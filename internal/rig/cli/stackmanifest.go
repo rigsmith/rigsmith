@@ -6,8 +6,10 @@ package cli
 // intra-repo package discovery (stackspace.go).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/confkit"
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/jsonc"
 	corestack "github.com/rigsmith/rigsmith/core/stackspace"
 )
@@ -608,6 +611,36 @@ func stackSetCursor(src *cfgfind.Source, m *stackManifest, prefix, sha string) e
 func stackRemoteURL(spec string) string {
 	host, rest, _ := strings.Cut(spec, "/")
 	return stackRemoteScheme(host) + stackHostForURL(host) + "/" + rest + ".git"
+}
+
+// stackAuthForURL resolves the credential for a stack remote, scoped to that
+// remote's own host.
+//
+// Every call that reaches a forge needs it, not only the fetch through the
+// engine: `ls-remote` runs first to resolve the tip, and on a machine where gh
+// holds the only credential — `gh auth login` without `gh auth setup-git`, which
+// is the default answer — that call fails before anything the engine does could
+// matter.
+//
+// Nothing found is nil, which the git helpers read as "send no header", so a
+// public remote is unaffected and a private one on a machine with no credential
+// fails exactly as it did before.
+func stackAuthForURL(ctx context.Context, remoteURL string) *gitrepo.HTTPAuth {
+	auth, err := gitrepo.CredentialFor(ctx, remoteURL)
+	if err != nil || auth == nil {
+		return nil
+	}
+	// Host-scoped, so a redirect off this forge cannot carry the credential with
+	// it. GitHub redirects a renamed owner to its new one, which stays in scope.
+	if u, err := url.Parse(remoteURL); err == nil {
+		auth.URLPrefix = u.Scheme + "://" + u.Host + "/"
+	}
+	return auth
+}
+
+// stackAuthFor is stackAuthForURL for a host/owner/name spec.
+func stackAuthFor(ctx context.Context, spec string) *gitrepo.HTTPAuth {
+	return stackAuthForURL(ctx, stackRemoteURL(spec))
 }
 
 // stackRemoteScheme is https everywhere but loopback.

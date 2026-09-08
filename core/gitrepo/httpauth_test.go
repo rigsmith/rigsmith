@@ -87,6 +87,7 @@ func TestCredentialFor(t *testing.T) {
 		t.Setenv("GIT_CONFIG_GLOBAL", cfg)
 		t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		withoutGH(t)
 
 		if _, err := CredentialFor(ctx, "https://alice@example.com:8443/acme/pty-core.git"); err != nil {
 			t.Fatal(err)
@@ -121,6 +122,7 @@ func TestCredentialFor(t *testing.T) {
 		t.Setenv("GIT_CONFIG_GLOBAL", cfg)
 		t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		withoutGH(t)
 
 		got, err := CredentialFor(ctx, "https://github.com/acme/pty-core.git")
 		if err != nil {
@@ -146,6 +148,7 @@ func TestCredentialFor(t *testing.T) {
 		t.Setenv("GIT_CONFIG_GLOBAL", cfg)
 		t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		withoutGH(t)
 
 		got, err := CredentialFor(ctx, "https://github.com/acme/pty-core.git")
 		if err != nil {
@@ -167,6 +170,7 @@ func TestCredentialFor(t *testing.T) {
 		t.Setenv("GIT_CONFIG_GLOBAL", cfg)
 		t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		withoutGH(t)
 
 		got, err := CredentialFor(ctx, "https://github.com/acme/pty-core.git")
 		if err != nil {
@@ -174,6 +178,109 @@ func TestCredentialFor(t *testing.T) {
 		}
 		if got != nil {
 			t.Fatal("resolved a credential with no helper configured; the test is reaching a real keychain")
+		}
+	})
+}
+
+// withoutGH takes the GitHub CLI out of the picture. The cases that use it
+// assert what git's own helper answered, and gh is asked first — so on a machine
+// that is logged into gh the real binary would answer instead and they would be
+// testing nothing.
+func withoutGH(t *testing.T) {
+	t.Helper()
+	prev := ghLookup
+	ghLookup = func(context.Context, string) *HTTPAuth { return nil }
+	// Each case configures a different helper for the same remote, and the
+	// lookup is memoized per process — without this they answer each other.
+	resetCredentialCache()
+	t.Cleanup(func() { ghLookup = prev; resetCredentialCache() })
+}
+
+func TestCredentialForPrefersGH(t *testing.T) {
+	ctx := context.Background()
+
+	// A git helper that answers, so "gh won" is distinguishable from "nothing
+	// else was configured". This is the shape of the bug: the helper's entry
+	// authenticates and cannot read the private repo, gh's token can.
+	withStaleHelper := func(t *testing.T) {
+		t.Helper()
+		cfg := filepath.Join(t.TempDir(), "gitconfig")
+		script := `!f() { test $1 = get && echo username=stale && echo password=stale-token; }; f`
+		if err := os.WriteFile(cfg, []byte("[credential]\n\thelper = \""+script+"\"\n\tuseHttpPath = true\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+		t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	}
+	stub := func(t *testing.T, a *HTTPAuth, asked *string) {
+		t.Helper()
+		prev := ghLookup
+		ghLookup = func(_ context.Context, query string) *HTTPAuth {
+			if asked != nil {
+				*asked = query
+			}
+			return a
+		}
+		resetCredentialCache()
+		t.Cleanup(func() { ghLookup = prev; resetCredentialCache() })
+	}
+
+	t.Run("gh wins over a credential helper that also answers", func(t *testing.T) {
+		withStaleHelper(t)
+		stub(t, &HTTPAuth{Username: "x-access-token", Password: "gh-token"}, nil)
+
+		got, err := CredentialFor(ctx, "https://github.com/acme/pty-core.git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || got.Password != "gh-token" {
+			t.Fatalf("got %+v, want gh's token — the stale helper answered first", got)
+		}
+	})
+
+	t.Run("gh is asked the same question git is", func(t *testing.T) {
+		withStaleHelper(t)
+		var asked string
+		stub(t, &HTTPAuth{Password: "gh-token"}, &asked)
+
+		if _, err := CredentialFor(ctx, "https://alice@example.com:8443/acme/pty-core.git"); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"protocol=https",
+			"host=example.com:8443",
+			"username=alice",
+			"path=acme/pty-core.git",
+		} {
+			if !strings.Contains(asked, want) {
+				t.Errorf("missing %q in what gh was asked:\n%s", want, asked)
+			}
+		}
+	})
+
+	t.Run("gh knowing nothing falls through to git", func(t *testing.T) {
+		withStaleHelper(t)
+		stub(t, nil, nil)
+
+		got, err := CredentialFor(ctx, "https://github.com/acme/pty-core.git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got == nil || got.Password != "stale-token" {
+			t.Fatalf("got %+v, want the configured helper's credential", got)
+		}
+	})
+
+	t.Run("gh answering with nothing at all is not a credential", func(t *testing.T) {
+		// `gh auth git-credential get` exits 0 and prints nothing for a host it
+		// does not know, which must read as "nothing found" rather than as a
+		// credential with an empty password.
+		if got := parseCredential(""); got != nil {
+			t.Fatalf("empty reply parsed as %+v, want nil", got)
+		}
+		if got := parseCredential("protocol=https\nhost=127.0.0.1\n"); got != nil {
+			t.Fatalf("reply with no password parsed as %+v, want nil", got)
 		}
 	})
 }

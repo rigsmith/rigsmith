@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
 
 // stackJoshVersion is the josh tag rig installs and expects. Pinned because the
@@ -314,12 +316,12 @@ var errProxyPortTaken = errors.New("josh-proxy exited before becoming ready")
 // does. Rare by hand and common under a parallel test run, where every package
 // is churning ports at once — which is where it was found, as a failure that
 // only ever appeared when the whole suite ran together.
-func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
+func startJoshProxy(ctx context.Context, bin, host string, auth *gitrepo.HTTPAuth) (*joshProxy, error) {
 	const attempts = 3
 	var err error
 	for i := 0; i < attempts; i++ {
 		var p *joshProxy
-		p, err = startJoshProxyOnce(ctx, bin, host)
+		p, err = startJoshProxyOnce(ctx, bin, host, auth)
 		if err == nil || !errors.Is(err, errProxyPortTaken) {
 			return p, err
 		}
@@ -327,7 +329,36 @@ func startJoshProxy(ctx context.Context, bin, host string) (*joshProxy, error) {
 	return nil, err
 }
 
-func startJoshProxyOnce(ctx context.Context, bin, host string) (*joshProxy, error) {
+// joshProxyCommand is the engine's command line and environment: everything
+// about how it is started that does not involve actually starting it.
+//
+// The engine fetches upstream by spawning its own git, which inherits this
+// environment and nothing else. The Authorization header the client sends
+// gets josh as far as authorising the request; the fetch behind it is a
+// plain `git fetch` that authenticates on its own, so without the credential
+// here it falls back to whatever credential helper the machine happens to
+// have — and on a machine where gh holds the only credential, there is none.
+//
+// What that failure looks like from the client is the reason this matters:
+// josh answers with an empty history rather than an error, so the import
+// succeeds and imports nothing.
+//
+// Scoped to the upstream host, and in the environment rather than argv for
+// the same reason as everywhere else: a process listing is readable by
+// anyone on the machine, an environment is not.
+func joshProxyCommand(ctx context.Context, bin, host, local string, port int, auth *gitrepo.HTTPAuth) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, bin,
+		"--local", local,
+		"--remote", stackRemoteScheme(host)+stackHostForURL(host),
+		"--port="+strconv.Itoa(port),
+		"--no-background")
+	if env := auth.Env(); len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	return cmd
+}
+
+func startJoshProxyOnce(ctx context.Context, bin, host string, auth *gitrepo.HTTPAuth) (*joshProxy, error) {
 	port, err := freePort(ctx)
 	if err != nil {
 		return nil, err
@@ -345,11 +376,7 @@ func startJoshProxyOnce(ctx context.Context, bin, host string) (*joshProxy, erro
 	if err := os.MkdirAll(local, 0o700); err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, bin,
-		"--local", local,
-		"--remote", stackRemoteScheme(host)+stackHostForURL(host),
-		"--port="+strconv.Itoa(port),
-		"--no-background")
+	cmd := joshProxyCommand(ctx, bin, host, local, port, auth)
 	// Keep the engine's output: when a filter or fetch fails, its log is the
 	// only place that says why, and discarding it leaves the caller guessing.
 	logFile, err := os.CreateTemp("", "josh-proxy-*.log")
