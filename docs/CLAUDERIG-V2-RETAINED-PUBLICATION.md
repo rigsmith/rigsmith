@@ -404,10 +404,14 @@ whose resolutions are already staged. This is a separate shared primitive,
 `FinishStagedMerge`; the private retained publisher still never edits canonical
 state. Claude verifies the batch archive and capture binding before calling it,
 under the staging lease that remains held through publication and confirmation.
-Fresh queued capture uses the same settled-state guard before retaining a seed
-or copying staging, including standalone autostash residue and active bisects. It refuses unfinished
-operations without attempting repair. Unresolved canonical
-conflicts and capture integration remain the next recovery step.
+Fresh queued capture validates its binding under the same staging lease, then
+uses this audited completion before retaining a seed or copying staging. It
+uses the capture-store byte limit and the sealed batch event time. If later seed
+retention or source capture fails, the completed canonical merge remains for
+retry; no capture is acknowledged until its archive is sealed. Already-sealed
+capture reuse skips recovery. Unresolved canonical conflicts and other operations
+(including standalone autostash residue and active bisects) remain blocked.
+Unresolved-conflict recovery is the next step.
 
 Completion uses the exact index as the chosen resolution, including any other
 staged changes. It does not run `git add`, infer resolutions from worktree files,
