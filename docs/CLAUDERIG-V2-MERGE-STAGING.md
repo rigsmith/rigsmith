@@ -39,8 +39,10 @@ seals and flushes an immutable intent containing:
 
 - Canonical Git-directory binding, exact parent commits, HEAD/merge markers and
   `AUTO_MERGE` tree identity.
-- The verified candidate bundle and tree, with the planner's original event
-  identity and a caller-supplied vendor policy version.
+- The verified candidate bundle and tree. The commit records the supplied event
+  time, author and message; the artifact key binds that request identity and the
+  caller-supplied vendor policy version to the canonical Git-directory binding.
+  The policy version is bound through the key, not a separate intent.json field.
 - Exact before/after indexes with digests, affected-file metadata and retained
   before/after file bytes.
 

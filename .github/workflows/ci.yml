@@ -49,15 +49,21 @@ jobs:
       - name: GitHub CLI for synthetic authentication fixtures
         run: gh --version
 
-      # Git-heavy service fixtures exceed Go's cumulative per-package timeout on
-      # Windows. Keep the ten-minute limit and run three exhaustive, disjoint
-      # service groups, with separate progress/timing for each.
+      # Git-heavy fixtures exceed Go's cumulative per-package timeout on Windows.
+      # Keep the ten-minute limit, with exhaustive, disjoint groups and separate
+      # progress/timing for shared artifacts, merge staging and Claude services.
       - name: Test other packages
         shell: bash
         env:
           CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate
         run: |
-          go list ./... | grep -v '^github.com/rigsmith/rigsmith/internal/clauderig/service$' | xargs go test -count=1
+          go list ./... | grep -Ev '^github.com/rigsmith/rigsmith/internal/(clauderig/service|agentrig/commitartifact)$' | xargs go test -count=1
+
+      - name: Test shared commit artifacts
+        run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -skip '^TestMergeStage'
+
+      - name: Test recoverable merge staging
+        run: go test ./internal/agentrig/commitartifact -count=1 -timeout=10m -run '^TestMergeStage'
 
       - name: Test Claude service workflows
         env:

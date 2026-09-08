@@ -32,8 +32,12 @@ func TestMergeStagePreservesPendingEditsAndCompletes(t *testing.T) {
 			}
 			putPublicationFile(t, r.dir, "clean", "later unstaged clean edit\n")
 			putPublicationFile(t, r.dir, "pending", "untracked pending\n")
+			// Existing ref metadata must survive both staging and sealed replay.
+			mustRun(t, r, "", "update-ref", "refs/rig/merge-plan", incoming)
+			putPublicationFile(t, r.dir, ".git/FETCH_HEAD", "retained fetch metadata\n")
+			refs := mustRun(t, r, "", "for-each-ref", "--format=%(refname) %(objectname)")
 			before := map[string][]byte{}
-			for _, path := range []string{".git/HEAD", ".git/MERGE_HEAD", ".git/ORIG_HEAD", ".git/MERGE_MSG", ".git/AUTO_MERGE", "clean", "pending"} {
+			for _, path := range []string{".git/HEAD", ".git/MERGE_HEAD", ".git/ORIG_HEAD", ".git/MERGE_MSG", ".git/AUTO_MERGE", ".git/FETCH_HEAD", "clean", "pending"} {
 				before[path] = readMergeTestFile(t, r.dir, path)
 			}
 			store := MergeStageStore{Dir: filepath.Join(t.TempDir(), "intent")}
@@ -67,6 +71,12 @@ func TestMergeStagePreservesPendingEditsAndCompletes(t *testing.T) {
 			}
 			if again, err := store.Stage(t.Context(), r.dir, p); err != nil || again != tree {
 				t.Fatal("retry", again, err)
+			}
+			if got := mustRun(t, r, "", "for-each-ref", "--format=%(refname) %(objectname)"); got != refs {
+				t.Fatal("staging or replay changed canonical refs", got, refs)
+			}
+			if !bytes.Equal(before[".git/FETCH_HEAD"], readMergeTestFile(t, r.dir, ".git/FETCH_HEAD")) {
+				t.Fatal("staging replay changed FETCH_HEAD")
 			}
 			head, err := FinishStagedMerge(t.Context(), r.dir, p.MergeFinishPolicy)
 			if err != nil {
