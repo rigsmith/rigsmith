@@ -409,7 +409,11 @@ func newStackPullCmd() *cobra.Command {
 				// which read cold says the fix was wrong. Name the file and the
 				// step between it and the pull.
 				if manifest, ok := stackOnlyManifestDirty(ctx, repo, src); ok {
-					return fmt.Errorf("stackspace has uncommitted changes — only %s; commit it (`git commit -m \"stack: manifest\" -- %s`), then pull again", manifest, manifest)
+					// -a rather than a pathspec: the guard has just established
+					// that the manifest is the only thing dirty, and a pathspec
+					// would be relative to wherever inside the stackspace the
+					// user is standing.
+					return fmt.Errorf("stackspace has uncommitted changes — only %s; commit it (`git commit -am \"stack: manifest\"`), then pull again", manifest)
 				}
 				return fmt.Errorf("stackspace has uncommitted changes — commit or stash before pulling")
 			}

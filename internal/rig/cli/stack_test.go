@@ -1284,7 +1284,7 @@ func TestStackPullDirtyGuardNamesTheManifest(t *testing.T) {
 // F1, local work on the prefix, and a merge of F2 (F1's child) resolved by
 // hand with msg. It returns the repo, the root, and the filtered upstream
 // commits F0 (F1's parent, never the cursor) and F2.
-func resolvedPullStackspace(t *testing.T, msg string) (*gitrepo.Repo, string, string, string) {
+func resolvedPullStackspace(ctx context.Context, t *testing.T, msg string) (*gitrepo.Repo, string, string, string) {
 	t.Helper()
 	root := t.TempDir()
 	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
@@ -1336,7 +1336,7 @@ func resolvedPullStackspace(t *testing.T, msg string) (*gitrepo.Repo, string, st
 	git("add", "-A")
 	git("commit", "-qm", msg)
 
-	repo, err := gitrepo.Open(context.Background(), root)
+	repo, err := gitrepo.Open(ctx, root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1347,7 +1347,7 @@ func TestStackTargetTaken(t *testing.T) {
 	ctx := context.Background()
 	for _, msg := range []string{"stack: pull tweed @ f2", "resolved the tweed merge"} {
 		t.Run("a resolved merge committed as "+strconv.Quote(msg), func(t *testing.T) {
-			repo, root, f0, f2 := resolvedPullStackspace(t, msg)
+			repo, root, f0, f2 := resolvedPullStackspace(ctx, t, msg)
 			// The re-run the conflict message asked for: the target is in
 			// HEAD's history and past where the prefix last stood.
 			if !stackTargetTaken(ctx, repo, "tweed", f2) {
@@ -1385,7 +1385,7 @@ func TestStackTargetTaken(t *testing.T) {
 // already made while the tree stays where the resolution left it.
 func TestStackImportCommitBySyncShape(t *testing.T) {
 	ctx := context.Background()
-	repo, root, f0, f2 := resolvedPullStackspace(t, "resolved the tweed merge")
+	repo, root, f0, f2 := resolvedPullStackspace(ctx, t, "resolved the tweed merge")
 	git := func(args ...string) string { return strings.TrimSpace(mustGitStack(t, root, args...)) }
 	f1, merge := git("rev-parse", f2+"^"), git("rev-parse", "HEAD")
 
