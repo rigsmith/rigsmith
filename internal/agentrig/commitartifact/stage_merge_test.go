@@ -363,3 +363,56 @@ func TestMergeStageRetryRevalidatesPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestMergeStageChecksUnchangedConflictBlobs(t *testing.T) {
+	for _, edited := range []bool{false, true} {
+		name := "unchanged"
+		if edited {
+			name = "later-edit"
+		}
+		t.Run(name, func(t *testing.T) {
+			r := gitRepo{dir: t.TempDir(), identity: []string{"GIT_AUTHOR_NAME=fixture", "GIT_AUTHOR_EMAIL=fixture@example.com", "GIT_COMMITTER_NAME=fixture", "GIT_COMMITTER_EMAIL=fixture@example.com"}}
+			mustRun(t, r, "", "init", "--initial-branch=main")
+			putPublicationFile(t, r.dir, "state", "base\x00binary\n")
+			mustRun(t, r, "", "add", "state")
+			mustRun(t, r, "", "commit", "-m", "base")
+			mustRun(t, r, "", "checkout", "-b", "incoming")
+			putPublicationFile(t, r.dir, "state", "incoming\x00binary\n")
+			mustRun(t, r, "", "add", "state")
+			mustRun(t, r, "", "commit", "-m", "incoming")
+			mustRun(t, r, "", "checkout", "main")
+			putPublicationFile(t, r.dir, "state", "ours\x00binary\n")
+			mustRun(t, r, "", "add", "state")
+			mustRun(t, r, "", "commit", "-m", "ours")
+			if _, err := r.run(t.Context(), nil, "merge", "--no-commit", "incoming"); !gitExited(err, 1) {
+				t.Fatal(err)
+			}
+			if got := mustRun(t, r, "", "rev-parse", "AUTO_MERGE:state"); got != mustRun(t, r, "", "rev-parse", "HEAD:state") {
+				t.Fatal("fixture AUTO_MERGE differs from ours")
+			}
+			if edited {
+				putPublicationFile(t, r.dir, "state", "later\x00manual edit\n")
+			}
+			index := readMergeTestFile(t, r.dir, ".git/index")
+			live := readMergeTestFile(t, r.dir, "state")
+			p := MergeStagePolicy{PolicyID: "binary-ours-v1", MergePlanPolicy: MergePlanPolicy{MergeFinishPolicy: mergeFinishPolicy(), Resolve: func(_ context.Context, _ string, _, ours, _ []byte, _ RelatedFiles) ([]byte, error) { return ours, nil }}}
+			store := MergeStageStore{Dir: filepath.Join(t.TempDir(), "intent")}
+			_, err := store.Stage(t.Context(), r.dir, p)
+			if edited {
+				if !errors.Is(err, ErrConflict) {
+					t.Fatalf("accepted later edit to unchanged conflict blob: %v", err)
+				}
+				if !bytes.Equal(index, readMergeTestFile(t, r.dir, ".git/index")) {
+					t.Fatal("staged over later edit")
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			} else if mustRun(t, r, "", "ls-files", "--unmerged") != "" {
+				t.Fatal("did not resolve index")
+			}
+			if !bytes.Equal(live, readMergeTestFile(t, r.dir, "state")) {
+				t.Fatal("changed live bytes")
+			}
+		})
+	}
+}

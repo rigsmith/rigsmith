@@ -342,7 +342,9 @@ func buildMergeStage(ctx context.Context, source gitRepo, root, binding string, 
 			return ErrInvalid
 		}
 		before := beforeTree[path]
-		if before != nil && before.oid == after.oid && before.mode == after.mode {
+		// A conflict is still affected when its resolution keeps AUTO_MERGE bytes.
+		// Retain it so initial validation and replay cannot skip later live edits.
+		if before != nil && !conflicts[path] && before.oid == after.oid && before.mode == after.mode {
 			continue
 		}
 		file := mergeStageFile{Path: path, After: after.oid, AfterSize: after.size, Mode: uint32(after.mode)}
