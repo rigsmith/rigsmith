@@ -24,16 +24,24 @@ func Run(ctx context.Context, cmd *exec.Cmd) error {
 	if err != nil {
 		return err
 	}
-	defer owner.close()
+	return runOwned(ctx, cmd, owner)
+}
+
+func runOwned(ctx context.Context, cmd *exec.Cmd, owner *ownership) (err error) {
+	defer func() {
+		if closeErr := owner.close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close command ownership: %w", closeErr))
+		}
+	}()
 	if err = cmd.Start(); err != nil {
 		return err
 	}
 	if err = owner.started(cmd); err != nil {
-		_ = owner.stop()
-		_ = cmd.Process.Kill()
-		_ = owner.finish()
-		_ = cmd.Wait()
-		return err
+		stopErr := owner.stop()
+		killErr := cmd.Process.Kill()
+		finishErr := owner.finish()
+		waitErr := cmd.Wait()
+		return errors.Join(err, stopErr, killErr, finishErr, waitErr)
 	}
 	done := make(chan error, 1)
 	go func() {

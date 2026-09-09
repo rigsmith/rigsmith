@@ -582,3 +582,17 @@ Synthetic tests cover SHA-1/SHA-256 ancestry, diverged/ahead tips, fresh remote
 rewrites, missing/shallow/false histories, offline/canceled fetches, unchanged
 queue attempts and staging bytes, lease/scratch cleanup, and a checked Claude
 worker stop/drain/restart round trip.
+
+## Windows child startup ownership (milestone 6b.6b.2a)
+
+Retained Git commands on Windows now inherit their kill-on-close job at creation,
+including before the Go runner observes startup. A suspended anchor is itself
+created atomically inside the job and never executes application code. The
+[process lifecycle contract](CLAUDERIG-V2-PROCESS-LIFECYCLE.md) describes the
+mechanism, its extra-process cost, and synthetic crash tests.
+
+This closes the Windows suspended-child assignment gap. It does not establish
+that cleanup has finished before another worker acquires a crash-released lease:
+Windows job termination is asynchronous. Unix parent-death supervision and
+cross-platform restart fencing remain milestones 6b.6b.2b and 6b.6b.2c. Worker
+commands and queued hooks remain disabled.
