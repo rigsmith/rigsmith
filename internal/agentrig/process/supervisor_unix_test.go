@@ -51,7 +51,13 @@ func TestUnixSupervisedCommand(t *testing.T) {
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			if mode == "io" {
 				cmd = exec.Command(os.Args[0], "-test.run=^TestUnixSupervisedIOHelper$", "--", "quoted argument ' \" end\xfe")
-				cmd.Env = []string{"RIG_SUPERVISOR_IO=1", "CUSTOM_VALUE=provided\xff"}
+				lease, err := storelock.Inherit(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lockPath := lease.Name()
+				_ = lease.Close()
+				cmd.Env = []string{"RIG_SUPERVISOR_IO=1", "CUSTOM_VALUE=provided\xff", "RIG_SUPERVISOR_LOCK=" + lockPath}
 				cmd.Dir = t.TempDir()
 				cmd.Stdin = strings.NewReader("input")
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -113,10 +119,20 @@ func TestUnixSupervisedIOHelper(t *testing.T) {
 	dir, _ := os.Getwd()
 	fmt.Fprintf(os.Stdout, "%s|%s|%s|%s", input, os.Getenv("CUSTOM_VALUE"), os.Args[len(os.Args)-1], dir)
 	fmt.Fprint(os.Stderr, "stderr")
-	// The protocol and lock must be close-on-exec, rather than inherited by Git.
+	// The lock must be close-on-exec. Other regular files (including Go's
+	// test log) may legitimately reuse its old descriptor number after exec.
+	unrelated, err := os.Open(os.Args[0])
+	if err != nil {
+		os.Exit(10)
+	}
+	defer unrelated.Close()
+	var lock syscall.Stat_t
+	if err := syscall.Stat(os.Getenv("RIG_SUPERVISOR_LOCK"), &lock); err != nil {
+		os.Exit(11)
+	}
 	for fd := 3; fd <= 6; fd++ {
 		var st syscall.Stat_t
-		if err := syscall.Fstat(fd, &st); err == nil && st.Mode&syscall.S_IFMT == syscall.S_IFREG {
+		if err := syscall.Fstat(fd, &st); err == nil && st.Dev == lock.Dev && st.Ino == lock.Ino {
 			os.Exit(9)
 		}
 	}

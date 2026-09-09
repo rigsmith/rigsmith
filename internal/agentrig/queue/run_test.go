@@ -41,22 +41,6 @@ func (r *runningFixture) wait(t *testing.T) runnerOutcome {
 		return runnerOutcome{}
 	}
 }
-func awaitRunner(t *testing.T, q *Queue) {
-	t.Helper()
-	until := time.Now().Add(10 * time.Second)
-	for time.Now().Before(until) {
-		_, free, err := storelock.Acquire(t.Context(), filepath.Join(q.dir, "runner"), 0)
-		if errors.Is(err, storelock.ErrBusy) {
-			return
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		free()
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("runner never acquired ownership")
-}
 
 func TestRunnerDrainsSeparateBatchesAndKeepsExactReceipts(t *testing.T) {
 	q := fixture(t)
@@ -107,8 +91,19 @@ func TestRunnerIdleReleasesWorkerAndPollsIndependentEnqueues(t *testing.T) {
 				interval = time.Hour
 			}
 			f := &executionFixture{}
-			r := startRunner(t, q, f, RunOptions{Stop: stop, Wake: wakeInput, PollInterval: interval, Observe: func(ExecutionResult, error) { close(stop) }})
-			awaitRunner(t, q)
+			// Observe startup under the runner lease. Probing by acquiring that
+			// same lock can beat the runner to it and make its zero-wait start fail.
+			ready := make(chan struct{})
+			r := startRunner(t, q, f, RunOptions{Stop: stop, Wake: wakeInput, PollInterval: interval,
+				CheckStartup: func(context.Context, Binding) error { close(ready); return nil },
+				Observe:      func(ExecutionResult, error) { close(stop) }})
+			select {
+			case <-ready:
+			case <-r.done:
+				t.Fatalf("runner failed startup: %+v", r.outcome)
+			case <-time.After(10 * time.Second):
+				t.Fatal("runner never acquired ownership")
+			}
 			before, err := os.ReadFile(filepath.Join(q.dir, "queue.json"))
 			if err != nil {
 				t.Fatal(err)

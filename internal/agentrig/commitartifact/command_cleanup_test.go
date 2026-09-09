@@ -74,9 +74,6 @@ func retainedCommandCleanup(t *testing.T, configure func(*testing.T, context.Con
 			if configure != nil {
 				ctx = configure(t, ctx, repo.dir)
 			}
-			if configure != nil {
-				ctx = configure(t, ctx, repo.dir)
-			}
 			if tc.mode == "wait" || strings.HasSuffix(tc.mode, "-cancel") {
 				go func() {
 					if waitCleanupMarker(ctx, marker) {
