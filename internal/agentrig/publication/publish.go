@@ -14,10 +14,16 @@ type PublishRequest struct {
 	StagingDir, Remote string
 	Plan               Plan
 	AllowMergeTool     bool
+	// RecordCommit requests the exact snapshot commit before reconciliation or
+	// history maintenance. Ordinary synchronous callers need no extra HEAD probe.
+	RecordCommit bool
 }
 
 // PublishResult records completed phases even if a later phase fails.
-type PublishResult struct{ Committed, Pushed bool }
+type PublishResult struct {
+	Committed, Pushed bool
+	SnapshotCommit    string `json:",omitempty"`
+}
 
 // Publish audits and commits a captured store, retries pushes through the supplied
 // conflict policy, then maintains history. A failed push is retried even when no
@@ -49,6 +55,12 @@ func (w Workflow) Publish(ctx context.Context, req PublishRequest) (result Publi
 		return result, err
 	}
 	result.Committed = changed
+	if req.RecordCommit {
+		result.SnapshotCommit, err = repo.Head(ctx)
+		if err != nil {
+			return result, err
+		}
+	}
 	if req.Remote == "" {
 		w.emit(Published{Result: result, LocalOnly: true})
 		return result, nil

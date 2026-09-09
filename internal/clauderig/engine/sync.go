@@ -76,6 +76,10 @@ type RootResult struct {
 
 // Report is the outcome of a sync into the staging dir.
 type Report struct {
+	// FreshSnapshots records requested native paths actually read into staging
+	// with stable source metadata. Internal evidence only; never serialize paths
+	// into journals or treat this as proof of retention or remote publication.
+	FreshSnapshots   map[string]bool `json:"-"`
 	Roots            []RootResult
 	ManifestProjects int
 	RetentionPruned  int              // staged transcript files removed as aged-out
@@ -88,6 +92,9 @@ type Report struct {
 
 // Options configure a sync.
 type Options struct {
+	// EvidencePaths opts selected sources into fresh reads even when size/mtime
+	// match staging. Retention, size limits and changed-file throttling still apply.
+	EvidencePaths map[string]bool
 	// ChunkTranscripts uses versioned staging chunks for large transcripts.
 	ChunkTranscripts bool
 	StagingDir       string
@@ -192,6 +199,9 @@ func Sync(opts Options) (*Report, error) {
 		}
 	}
 	rep := &Report{}
+	if len(opts.EvidencePaths) > 0 {
+		rep.FreshSnapshots = make(map[string]bool)
+	}
 	// Findings from whole files, tracked apart from JSON-value findings because the
 	// two need different remedies in the error message.
 	credentialFiles := 0
@@ -254,6 +264,22 @@ func Sync(opts Options) (*Report, error) {
 				// must not abort the whole sync — skip it.
 				rr.SkippedFiles++
 				continue
+			}
+			evidencePath := srcPath
+			if len(opts.EvidencePaths) > 0 {
+				if resolved, err := filepath.EvalSymlinks(srcPath); err == nil {
+					evidencePath = resolved
+				}
+			}
+			tracked := opts.EvidencePaths[evidencePath]
+			noteSnapshot := func() {
+				if !tracked {
+					return
+				}
+				after, err := os.Stat(srcPath)
+				if err == nil && info.Mode().IsRegular() && os.SameFile(info, after) && info.Size() == after.Size() && info.ModTime().Equal(after.ModTime()) {
+					rep.FreshSnapshots[evidencePath] = true
+				}
 			}
 
 			// Retention: drop project transcripts older than the window. Memory is
@@ -336,7 +362,7 @@ func Sync(opts Options) (*Report, error) {
 					rr.Deferred++
 					continue
 				}
-				if unchanged {
+				if unchanged && !tracked {
 					if scrub {
 						dropped, err := dropOversizeSnapshot()
 						if err != nil {
@@ -394,6 +420,7 @@ func Sync(opts Options) (*Report, error) {
 							})
 						}
 						rr.Files++
+						noteSnapshot()
 						continue
 					}
 				}
@@ -426,6 +453,7 @@ func Sync(opts Options) (*Report, error) {
 					return nil, err
 				}
 				rr.Files++
+				noteSnapshot()
 				continue
 			}
 

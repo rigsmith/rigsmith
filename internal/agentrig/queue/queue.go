@@ -128,6 +128,10 @@ type Queue struct {
 	limit   int
 }
 
+// Directory returns the queue's absolute state directory. Composition callers
+// must keep it outside native source roots and staging before capturing files.
+func (q *Queue) Directory() string { return q.dir }
+
 func newQueue(dir string, binding Binding) (*Queue, error) {
 	for _, v := range []string{binding.Vendor, binding.StoreID, binding.RootID, binding.RemoteID, binding.ConfigID} {
 		if !identifier(v) {
