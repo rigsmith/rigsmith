@@ -276,6 +276,17 @@ commands remain future work.
 
 ## Bounded retained append recovery
 
+Per-machine `journal/<machine>.jsonl` appends now also have a narrow recovery
+policy for consecutive queued captures from one canonical seed. Each record must
+have a valid timestamp, known operation and known outcome. Its machine must map
+to the filename using the journal writer's existing sanitization.
+Both sides must retain an existing base unchanged; independently created journals
+can use an empty base. The union preserves unknown fields and original bytes without applying transcript
+UUID/index rules; duplicate top-level fields remain invalid.
+Edited/truncated history (including rotation), malformed records and other JSONL
+locations remain blocked. The same blob bounds and full-tree secret audit apply.
+See [worker integration](CLAUDERIG-V2-QUEUE.md#worker-loop-and-controlled-shutdown-milestone-6b6a).
+
 `ResolveRetained` also accepts the Claude adapter's native CLI project transcripts
 (including subagents, excluding memory JSONL and chunk parts) and memory-text paths when both snapshots preserve an existing merge base as an exact byte prefix.
 All sides must be UTF-8 without NUL and end at a complete newline (or be empty).

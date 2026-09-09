@@ -363,6 +363,11 @@ func readLines(path string) ([]string, error) {
 	return lines, sc.Err()
 }
 
+// MatchesFile reports whether name is the journal filename used by Append for
+// machine. It accepts a filename, not a relative path, and shares the writer's
+// sanitization for spaces, separators, Unicode and empty names.
+func MatchesFile(name, machine string) bool { return name == fileName(machine) }
+
 // fileName maps a machine name to its journal file, keeping the result a single
 // safe path segment. The name reaches us from config or the OS hostname, so it
 // is not automatically trustworthy as a filename — a name containing a
