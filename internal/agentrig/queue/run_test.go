@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,7 +118,7 @@ func TestRunnerIdleReleasesWorkerAndPollsIndependentEnqueues(t *testing.T) {
 			if err != nil || string(before) != string(after) {
 				t.Fatal("idle loop rewrote queue state", err)
 			}
-			if _, err := q.Run(t.Context(), &executionFixture{}, RunOptions{Drain: true}); !errors.Is(err, storelock.ErrBusy) {
+			if _, err := q.Run(t.Context(), &executionFixture{}, RunOptions{Drain: true}); !errors.Is(err, storelock.ErrBusy) || !strings.Contains(err.Error(), "queue runner") {
 				t.Fatal("duplicate runner", err)
 			}
 			w := worker(t, q)

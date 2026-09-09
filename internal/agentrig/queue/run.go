@@ -70,7 +70,7 @@ func (q *Queue) Run(ctx context.Context, adapter Adapter, opts RunOptions) (resu
 	}
 	_, release, err := storelock.Acquire(ctx, filepath.Join(q.dir, "runner"), 0)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("acquire queue runner ownership: %w", err)
 	}
 	defer release()
 	wake := opts.Wake

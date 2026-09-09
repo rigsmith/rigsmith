@@ -40,13 +40,15 @@ func ResolveRetained(ctx context.Context, path string, base, ours, theirs []byte
 	}
 	if isJournal {
 		for _, side := range [][]byte{base, ours, theirs} {
-			if !journalRecords(side, strings.TrimSuffix(rel, ".jsonl")) {
+			if !journalRecords(side, rel) {
 				return nil, commitartifact.ErrConflict
 			}
 		}
 		if base == nil {
 			base = []byte{}
 		}
+		// Journal UUID-like fields are opaque future data, not transcript IDs.
+		rule.DeduplicateRecords = false
 	}
 	if base == nil || ours == nil || theirs == nil {
 		return nil, commitartifact.ErrConflict
@@ -185,7 +187,7 @@ func retainedRecordUUID(raw []byte) (string, bool) {
 
 // Journal appends must contain actual records for the named machine. Unknown
 // fields remain byte-preserved, but malformed records cannot establish an append.
-func journalRecords(data []byte, machine string) bool {
+func journalRecords(data []byte, name string) bool {
 	for len(data) > 0 {
 		i := bytes.IndexByte(data, '\n')
 		if i < 0 {
@@ -194,7 +196,7 @@ func journalRecords(data []byte, machine string) bool {
 		line := data[:i]
 		data = data[i+1:]
 		var record journal.Record
-		if json.Unmarshal(line, &record) != nil || record.At.IsZero() || record.Machine != machine {
+		if !uniqueJournalFields(line) || json.Unmarshal(line, &record) != nil || record.At.IsZero() || !journal.MatchesFile(name, record.Machine) {
 			return false
 		}
 		switch record.Op {
@@ -209,4 +211,32 @@ func journalRecords(data []byte, machine string) bool {
 		}
 	}
 	return true
+}
+
+// Keep duplicate-field rejection independent of transcript UUID/index rules.
+func uniqueJournalFields(raw []byte) bool {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	first, err := d.Token()
+	if err != nil || first != json.Delim('{') {
+		return false
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		token, err := d.Token()
+		key, ok := token.(string)
+		if err != nil || !ok || seen[key] {
+			return false
+		}
+		seen[key] = true
+		var value json.RawMessage
+		if d.Decode(&value) != nil {
+			return false
+		}
+	}
+	last, err := d.Token()
+	if err != nil || last != json.Delim('}') {
+		return false
+	}
+	_, err = d.Token()
+	return err == io.EOF
 }

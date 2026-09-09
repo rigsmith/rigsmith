@@ -518,8 +518,10 @@ and saved-phase restart. A synthetic Claude adapter round trip stops after push
 but before confirmation, finishes that batch, preserves a later arrival and then
 drains it through a new run. Successive captures from the same canonical seed
 also preserve both machine-journal appends. This adds a narrow retained policy
-for `journal/<machine>.jsonl`: validate each record's time, machine, operation
-and outcome, preserve the existing base byte-for-byte, and append both tails.
+for `journal/<machine>.jsonl`: validate each record's time, operation and outcome, match its machine through
+the journal writer's filename sanitization, preserve the existing base byte-for-byte,
+and append both tails. Unknown fields (including UUID-like names) stay opaque;
+transcript ID/index rules do not apply. Duplicate top-level fields remain invalid.
 Independently created journal files can use an empty base. Edited/truncated
 history, malformed records and other JSONL locations remain conflicts; the full
 publication tree still passes the existing secret audit. Journal rotation that

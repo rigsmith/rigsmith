@@ -3,10 +3,15 @@ package mergepolicy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
+	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 )
 
 func TestRetainedAppendRecovery(t *testing.T) {
@@ -149,5 +154,51 @@ func TestRetainedMachineJournalAppends(t *testing.T) {
 		if _, err := ResolveRetained(t.Context(), path, base, good, append(bytes.Clone(base), right...)); !errors.Is(err, commitartifact.ErrConflict) {
 			t.Fatal("unexpected journal policy", path, err)
 		}
+	}
+}
+
+func TestRetainedJournalsUseWriterFilenameAndKeepOpaqueFields(t *testing.T) {
+	for _, machine := range []string{"fixture", "name with spaces", "nested/name", "héllo", "...", ""} {
+		t.Run(machine, func(t *testing.T) {
+			dir := t.TempDir()
+			record := journal.Record{At: time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC), Machine: machine, Op: journal.OpSync, Outcome: journal.OutcomeOK}
+			if err := journal.Append(dir, record); err != nil {
+				t.Fatal(err)
+			}
+			entries, err := os.ReadDir(filepath.Join(dir, journal.DirName))
+			if err != nil || len(entries) != 1 {
+				t.Fatal(entries, err)
+			}
+			name := entries[0].Name()
+			base, err := os.ReadFile(filepath.Join(dir, journal.DirName, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var tails [][]byte
+			for i := range 2 {
+				record.At = record.At.Add(time.Minute)
+				encoded, err := json.Marshal(record)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// These are opaque journal fields, including numeric/index-shaped
+				// values and a repeated uuid on otherwise different records.
+				extra := `,"uuid":"same-future-value","UUID":42,"clauderig_chunked_transcript":{"future":true}}` + "\n"
+				if i == 0 {
+					extra = `,"uuid":"same-future-value","UUID":42,"clauderig_chunked_transcript":{"future":false}}` + "\n"
+				}
+				tails = append(tails, append(encoded[:len(encoded)-1], extra...))
+			}
+			ours := append(bytes.Clone(base), tails[0]...)
+			theirs := append(bytes.Clone(base), tails[1]...)
+			want := append(bytes.Clone(ours), tails[1]...)
+			got, err := ResolveRetained(t.Context(), "journal/"+name, base, ours, theirs)
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("journal %q: %q %v", name, got, err)
+			}
+			if _, err := ResolveRetained(t.Context(), "journal/wrong-file.jsonl", base, ours, theirs); !errors.Is(err, commitartifact.ErrConflict) {
+				t.Fatal("accepted wrong journal filename", err)
+			}
+		})
 	}
 }
