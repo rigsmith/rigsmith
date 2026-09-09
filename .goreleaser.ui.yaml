@@ -50,7 +50,7 @@ builds:
   # needs cgo, a real macOS runner and a .app bundle, which is scripts/package-ui.sh.
   - id: clauderig-ui
     main: ./ui
-    binary: clauderigUi
+    binary: claudeRigUi
     env:
       - CGO_ENABLED=0
     goos:
@@ -68,7 +68,7 @@ archives:
   - id: clauderig-ui
     ids:
       - clauderig-ui
-    name_template: "clauderigUi_{{ .Env.UI_VERSION }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "claudeRigUi_{{ .Env.UI_VERSION }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - zip
 

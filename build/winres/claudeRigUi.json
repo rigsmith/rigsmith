@@ -1,7 +1,7 @@
 {
   "RT_GROUP_ICON": {
     "APP": {
-      "0000": "../icons/clauderigUi.png"
+      "0000": "../icons/claudeRigUi.png"
     }
   },
   "RT_VERSION": {
@@ -16,8 +16,8 @@
             "CompanyName": "RigSmith",
             "ProductName": "claudeRig UI",
             "FileDescription": "The claudeRig menu bar app: sync health, sessions and accounts at a glance",
-            "InternalName": "clauderigUi",
-            "OriginalFilename": "clauderigUi.exe",
+            "InternalName": "claudeRigUi",
+            "OriginalFilename": "claudeRigUi.exe",
             "LegalCopyright": "Copyright (c) 2026 John Campion Jr"
           }
         }
