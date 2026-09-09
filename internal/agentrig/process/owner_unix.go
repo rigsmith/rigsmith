@@ -39,14 +39,42 @@ func killGroup(pid int) error {
 		return nil
 	}
 	if errors.Is(err, syscall.EPERM) {
-		// Darwin reports EPERM for a group consisting only of zombies.
-		alive, checkErr := groupAlive(pid)
-		if checkErr == nil && !alive {
+		// Darwin can reject a repeated kill while an earlier SIGKILL is still
+		// taking effect, before all members become zombies. Wait briefly for
+		// observed exit; EPERM itself never proves cleanup. The wait is bounded
+		// so a real permissions failure with live helpers remains an error.
+		stopped, checkErr := confirmGroupExit(func() (bool, error) { return groupAlive(pid) }, time.Second)
+		if checkErr != nil {
+			return errors.Join(err, checkErr)
+		}
+		if stopped {
 			return nil
 		}
 	}
 	return err
 }
+
+// confirmGroupExit checks until every member has stopped, an inspection fails,
+// or the settling interval expires. It never signals a process or assumes exit
+// from elapsed time. inspect reports whether an executing member remains.
+func confirmGroupExit(inspect func() (bool, error), settle time.Duration) (bool, error) {
+	deadline := time.Now().Add(settle)
+	for {
+		alive, err := inspect()
+		if err != nil {
+			return false, err
+		}
+		if !alive {
+			return true, nil
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false, nil
+		}
+		time.Sleep(min(remaining, 5*time.Millisecond))
+	}
+}
+
 func (o *ownership) finish() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()

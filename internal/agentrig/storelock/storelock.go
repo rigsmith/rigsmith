@@ -67,6 +67,11 @@ func Acquire(ctx context.Context, dir string, wait time.Duration) (context.Conte
 				f.Close()
 				return ctx, nil, fmt.Errorf("cannot nest operations on different staging stores")
 			}
+			if err := checkFence(held.file); err != nil {
+				held.mu.Unlock()
+				f.Close()
+				return ctx, nil, err
+			}
 			held.refs++
 			held.mu.Unlock()
 			f.Close()
@@ -87,6 +92,10 @@ func Acquire(ctx context.Context, dir string, wait time.Duration) (context.Conte
 		}
 		if got {
 			if err := ctx.Err(); err != nil {
+				f.Close()
+				return ctx, nil, err
+			}
+			if err := checkFence(f); err != nil {
 				f.Close()
 				return ctx, nil, err
 			}

@@ -54,6 +54,9 @@ jobs:
       - name: Linux GUI headers (for ./ui)
         if: matrix.os == 'ubuntu-latest'
         run: |
+          # Chrome is preinstalled and unused here. Its unrelated package index
+          # can be inconsistent during publication and block Ubuntu GUI headers.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 

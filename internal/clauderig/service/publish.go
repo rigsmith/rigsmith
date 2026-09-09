@@ -29,6 +29,9 @@ type PublishResult = publication.PublishResult
 // Publish supplies Claude's policies to the shared Git workflow. Journalling and
 // native metadata serialization remain in the calling Claude services.
 func (s Service) Publish(ctx context.Context, req PublishRequest) (PublishResult, error) {
+	if err := requireCanonicalRunner(ctx); err != nil {
+		return PublishResult{}, err
+	}
 	ctx, release, err := storelock.Acquire(ctx, req.StagingDir, StoreWait)
 	if err != nil {
 		return PublishResult{}, err

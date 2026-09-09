@@ -12,10 +12,11 @@ type supervisorCommand struct {
 
 // WithSupervisor selects an explicit executable entry point that calls
 // ServeSupervisor and exits with its result. Unix retained commands then run in
-// a separate supervisor that inherits the context's staging lease. Windows keeps
-// its native job ownership. This is internal worker plumbing, not a shell command
+// a separate supervisor that inherits the context's staging lease. All supported
+// platforms persist a command fence before creation; Windows keeps its native
+// job ownership. Unconfirmed cleanup blocks the store across restarts. This is internal worker plumbing, not a shell command
 // or a general remote-execution protocol. Do not enable queued hooks until the
-// remaining supervisor-failure/restart fencing gates are complete.
+// fenced-store recovery and rollout gates are complete.
 func WithSupervisor(ctx context.Context, executable string, args ...string) context.Context {
 	return context.WithValue(ctx, supervisorKey{}, supervisorCommand{
 		path: executable, args: append([]string(nil), args...),
@@ -34,4 +35,12 @@ func WithSupervisorLease(ctx, staging context.Context) context.Context {
 	}
 	supervisor.lease = staging
 	return context.WithValue(ctx, supervisorKey{}, supervisor)
+}
+
+// SupervisionEnabled reports an explicit lifecycle requirement. Workflows that
+// cannot yet supervise every external writer must reject this context rather
+// than silently falling back to ordinary command execution.
+func SupervisionEnabled(ctx context.Context) bool {
+	_, ok := ctx.Value(supervisorKey{}).(supervisorCommand)
+	return ok
 }

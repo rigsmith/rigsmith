@@ -36,7 +36,8 @@ func TestUnixSupervisedCommand(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
-			ctx, release, err := storelock.Acquire(ctx, t.TempDir(), 0)
+			store := t.TempDir()
+			ctx, release, err := storelock.Acquire(ctx, store, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,6 +101,12 @@ func TestUnixSupervisedCommand(t *testing.T) {
 					t.Fatal("supervisor failure looks like ordinary command exit")
 				}
 			}
+			release()
+			_, next, acquireErr := storelock.Acquire(t.Context(), store, 0)
+			if acquireErr != nil {
+				t.Fatalf("verified cleanup retained fence: %v; command error: %v; supervisor stderr: %s", acquireErr, err, stderr.String())
+			}
+			next()
 			if mode == "return" || mode == "wait" {
 				_ = os.WriteFile(marker+".released", nil, 0600)
 				time.Sleep(100 * time.Millisecond)
@@ -280,23 +287,26 @@ func TestUnixSupervisorStoppedEntrypoint(t *testing.T) {
 }
 
 func TestUnixSupervisorRejectsInvalidStartup(t *testing.T) {
-	ctx, release, err := storelock.Acquire(t.Context(), t.TempDir(), 0)
-	if err != nil {
-		t.Fatal(err)
+	newLease := func() context.Context {
+		ctx, release, err := storelock.Acquire(t.Context(), t.TempDir(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(release)
+		return ctx
 	}
-	defer release()
 	for _, tc := range []struct {
 		name string
 		ctx  context.Context
 		cmd  *exec.Cmd
 	}{
 		{"no-lease", supervisorContext(t.Context()), helperCommand("exit", "")},
-		{"relative-supervisor", WithSupervisor(ctx, "relative"), helperCommand("exit", "")},
-		{"missing-supervisor", WithSupervisor(ctx, filepath.Join(t.TempDir(), "missing")), helperCommand("exit", "")},
-		{"oversized", supervisorContext(ctx), exec.Command(os.Args[0], strings.Repeat("x", supervisorLimit))},
-		{"oversized-diagnostic", supervisorContext(ctx), &exec.Cmd{Path: strings.Repeat("\x00", 400000), Args: []string{"invalid"}}},
-		{"oversized-completion", WithSupervisor(ctx, os.Args[0], "-test.run=^TestUnixSupervisorOversizedResult$"), helperCommand("exit", "")},
-		{"missing-completion", WithSupervisor(ctx, os.Args[0], "-test.run=^NoMatchingTest$"), helperCommand("exit", "")},
+		{"relative-supervisor", WithSupervisor(newLease(), "relative"), helperCommand("exit", "")},
+		{"missing-supervisor", WithSupervisor(newLease(), filepath.Join(t.TempDir(), "missing")), helperCommand("exit", "")},
+		{"oversized", supervisorContext(newLease()), exec.Command(os.Args[0], strings.Repeat("x", supervisorLimit))},
+		{"oversized-diagnostic", supervisorContext(newLease()), &exec.Cmd{Path: strings.Repeat("\x00", 400000), Args: []string{"invalid"}}},
+		{"oversized-completion", WithSupervisor(newLease(), os.Args[0], "-test.run=^TestUnixSupervisorOversizedResult$"), helperCommand("exit", "")},
+		{"missing-completion", WithSupervisor(newLease(), os.Args[0], "-test.run=^NoMatchingTest$"), helperCommand("exit", "")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := Run(tc.ctx, tc.cmd); err == nil {
@@ -306,7 +316,7 @@ func TestUnixSupervisorRejectsInvalidStartup(t *testing.T) {
 			}
 		})
 	}
-	canceled, cancel := context.WithCancel(supervisorContext(ctx))
+	canceled, cancel := context.WithCancel(supervisorContext(newLease()))
 	cancel()
 	cmd := helperCommand("exit", "")
 	if err := Run(canceled, cmd); !errors.Is(err, context.Canceled) || cmd.Process != nil {
@@ -325,6 +335,9 @@ func TestUnixSupervisorCancelsIncompleteRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lease.Close()
+	if _, err := storelock.BeginFence(ctx); err != nil {
+		t.Fatal(err)
+	}
 	pipe := func() (*os.File, *os.File) {
 		r, w, err := os.Pipe()
 		if err != nil {

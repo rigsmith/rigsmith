@@ -7,12 +7,28 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
+
+// ErrSupervisedCanonicalGitUnavailable gates workflows that still use the
+// synchronous Git runner. Every external writer must be supervised before these
+// boundaries can accept a supervised context. Retained artifact APIs use their
+// separate owned runner and remain available.
+var ErrSupervisedCanonicalGitUnavailable = errors.New("supervised canonical Git workflows are unavailable until their command runner is adapted")
+
+func requireCanonicalRunner(ctx context.Context) error {
+	if process.SupervisionEnabled(ctx) {
+		return ErrSupervisedCanonicalGitUnavailable
+	}
+	return nil
+}
 
 // StoreWait bounds contention for requested operations; SessionStart pull tries
 // once. The lock remains owned for the entire operation after acquisition.

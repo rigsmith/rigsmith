@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -65,6 +67,14 @@ func TestWindowsOwnerHelper(t *testing.T) {
 	}
 	cmd := windowsOwnerHelper("command", marker+".leaf")
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	ctx, release, err := storelock.Acquire(context.Background(), marker+".store", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if _, err := storelock.BeginFence(ctx); err != nil {
+		t.Fatal(err)
+	}
 	owner, err := prepare(cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -171,8 +181,21 @@ func TestWindowsOwnerDeathAtStartupBoundaries(t *testing.T) {
 						t.Fatalf("process %d not alive before owner death: %d %v", pid, state, err)
 					}
 				}
+				workerHandle := observeWindowsProcess(t, uint32(cmd.Process.Pid))
 				if err := cmd.Process.Kill(); err != nil {
 					t.Fatal(err)
+				}
+				// Reap only the worker before checking the store. Do not wait for
+				// children or job accounting to drain before testing replacement.
+				if state, err := windows.WaitForSingleObject(workerHandle, 10000); err != nil || state != windows.WAIT_OBJECT_0 {
+					t.Fatal("worker did not exit", state, err)
+				}
+				_, release, acquireErr := storelock.Acquire(t.Context(), marker+".store", 0)
+				if release != nil {
+					release()
+				}
+				if !errors.Is(acquireErr, storelock.ErrFenced) {
+					t.Fatal("replacement bypassed unconfirmed cleanup", acquireErr)
 				}
 				for i, h := range handles {
 					if state, err := windows.WaitForSingleObject(h, 10000); err != nil || state != windows.WAIT_OBJECT_0 {

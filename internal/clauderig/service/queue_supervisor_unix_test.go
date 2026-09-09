@@ -35,14 +35,3 @@ func TestQueueAdapterSupervisedOfflineRecovery(t *testing.T) {
 	// supervision must retain the lease on retry without recapturing the source.
 	queueAdapterOfflineRecovery(t, queuedSupervisorContext(t))
 }
-
-func TestQueueAdapterSupervisedManualCoverage(t *testing.T) {
-	ctx := queuedSupervisorContext(t)
-	req, q, request, svc := coverageFixture(t)
-	event := enqueueCoverage(t, q, request)
-	result, err := svc.SyncWithCoverage(ctx, req, q)
-	if err != nil || !result.Sync.Publication.Pushed || len(result.Acknowledged) != 1 || result.Acknowledged[0] != event.BatchID {
-		t.Fatalf("supervised coverage confirmation: %+v %v", result, err)
-	}
-	pendingCoverage(t, q, 0)
-}

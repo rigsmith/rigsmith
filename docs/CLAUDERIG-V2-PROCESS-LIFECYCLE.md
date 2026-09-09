@@ -59,10 +59,9 @@ argument/environment/directory/stdin/stdout/stderr preservation, command exit
 codes, normal helper exit and cancellation. CI runs the native Windows tests;
 cross-compilation alone cannot validate kernel behavior.
 
-These tests prove child cleanup after owner death, not safe lease reacquisition.
-Job termination is asynchronous, so another worker could acquire an OS-released
-lease before every old child has exited. Milestone 6b.6b.2c must fence replacement
-workers against that interval and validate platform restart behavior. The Unix
+Job termination is asynchronous: the OS can release the worker’s lease before
+every old child has exited. The persistent fence below blocks replacement writers
+through that interval, without assuming job termination has already completed. The Unix
 worker-death boundary is described below. Production worker commands, service
 registration and queued hooks remain disabled until the remaining gates are complete.
 
@@ -73,8 +72,8 @@ An opt-in internal `process.WithSupervisor` context selects a dedicated executab
 entry point that calls `process.ServeSupervisor` and immediately exits with its
 result. No package initialization, environment-variable dispatch or shell wrapper
 is involved. Command/hook wiring has not been enabled; ordinary synchronous
-Claude operations continue to use their existing process runner. Windows ignores
-this Unix selection and retains its native job ownership.
+Claude operations continue to use their existing process runner. Windows retains its native job ownership and uses this selection to require
+a staging lease and persistent fence; it does not launch a Unix supervisor.
 
 For each retained command on Linux/macOS:
 
@@ -120,13 +119,75 @@ phase, stop/drain and offline replay after source removal under supervision.
 The inherited-lease test separately checks that an expired context cannot
 produce another duplicate and that closing the final duplicate releases the lock.
 
-### Remaining restart fence
+Canonical service workflows still use `core/gitrepo` directly. `Capture`, `Sync`,
+`SyncWithCoverage`, `Publish`, `Pull`, `Reconcile`, `RepairMerge`, and `FinishMerge`
+therefore reject explicitly supervised contexts before acquiring worker/staging
+ownership or changing data. Their ordinary synchronous paths remain available.
+The private sealed-capture path skips canonical repair and remains available to
+the retained queue adapter; its owned Git phases have separate lifecycle tests. The earlier supervised coverage fixture exercised retained confirmation,
+not every canonical Git command; it is now a refusal test on every platform.
+Adapting those canonical calls is an explicit 6b.6b.2d gate before queued rollout.
 
-This proves cleanup after **worker** death while the supervisor survives. It does
-not yet fence a supervisor killed independently, a failed cleanup inspection, or
-Windows job termination still in progress after its owner's death. A failed
-supervisor/cleanup must leave durable evidence that prevents a replacement worker
-from treating the released OS lock as proof that all old writers stopped. That is
-6b.6b.2c, required before production worker startup and queued-hook rollout.
+## Persistent restart fence (6b.6b.2c)
+
+Selecting supervision also records command intent in the existing sibling store
+lock file before creating any process. The record contains a fixed version marker
+and random command identity, never arguments, environment, paths, credentials, or
+transcript bytes. It is written and flushed in place: replacing or deleting the
+lock inode would invalidate coordination with waiting writers. This protects
+against process crashes on stable local filesystems; it is not a new power-loss
+or distributed-lock guarantee.
+
+An empty lock file means no unconfirmed supervised command. Any nonempty record,
+including a partial, damaged or unknown version, blocks `storelock.Acquire` with
+`ErrFenced` after it gets the OS lock. Active nested acquisitions also check it;
+a stale operation context cannot bypass it. While the old lease is still held,
+independent contenders continue to receive the usual `ErrBusy`. Ordinary paths
+never create a fence unless command supervision was explicitly selected.
+
+On Unix, intent precedes supervisor creation. The supervisor adopts the record
+through its inherited lease descriptor, runs the command, and clears the exact
+record only after confirmed group cleanup. It clears before writing completion,
+so a dead worker or broken result pipe does not strand an otherwise clean store.
+Cancellation, nonzero command exit and failed command startup can all have
+verified cleanup; command status and cleanup evidence are tracked separately.
+Failure to start the supervisor itself can also clear intent because no writer
+was created. Missing/malformed completion remains a protocol error; the worker
+never clears intent on behalf of a supervisor that started.
+
+The public runner rejects already-started commands before creating ownership or
+intent. It does not adopt an external process or claim cleanup for one.
+
+On Windows, intent precedes job/anchor preparation. Normal cleanup clears it only
+after the existing job drain and process-handle waits, including ownership-handle
+cleanup. Abrupt worker death leaves the record in place even if the job's
+asynchronous termination subsequently succeeds. Losing the OS lock is not proof
+that the helpers have stopped. Unsupported platforms reject supervised execution.
+
+Darwin may reject a repeated kill while helpers are still exiting. On `EPERM`,
+cleanup observes the group for at most one second and succeeds only when no
+executing member remains. Expiry with live members, or an inspection failure,
+retains the error and fence; the delay itself is never evidence of cleanup.
+
+Cleanup observation failures keep the fence. A stale completion token cannot
+clear a newer command's intent. A failure flushing the cleared record is returned
+even if truncation already took effect. That differs from uncertain process cleanup:
+`Clear` is called only after all writers are verified stopped, so an empty or
+retained record is safe after such a flush failure. No timer, worker restart, ordinary retry, or
+operator bypass clears an unconfirmed record. This deliberately prefers a blocked
+store to overlapping writers. **Proof-based recovery and canonical Git supervision (6b.6b.2d) are still
+required before production queued hooks:** this milestone does not expose an
+unfence command, advise deleting lock files, or claim automatic recovery after
+supervisor/Windows owner death. Queue data and retained artifacts remain intact.
+
+Synthetic tests kill a worker after flushed intent; kill both Unix guardians while
+an external writer remains alive; and check a fenced acquisition before waiting
+for Windows children to exit at each creation boundary. Normal/nonzero exits,
+cancellation and startup failure must release the fence after verified cleanup.
+Other tests cover damaged records, expired leases, stale completion identities,
+cleanup observation failure, and missing/oversized supervisor completion. Existing
+worker-death tests still require an available store after a surviving Unix
+supervisor successfully cleans up.
+
 There is one additional running supervisor per retained Unix command. Trusted
 helpers must stay in their inherited process group; this is not a sandbox.

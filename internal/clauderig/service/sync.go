@@ -50,6 +50,9 @@ type SyncResult struct {
 // Sync repairs, captures, scans, records metadata/journal entries and publishes.
 // Debounce and terminal input remain caller responsibilities.
 func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, rerr error) {
+	if err := requireCanonicalRunner(ctx); err != nil {
+		return result, err
+	}
 	if req.Config == nil {
 		return result, fmt.Errorf("sync requires a configuration")
 	}

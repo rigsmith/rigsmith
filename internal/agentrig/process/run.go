@@ -20,6 +20,9 @@ func Run(ctx context.Context, cmd *exec.Cmd) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if cmd.Process != nil {
+		return errors.New("command already started")
+	}
 	if supervisor, ok := ctx.Value(supervisorKey{}).(supervisorCommand); ok {
 		return runSupervised(ctx, cmd, supervisor)
 	}
@@ -27,30 +30,57 @@ func Run(ctx context.Context, cmd *exec.Cmd) error {
 }
 
 func runDirect(ctx context.Context, cmd *exec.Cmd) error {
-	owner, err := prepare(cmd)
-	if err != nil {
-		return err
-	}
-	return runOwned(ctx, cmd, owner)
+	err, _ := runDirectChecked(ctx, cmd)
+	return err
 }
 
-func runOwned(ctx context.Context, cmd *exec.Cmd, owner *ownership) (err error) {
+// Cleanup evidence is independent of the command status: cancellation, failed
+// startup, and nonzero exits can all leave a clean store.
+func runDirectChecked(ctx context.Context, cmd *exec.Cmd) (error, bool) {
+	owner, err := prepare(cmd)
+	if err != nil {
+		return err, true
+	}
+	return runOwnedChecked(ctx, cmd, owner)
+}
+
+func runOwned(ctx context.Context, cmd *exec.Cmd, owner *ownership) error {
+	err, _ := runOwnedChecked(ctx, cmd, owner)
+	return err
+}
+
+type commandOwnership interface {
+	started(*exec.Cmd) error
+	wait() error
+	stop() error
+	finish() error
+	close() error
+}
+
+func runOwnedChecked(ctx context.Context, cmd *exec.Cmd, owner commandOwnership) (err error, cleanupVerified bool) {
+	cleanupVerified = true // No command has been created yet; close also retires any anchor.
 	defer func() {
 		if closeErr := owner.close(); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("close command ownership: %w", closeErr))
+			cleanupVerified = false
 		}
 	}()
 	if err = cmd.Start(); err != nil {
-		return err
+		return err, cleanupVerified
 	}
+	cleanupVerified = false
 	if err = owner.started(cmd); err != nil {
 		stopErr := owner.stop()
 		killErr := cmd.Process.Kill()
 		finishErr := owner.finish()
 		waitErr := cmd.Wait()
-		return errors.Join(err, stopErr, killErr, finishErr, waitErr)
+		return errors.Join(err, stopErr, killErr, finishErr, waitErr), finishErr == nil
 	}
-	done := make(chan error, 1)
+	type outcome struct {
+		err             error
+		cleanupVerified bool
+	}
+	done := make(chan outcome, 1)
 	go func() {
 		observed := owner.wait()
 		stopped := owner.finish()
@@ -62,19 +92,22 @@ func runOwned(ctx context.Context, cmd *exec.Cmd, owner *ownership) (err error) 
 		}
 		waitErr := cmd.Wait()
 		if observed == nil && stopped == nil {
-			done <- waitErr
+			done <- outcome{waitErr, true}
 		} else {
-			done <- errors.Join(observed, stopped, waitErr)
+			done <- outcome{errors.Join(observed, stopped, waitErr), false}
 		}
 	}()
+	var result outcome
 	select {
-	case err = <-done:
+	case result = <-done:
 	case <-ctx.Done():
 		stopErr := owner.stop()
-		err = errors.Join(stopErr, <-done)
+		result = <-done
+		result.err = errors.Join(stopErr, result.err)
 	}
+	err, cleanupVerified = result.err, result.cleanupVerified
 	if ctx.Err() != nil {
-		return errors.Join(ctx.Err(), err)
+		return errors.Join(ctx.Err(), err), cleanupVerified
 	}
-	return err
+	return err, cleanupVerified
 }
