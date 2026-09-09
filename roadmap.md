@@ -36,8 +36,10 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Manual-sync queue coverage: shared checkpoint (6b.5a) | Merged: [#359](https://github.com/rigsmith/rigsmith/pull/359). Seal candidate membership before capture and acknowledge only fully covered batches; preserve later arrivals, partial coverage and saved recovery work. |
 | Manual-sync queue coverage: Claude integration (6b.5b) | Merged: [#363](https://github.com/rigsmith/rigsmith/pull/363). Capture fresh session/subagent evidence and verify the exact remote snapshot before acknowledging complete batches. Internal service; command/hook wiring remains in rollout. |
 | Worker loop, graceful stop and draining (6b.6a) | Merged: [#365](https://github.com/rigsmith/rigsmith/pull/365). Poll accepted work, honor durable retries, yield to foreground operations, and retain unfinished work on stop/restart. |
-| Startup shared-history validation (6b.6b.1) | In review (current PR). Check freshly fetched destination ancestry before claiming work; reject uninitialized/unrelated stores without changing queue attempts or staging. |
-| Parent-death cleanup and OS restart (6b.6b.2) | Next. Fence child lifetimes across abrupt worker death and validate startup/restart before command rollout. |
+| Startup shared-history validation (6b.6b.1) | Merged: [#367](https://github.com/rigsmith/rigsmith/pull/367). Check freshly fetched destination ancestry before claiming work; reject uninitialized/unrelated stores without changing queue attempts or staging. |
+| Windows child ownership at creation (6b.6b.2a) | In review (current PR). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
+| Unix parent-death supervision (6b.6b.2b) | Next. Retain ownership until orphaned helpers stop after abrupt worker death. |
+| OS restart fencing and lifecycle validation (6b.6b.2c) | Planned. Prevent restarted workers from overlapping old helpers; validate platform startup/restart before command rollout. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |

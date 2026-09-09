@@ -99,8 +99,10 @@ may remain for their new parent to reap. Further group signals are disabled befo
 the root PID can be reused. The runner also handles macOS's EPERM response for a
 group containing only zombies, after checking membership.
 
-On Windows, the command starts suspended, joins a private kill-on-close job, and
-only then resumes. Assignment/resumption failure terminates the suspended child.
+On Windows, a never-resumed anchor is created atomically in a private
+kill-on-close job. Commands inherit that job at creation through the anchor
+parent, so there is no suspended-create/assign gap. Startup errors fail closed.
+See the [process lifecycle contract](CLAUDERIG-V2-PROCESS-LIFECYCLE.md).
 Cancellation and normal completion terminate the job and wait for its active
 process count to reach zero before releasing handles. This follows the documented
 [job-object membership and lifetime rules](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
@@ -113,9 +115,9 @@ success. Linux requires accessible `/proc` process metadata; unsupported platfor
 fail before starting a command.
 
 Abrupt parent death is still a rollout gate. Unix process groups alone do not
-terminate when the worker dies. Windows kill-on-close jobs help after association,
-but the suspended-create/assign window needs a stronger startup contract for that
-guarantee. Worker supervision, store-lease ownership across parent death, ownership of any
+terminate when the worker dies. Windows job ownership now covers creation, but
+job termination is asynchronous: replacement workers still need fencing against
+old helpers before acquiring a crash-released store lease. Worker supervision, store-lease ownership across parent death, ownership of any
 future external merge tools, native conflict recovery and draining
 must be completed before enabling queued hooks. The next integration work must
 not confuse cancellation cleanup with crash recovery.
