@@ -36,3 +36,11 @@ func WithSupervisorLease(ctx, staging context.Context) context.Context {
 	supervisor.lease = staging
 	return context.WithValue(ctx, supervisorKey{}, supervisor)
 }
+
+// SupervisionEnabled reports an explicit lifecycle requirement. Workflows that
+// cannot yet supervise every external writer must reject this context rather
+// than silently falling back to ordinary command execution.
+func SupervisionEnabled(ctx context.Context) bool {
+	_, ok := ctx.Value(supervisorKey{}).(supervisorCommand)
+	return ok
+}

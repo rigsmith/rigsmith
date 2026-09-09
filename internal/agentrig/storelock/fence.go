@@ -106,8 +106,9 @@ func readFence(file *os.File) ([]byte, error) {
 }
 
 // Clear records verified cleanup, independently of operation cancellation. An
-// old completion cannot clear a newer command's intent. Failure retains or
-// conservatively reports the fence; it must never be hidden by a command exit.
+// old completion cannot clear a newer command's intent. A flush failure is
+// returned even if truncation already took effect: all writers were verified
+// stopped before Clear was called, so either disk state is safe for restart.
 func (f *Fence) Clear() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

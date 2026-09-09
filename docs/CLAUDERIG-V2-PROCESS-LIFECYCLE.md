@@ -119,6 +119,13 @@ phase, stop/drain and offline replay after source removal under supervision.
 The inherited-lease test separately checks that an expired context cannot
 produce another duplicate and that closing the final duplicate releases the lock.
 
+Canonical manual sync still uses `core/gitrepo` directly. `Sync` and
+`SyncWithCoverage` therefore reject explicitly supervised contexts before acquiring
+worker/staging ownership or changing data. Their ordinary synchronous paths remain
+available. The earlier supervised coverage fixture exercised retained confirmation,
+not every canonical Git command; it is now a refusal test on every platform.
+Adapting those canonical calls is an explicit 6b.6b.2d gate before queued rollout.
+
 ## Persistent restart fence (6b.6b.2c)
 
 Selecting supervision also records command intent in the existing sibling store
@@ -146,6 +153,9 @@ Failure to start the supervisor itself can also clear intent because no writer
 was created. Missing/malformed completion remains a protocol error; the worker
 never clears intent on behalf of a supervisor that started.
 
+The public runner rejects already-started commands before creating ownership or
+intent. It does not adopt an external process or claim cleanup for one.
+
 On Windows, intent precedes job/anchor preparation. Normal cleanup clears it only
 after the existing job drain and process-handle waits, including ownership-handle
 cleanup. Abrupt worker death leaves the record in place even if the job's
@@ -158,9 +168,12 @@ executing member remains. Expiry with live members, or an inspection failure,
 retains the error and fence; the delay itself is never evidence of cleanup.
 
 Cleanup observation failures keep the fence. A stale completion token cannot
-clear a newer command's intent. No timer, worker restart, ordinary retry, or
+clear a newer command's intent. A failure flushing the cleared record is returned
+even if truncation already took effect. That differs from uncertain process cleanup:
+`Clear` is called only after all writers are verified stopped, so an empty or
+retained record is safe after such a flush failure. No timer, worker restart, ordinary retry, or
 operator bypass clears an unconfirmed record. This deliberately prefers a blocked
-store to overlapping writers. **A proof-based recovery remedy (6b.6b.2d) is still
+store to overlapping writers. **Proof-based recovery and canonical Git supervision (6b.6b.2d) are still
 required before production queued hooks:** this milestone does not expose an
 unfence command, advise deleting lock files, or claim automatic recovery after
 supervisor/Windows owner death. Queue data and retained artifacts remain intact.

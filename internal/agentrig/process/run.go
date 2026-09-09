@@ -20,6 +20,9 @@ func Run(ctx context.Context, cmd *exec.Cmd) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if cmd.Process != nil {
+		return errors.New("command already started")
+	}
 	if supervisor, ok := ctx.Value(supervisorKey{}).(supervisorCommand); ok {
 		return runSupervised(ctx, cmd, supervisor)
 	}
