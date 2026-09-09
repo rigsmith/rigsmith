@@ -649,3 +649,63 @@ func TestQueueAdapterRetainedChunkRoundTrip(t *testing.T) {
 		t.Fatal("acknowledged work replayed", err, remote.pushes)
 	}
 }
+
+func TestQueueAdapterRunnerStopAndDrain(t *testing.T) {
+	req := artifactCaptureFixture(t, "runner confirmed bytes")
+	remoteDir := filepath.Join(t.TempDir(), "remote.git")
+	git(t, filepath.Dir(remoteDir), "init", "--bare", remoteDir)
+	req.Sync.Config.Remote = remoteDir
+	// Worker startup must establish shared Git ancestry before queued captures.
+	// Match an initialized backup store, rather than generating a separate root
+	// commit for each capture against an empty canonical staging repository.
+	seed := service.Service{ReadIdentity: func() (service.Identity, error) { return req.Identity, nil }}
+	if _, err := seed.Sync(t.Context(), req.Sync); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	req.Binding, err = service.CaptureBinding(req.Sync, req.Profiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, err := commitartifact.NewConfiguredGitTransport(commitartifact.GitTransportOptions{Remote: remoteDir, Branch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &queuedTransport{ArtifactTransport: transport}
+	q, _, adapter := queueAdapterFixture(t, req, artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}, remote)
+	stop := make(chan struct{})
+	remote.afterPush = func() {
+		remote.afterPush = nil
+		r := req.Work.Events[0].Request
+		r.EventID = "after-stop"
+		if _, err := q.Enqueue(t.Context(), r, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		// Stop before remote confirmation and acknowledgement; graceful shutdown
+		// must still finish the active retained publication and cleanup.
+		close(stop)
+	}
+	result, err := q.Run(t.Context(), adapter, queue.RunOptions{Stop: stop})
+	if err != nil || result.CompletedBatches != 1 {
+		t.Fatal(result, err)
+	}
+	jobs, err := q.Snapshot(t.Context())
+	if err != nil || len(jobs) != 1 || jobs[0].Attempts != 0 {
+		t.Fatal(jobs, err)
+	}
+	_, release, err := storelock.Acquire(t.Context(), req.Sync.StagingDir, 0)
+	if err != nil {
+		t.Fatal("runner returned before staging cleanup", err)
+	}
+	release()
+	result, err = q.Run(t.Context(), adapter, queue.RunOptions{Drain: true})
+	if err != nil || result.CompletedBatches != 1 {
+		t.Fatal("restart/drain", result, err)
+	}
+	if data := git(t, remoteDir, "show", "main:cli/projects/-workspace-acme/s.jsonl"); !strings.Contains(data, "runner confirmed bytes") {
+		t.Fatal("missing published snapshot")
+	}
+	if data := git(t, remoteDir, "show", "main:journal/fixture.jsonl"); strings.Count(data, `"op":"sync"`) != 3 {
+		t.Fatalf("lost or duplicated journal appends: %s", data)
+	}
+}

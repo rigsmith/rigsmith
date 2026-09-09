@@ -119,3 +119,35 @@ func TestRetainedRejectsMixedCaseUUIDCollision(t *testing.T) {
 		t.Fatal("ambiguous UUID spelling accepted", err)
 	}
 }
+
+func TestRetainedMachineJournalAppends(t *testing.T) {
+	base := []byte("{\"at\":\"2026-09-09T00:00:00Z\",\"machine\":\"fixture\",\"op\":\"sync\",\"outcome\":\"ok\",\"future\":{\"keep\":true}}\r\n")
+	left := []byte("{\"at\":\"2026-09-09T00:01:00Z\",\"machine\":\"fixture\",\"op\":\"sync\",\"outcome\":\"ok\"}\n")
+	right := []byte("{\"at\":\"2026-09-09T00:02:00Z\",\"machine\":\"fixture\",\"op\":\"restore\",\"outcome\":\"failed\"}\n")
+	for _, ancestor := range [][]byte{nil, {}, base} {
+		ours := append(bytes.Clone(ancestor), left...)
+		theirs := append(bytes.Clone(ancestor), right...)
+		want := append(bytes.Clone(ours), right...)
+		got, err := ResolveRetained(t.Context(), "journal/fixture.jsonl", ancestor, ours, theirs)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("journal append: %q %v", got, err)
+		}
+	}
+	good := append(bytes.Clone(base), left...)
+	for _, bad := range [][]byte{
+		nil, left, append(bytes.Clone(base), []byte("not json\n")...),
+		bytes.Replace(good, []byte(`"machine":"fixture"`), []byte(`"machine":"other"`), 1),
+		bytes.Replace(good, []byte(`"op":"sync"`), []byte(`"op":"unknown"`), 1),
+		bytes.Replace(good, []byte(`"outcome":"ok"`), []byte(`"outcome":"unknown"`), 1),
+		append(bytes.Clone(base), []byte("{\"at\":\"2026-09-09T00:01:00Z\",\"machine\":\"fixture\",\"op\":\"sync\",\"outcome\":\"ok\",\"outcome\":\"failed\"}\n")...),
+	} {
+		if _, err := ResolveRetained(t.Context(), "journal/fixture.jsonl", base, good, bad); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Fatalf("accepted malformed/changed journal %q: %v", bad, err)
+		}
+	}
+	for _, path := range []string{"journal/nested/fixture.jsonl", "journal/.jsonl", "cli/journal/fixture.jsonl", "journal/fixture.JSONL"} {
+		if _, err := ResolveRetained(t.Context(), path, base, good, append(bytes.Clone(base), right...)); !errors.Is(err, commitartifact.ErrConflict) {
+			t.Fatal("unexpected journal policy", path, err)
+		}
+	}
+}

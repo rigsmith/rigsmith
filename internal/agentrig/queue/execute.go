@@ -57,6 +57,9 @@ type ExecutionResult struct {
 	BatchID      uint64
 	Phase        Phase
 	Acknowledged bool
+	// FailureRecorded is true only after a classified adapter failure has been
+	// durably scheduled or blocked. It never covers failed/uncertain queue writes.
+	FailureRecorded bool `json:",omitempty"`
 }
 
 // RunOne owns a worker for at most one ready batch, advancing only unfinished
@@ -86,7 +89,8 @@ func (q *Queue) RunOne(ctx context.Context, now time.Time, adapter Adapter) (res
 	if b.Phase != Pushed {
 		execution, err := adapter.Begin(ctx, q.binding, cloneWork(b))
 		if err != nil {
-			return result, w.executionFailed(ctx, b.ID, err)
+			result.FailureRecorded, err = w.executionFailed(ctx, b.ID, err)
+			return result, err
 		}
 		if execution == nil {
 			return result, fmt.Errorf("queue adapter returned no execution")
@@ -112,7 +116,8 @@ func (q *Queue) RunOne(ctx context.Context, now time.Time, adapter Adapter) (res
 				return result, ErrTransition
 			}
 			if err != nil {
-				return result, w.executionFailed(ctx, b.ID, err)
+				result.FailureRecorded, err = w.executionFailed(ctx, b.ID, err)
+				return result, err
 			}
 			// Never advance to another external effect after a failed/uncertain
 			// marker write, and never reclassify a persistence error as an
@@ -135,17 +140,18 @@ func (q *Queue) RunOne(ctx context.Context, now time.Time, adapter Adapter) (res
 	return result, nil
 }
 
-func (w *Worker) executionFailed(ctx context.Context, id uint64, err error) error {
+func (w *Worker) executionFailed(ctx context.Context, id uint64, err error) (bool, error) {
 	if ctx.Err() != nil {
-		return err
+		return false, err
 	}
 	var failure *ExecutionFailure
 	if errors.As(err, &failure) && failure != nil {
 		if saveErr := w.Retry(ctx, id, failure.RetryAt, failure.Code, failure.Blocked); saveErr != nil {
-			return errors.Join(err, saveErr)
+			return false, errors.Join(err, saveErr)
 		}
+		return true, err
 	}
-	return err
+	return false, err
 }
 
 func cloneWork(b Work) Work {

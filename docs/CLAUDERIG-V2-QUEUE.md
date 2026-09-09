@@ -200,9 +200,9 @@ remains the gate for synchronous behavior.
   below.
 - Protect requested sources from retention until captured; handle deletion and
   unavailable source attribution explicitly, without acknowledging missing data.
-- The shared coverage checkpoint below is implemented. Integrate Claude
-  per-request capture evidence and confirmed manual publication before calling
-  its acknowledgement API. A queue high-water mark alone cannot establish coverage.
+- The shared coverage checkpoint and Claude evidence/confirmation service below
+  are implemented. Production commands must explicitly call `SyncWithCoverage`;
+  a queue high-water mark alone cannot establish coverage.
 - Keep lock order consistent: worker ownership before staging ownership; queue
   transactions stay short. Pass the original cancellation context to queue APIs,
   not a borrowed staging-store capability, which rejects nesting another store.
@@ -266,7 +266,8 @@ an unmarked successful push confirms reachability without another push. Conflict
 reported by retained publication become blocked `publication-conflict` jobs;
 recovery requires an explicit decision. The adapter now classifies other failures
 using the bounded policy below. It adds no daemon or automatic retry loop: a
-worker must call RunOne again when work is due. Raw errors are never persisted
+caller may now use the shared runner below to schedule `RunOne` when work is due.
+Raw errors are never persisted
 in queue state. Local-only completion remains unsupported.
 
 Synthetic tests exercise real configured Git publication, offline recovery after
@@ -462,3 +463,75 @@ retention/size/scan failures, native and chunked/redacted snapshots, late group
 members, local/dry runs, cancellation, remote rewrites and push reconciliation.
 Shared confirmation tests cover SHA-1/SHA-256 repositories, exact raw snapshot
 bytes, false fetched refs, policy rejection, size bounds and scratch cleanup.
+
+
+## Worker loop and controlled shutdown (milestone 6b.6a)
+
+`Queue.Run` schedules the existing adapter and `RunOne` driver. It is an internal,
+in-process boundary; it does not install a daemon, service, producer or hook.
+A separate runner lease excludes duplicate loops for the same queue. Each batch
+acquires its existing worker/staging leases and releases them after execution
+cleanup. Idle and backoff waits hold neither lease, allowing manual sync/coverage
+and foreground recovery. A competing foreground owner makes the loop wait;
+explicit drain mode reports that contention instead of replacing the owner.
+All queue operations use the independent operation context.
+
+The loop reads persisted state before attempting execution, so idle polls do not
+claim batches, increment attempts or rewrite queue ownership. It observes the
+same first-batch-per-provenance ordering as `Worker.Next`. Blocked or delayed
+work cannot be overtaken within that provenance; independent provenance can
+continue. A one-second default poll detects independent-process enqueues. An
+optional wake channel reduces same-process latency but is only a hint; closing it
+disables the hint instead of causing a busy loop. The next eligible persisted
+retry deadline can wake the loop sooner than the configured poll interval.
+
+`ExecutionResult.FailureRecorded` is true only when an adapter's classified
+failure has been durably scheduled or blocked. The loop can continue after that
+result. Unknown errors, cancellation and failed/uncertain queue writes stop it;
+a wrapped classification cannot hide an uncertain retry-marker write. Retry
+deadlines already due when the attempt started stop the loop instead of spinning.
+The adapter retains responsibility for backoff and retry-budget policy. Raw
+errors are never written to queue state; an optional observer receives outcomes
+after execution cleanup and worker release and must return promptly.
+
+Signaling `Stop` requests graceful shutdown: the current batch can finish remote
+confirmation, durable acknowledgement and cleanup, then the loop stops before
+claiming more work. Context cancellation instead reaches the current adapter and
+waits for its cleanup contract before returning. Graceful success does not mean
+that every accepted request has completed. `RunResult.CompletedBatches` counts
+only individually acknowledged batches, with no generation-watermark shortcut.
+
+`Drain` processes ready batches until none are eligible. An empty observation
+returns success; blocked or delayed work returns `DrainPending`/`ErrUndrained`
+with remaining/blocked counts and the next eligible retry time when available.
+It does not wait through backoff, discard blocked work or silently call it drained.
+Producers must be stopped externally before draining the entire backlog. New
+input can extend a live drain or arrive after its final empty observation; this
+API does not provide an admission fence. Stop and cancellation remain available
+to bound the operation. A restart reopens durable phases and resumes only their
+unfinished effects, preserving later arrivals and producer receipts.
+
+Tests cover polling/wake hints, idle ownership and no state rewrites, duplicate
+runners, graceful and immediate shutdown, retry deadlines, blocked-provenance
+ordering, incomplete drains, failed/uncertain markers, process death after commit
+and saved-phase restart. A synthetic Claude adapter round trip stops after push
+but before confirmation, finishes that batch, preserves a later arrival and then
+drains it through a new run. Successive captures from the same canonical seed
+also preserve both machine-journal appends. This adds a narrow retained policy
+for `journal/<machine>.jsonl`: validate each record's time, machine, operation
+and outcome, preserve the existing base byte-for-byte, and append both tails.
+Independently created journal files can use an empty base. Edited/truncated
+history, malformed records and other JSONL locations remain conflicts; the full
+publication tree still passes the existing secret audit. Journal rotation that
+removes the common prefix remains blocked for explicit recovery.
+
+The Claude integration fixture initializes a shared Git history before worker
+startup. Unrelated root histories remain unsupported; platform startup must verify
+or establish the initial common ancestry before enabling queued execution.
+
+This does not close the parent-death supervision gate. A crashed process releases
+its OS leases, but this alone cannot prove that orphaned external helpers have
+stopped. Platform worker supervision, safe child ownership during startup and
+validated OS restart behavior are milestone 6b.6b. Production worker commands,
+producer stop/drain coordination and rollback wiring remain rollout work; installed
+synchronous commands and hooks keep their existing behavior.

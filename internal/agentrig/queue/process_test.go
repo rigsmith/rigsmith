@@ -2,12 +2,17 @@ package queue
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 )
 
 func TestQueueProcessHelper(t *testing.T) {
@@ -21,6 +26,15 @@ func TestQueueProcessHelper(t *testing.T) {
 	}
 	mode := os.Getenv("RIG_QUEUE_TEST_MODE")
 	switch mode {
+	case "runner-owner":
+		f := &executionFixture{push: func(context.Context, Work) error {
+			fmt.Println("runner-owned")
+			_, _ = bufio.NewReader(os.Stdin).ReadByte()
+			return nil
+		}}
+		if _, err := q.Run(t.Context(), f, RunOptions{}); err != nil {
+			t.Fatal(err)
+		}
 	case "coverage":
 		prepareCoverage(t, worker(t, q))
 		fmt.Println("coverage-owned")
@@ -207,5 +221,38 @@ func TestIndependentProcessesDoNotLoseEnqueues(t *testing.T) {
 	jobs, err := q.Snapshot(t.Context())
 	if err != nil || len(jobs) != 1 || len(jobs[0].Events) != 12 || jobs[0].Through != 12 {
 		t.Fatalf("cross-process enqueue loss: %+v %v", jobs, err)
+	}
+}
+
+func TestRunnerProcessDeathResumesCommitAndRetainsLaterInput(t *testing.T) {
+	q := fixture(t)
+	enqueue(t, q, request("a"))
+	cmd, ready := subprocess(t, q.dir, "runner-owner")
+	expectLine(t, ready, "runner-owned")
+	if _, err := q.Run(t.Context(), &executionFixture{}, RunOptions{Drain: true}); !errors.Is(err, storelock.ErrBusy) {
+		t.Fatal("replaced live runner", err)
+	}
+	enqueue(t, q, request("later"))
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	reopened, err := Open(t.Context(), q.dir, fixtureBinding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &executionFixture{begin: func(_ context.Context, _ Binding, b Work) error {
+		if b.ID == 1 && (b.Phase != Committed || b.CommitRef != "commit-ref") {
+			t.Fatalf("lost retained commit: %+v", b)
+		}
+		return nil
+	}}
+	result, err := reopened.Run(t.Context(), f, RunOptions{Drain: true})
+	if err != nil || result.CompletedBatches != 2 {
+		t.Fatal(result, err)
+	}
+	want := []string{"begin", "push", "close", "begin", "capture", "commit", "push", "close"}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Fatal("replayed saved phases or lost later input", f.calls)
 	}
 }
