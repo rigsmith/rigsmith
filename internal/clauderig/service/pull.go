@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
@@ -27,6 +28,7 @@ type PullRequest struct {
 // as best-effort. A failed initial clone creates no journal/staging directory.
 type PullResult struct {
 	CoordinationError                        error
+	CommandError                             error // Selected runner failed or cleanup was uncertain; no later restore/journal writes.
 	RequestError                             error
 	CloneError, ReconcileError, RestoreError error
 	Repair                                   RepairResult
@@ -37,7 +39,7 @@ type PullResult struct {
 // keeps its successful exit on these operational failures; callers can inspect
 // the result without scraping rendered output.
 func (s Service) Pull(ctx context.Context, req PullRequest) (result PullResult) {
-	if err := requireCanonicalRunner(ctx); err != nil {
+	if err := requireCanonicalRunner(ctx, false); err != nil {
 		result.RequestError = err
 		s.emit(PullFailed{Err: err})
 		return result
@@ -54,6 +56,13 @@ func (s Service) Pull(ctx context.Context, req PullRequest) (result PullResult) 
 		return result
 	}
 	defer release()
+	ctx = canonicalContext(ctx)
+	defer func() {
+		if failure := commandrun.Check(ctx); failure != nil {
+			result.CommandError = failure
+			s.emit(PullFailed{Err: failure})
+		}
+	}()
 	cfg, me, staging := req.Config, req.Machine, req.StagingDir
 	// Update the staging repo from the remote (best-effort; never blocks).
 	if cfg.Remote != "" {
@@ -74,6 +83,9 @@ func (s Service) Pull(ctx context.Context, req PullRequest) (result PullResult) 
 			// A failed repair does not stop this best-effort path. Unlike sync,
 			// pull does not capture a new snapshot over the conflicted tree.
 			result.Repair = s.RepairMerge(ctx, staging, false)
+			if commandrun.Check(ctx) != nil {
+				return result
+			}
 			if err := repo.Pull(ctx, "origin", "main"); err != nil {
 				// A non-ff divergence is not an error to report and forget —
 				// it never resolves itself. Merge it here (policies decide,
@@ -86,12 +98,18 @@ func (s Service) Pull(ctx context.Context, req PullRequest) (result PullResult) 
 				if rerr := s.Reconcile(ctx, ReconcileRequest{Repo: repo, Remote: "origin", Branch: "main"}); rerr != nil {
 					result.ReconcileError = rerr
 					s.emit(PullFailed{Err: rerr})
+					if commandrun.Check(ctx) != nil {
+						return result
+					}
 					_ = journal.Append(staging, journal.Failed(me.Name, journal.OpPull, rerr))
 				}
 			}
 		}
 	}
 
+	if commandrun.Check(ctx) != nil {
+		return result
+	}
 	result.Restore, result.RestoreError = s.autoRestoreIfFresh(ctx, req)
 	return result
 }

@@ -2,17 +2,17 @@ package service_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 )
 
-func TestCanonicalGitBoundariesRejectSupervision(t *testing.T) {
+func TestCanonicalGitBoundariesRejectForeignRunner(t *testing.T) {
 	req, root := syncFixture(t, "unchanged live bytes")
 	staging := filepath.Join(root, "uncreated-parent", "store")
 	req.StagingDir = staging
@@ -20,7 +20,7 @@ func TestCanonicalGitBoundariesRejectSupervision(t *testing.T) {
 		t.Fatal("gated call reached capture")
 		return service.Identity{}, nil
 	}}
-	ctx := process.WithSupervisor(t.Context(), "unused")
+	ctx := commandrun.WithRunner(t.Context(), nil)
 	repo := &gitrepo.Repo{Dir: staging}
 	cases := map[string]func(context.Context) error{
 		"capture":  func(ctx context.Context) error { _, err := svc.Capture(ctx, req); return err },
@@ -45,7 +45,7 @@ func TestCanonicalGitBoundariesRejectSupervision(t *testing.T) {
 	}
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) {
-			if err := run(ctx); !errors.Is(err, service.ErrSupervisedCanonicalGitUnavailable) {
+			if err := run(ctx); err == nil || !strings.Contains(err.Error(), "requires its own command runner") {
 				t.Fatalf("canonical boundary bypassed supervision: %v", err)
 			}
 			// Acquire would create this parent and its sibling lock, even before Git.

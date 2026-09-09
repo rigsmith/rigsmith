@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/climenu"
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/claudemd"
 	"github.com/rigsmith/rigsmith/internal/clauderig/gitignore"
@@ -146,8 +147,23 @@ func scopeInstall(c *cobra.Command, sp scopeSpec) error {
 // an existing pattern already covers it. Returns what it did for reporting.
 func ensureLocalIgnored(ctx context.Context, root string) (string, error) {
 	const entry = ".claude/settings.local.json"
-	if repo, err := gitrepo.Open(ctx, root); err == nil && repo.IsIgnored(ctx, entry) {
+	if commandrun.Configured(ctx) {
+		repo, err := gitrepo.Open(ctx, root)
+		if err != nil {
+			return "", err
+		}
+		ignored, err := repo.CheckIgnored(ctx, entry)
+		if err != nil {
+			return "", err
+		}
+		if ignored {
+			return "already ignored", nil
+		}
+	} else if repo, err := gitrepo.Open(ctx, root); err == nil && repo.IsIgnored(ctx, entry) {
 		return "already ignored", nil
+	}
+	if err := commandrun.Check(ctx); err != nil {
+		return "", err
 	}
 	giPath := filepath.Join(root, ".gitignore")
 	b, err := os.ReadFile(giPath)

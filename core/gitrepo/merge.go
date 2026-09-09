@@ -255,6 +255,9 @@ func (r *Repo) ConflictStage(ctx context.Context, path string, stage int) (conte
 // ResolveWith writes content to a conflicted path and stages it, marking that
 // path resolved.
 func (r *Repo) ResolveWith(ctx context.Context, path string, content []byte) error {
+	if err := commandrun.Check(ctx); err != nil {
+		return err
+	}
 	full := filepath.Join(r.Dir, filepath.FromSlash(path))
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
@@ -282,11 +285,18 @@ func (r *Repo) UnionMerge(ctx context.Context, path string) (content []byte, ok 
 	if !hasBase {
 		base = nil
 	}
+	if commandrun.Check(ctx) != nil {
+		return nil, false
+	}
 	dir, err := os.MkdirTemp("", "clauderig-union")
 	if err != nil {
 		return nil, false
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		if commandrun.Check(ctx) == nil {
+			_ = os.RemoveAll(dir)
+		}
+	}()
 	write := func(name string, b []byte) string {
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, b, 0o644); err != nil {

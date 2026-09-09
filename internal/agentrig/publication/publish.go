@@ -2,9 +2,11 @@ package publication
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
 
@@ -30,6 +32,14 @@ type PublishResult struct {
 // conflict policy, then maintains history. A failed push is retried even when no
 // new commit was created. Publication is reported before maintenance errors.
 func (w Workflow) Publish(ctx context.Context, req PublishRequest) (result PublishResult, err error) {
+	defer func() {
+		if failure := commandrun.Check(ctx); failure != nil && !errors.Is(err, failure) {
+			err = errors.Join(err, failure)
+		}
+	}()
+	if err := commandrun.Check(ctx); err != nil {
+		return result, err
+	}
 	if err := w.Policy.check(); err != nil {
 		return result, err
 	}

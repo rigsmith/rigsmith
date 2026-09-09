@@ -37,6 +37,9 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 // Init ensures a git repo exists at dir (creating it on `main` with a clauderig
 // identity and signing disabled — safe for non-interactive hook runs).
 func Init(ctx context.Context, dir string) (*Repo, error) {
+	if err := commandrun.Check(ctx); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -55,11 +58,17 @@ func Init(ctx context.Context, dir string) (*Repo, error) {
 	if _, err := runGit(ctx, dir, "config", "user.name"); err != nil {
 		_, _ = runGit(ctx, dir, "config", "user.name", "clauderig")
 	}
+	if err := commandrun.Check(ctx); err != nil {
+		return nil, err
+	}
 	return &Repo{Dir: dir}, nil
 }
 
 // Clone clones url into dir and returns the Repo.
 func Clone(ctx context.Context, url, dir string) (*Repo, error) {
+	if err := commandrun.Check(ctx); err != nil {
+		return nil, err
+	}
 	parent := filepath.Dir(dir)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return nil, err

@@ -26,6 +26,20 @@ type lease struct {
 	refs int
 }
 
+// SameActiveLease reports whether both contexts carry the same live ownership
+// capability. Derived contexts and nested acquisitions share it; an expired or
+// unrelated capability cannot authorize rebinding command supervision.
+func SameActiveLease(a, b context.Context) bool {
+	left, _ := a.Value(contextKey{}).(*lease)
+	right, _ := b.Value(contextKey{}).(*lease)
+	if left == nil || left != right || a.Err() != nil || b.Err() != nil {
+		return false
+	}
+	left.mu.Lock()
+	defer left.mu.Unlock()
+	return left.refs > 0
+}
+
 // Acquire returns an operation context and an idempotent release function.
 // Zero wait tries once; a positive wait bounds contention, independently of the
 // operation's lifetime. Cancellation returns the caller's context error.

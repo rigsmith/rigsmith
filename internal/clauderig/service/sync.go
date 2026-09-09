@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
@@ -50,7 +51,7 @@ type SyncResult struct {
 // Sync repairs, captures, scans, records metadata/journal entries and publishes.
 // Debounce and terminal input remain caller responsibilities.
 func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, rerr error) {
-	if err := requireCanonicalRunner(ctx); err != nil {
+	if err := requireCanonicalRunner(ctx, req.AllowMergeTool); err != nil {
 		return result, err
 	}
 	if req.Config == nil {
@@ -61,6 +62,8 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, 
 		return result, err
 	}
 	defer release()
+	ctx = canonicalContext(ctx)
+	defer func() { rerr = canonicalResult(ctx, rerr) }()
 	result.Capture, rerr = s.Capture(ctx, req)
 	if rerr != nil || req.DryRun {
 		return result, rerr
@@ -73,7 +76,7 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, 
 	// Capture records its own failures. Publication failures remain a separate
 	// journal entry, written after the attempted commit as in synchronous sync.
 	defer func() {
-		if rerr != nil {
+		if rerr != nil && commandrun.Check(ctx) == nil {
 			_ = journal.Append(req.StagingDir, journal.Failed(req.Machine.Name, journal.OpSync, rerr))
 		}
 	}()
