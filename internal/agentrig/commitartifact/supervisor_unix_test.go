@@ -31,6 +31,11 @@ func TestRetainedSupervisorEntrypoint(t *testing.T) {
 }
 
 func TestRetainedSupervisedCommandCleanup(t *testing.T) {
+	// Race binaries otherwise sleep a second on every os.Exit. Head validation
+	// starts many commands, so those synthetic delays can exhaust the cleanup
+	// deadline even after every helper has stopped. Keep race instrumentation
+	// and the existing deadlines; disable only this subprocess exit delay.
+	t.Setenv("GORACE", os.Getenv("GORACE")+" atexit_sleep_ms=0")
 	// Reuse all existing exit/cancel/output-failure scenarios through the real
 	// retained command, transport and streaming builders (including WaitDelay).
 	retainedCommandCleanup(t, retainedSupervisorContext)
