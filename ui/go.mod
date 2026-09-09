@@ -7,7 +7,7 @@
 // internal rule is about import paths, not module boundaries, and
 // github.com/rigsmith/rigsmith/ui is under github.com/rigsmith/rigsmith.
 // go.work at the repo root is what resolves that locally.
-module github.com/rigsmith/rigsmith/ui // rigsmith:version 0.1.1
+module github.com/rigsmith/rigsmith/ui // rigsmith:version 0.2.0
 
 go 1.26.7
 

@@ -1,5 +1,43 @@
 # github.com/rigsmith/rigsmith/ui
 
+## 0.2.0
+### 🚀 Enhancements
+
+- **clauderig-ui:** The claudeRig UI now ships on its own tag, so a window release no longer waits for a toolchain release.
+  
+  It has always been a separate module on its own version — 0.x while the command line tools are at 1.x — and `shiprig tag` has always rendered `ui/vX.Y.Z` for it. Nothing consumed that tag: the window rode the CLIs' release, which meant every fix to it waited for one, and the Windows download lived in a release named after a version the app does not have.
+  
+  Pushing `ui/vX.Y.Z` now fires its own workflow, built from the pieces that already existed. GoReleaser builds and Authenticode-signs the Windows binaries through the same hook the CLIs use, a macOS runner builds, signs and notarizes the `.app` through the same script as before, and the two are published together as one GitHub release, a Homebrew cask and a winget submission. `brew install --cask rigsmith/tap/clauderig-ui` is unchanged; the zip it downloads now sits in a release carrying the window's own version rather than the CLIs'.
+  
+  A tag that disagrees with `ui/go.mod` is refused before anything is built. The two are written at different moments, and a mismatch would ship a window reporting one number under a tag promising another, with the cask and the winget manifest each believing a different one.
+- **clauderig-ui:** The window now tells you when the machine-wide Claude Desktop is launched, because that is the window a session meant for a profile can end up in.
+  
+  A watch scans the running Claude Desktop processes every ten seconds — five while the notice is up — and raises a small window the moment one appears with no `--user-data-dir`: the ordinary install, the one the Dock and Spotlight start. While it is open a `claude://` deep link is routed by scheme rather than to a chosen window, so **Open in Desktop** can land there instead of the profile that was picked, and `clauderig desktop send --session` refuses rather than guess. Until now the first sign of any of that was a refusal, or a conversation filed under the wrong account.
+  
+  It is the app's own window rather than an OS notification, and deliberately: a real notification needs a signed bundle and the user's permission, so it would be silent in a dev build and silent again for anyone who ever declined the prompt. A window is the one surface a tray app can always put on screen.
+  
+  Three decisions about when NOT to speak, each of them a way this could have become noise. A Desktop window already open when the tray starts is not a launch, so starting the app never greets you with a warning about something you have had open all morning. A failed process scan holds the previous answer instead of reading as "closed", which would otherwise make the next successful scan look like a launch. And a machine with no clauderig Desktop profiles is never warned at all — with nothing to route a session to, the main app is simply Claude Desktop.
+  
+  Raising only on the transition is also what makes dismissing it work: it will not come back until that app is closed and opened again. **Don't warn again** on the notice turns it off for good, and the tray's **Warn when Claude Desktop opens** is the way back on — an off switch whose on switch is a file somebody has to find is not a setting.
+
+### 🩹 Fixes
+
+- **clauderig-ui:** The sessions window no longer hangs on Windows when a CLI store's project folder has to be named from its transcripts.
+  
+  Recovering the real directory behind a project slug walks up the working directory a transcript recorded, and it stopped when it saw `/`. Windows spells its root `\` or `C:\`, `filepath.Dir` returns those unchanged, and the walk ran forever — the window wedged on the first folder whose name had to be recovered. It now stops where `Dir` stops changing the path, which is the root on every platform.
+  
+  A group id from the window that begins with `/` is also refused on Windows now. The guard called `filepath.IsAbs`, which is the host's rule: `/etc/passwd` is not absolute on Windows because it names no volume, so an id written to be refused walked straight past it.
+- **clauderig-ui:** Two Claude Desktop accounts whose ids begin the same way no longer merge into one folder in the Places view.
+  
+  The group was keyed by the NAME shown for an account, and with no email on file that name was the account id cut at its first `-`. Two accounts sharing that prefix therefore shared a key: one group, holding both accounts' sessions, carrying one account's id. Clicking it showed only that one account's sessions, because the drawer filters on the id — so the row advertised a count it could not produce, which is the exact failure the split exists to prevent. Groups are now keyed by the account id, and an account with no email on file is named by its id in full: long, but never two accounts under one heading.
+  
+  A Desktop sidecar that will not parse also keeps its filename as its label. It used to be relabelled `(untitled) <first segment of the filename>`, which presented a slice of a filename as though it were a session id — for `local_broken.json`, a session called "broken". The relabelling is right for a record that parsed and simply had no title; for one we could not read at all, the filename is the only fact there is, and it is also what somebody needs in order to go and look at the file.
+- **clauderig-ui:** The claudeRig UI's Windows executable now carries an icon, a version and a description.
+  
+  `build/winres/` had an entry for each CLI and none for the window, so `scripts/winres.sh` embedded nothing into it: a generic icon in Explorer, an empty properties dialog, and no FileDescription for winget's tooling to read — komac classifies a binary from exactly that field. It shipped that way for its whole life, and nothing in the repo said so.
+  
+  Its version comes from `ui/go.mod` rather than from `git describe`, which would have answered with whichever tag is newest in the history — usually the CLIs' — and put a different number in the properties dialog than the app reports about itself.
+
 ## 0.1.1
 ### 🩹 Fixes
 
