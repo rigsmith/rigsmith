@@ -256,8 +256,9 @@ writer locks. The execution keeps a staging context solely for borrowing that
 lease; archive builders, seed/commit stores, private capture trees and queue
 transactions receive independent operation contexts. This avoids borrowing one
 store's capability to access another and prevents a capture-store/staging lock
-inversion. Manual sync cannot run between execution phases; this exclusion does
-not yet establish manual-sync event coverage. Capture and publication can finish audited staged merges or resume supported unresolved conflicts through [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
+inversion. Manual sync cannot run between execution phases. The separate
+[coverage service](#claude-manual-sync-evidence-milestone-6b5b) now establishes
+manual-sync event coverage while owning both worker and staging. Capture and publication can finish audited staged merges or resume supported unresolved conflicts through [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
 
 RunOne persists each successful reference, resumes only unfinished phases, and
 acknowledges only its sealed batch after fresh remote confirmation. A retry after
@@ -346,9 +347,10 @@ Already-staged canonical merges can be completed before retrying committed work;
 
 The shared queue now exposes `Worker.PrepareCoverage` and a session-bound
 `Coverage` ticket. This is an internal integration boundary: Claude's synchronous
-commands do not call it yet, and queued hooks remain disabled. Claude's current
-aggregate capture report cannot establish coverage of individual queued requests;
-that evidence and publication wiring are milestone 6b.5b.
+commands do not call it yet, and queued hooks remain disabled. The Claude service
+now supplies per-request evidence and publication wiring through
+[milestone 6b.5b](#claude-manual-sync-evidence-milestone-6b5b); aggregate capture
+counts alone cannot establish coverage of individual requests.
 
 The caller acquires worker ownership, validates its actual binding and source
 provenance, and prepares candidates **before reading sources**, with worker
@@ -394,3 +396,69 @@ partial coverage, later arrivals, detached inputs, recovery barriers, stale owne
 failed/uncertain persistence, cancellation, real process death and acknowledgement
 crash boundaries. Schema-1 fixtures retain completed receipts, committed artifacts
 and retry metadata through the additive schema-2 upgrade.
+
+
+## Claude manual-sync evidence (milestone 6b.5b)
+
+`Service.SyncWithCoverage` composes synchronous capture/publication with an
+explicit, existing queue. It acquires worker ownership before staging, verifies
+that queue storage is outside all resolved source and staging roots, and checks
+the current configuration binding. Live identity is read once at the ordinary
+capture point, before resolving manual flush intent. Identity errors or invalid
+provenance never become unknown-account acknowledgements. Queue transactions use
+an independent operation context; both leases remain held until confirmation and
+acknowledgement finish. Producers may enqueue later generations throughout.
+
+Before capture, the service seals candidates and resolves each requested CLI
+session to one native transcript. Coverage includes its subagents, any selected
+flush groups, and all allowlisted CLI transcripts for an all-flush request.
+Missing or ambiguous sessions and unavailable selected paths remain pending.
+Requested sources are freshly read even when size and modification time match
+staging; changed-file throttling, retention, size limits and secret policy still
+apply. Evidence requires a regular source with stable file identity, size and
+modification time across the read. Native source paths remain in memory and are
+excluded from serialized reports and journals.
+
+After capture and pruning, a second group walk detects newly appearing members.
+Every required member must have fresh capture evidence and a readable retained
+snapshot. The session ledger must exist and match the account when provenance
+has a known account UUID. A successful identity read with no UUID supports
+explicit unknown provenance; failed or invalid reads cannot acknowledge it. The service
+hashes logical transcript bytes, validating chunk indexes and parts, and keeps
+only completely covered batches. Deferred, skipped, missing, pruned, oversized
+or partially covered groups remain pending with their retry budget unchanged.
+Chunking and redaction are verified in their resulting backup representation.
+
+Coverage publication refreshes tracked Git contents even when the index stat
+cache matches; ordinary sync retains its existing incremental staging.
+Publication records the original snapshot commit before reconciliation or
+history maintenance. `commitartifact.ConfirmSnapshot` freshly fetches the bound
+remote using existing system Git/`gh` configuration into a temporary private
+repository. It requires the snapshot in the fetched history, validates and audits
+its raw committed tree, and compares its logical transcript hashes and account
+ledger with capture evidence. It does not trust cached remote refs or reread live
+sources after publication. A concurrent remote append or successful reconciliation
+can preserve this proof. Rewritten or squashed-away snapshot history cannot, even
+when an earlier push succeeded; the queue remains pending for a later capture.
+Temporary confirmation data is removed when the operation returns.
+
+Only confirmed complete batches reach `Coverage.Acknowledge`. Local-only and dry
+runs do not prepare or acknowledge candidates. Capture, scan, publication,
+confirmation or cancellation failures cannot acknowledge work. The result retains
+ordinary sync progress when a later confirmation or acknowledgement fails.
+External merge tools are rejected at this boundary until their process lifetime
+can be covered by worker lifecycle controls. Configured transport validation runs
+before capture; the existing HTTPS/Git authentication path and absolute local
+fixture paths are reused without adding credentials or transport mechanisms.
+
+This service is not yet wired into installed commands or hooks. Ordinary `Sync`
+keeps its existing behavior. Production queue discovery, worker lifecycle,
+capacity/cleanup and opt-in command/hook integration remain rollout gates;
+Desktop request routing and the separate Codex adapter remain future work.
+
+Synthetic tests cover later arrivals, worker/staging exclusion, identity/flush
+ordering, same-metadata source changes, selected subagents and all-flush batches,
+retention/size/scan failures, native and chunked/redacted snapshots, late group
+members, local/dry runs, cancellation, remote rewrites and push reconciliation.
+Shared confirmation tests cover SHA-1/SHA-256 repositories, exact raw snapshot
+bytes, false fetched refs, policy rejection, size bounds and scratch cleanup.

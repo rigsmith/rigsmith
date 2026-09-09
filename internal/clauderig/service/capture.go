@@ -68,7 +68,7 @@ func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureIn
 	// registry with another — and the registry is what resolves an
 	// alias or email back to that uuid, so the two disagreeing breaks
 	// `search --account` for exactly those rows.
-	identity, _ := s.liveIdentity()
+	identity, identityErr := s.liveIdentity()
 	liveAcct, liveOrg, liveEmail := identity.AccountUUID, identity.OrganizationUUID, identity.Email
 	// Validated HERE, before anything consumes it. There are two ways out
 	// of this variable — the ledger, via engine.Sync, and the device
@@ -120,7 +120,15 @@ func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureIn
 		profiles, sources = inputs.profiles, inputs.sources
 		attributionSessions = inputs.attributionSessions
 	}
+	var evidencePaths map[string]bool
+	if req.coverage != nil {
+		if err := req.coverage.prepare(req, identity, identityErr, profiles); err != nil {
+			return report, err
+		}
+		evidencePaths = req.coverage.evidencePaths
+	}
 	rep, serr := engine.Sync(engine.Options{
+		EvidencePaths:    evidencePaths,
 		ChunkTranscripts: chunked,
 		StagingDir:       staging, Config: cfg, Machine: me, ClaudeVersion: claudeVer,
 		RetentionDays:       cfg.Retention.HistoryDays,
