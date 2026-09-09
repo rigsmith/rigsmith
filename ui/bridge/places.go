@@ -701,7 +701,13 @@ func cliProjects(loc location, resolve bool) []PlaceGroup {
 // groupDir resolves a group id to a directory, refusing anything that climbs out
 // of the store. The id reaches here from the window, so it is input.
 func groupDir(loc location, groupID string) (string, error) {
-	if groupID == "" || strings.Contains(groupID, "..") || filepath.IsAbs(groupID) {
+	// Rooted, by anyone's spelling. filepath.IsAbs is the HOST's rule, and on
+	// Windows "/etc/passwd" is not absolute by that rule — no volume — so an id
+	// the guard is written to refuse walked straight past it there. A leading
+	// separator of either kind, or a volume, is rooted wherever this runs.
+	rooted := strings.HasPrefix(groupID, "/") || strings.HasPrefix(groupID, `\`) ||
+		filepath.IsAbs(groupID) || filepath.VolumeName(groupID) != ""
+	if groupID == "" || strings.Contains(groupID, "..") || rooted {
 		return "", os.ErrNotExist
 	}
 	base := filepath.Join(loc.base, cliProjectsDir)
@@ -902,11 +908,21 @@ func countLatestNewest(dir, suffix string) (int, time.Time, string) {
 // directory name — that prefix is the project, spelled the way it really is,
 // and proved so rather than assumed.
 func projectPath(slug, transcript string) string {
-	cwd := transcriptCwd(transcript)
-	for p := cwd; p != "" && p != "/" && p != "."; p = filepath.Dir(p) {
+	// Stopped at the fixed point of Dir, not at a named root. "/" is one root
+	// spelling of several — Windows walks up to `\` or `C:\`, where Dir returns
+	// its argument forever, and this loop hung there until CI ran it: ten
+	// minutes of a test binary spinning, and the same spin inside the sessions
+	// window of anyone browsing a CLI store on Windows. Dir is idempotent at
+	// every root on every platform, which is the property to lean on.
+	for p := transcriptCwd(transcript); p != "" && p != "."; {
 		if slugOf(p) == slug {
 			return p
 		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return ""
+		}
+		p = parent
 	}
 	return ""
 }

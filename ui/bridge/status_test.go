@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -105,7 +106,10 @@ func TestSettingsPathPrefersMachineHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "/tmp/fakehome/.claude/settings.json"; got != want {
+	// Joined, not written out: settingsPath uses the host's separator, so the
+	// literal "/tmp/fakehome/.claude/settings.json" is a Unix spelling of the
+	// answer rather than the answer.
+	if want := filepath.Join("/tmp/fakehome", ".claude", "settings.json"); got != want {
 		t.Fatalf("settingsPath = %q, want %q", got, want)
 	}
 }

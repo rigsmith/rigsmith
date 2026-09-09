@@ -85,14 +85,14 @@ jobs:
           path: |
             ${{ steps.paths.outputs.gocache }}
             ${{ steps.paths.outputs.gomodcache }}
-          key: go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum') }}
+          key: go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum', 'ui/go.sum') }}
           restore-keys: |
             go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-
 
       # Wails v3 links against GTK 4 and WebKitGTK 6.0 on Linux — not the GTK 3 /
-      # WebKit2GTK 4.1 pairing most guides still name — so `go test ./...` cannot
-      # compile ./ui here without them. The app only ships for macOS, but keeping
-      # it inside ./... means a change that breaks another platform is caught
+      # WebKit2GTK 4.1 pairing most guides still name — so the ./ui step below
+      # cannot compile without them. The app only ships for macOS, but testing it
+      # on every runner means a change that breaks another platform is caught
       # here rather than by whoever tries to port it.
       - name: Linux GUI headers (for ./ui)
         run: |
@@ -111,6 +111,24 @@ jobs:
         env:
           CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate
         run: go test ./... -count=1
+
+      # ./ui is a SEPARATE module, so `go test ./...` above never reaches it —
+      # a workspace does not make one module's ./... cross into another. That
+      # gap is not theoretical: two ui/bridge tests sat red from the commit that
+      # introduced them (#314) until #361, through green run after green run,
+      # because nothing here ever ran them.
+      - name: Test ./ui
+        working-directory: ui
+        run: go test ./... -count=1
+
+      # Here rather than in the lint job for one reason: the GUI headers ./ui
+      # needs on Linux are installed above, and installing them a second time
+      # would slow the tier whose whole job is to fail fast. `gofmt -l .` in
+      # that job already walks ./ui, since it reads files rather than compiling
+      # them.
+      - name: Vet ./ui
+        working-directory: ui
+        run: go vet ./...
 
       - name: ClaudeRig baseline compatibility
         env:
@@ -162,7 +180,7 @@ jobs:
           path: |
             ${{ steps.paths.outputs.gocache }}
             ${{ steps.paths.outputs.gomodcache }}
-          key: go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum') }}
+          key: go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum', 'ui/go.sum') }}
           restore-keys: |
             go-test-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-
 
@@ -175,6 +193,13 @@ jobs:
       - name: Test
         env:
           CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate
+        run: go test ./... -count=1
+
+      # A separate module: `go test ./...` above does not reach it. See the
+      # same step in test (linux) for what that cost us. Here it matters most —
+      # macOS is the platform the app actually ships for.
+      - name: Test ./ui
+        working-directory: ui
         run: go test ./... -count=1
 
       - name: ClaudeRig baseline compatibility

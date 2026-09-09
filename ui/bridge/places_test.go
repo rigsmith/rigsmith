@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,17 +23,44 @@ func writeFile(t *testing.T, dir, rel, body string) string {
 
 // sidecar is what Desktop writes about a session it knows of.
 func sidecar(id, cliID, title, cwd string, at time.Time) string {
-	return `{"sessionId":"` + id + `","cliSessionId":"` + cliID + `","title":"` + title +
-		`","cwd":"` + cwd + `","branch":"main","isArchived":false,"lastActivityAt":` +
-		itoa(at.UnixMilli()) + `}`
+	return sidecarIn(id, cliID, title, "", cwd, at)
 }
 
 // sidecarIn is a sidecar whose origin folder differs from where it ran, which
-// is what a worktree session looks like.
+// is what a worktree session looks like. origin may be empty, for a session
+// that ran where it was opened.
+//
+// MARSHALLED, not concatenated. These fixtures carry real paths from the host,
+// and `C:\Users\runneradmin\Git` pasted between quotes is not a JSON string —
+// \U and \r are escapes. Every sidecar on Windows parsed as garbage, every
+// folder came back "(folder not recorded)", and the tests read as a grouping
+// bug on a platform where grouping was fine.
 func sidecarIn(id, cliID, title, origin, cwd string, at time.Time) string {
-	return `{"sessionId":"` + id + `","cliSessionId":"` + cliID + `","title":"` + title +
-		`","originCwd":"` + origin + `","cwd":"` + cwd + `","branch":"main","lastActivityAt":` +
-		itoa(at.UnixMilli()) + `}`
+	rec := map[string]any{
+		"sessionId": id, "cliSessionId": cliID, "title": title,
+		"cwd": cwd, "branch": "main", "lastActivityAt": at.UnixMilli(),
+	}
+	if origin != "" {
+		rec["originCwd"] = origin
+	}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		panic(err) // a fixture that will not marshal is a broken test, not a case
+	}
+	return string(b)
+}
+
+// homeLabel is a path under $HOME as the window labels it. trimHome shortens the
+// home prefix to "~" and leaves the separators alone, so the label is "~/Git" on
+// Unix and "~\Git" on Windows — writing either one literally makes the test a
+// test of which machine it ran on.
+func homeLabel(t *testing.T, parts ...string) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return trimHome(filepath.Join(append([]string{home}, parts...)...))
 }
 
 func itoa(n int64) string {
@@ -146,22 +174,23 @@ func TestSessionsGroupByTheFolderTheyWereOpenedIn(t *testing.T) {
 		sidecarIn("local_d", "cli-4", "Four", git, git, time.Now()))
 
 	groups := desktopFolders(location{base: base, kind: "desktop"})
+	gitLabel, tweedLabel := homeLabel(t, "Git"), homeLabel(t, "Git", "tweed")
 	byLabel := map[string]int{}
 	byAccount := map[string]int{}
 	for _, g := range groups {
 		byLabel[g.Label] += g.Items
-		if g.Label == "~/Git" {
+		if g.Label == gitLabel {
 			byAccount[g.Account] = g.Items
 		}
 	}
-	if byLabel["~/Git"] != 3 {
-		t.Errorf("~/Git holds %d sessions, want the three opened there: %v", byLabel["~/Git"], byLabel)
+	if byLabel[gitLabel] != 3 {
+		t.Errorf("%s holds %d sessions, want the three opened there: %v", gitLabel, byLabel[gitLabel], byLabel)
 	}
-	if byLabel["~/Git/tweed"] != 1 {
-		t.Errorf("~/Git/tweed holds %d, want 1: %v", byLabel["~/Git/tweed"], byLabel)
+	if byLabel[tweedLabel] != 1 {
+		t.Errorf("%s holds %d, want 1: %v", tweedLabel, byLabel[tweedLabel], byLabel)
 	}
 	if len(byAccount) != 2 || byAccount["acct-1"] != 2 || byAccount["acct-2"] != 1 {
-		t.Errorf("~/Git by account = %v, want acct-1 holding its two and acct-2 its one", byAccount)
+		t.Errorf("%s by account = %v, want acct-1 holding its two and acct-2 its one", gitLabel, byAccount)
 	}
 }
 
@@ -270,14 +299,42 @@ func TestProjectPathRecoversTheRealDirectoryName(t *testing.T) {
 		`{"type":"bridge-session","sessionId":"x"}`+"\n"+
 			`{"type":"user","cwd":"/Users/john/Git/XTerm.NET/.claude/worktrees/wt-1"}`+"\n")
 
+	// Cleaned, because the answer is a prefix of the cwd that filepath.Dir has
+	// walked back to — and Dir cleans, which on Windows means the separators
+	// come back as backslashes. The path is the same place either way, and
+	// writing one platform's spelling here would test the runner.
 	got := projectPath("-Users-john-Git-XTerm-NET", tr)
-	if got != "/Users/john/Git/XTerm.NET" {
-		t.Errorf("projectPath = %q, want the real directory the slug was made from", got)
+	if want := filepath.Clean("/Users/john/Git/XTerm.NET"); got != want {
+		t.Errorf("projectPath = %q, want the real directory the slug was made from (%s)", got, want)
 	}
 	// A slug that no prefix of the cwd accounts for must not be answered with a
 	// guess: a path that looks right and is not is worse than none.
 	if got := projectPath("-somewhere-else", tr); got != "" {
 		t.Errorf("projectPath invented %q for a slug the cwd cannot explain", got)
+	}
+}
+
+// The walk up the cwd has to STOP, on every platform. It looked for "/" as the
+// root, which Windows spells "\\" or "C:\\" — filepath.Dir returns those
+// unchanged, so the loop ran forever there: a ten-minute test timeout in CI, and
+// the sessions window wedged for anyone browsing a CLI store on Windows.
+//
+// Run with a deadline rather than called directly, because the failure this
+// guards against is a hang, and a hanging test reports as a ten-minute timeout
+// on the whole package rather than as this one assertion.
+func TestProjectPathStopsAtTheRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "s.jsonl", `{"cwd":"/a/b/c"}`+"\n")
+
+	done := make(chan string, 1)
+	go func() { done <- projectPath("-no-slug-matches-this", filepath.Join(dir, "s.jsonl")) }()
+	select {
+	case got := <-done:
+		if got != "" {
+			t.Errorf("projectPath = %q, want none: no prefix of the cwd makes that slug", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("projectPath did not return — it is walking past the root")
 	}
 }
 
@@ -355,8 +412,8 @@ func TestSessionsAreSplitByAccount(t *testing.T) {
 	}
 	accounts := map[string]bool{}
 	for _, g := range groups {
-		if g.Label != "~/Git" {
-			t.Errorf("label = %q, want the folder", g.Label)
+		if want := homeLabel(t, "Git"); g.Label != want {
+			t.Errorf("label = %q, want the folder (%s)", g.Label, want)
 		}
 		if g.Items != 1 {
 			t.Errorf("%s holds %d sessions, want its own one", g.Account, g.Items)
