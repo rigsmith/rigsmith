@@ -129,25 +129,39 @@ func TestSessionsGroupByTheFolderTheyWereOpenedIn(t *testing.T) {
 	base := t.TempDir()
 	home, _ := os.UserHomeDir()
 	git := filepath.Join(home, "Git")
-	// Two accounts, same workspace id, same folder: one group, not three.
+	// Two workspaces of ONE account, same folder: one group, not two. The
+	// workspace uuid is not a place, and a session opened in ~/Git belongs
+	// under ~/Git whichever workspace Desktop filed it in.
 	writeFile(t, base, codeSessions+"/acct-1/ws-same/local_a.json",
 		sidecarIn("local_a", "cli-1", "One", git, filepath.Join(git, "rigsmith"), time.Now()))
-	writeFile(t, base, codeSessions+"/acct-2/ws-same/local_b.json",
+	writeFile(t, base, codeSessions+"/acct-1/ws-other/local_b.json",
 		sidecarIn("local_b", "cli-2", "Two", git, git, time.Now().Add(-time.Hour)))
 	// A different folder is a different group.
 	writeFile(t, base, codeSessions+"/acct-1/ws-other/local_c.json",
 		sidecarIn("local_c", "cli-3", "Three", filepath.Join(git, "tweed"), git, time.Now()))
+	// A second account in the same folder is NOT the same group — see
+	// TestSessionsAreSplitByAccount for why. Here it is only present to prove
+	// that folders are collapsed across workspaces and not across logins.
+	writeFile(t, base, codeSessions+"/acct-2/ws-same/local_d.json",
+		sidecarIn("local_d", "cli-4", "Four", git, git, time.Now()))
 
 	groups := desktopFolders(location{base: base, kind: "desktop"})
 	byLabel := map[string]int{}
+	byAccount := map[string]int{}
 	for _, g := range groups {
-		byLabel[g.Label] = g.Items
+		byLabel[g.Label] += g.Items
+		if g.Label == "~/Git" {
+			byAccount[g.Account] = g.Items
+		}
 	}
-	if byLabel["~/Git"] != 2 {
-		t.Errorf("~/Git holds %d sessions, want the two opened there: %v", byLabel["~/Git"], byLabel)
+	if byLabel["~/Git"] != 3 {
+		t.Errorf("~/Git holds %d sessions, want the three opened there: %v", byLabel["~/Git"], byLabel)
 	}
 	if byLabel["~/Git/tweed"] != 1 {
 		t.Errorf("~/Git/tweed holds %d, want 1: %v", byLabel["~/Git/tweed"], byLabel)
+	}
+	if len(byAccount) != 2 || byAccount["acct-1"] != 2 || byAccount["acct-2"] != 1 {
+		t.Errorf("~/Git by account = %v, want acct-1 holding its two and acct-2 its one", byAccount)
 	}
 }
 
