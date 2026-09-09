@@ -319,6 +319,53 @@ toast:
   evidence is in
   [CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md](CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md).
 
+### The UI says when the main app is open
+
+> Status: **implemented** (2026-09-08), in `clauderig-ui`.
+
+The routing rule above is invisible until it bites. Nothing about a Claude
+Desktop window says which install it is, and the machine-wide one — launched
+from the Dock, Spotlight or the Start menu, with no `--user-data-dir` — is the
+one most likely to be open by accident. Its first sign was a refused `--session`
+send, or a conversation filed under whichever account that install happens to be
+signed into.
+
+So the UI watches for it. A scan of the running Claude Desktop processes every
+ten seconds (five while the notice is on screen) raises a small window when an
+instance with no profile flag appears. It counts **processes**, through the same
+`desktop.Instances` the routing guard uses and the same `desktop.CanonicalDir`
+for deciding which profile a data directory belongs to — two normalisations that
+drifted apart would have the CLI refuse a send over a window the UI had just
+called closed.
+
+Decisions worth keeping, all of them about staying quiet:
+
+- **Our own window, not an OS notification.** A real notification needs a signed
+  bundle and the user's permission; it would be silent in a dev build, and
+  silent again for anyone who declined the prompt once. The warning is worth
+  nothing if it does not arrive.
+- **Edge-triggered.** A window already open when the tray starts is not a
+  launch. A failed scan holds the previous state rather than reading as
+  "closed", which would make the next successful scan look like a launch.
+  Raising only on the transition is also what makes dismissal work: nothing has
+  to remember that you closed the notice, because it cannot return until the app
+  does.
+- **A machine with no profiles is never warned.** With nothing to route a
+  session to there is no hazard, and the main app is simply Claude Desktop. An
+  *unreadable* profile store is the other way round — that is not evidence that
+  there are no profiles, and a warning you can dismiss beats a routing failure
+  nobody saw coming.
+- **Off for good is a real choice.** *Don't warn again* writes
+  `desktopWarnOnLaunch: false` to `~/.clauderig/ui-state.json` — the UI's own
+  machine-local settings, not a `clauderig` config key, because whether a popup
+  is welcome is a fact about the machine you are sitting at. The tray's *Warn
+  when Claude Desktop opens* is the way back on; an off switch whose on switch
+  is a file somebody has to find is not a setting.
+
+There is no button to quit the main app. clauderig has no verb that reaches an
+instance it did not launch, and inventing one to close a window somebody opened
+themselves is not the notice's job — it says ⌘Q (or Alt+F4) and leaves it there.
+
 ### Finding the session
 
 You rarely know a session's uuid, so three things offer it:

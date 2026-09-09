@@ -73,6 +73,8 @@ func TestFrontendCallsMatchBoundMethods(t *testing.T) {
 		fqn(&Accounts{}, "Get"),
 		fqn(&Accounts{}, "OpenDesktop"),
 		fqn(&Accounts{}, "RunCLI"),
+		fqn(&Desktop{}, "Get"),
+		fqn(&Desktop{}, "Mute"),
 		fqn(&Windows{}, "Open"),
 		fqn(&Windows{}, "Hide"),
 	}
@@ -99,6 +101,7 @@ func TestBoundMethodsExist(t *testing.T) {
 		{&Actions{}, []string{"Run", "Busy", "RunWith"}},
 		{&Library{}, []string{"List", "Detail", "OpenTerminal", "OpenDesktop", "OpenVSCode", "Materialize", "HandOff", "TakeHandOff", "Delete", "RerootSession"}},
 		{&Accounts{}, []string{"Get", "OpenDesktop", "RunCLI"}},
+		{&Desktop{}, []string{"Get", "Mute", "Warn", "SetWarn"}},
 		{&Windows{}, []string{"Open", "Hide"}},
 	} {
 		typ := reflect.TypeOf(tc.svc)

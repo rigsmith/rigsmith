@@ -24,8 +24,10 @@ CGO_LDFLAGS="-O2 -g -mmacosx-version-min=12.0" \
   go run ./ui --window
 ```
 
-`--window` opens the status window at startup and `--sessions` the sessions
-manager. Without either the app starts in the tray only — which is the intended
+`--window` opens the status window at startup, `--sessions` the sessions
+manager, and `--notice` the Claude Desktop notice — which is otherwise raised
+only by a launch you cannot schedule, so it is the way to look at that window on
+purpose. Without any of them the app starts in the tray only — which is the intended
 behaviour, and also the escape hatch for Linux desktops where the tray never
 appears (GNOME needs an AppIndicator extension).
 
@@ -34,8 +36,8 @@ terminal** button hands the resume script to; it defaults to `Terminal`, which
 is the one macOS always has. The **Copy command** button beside it is the path
 that works with any terminal, multiplexer or remote host.
 
-Both flags reveal their window on `events.Common.ApplicationStarted` rather than
-before `app.Run()`. Showing a window before the app is running silently does
+All three flags reveal their window on `events.Common.ApplicationStarted` rather
+than before `app.Run()`. Showing a window before the app is running silently does
 nothing for any window but the first, which made `--sessions` look like a dead
 flag while the same window opened fine from the tray menu.
 
@@ -106,3 +108,28 @@ row each, via `internal/clauderig/sessions`. A `Sessions` service used to sit
 beside it reading the remote through `peek`; it was folded in and removed once
 the manager covered listing, reading, and — via *Bring to this Mac* —
 materialising.
+
+## The Claude Desktop notice
+
+A watch (`watchDesktop` in `main.go`) scans for running Claude Desktop windows
+every ten seconds — five while the notice is on screen — and raises a small
+window when the **machine-wide** install is launched: the one started with no
+`--user-data-dir`, which is what you get from the Dock, Spotlight or the Start
+menu. While it is open, a `claude://` deep link is routed by scheme rather than
+to a particular window, so **Open in Desktop** can land there instead of the
+profile that was picked, and `clauderig desktop send --session` refuses rather
+than guess.
+
+It is our own window rather than an OS notification on purpose: a real
+notification needs a signed `.app` bundle and the user's permission, so it would
+be silent in a dev build and silent for anyone who ever declined the prompt.
+
+The decisions about *when* to raise it are in `bridge.DesktopAlarm`, which is
+where the tests are — a window already open when the tray starts is not a
+launch, a failed process scan holds the previous state rather than reading as
+"closed", and a machine with no clauderig profiles is never warned at all.
+
+**Don't warn again** on the notice writes `desktopWarnOnLaunch: false` to
+`~/.clauderig/ui-state.json` — the UI's own machine-local settings, deliberately
+not a `clauderig` config key. The tray's **Warn when Claude Desktop opens**
+checkbox is the way back on.

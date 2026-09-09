@@ -75,11 +75,16 @@ func main() {
 	// escape hatch when the tray never shows up.
 	showWindow := flag.Bool("window", false, "open the status window at startup instead of starting in the tray only")
 	showSessions := flag.Bool("sessions", false, "open the sessions window at startup")
+	// The notice is normally raised by a launch nobody can schedule, so there
+	// would otherwise be no way to look at it on purpose — including for anyone
+	// changing its copy or its layout.
+	showNotice := flag.Bool("notice", false, "open the Claude Desktop notice at startup, whatever is running")
 	flag.Parse()
 
 	statusSvc := bridge.NewStatus()
 	actionsSvc := bridge.NewActions()
 	windowsSvc := bridge.NewWindows()
+	desktopSvc := bridge.NewDesktop()
 
 	app := application.New(application.Options{
 		Name:        AppName,
@@ -99,6 +104,7 @@ func main() {
 			application.NewService(bridge.NewLibrary()),
 			application.NewService(bridge.NewPlaces()),
 			application.NewService(bridge.NewAccounts()),
+			application.NewService(desktopSvc),
 			application.NewService(windowsSvc),
 		},
 		Mac: application.MacOptions{
@@ -113,14 +119,17 @@ func main() {
 
 	window := newWindow(app)
 	sessionsWindow := newSessionsWindow(app)
-	tray := newTray(app, window, sessionsWindow, actionsSvc)
+	noticeWindow := newNoticeWindow(app)
+	tray, warnItem := newTray(app, window, sessionsWindow, noticeWindow, desktopSvc, actionsSvc)
 
 	// Registered by name so the status window can raise the sessions window
 	// without the frontend knowing anything about how windows are built.
 	windowsSvc.Register("sessions", func() { reveal(sessionsWindow) }, func() { sessionsWindow.Hide() })
 	windowsSvc.Register("main", func() { reveal(window) }, func() { window.Hide() })
+	windowsSvc.Register("notice", func() { reveal(noticeWindow) }, func() { noticeWindow.Hide() })
 
 	go poll(app, statusSvc, tray, window)
+	go watchDesktop(app, desktopSvc, noticeWindow, func(on bool) { warnItem.SetChecked(on) })
 
 	// An action changes exactly what the tray reports, so repaint the moment
 	// one finishes rather than waiting out the poll interval.
@@ -139,12 +148,16 @@ func main() {
 		// backdrop, which Wails applies afterwards.
 		window.SetBackgroundColour(inkColour)
 		sessionsWindow.SetBackgroundColour(inkColour)
+		noticeWindow.SetBackgroundColour(inkColour)
 
 		if *showWindow {
 			reveal(window)
 		}
 		if *showSessions {
 			reveal(sessionsWindow)
+		}
+		if *showNotice {
+			reveal(noticeWindow)
 		}
 	})
 
@@ -369,6 +382,52 @@ func newSessionsWindow(app *application.App) *application.WebviewWindow {
 	return w
 }
 
+// newNoticeWindow builds the Desktop-launch notice: a small window that appears
+// when the machine-wide Claude Desktop is started, and goes away when it is
+// closed or dismissed.
+//
+// Our own window rather than an OS notification on purpose. A real notification
+// goes through UNUserNotificationCenter on macOS, which wants a signed .app
+// bundle with our identifier and the user's permission — so it would be silent
+// in a dev build, silent for anyone running the binary directly, and silent
+// again the first time somebody said no to the permission prompt. A window is
+// the one surface a tray app can always put on screen, and this warning is
+// worth nothing if it does not arrive.
+//
+// It keeps its native frame and does NOT hide on losing focus. The status
+// window is a tray popover — click away and it is gone — but a notice you
+// glanced past while switching apps is a notice you never read.
+func newNoticeWindow(app *application.App) *application.WebviewWindow {
+	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:  "notice",
+		Title: AppName + " — Claude Desktop",
+		// Same reason as the status window: see newWindow.
+		BackgroundColour: application.NewRGB(0x0E, 0x0E, 0x12),
+		Width:            460,
+		Height:           430,
+		Hidden:           true,
+		DisableResize:    true,
+		URL:              "/notice.html",
+		Windows:          application.WindowsWindow{Theme: application.Dark},
+		Mac: application.MacWindow{
+			TitleBar: application.MacTitleBarHiddenInset,
+			// Same as the status window: see newWindow.
+			Backdrop: application.MacBackdropTransparent,
+		},
+	})
+	// Hide rather than close, like every other window here: the tray is the
+	// app, and a notice that CLOSED could not be shown again for the next
+	// launch. See newWindow for why quitting is the exception.
+	w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if quitting.Load() {
+			return
+		}
+		e.Cancel()
+		w.Hide()
+	})
+	return w
+}
+
 // reveal shows the window and raises it. Show alone leaves it behind whatever
 // has focus, which reads as "the menu item did nothing" — and as an accessory
 // app there is no Dock icon to click as a fallback.
@@ -401,7 +460,7 @@ func reveal(w *application.WebviewWindow) {
 
 // newTray builds the menu bar icon. Clicking it toggles the window beneath the
 // icon; the menu carries the actions.
-func newTray(app *application.App, window, sessions *application.WebviewWindow, actions *bridge.Actions) *application.SystemTray {
+func newTray(app *application.App, window, sessions, notice *application.WebviewWindow, desk *bridge.Desktop, actions *bridge.Actions) (*application.SystemTray, *application.MenuItem) {
 	tray := app.SystemTray.New()
 
 	menu := app.NewMenu()
@@ -414,12 +473,27 @@ func newTray(app *application.App, window, sessions *application.WebviewWindow, 
 	menu.Add("Sync now").OnClick(func(*application.Context) { runFromTray(actions, window, bridge.ActionSync) })
 	menu.Add("Pull").OnClick(func(*application.Context) { runFromTray(actions, window, bridge.ActionPull) })
 	menu.AddSeparator()
+	// The way back on. The notice can turn itself off from its own window, and
+	// an off switch whose on switch is a JSON file somebody has to find is not
+	// a setting, it is a trap.
+	warn := menu.AddCheckbox("Warn when Claude Desktop opens", desk.Warn())
+	warn.OnClick(func(*application.Context) {
+		// Wails flips a checkbox before the handler runs, so this reads the
+		// state being asked for rather than the one being left.
+		if err := desk.SetWarn(warn.Checked()); err != nil {
+			// A preference that could not be saved must not look saved. Putting
+			// the tick back is the only feedback a tray menu has.
+			warn.SetChecked(!warn.Checked())
+		}
+	})
+	menu.AddSeparator()
 	menu.Add("Quit").OnClick(func(*application.Context) {
 		// Close the windows before quitting, and the sessions window before the
 		// popup: WebView2 holds a window class per environment, and tearing the
 		// process down around live ones is what makes Chromium complain on exit.
 		// Close() is synchronous, so by app.Quit() they are gone.
 		quitting.Store(true)
+		notice.Close()
 		sessions.Close()
 		window.Close()
 		app.Quit()
@@ -438,7 +512,7 @@ func newTray(app *application.App, window, sessions *application.WebviewWindow, 
 	// NIM_MODIFY failed". Early is the quiet path, not the noisy one.
 	applyLevel(tray, health.Amber)
 	tray.SetTooltip(AppName + " — checking…")
-	return tray
+	return tray, warn
 }
 
 // trayReadyGrace is how long the poll waits before its first pass, so it cannot
@@ -494,6 +568,102 @@ func refresh(ctx context.Context, svc *bridge.Status, tray *application.SystemTr
 	// Let an open window re-render without waiting for its own poll.
 	if window != nil {
 		window.EmitEvent("clauderig:health", rep)
+	}
+}
+
+// The Desktop watch's cadences, chosen the same way the status poll's are: what
+// is anyone waiting on, and what does the look cost.
+//
+// The look is one pgrep plus one command-line read per live Claude window —
+// two short-lived processes on an idle machine, no git and no network — so this
+// is affordable at a rate status.Gather could never be polled at.
+//
+// Ten seconds is the interesting number. The notice has to arrive close enough
+// to the launch to explain what someone is looking at, and Claude Desktop's own
+// window takes a couple of seconds to paint, so a 5s average lag lands while
+// they are still watching it open. Much beyond that and the notice reads as
+// having wandered in from nothing. Five seconds everywhere would double the
+// wakeups to buy a difference nobody can feel.
+//
+// With the notice ON SCREEN the faster rate is worth it, exactly as it is for
+// the status window: its window list is live, and the app it is warning about
+// being quit should take it away promptly rather than leaving a false warning
+// up for another nine seconds.
+const (
+	desktopInterval = 10 * time.Second
+	desktopOpen     = 5 * time.Second
+)
+
+// desktopEvent carries the current Desktop picture to the notice window.
+const desktopEvent = "clauderig:desktop"
+
+// watchDesktop raises the notice when the machine-wide Claude Desktop is
+// launched, and takes it away when that window closes.
+//
+// The decision is bridge.DesktopAlarm's, not this loop's — which state counts
+// as a launch, what a failed scan means, and when a profile-less machine should
+// be left alone are the parts worth testing, and they cannot be tested here.
+// This is the wiring: scan, ask, show or hide.
+func watchDesktop(app *application.App, svc *bridge.Desktop, notice *application.WebviewWindow, syncWarn func(bool)) {
+	ctx := app.Context()
+	var alarm bridge.DesktopAlarm
+	warned := svc.Warn()
+	for {
+		// Scanned FIRST, before any wait. The alarm's first answer is a seed
+		// rather than a launch, so a wait up front would make the seed the
+		// state ten seconds in — and Claude Desktop opened during those ten
+		// seconds would be seeded as "was already running" and never warned
+		// about. Starting the tray and then opening Desktop is an ordinary
+		// morning, not a corner case. Nothing native is touched on this pass:
+		// EmitEvent goes through the app's event bus and IsVisible is nil-safe,
+		// so it is safe before the windows exist.
+		if v, err := svc.Get(ctx); err == nil {
+			// Emitted every pass, not only on a transition: a notice left open
+			// while a second profile window opens should say so rather than
+			// describe the machine as it was when it appeared.
+			notice.EmitEvent(desktopEvent, v)
+
+			// The notice's own "don't warn again" writes the preference; the
+			// tray tick is the only place that shows it. Re-reading here is
+			// what stops the menu claiming a warning that was turned off from
+			// the window.
+			if w := svc.Warn(); w != warned {
+				warned = w
+				syncWarn(w)
+			}
+
+			switch alarm.Step(v) {
+			case bridge.AlarmRaise:
+				// Stepped either way, warned or not: the state has to keep
+				// tracking the app so turning the warning back on does not
+				// immediately fire over a window that has been open the whole
+				// time.
+				if warned {
+					reveal(notice)
+				}
+			case bridge.AlarmClear:
+				// The app it is warning about has gone, so the warning is now
+				// false. Hiding it is the only honest thing to do with a notice
+				// whose subject no longer exists.
+				notice.Hide()
+			}
+		}
+
+		// Chosen after each pass rather than by a fixed ticker, so dismissing
+		// the notice drops the rate from the next tick. At the end of the loop
+		// so that a failed pass waits with the rest of them rather than
+		// spinning.
+		wait := desktopInterval
+		if notice.IsVisible() {
+			wait = desktopOpen
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
 }
 
