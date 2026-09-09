@@ -534,8 +534,8 @@ operation before enabling queued execution.
 
 This does not close the parent-death supervision gate. A crashed process releases
 its OS leases, but this alone cannot prove that orphaned external helpers have
-stopped. Platform worker supervision, safe child ownership during startup and
-validated OS restart behavior remain milestone 6b.6b.2. Production worker commands,
+stopped. Milestone 6b.6b.2 still covers platform worker supervision, safe child
+ownership during startup, and validated OS restart behavior. Production worker commands,
 producer stop/drain coordination and rollback wiring remain rollout work; installed
 synchronous commands and hooks keep their existing behavior.
 

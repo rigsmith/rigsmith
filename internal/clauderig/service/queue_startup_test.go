@@ -117,6 +117,9 @@ func TestQueueAdapterStartupChecksBeforeClaimWithoutChangingStaging(t *testing.T
 			if result.CompletedBatches != 0 || (mode == "ready" && err != nil) || (mode != "ready" && err == nil) || (want != nil && !errors.Is(err, want)) {
 				t.Fatal(result, err)
 			}
+			if mode == "overlap" && (err == nil || !strings.Contains(err.Error(), "commit store must be outside source, capture and staging roots")) {
+				t.Fatal("overlap did not fail at the disjoint-store check", err)
+			}
 			if after, err := os.ReadFile(filepath.Join(dir, "queue.json")); err != nil || string(after) != string(before) {
 				t.Fatal("startup changed queue state", err)
 			}
