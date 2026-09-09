@@ -16,4 +16,4 @@ func (*ownership) started(*exec.Cmd) error { return nil }
 func (*ownership) wait() error             { return nil }
 func (*ownership) stop() error             { return nil }
 func (*ownership) finish() error           { return nil }
-func (*ownership) close()                  {}
+func (*ownership) close() error            { return nil }

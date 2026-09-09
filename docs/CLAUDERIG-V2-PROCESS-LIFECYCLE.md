@@ -5,7 +5,9 @@
 The shared `process.Run` used by retained Git operations must own each external
 command and its trusted helpers before any command code runs. Cancellation and
 normal exit terminate the job and wait for its active-process count to reach
-zero before returning to the caller that owns the staging lease.
+zero and for the owned anchor/command handles to signal exit before returning
+to the caller that owns the staging lease. Cleanup/inspection errors are joined
+with command errors, including failed startup.
 
 Previously, Windows created the command suspended, assigned it to a job, and
 resumed its thread. An abrupt owner death between creation and assignment could
@@ -52,6 +54,7 @@ Windows-only synthetic tests kill the owning process without running defers:
 Tests hold independent process handles before killing the owner, then require
 all handles to signal exit. They repeat each case with a fresh owner and check
 that inherited output pipes close. Other tests cover failed executable startup,
+startup and cleanup errors being reported together,
 argument/environment/directory/stdin/stdout/stderr preservation, command exit
 codes, normal helper exit and cancellation. CI runs the native Windows tests;
 cross-compilation alone cannot validate kernel behavior.

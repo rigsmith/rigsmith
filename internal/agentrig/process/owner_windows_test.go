@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -204,7 +205,9 @@ func TestWindowsAnchorCleanupOnStartFailure(t *testing.T) {
 		owner.close()
 		t.Fatal("missing executable started")
 	}
-	owner.close()
+	if err := owner.close(); err != nil {
+		t.Fatal(err)
+	}
 	if state, err := windows.WaitForSingleObject(h, 0); err != nil || state != windows.WAIT_OBJECT_0 {
 		t.Fatalf("anchor survived start failure: %d %v", state, err)
 	}
@@ -227,5 +230,27 @@ func TestWindowsJobParentPreservesCommandIO(t *testing.T) {
 	}
 	if want := dir + "|environment value|" + arg + "|stdin contents"; stdout.String() != want || stderr.String() != "stderr" {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+// A failed native cleanup must not be hidden behind an ordinary start error.
+func TestWindowsStartFailureSurfacesCleanupError(t *testing.T) {
+	cmd := exec.Command(filepath.Join(t.TempDir(), "missing.exe"))
+	owner, err := prepare(cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Closing the job initiates kill-on-close, then replacing its handle with
+	// zero deterministically makes the cleanup API reject inspection/termination.
+	// Do not retain a stale handle value that another goroutine could reuse.
+	if err := windows.CloseHandle(owner.job); err != nil {
+		_ = owner.close()
+		t.Fatal(err)
+	}
+	owner.job = 0
+	err = runOwned(t.Context(), cmd, owner)
+	var startErr *os.PathError
+	if !errors.As(err, &startErr) || !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
+		t.Fatalf("start and cleanup errors not both surfaced: %v", err)
 	}
 }

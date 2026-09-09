@@ -123,22 +123,37 @@ func (o *ownership) finish() error {
 			return err
 		}
 		if accounting.Active == 0 {
+			// Job accounting can reach zero before process handles signal. Wait
+			// for our direct handles too, including a never-resumed anchor.
+			for _, handle := range []windows.Handle{o.anchor, o.root} {
+				if handle == 0 {
+					continue
+				}
+				state, err := windows.WaitForSingleObject(handle, windows.INFINITE)
+				if err != nil {
+					return err
+				}
+				if state != windows.WAIT_OBJECT_0 {
+					return errors.New("command process exit not confirmed")
+				}
+			}
 			o.finished = true
 			return nil
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 }
-func (o *ownership) close() {
+func (o *ownership) close() error {
 	// Also retire the suspended anchor when exec.Cmd.Start fails.
-	_ = o.finish()
+	err := o.finish()
 	if o.anchor != 0 {
-		windows.CloseHandle(o.anchor)
+		err = errors.Join(err, windows.CloseHandle(o.anchor))
 	}
 	if o.root != 0 {
-		windows.CloseHandle(o.root)
+		err = errors.Join(err, windows.CloseHandle(o.root))
 	}
 	if o.job != 0 {
-		windows.CloseHandle(o.job)
+		err = errors.Join(err, windows.CloseHandle(o.job))
 	}
+	return err
 }

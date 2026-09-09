@@ -104,7 +104,8 @@ kill-on-close job. Commands inherit that job at creation through the anchor
 parent, so there is no suspended-create/assign gap. Startup errors fail closed.
 See the [process lifecycle contract](CLAUDERIG-V2-PROCESS-LIFECYCLE.md).
 Cancellation and normal completion terminate the job and wait for its active
-process count to reach zero before releasing handles. This follows the documented
+process count to reach zero and its owned process handles to signal exit before
+releasing handles. Startup and cleanup errors are reported together. This follows the documented
 [job-object membership and lifetime rules](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 A job handle stays owned through cleanup, including helpers holding output pipes.
 

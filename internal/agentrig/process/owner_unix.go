@@ -69,4 +69,4 @@ func (o *ownership) finish() error {
 	o.finished = true
 	return err
 }
-func (o *ownership) close() {}
+func (o *ownership) close() error { return nil }
