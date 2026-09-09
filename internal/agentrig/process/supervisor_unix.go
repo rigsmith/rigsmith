@@ -114,7 +114,11 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	fence, err := storelock.BeginFence(leaseContext)
+	evidence, err := newEvidence()
+	if err != nil {
+		return err
+	}
+	fence, err := storelock.BeginRecoverableFence(leaseContext, evidence.bytes())
 	if err != nil {
 		return err
 	}
@@ -240,8 +244,14 @@ func ServeSupervisor() int {
 	// Path was already resolved by the worker; never search the supervisor's PATH.
 	cmd := &exec.Cmd{Path: string(request.Path), Args: commandStrings(request.Args), Env: commandStrings(request.Env), Dir: string(request.Dir),
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
+	owner, err := prepareRecoverable(cmd, fence)
+	if err != nil {
+		// A failed evidence transition can leave a damaged record. Never
+		// clear it based on the old phase; no actual command was launched.
+		return finish(125, err)
+	}
 	cleanupVerified = false
-	err, cleanupVerified = runDirectChecked(ctx, cmd)
+	err, cleanupVerified = runOwnedChecked(ctx, cmd, owner)
 	if err == nil {
 		return finish(0, nil)
 	}

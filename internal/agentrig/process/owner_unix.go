@@ -13,6 +13,8 @@ import (
 type ownership struct {
 	mu       sync.Mutex
 	pid      int
+	group    int
+	anchor   *exec.Cmd
 	finished bool
 }
 
@@ -31,7 +33,7 @@ func (o *ownership) stop() error {
 	if o.finished {
 		return nil
 	}
-	return killGroup(o.pid)
+	return killGroup(o.groupID())
 }
 func killGroup(pid int) error {
 	err := syscall.Kill(-pid, syscall.SIGKILL)
@@ -80,10 +82,10 @@ func (o *ownership) finish() error {
 	defer o.mu.Unlock()
 	// waitExited leaves the leader waitable, pinning its PID while signalling the
 	// group. Disable further signals before cmd.Wait reaps it and permits PID reuse.
-	err := killGroup(o.pid)
+	err := killGroup(o.groupID())
 	if err == nil {
 		for {
-			alive, checkErr := groupAlive(o.pid)
+			alive, checkErr := groupAlive(o.groupID())
 			if checkErr != nil {
 				err = checkErr
 				break
@@ -97,4 +99,25 @@ func (o *ownership) finish() error {
 	o.finished = true
 	return err
 }
-func (o *ownership) close() error { return nil }
+func (o *ownership) groupID() int {
+	if o.group != 0 {
+		return o.group
+	}
+	return o.pid
+}
+func (o *ownership) close() error {
+	if o.anchor == nil {
+		return nil
+	}
+	var err error
+	if !o.finished {
+		err = o.finish()
+	}
+	// Reap the harmless anchor only after group cleanup, releasing the PGID.
+	// It may have exited normally or been killed during cancellation.
+	waitErr := o.anchor.Wait()
+	if _, exited := waitErr.(*exec.ExitError); waitErr != nil && !exited {
+		err = errors.Join(err, waitErr)
+	}
+	return err
+}

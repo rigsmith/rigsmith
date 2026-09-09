@@ -129,9 +129,9 @@ separate owned Git phases.
 ## Persistent restart fence (6b.6b.2c)
 
 Selecting supervision also records command intent in the existing sibling store
-lock file before creating any process. The record contains a fixed version marker
+lock file before creating any process. The initial record contains a fixed version marker
 and random command identity, never arguments, environment, paths, credentials, or
-transcript bytes. It is written and flushed in place: replacing or deleting the
+transcript bytes. The Unix recovery extension below adds bounded ownership evidence. It is written and flushed in place: replacing or deleting the
 lock inode would invalidate coordination with waiting writers. This protects
 against process crashes on stable local filesystems; it is not a new power-loss
 or distributed-lock guarantee.
@@ -173,8 +173,8 @@ even if truncation already took effect. That differs from uncertain process clea
 `Clear` is called only after all writers are verified stopped, so an empty or
 retained record is safe after such a flush failure. No timer, worker restart, ordinary retry, or
 operator bypass clears an unconfirmed record. This deliberately prefers a blocked
-store to overlapping writers. **Proof-based recovery (6b.6b.2d.3) is still
-required before production queued hooks:** this milestone does not expose an
+store to overlapping writers. **The Unix recovery extension below adds explicit proof-based recovery; Windows
+recovery remains required before production queued hooks.** This milestone does not expose an
 unfence command, advise deleting lock files, or claim automatic recovery after
 supervisor/Windows owner death. Queue data and retained artifacts remain intact.
 
@@ -269,8 +269,8 @@ history maintenance. Unix supervisor-loss tests before and
 after capture verify a persistent fence and unchanged queue attempts, including
 no publication or failure-journal write after supervision is lost. Existing process
 ownership tests cover helper lifetime and Windows job cleanup. Pinned ordinary v1
-compatibility remains a separate required check. Fenced-store recovery is next;
-this milestone does not add a timer-based reset or expose queued hooks.
+compatibility remains a separate required check. The Unix recovery extension follows below;
+there is no timer-based reset or exposed queued hook.
 
 ### Canonical review clarifications
 
@@ -292,3 +292,77 @@ before canonical runner binding, Git execution, or capture. Acquisition can
 create the requested store's sibling lock file and parent while resolving that
 identity; this is existing lock behavior, not permission to mutate the store.
 Lock files must not be removed to undo a rejected acquisition.
+
+## Unix fenced-store recovery (6b.6b.2d.3a)
+
+`process.RecoverStore` is an internal Linux/macOS entry point. It opens the
+existing sibling lock without creating directories or a new inode, acquires
+exclusive OS ownership, validates the entire fence, obtains positive process
+ownership evidence, rechecks cancellation and the exact record, then clears and
+flushes it in place. A clean store is an idempotent no-op. A held lock, failed
+proof, cancellation, damaged/unknown record, or changed command identity never
+authorizes clearing. It grants no normal staging lease and performs no Git,
+capture, restore, journal, queue acknowledgement, or artifact cleanup. Ordinary
+acquisition still refuses every nonempty fence; recovery is never an implicit
+retry or worker-startup side effect.
+
+Explicitly supervised Unix commands now write a v2 fixed-size record with a
+random command token, bounded platform evidence and SHA-256 checksum. Evidence
+contains the platform, hashed host/boot/process-namespace identities, and the
+command's process-group ID. It contains no command arguments, environment,
+source paths, credentials, or transcript bytes. The checksum detects torn phase
+updates; it is not protection against a malicious local process. Existing v1
+records lack recovery evidence and remain fenced, even after a reboot. They are
+not guessed, upgraded, reset or deleted.
+
+Before supervisor startup, the group is zero: no Git command has been authorized.
+The inherited lease prevents recovery while the supervisor can still launch.
+Inside the supervisor, `/usr/bin/true` starts a harmless group leader with an
+empty environment and no inherited control descriptors. Its unreaped process
+reserves the group ID. The supervisor writes and flushes that identity before
+starting Git in the same group. Failure to create the anchor or seal evidence
+prevents command startup. Cancellation and normal completion drain that group,
+wait for Git, reap the anchor, and clear the fence only on verified cleanup.
+This adds one small process and a durable evidence transition per supervised Git
+command; ordinary synchronous commands retain their existing execution path.
+Linux/macOS supervision now requires the standard `/usr/bin/true` utility and
+readable native ownership identities; missing dependencies fail closed.
+
+Recovery in the same boot requires the same host and process namespace. With no
+authorized group it can clear once exclusive ownership is obtained. With a sealed
+group, the kernel must report that the entire group is absent: `kill(-pgid, 0)`
+returning `ESRCH`. The signal is zero: recovery never terminates a process. An
+existing or permission-denied group remains blocked. Zombie groups and recycled
+IDs can conservatively delay recovery; a missing individual PID is insufficient.
+Using the kernel group lookup avoids a userspace process-enumeration race with
+helpers forking during inspection.
+
+Linux binds evidence to `/etc/machine-id`, the kernel boot UUID and the PID
+namespace inode; it verifies that procfs `self` matches the caller's PID. macOS
+uses `gethostuuid` and `kern.bootsessionuuid`. Identifiers are validated and hashed
+before persistence. A different native boot ID on the same host proves the old
+boot's processes cannot survive. A different host, changed namespace in the same
+boot, or unreadable identity is refused. These are local-store guarantees: shared
+network stores, cloned machine/VM identities, manually edited fences, and moving
+live stores between hosts/namespaces are outside the coordination contract.
+
+After recovery, the caller still performs the existing merge repair and secret
+checks, then fresh remote confirmation before completing queued work. Tests cover
+an independently killed supervisor with a surviving writer: recovery refuses
+while that writer can still change files and succeeds after the fixture stops
+the group. Service tests recover supervisor loss both before and after capture,
+verify unchanged journal/queue state, and then complete a fresh supervised sync
+and acknowledge only confirmed coverage. Other tests cover scoped evidence,
+simulated boot changes, malformed records, stale completions, cancellation,
+exclusive ownership and preserving retained bytes. Native CI supplies Linux and
+macOS execution; simulated boot tests do not reboot the host.
+
+Windows keeps its existing v1 fence and native job cleanup. Recovery remains
+refused pending 6b.6b.2d.3b: neither losing the worker lock nor failing to open a
+job by name is used as proof that asynchronous child termination completed. The
+same shared recovery transaction can be reused when Windows has adequate durable
+evidence. No production command, hook, or automatic reset is added here.
+
+Platform references: [Linux signal group semantics](https://man7.org/linux/man-pages/man2/kill.2.html),
+[Apple syscall definitions](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/syscalls.master),
+and [Windows job lifetime](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
