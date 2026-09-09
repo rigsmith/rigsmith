@@ -299,12 +299,19 @@ Lock files must not be removed to undo a rejected acquisition.
 existing sibling lock without creating directories or a new inode, acquires
 exclusive OS ownership, validates the entire fence, obtains positive process
 ownership evidence, rechecks cancellation and the exact record, then clears and
-flushes it in place. A clean store is an idempotent no-op. A held lock, failed
+flushes it in place. An existing empty lock is an idempotent no-op; a missing lock
+or parent returns a filesystem error and is never recreated by recovery. A held lock, failed
 proof, cancellation, damaged/unknown record, or changed command identity never
 authorizes clearing. It grants no normal staging lease and performs no Git,
 capture, restore, journal, queue acknowledgement, or artifact cleanup. Ordinary
 acquisition still refuses every nonempty fence; recovery is never an implicit
 retry or worker-startup side effect.
+
+Recovery rejects a symlink at the lock pathname, compares the opened file with
+the expected inode, and rechecks the pathname before clearing. Observed inode
+replacement leaves both records intact. These checks catch accidental path
+substitution; they do not defend against a malicious local actor rewriting paths
+between checks or editing a fence directly.
 
 Explicitly supervised Unix commands now write a v2 fixed-size record with a
 random command token, bounded platform evidence and SHA-256 checksum. Evidence

@@ -237,6 +237,13 @@ func RecoverFence(ctx context.Context, dir string, verify func([]byte) error) (b
 	if err != nil {
 		return false, err
 	}
+	expected, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	if !expected.Mode().IsRegular() {
+		return false, fmt.Errorf("%w: recovery lock is not a regular file", ErrFenced)
+	}
 	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return false, err
@@ -246,13 +253,21 @@ func RecoverFence(ctx context.Context, dir string, verify func([]byte) error) (b
 	if err != nil {
 		return false, err
 	}
-	if !info.Mode().IsRegular() {
-		return false, errors.New("recovery lock is not a regular file")
+	if !info.Mode().IsRegular() || !os.SameFile(expected, info) {
+		return false, fmt.Errorf("%w: recovery lock identity changed", ErrFenced)
 	}
 	if got, err := tryLock(file); err != nil {
 		return false, err
 	} else if !got {
 		return false, ErrBusy
+	}
+	return recoverLockedFence(ctx, file, verify)
+}
+
+// recoverLockedFence requires exclusive ownership of file for the entire call.
+func recoverLockedFence(ctx context.Context, file *os.File, verify func([]byte) error) (bool, error) {
+	if err := checkRecoveryPath(file); err != nil {
+		return false, err
 	}
 	if err := checkFence(file); err == nil {
 		return false, nil
@@ -273,8 +288,28 @@ func RecoverFence(ctx context.Context, dir string, verify func([]byte) error) (b
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if err := checkRecoveryPath(file); err != nil {
+		return false, err
+	}
 	if err := (&Fence{file: file, token: token}).Clear(); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// Reject accidental links and observed lock replacement. As with acquisition,
+// coordination assumes local participants do not maliciously rewrite lock paths.
+func checkRecoveryPath(file *os.File) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	named, err := os.Lstat(file.Name())
+	if err != nil {
+		return err
+	}
+	if !named.Mode().IsRegular() || !os.SameFile(opened, named) {
+		return fmt.Errorf("%w: recovery lock identity changed", ErrFenced)
+	}
+	return nil
 }
