@@ -15,7 +15,8 @@ type PublishRequest struct {
 	Plan               Plan
 	AllowMergeTool     bool
 	// RecordCommit requests the exact snapshot commit before reconciliation or
-	// history maintenance. Ordinary synchronous callers need no extra HEAD probe.
+	// history maintenance, rereading tracked bytes instead of trusting stat caches.
+	// Ordinary synchronous callers need neither this refresh nor a HEAD probe.
 	RecordCommit bool
 }
 
@@ -49,6 +50,11 @@ func (w Workflow) Publish(ctx context.Context, req PublishRequest) (result Publi
 	}
 	if err := w.Policy.Audit(req.StagingDir); err != nil {
 		return result, err
+	}
+	if req.RecordCommit {
+		if err := repo.StageAllFresh(ctx); err != nil {
+			return result, err
+		}
 	}
 	changed, err := repo.Commit(ctx, req.Plan.SnapshotMessage)
 	if err != nil {

@@ -93,7 +93,9 @@ type Report struct {
 // Options configure a sync.
 type Options struct {
 	// EvidencePaths opts selected sources into fresh reads even when size/mtime
-	// match staging. Retention, size limits and changed-file throttling still apply.
+	// match staging. Keys use the resolved root plus the relative entry path;
+	// individual file aliases keep separate evidence. Retention, size limits and
+	// changed-file throttling still apply.
 	EvidencePaths map[string]bool
 	// ChunkTranscripts uses versioned staging chunks for large transcripts.
 	ChunkTranscripts bool
@@ -251,6 +253,12 @@ func Sync(opts Options) (*Report, error) {
 			cliLinks = links
 			cliSessionIDs = sessionIDsFrom(files)
 		}
+		evidenceRoot := loc
+		if len(opts.EvidencePaths) > 0 {
+			if resolved, err := filepath.EvalSymlinks(loc); err == nil {
+				evidenceRoot = resolved
+			}
+		}
 		stageRoot := filepath.Join(opts.StagingDir, r.ID)
 
 		for _, rel := range files {
@@ -265,12 +273,9 @@ func Sync(opts Options) (*Report, error) {
 				rr.SkippedFiles++
 				continue
 			}
-			evidencePath := srcPath
-			if len(opts.EvidencePaths) > 0 {
-				if resolved, err := filepath.EvalSymlinks(srcPath); err == nil {
-					evidencePath = resolved
-				}
-			}
+			// Resolve only the root: two file aliases may stage different snapshots
+			// due to throttling and must never borrow one another's fresh evidence.
+			evidencePath := filepath.Join(evidenceRoot, filepath.FromSlash(rel))
 			tracked := opts.EvidencePaths[evidencePath]
 			noteSnapshot := func() {
 				if !tracked {

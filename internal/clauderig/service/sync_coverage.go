@@ -247,7 +247,7 @@ func (c *manualCoverage) sessionPaths(event queue.Event, paths []string) []strin
 			continue
 		}
 		transcripts = append(transcripts, path)
-		if filepath.Base(path) == event.Request.SessionID+".jsonl" {
+		if strings.HasPrefix(path, "projects/") && strings.Count(path, "/") == 2 && filepath.Base(path) == event.Request.SessionID+".jsonl" {
 			if parent != "" {
 				return nil
 			}
@@ -263,12 +263,19 @@ func (c *manualCoverage) sessionPaths(event queue.Event, paths []string) []strin
 		if err != nil {
 			return nil
 		}
-		rel, err := filepath.Rel(c.cliRoot, abs)
-		rel = filepath.ToSlash(rel)
-		if err != nil || !slices.Contains(transcripts, rel) {
+		matched := false
+		for _, rel := range transcripts {
+			target, err := canonicalCapturePath(filepath.Join(c.cliRoot, filepath.FromSlash(rel)))
+			if err == nil && target == abs {
+				// Keep the allowlisted entry, including aliases to external files,
+				// while matching flush paths as the capture engine does.
+				selected = append(selected, rel)
+				matched = true
+			}
+		}
+		if !matched {
 			return nil
 		}
-		selected = append(selected, rel)
 	}
 	if event.Request.Flush.Mode == queue.All {
 		return transcripts

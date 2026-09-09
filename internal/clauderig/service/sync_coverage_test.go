@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -124,6 +125,10 @@ func TestSyncWithCoverageReadsSameMetadataBytesFresh(t *testing.T) {
 	if _, err := svc.Sync(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
+	// Model Windows' reduced stat cache on every platform. Fresh capture must
+	// also force Git to read bytes when size/mtime match its cached index entry.
+	git(t, req.StagingDir, "config", "core.trustctime", "false")
+	git(t, req.StagingDir, "config", "core.checkStat", "minimal")
 	src := filepath.Join(req.Machine.Home, ".claude/projects/-workspace-acme/s.jsonl")
 	info, err := os.Stat(src)
 	if err != nil {
@@ -461,4 +466,100 @@ func TestSyncWithCoverageConfirmsSnapshotBeforeReconciliation(t *testing.T) {
 	}
 	git(t, req.StagingDir, "merge-base", "--is-ancestor", result.Sync.Publication.SnapshotCommit, head)
 	pendingCoverage(t, q, 0)
+}
+
+func TestSyncWithCoverageRequiresNativeParentShape(t *testing.T) {
+	for _, parentPresent := range []bool{false, true} {
+		t.Run(fmt.Sprint(parentPresent), func(t *testing.T) {
+			req, q, r, svc := coverageFixture(t)
+			if _, err := svc.Sync(t.Context(), req); err != nil {
+				t.Fatal(err)
+			}
+			// Keep the permanent ledger row while adding a nested name collision.
+			if !parentPresent {
+				if err := os.Remove(filepath.Join(req.Machine.Home, ".claude/projects/-workspace-acme/s.jsonl")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			put(t, req.Machine.Home, ".claude/projects/-workspace-acme/other/subagents/s.jsonl", "{\"type\":\"progress\"}\n")
+			enqueueCoverage(t, q, r)
+			result, err := svc.SyncWithCoverage(t.Context(), req, q)
+			want := 0
+			if parentPresent {
+				want = 1
+			}
+			if err != nil || len(result.Acknowledged) != want {
+				t.Fatalf("parent=%v: %+v %v", parentPresent, result, err)
+			}
+			pendingCoverage(t, q, 1-want)
+		})
+	}
+}
+
+func TestSyncWithCoverageSymlinkedTranscript(t *testing.T) {
+	for _, mode := range []string{queue.Normal, queue.Selected} {
+		t.Run(string(mode), func(t *testing.T) {
+			req, q, r, svc := coverageFixture(t)
+			src := filepath.Join(req.Machine.Home, ".claude/projects/-workspace-acme/s.jsonl")
+			target := filepath.Join(t.TempDir(), "source.jsonl")
+			if err := os.Rename(src, target); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, src); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			r.Flush.Mode = mode
+			if mode == queue.Selected {
+				r.Flush.Paths = []string{src}
+			}
+			enqueueCoverage(t, q, r)
+			result, err := svc.SyncWithCoverage(t.Context(), req, q)
+			if err != nil || len(result.Acknowledged) != 1 {
+				t.Fatalf("symlinked transcript: %+v %v", result, err)
+			}
+			pendingCoverage(t, q, 0)
+		})
+	}
+}
+
+func TestSyncWithCoverageDoesNotShareEvidenceBetweenFileAliases(t *testing.T) {
+	req, _, _, svc := coverageFixture(t)
+	native := false
+	req.Config.ChunkTranscripts = &native
+	req.Config.Retention.LargeFileBytes = 1024
+	parent := filepath.Join(req.Machine.Home, ".claude/projects/-workspace-acme/s.jsonl")
+	body, err := os.ReadFile(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = append(body, []byte(strings.Repeat("{\"type\":\"progress\"}\n", 100))...)
+	if err := os.WriteFile(parent, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	const aliasRel = "projects/-workspace-acme/s/subagents/agent-a.jsonl"
+	alias := filepath.Join(req.Machine.Home, ".claude", filepath.FromSlash(aliasRel))
+	if err := os.MkdirAll(filepath.Dir(alias), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(parent, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := svc.Sync(t.Context(), req); err != nil {
+		t.Fatal(err)
+	}
+	// Only the alias has a stale, slightly shorter staged snapshot. Its large
+	// source is deferred while the parent is freshly read from the same target.
+	put(t, req.StagingDir, "cli/"+aliasRel, string(body[:len(body)-len("{\"type\":\"progress\"}\n")]))
+	q, r := coverageQueue(t, req, filepath.Join(t.TempDir(), "queue"))
+	enqueueCoverage(t, q, r)
+	result, err := svc.SyncWithCoverage(t.Context(), req, q)
+	if err != nil || len(result.Acknowledged) != 0 || result.Sync.Capture.Roots[0].Deferred != 1 {
+		t.Fatalf("alias borrowed evidence: %+v %v", result, err)
+	}
+	pendingCoverage(t, q, 1)
+	req.Flush.Mode = service.FlushAll
+	result, err = svc.SyncWithCoverage(t.Context(), req, q)
+	if err != nil || len(result.Acknowledged) != 1 {
+		t.Fatalf("alias flush: %+v %v", result, err)
+	}
 }

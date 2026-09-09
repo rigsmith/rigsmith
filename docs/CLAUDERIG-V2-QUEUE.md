@@ -421,12 +421,16 @@ excluded from serialized reports and journals.
 
 After capture and pruning, a second group walk detects newly appearing members.
 Every required member must have fresh capture evidence and a readable retained
-snapshot. The session ledger must exist and match a known account. The service
+snapshot. The session ledger must exist and match the account when provenance
+has a known account UUID. A successful identity read with no UUID supports
+explicit unknown provenance; failed or invalid reads cannot acknowledge it. The service
 hashes logical transcript bytes, validating chunk indexes and parts, and keeps
 only completely covered batches. Deferred, skipped, missing, pruned, oversized
 or partially covered groups remain pending with their retry budget unchanged.
 Chunking and redaction are verified in their resulting backup representation.
 
+Coverage publication refreshes tracked Git contents even when the index stat
+cache matches; ordinary sync retains its existing incremental staging.
 Publication records the original snapshot commit before reconciliation or
 history maintenance. `commitartifact.ConfirmSnapshot` freshly fetches the bound
 remote using existing system Git/`gh` configuration into a temporary private
