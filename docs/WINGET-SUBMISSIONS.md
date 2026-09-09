@@ -92,7 +92,7 @@ CLIs' does. `winget-submit.sh` takes both from the environment instead:
 
 ```sh
 WINGET_TAG=ui/v0.2.0 \
-WINGET_PACKAGES=RigSmith.ClaudeRigUi:clauderigUi \
+WINGET_PACKAGES=RigSmith.ClaudeRigUi:claudeRigUi \
   sh scripts/winget-submit.sh 0.2.0 --submit
 ```
 
@@ -122,8 +122,8 @@ BASE=https://github.com/rigsmith/rigsmith/releases/download/ui/v$V
 
 komac new RigSmith.ClaudeRigUi \
   --version "$V" \
-  --urls "$BASE/clauderigUi_${V}_windows_amd64.zip" \
-         "$BASE/clauderigUi_${V}_windows_arm64.zip" \
+  --urls "$BASE/claudeRigUi_${V}_windows_amd64.zip" \
+         "$BASE/claudeRigUi_${V}_windows_arm64.zip" \
   --package-name "claudeRig UI" \
   --publisher RigSmith \
   --moniker clauderig-ui \
@@ -152,7 +152,7 @@ come from its analysis of the zip and from the prompts. In
 `dist/winget/*.installer.yaml`, confirm:
 
 - `NestedInstallerType: portable`, never `exe`;
-- every nested file has a `PortableCommandAlias` — `clauderigUi`;
+- every nested file has a `PortableCommandAlias` — `claudeRigUi`;
 - `Commands` is present, or `winget search` and `winget install --command` have
   nothing to match.
 
@@ -176,7 +176,7 @@ rather than shouting the acronym. Decided rather than defaulted, because a
 published winget package cannot be renamed: it is a new package plus a removal
 request for the old one. `release-ui.yml` passes this exact string.
 
-The window's `.exe` does carry version resources — `build/winres/clauderigUi.json`,
+The window's `.exe` does carry version resources — `build/winres/claudeRigUi.json`,
 embedded by `scripts/winres.sh ui` — so komac reads a real FileDescription and
 OriginalFilename for it rather than guessing from an empty PE. It shipped
 without any for its whole life, because `build/winres/` had an entry per CLI and

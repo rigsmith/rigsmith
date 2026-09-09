@@ -65,5 +65,5 @@ if [ "$target" = ui ] || [ "$target" = all ]; then
   # Windows shows for the same file. UI_VERSION when the release sets it, the
   # module's own declaration otherwise.
   version="${UI_VERSION:-$(sh "$ROOT/scripts/ui-version.sh" "$ROOT/ui/go.mod")}"
-  make_syso clauderigUi "$ROOT/ui/rsrc" "$version"
+  make_syso claudeRigUi "$ROOT/ui/rsrc" "$version"
 fi

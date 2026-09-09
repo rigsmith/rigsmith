@@ -246,7 +246,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
           WINGET_TAG: ${{ github.ref_name }}
-          WINGET_PACKAGES: RigSmith.ClaudeRigUi:clauderigUi
+          WINGET_PACKAGES: RigSmith.ClaudeRigUi:claudeRigUi
         run: |
           # The secrets context is not available in a step `if`, so gate here.
           if [ -z "${GITHUB_TOKEN:-}" ]; then

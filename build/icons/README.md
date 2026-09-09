@@ -17,13 +17,13 @@ Requires `rsvg-convert` (`brew install librsvg`):
 
 ```sh
 for pair in rig:tile-rig shiprig:tile-shipRig changerig:tile-changeRig \
-            clauderig:tile-claudeRig clauderigUi:tile-claudeRig; do
+            clauderig:tile-claudeRig claudeRigUi:tile-claudeRig; do
   tool=${pair%%:*}; src=${pair##*:}
   rsvg-convert -w 256 -h 256 "design/marks/$src.svg" -o "build/icons/$tool.png"
 done
 ```
 
-`clauderigUi` reuses the claudeRig tile deliberately: it is the claudeRig app,
+`claudeRigUi` reuses the claudeRig tile deliberately: it is the claudeRig app,
 and its macOS bundle is built from the same mark (`design/marks/png/app-claudeRig-512.png`,
 see `scripts/package-ui.sh`). One window, one icon, whichever platform it is on.
 
