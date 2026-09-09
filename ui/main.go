@@ -148,6 +148,7 @@ func main() {
 		// backdrop, which Wails applies afterwards.
 		window.SetBackgroundColour(inkColour)
 		sessionsWindow.SetBackgroundColour(inkColour)
+		noticeWindow.SetBackgroundColour(inkColour)
 
 		if *showWindow {
 			reveal(window)
@@ -608,8 +609,50 @@ func watchDesktop(app *application.App, svc *bridge.Desktop, notice *application
 	var alarm bridge.DesktopAlarm
 	warned := svc.Warn()
 	for {
+		// Scanned FIRST, before any wait. The alarm's first answer is a seed
+		// rather than a launch, so a wait up front would make the seed the
+		// state ten seconds in — and Claude Desktop opened during those ten
+		// seconds would be seeded as "was already running" and never warned
+		// about. Starting the tray and then opening Desktop is an ordinary
+		// morning, not a corner case. Nothing native is touched on this pass:
+		// EmitEvent goes through the app's event bus and IsVisible is nil-safe,
+		// so it is safe before the windows exist.
+		if v, err := svc.Get(ctx); err == nil {
+			// Emitted every pass, not only on a transition: a notice left open
+			// while a second profile window opens should say so rather than
+			// describe the machine as it was when it appeared.
+			notice.EmitEvent(desktopEvent, v)
+
+			// The notice's own "don't warn again" writes the preference; the
+			// tray tick is the only place that shows it. Re-reading here is
+			// what stops the menu claiming a warning that was turned off from
+			// the window.
+			if w := svc.Warn(); w != warned {
+				warned = w
+				syncWarn(w)
+			}
+
+			switch alarm.Step(v) {
+			case bridge.AlarmRaise:
+				// Stepped either way, warned or not: the state has to keep
+				// tracking the app so turning the warning back on does not
+				// immediately fire over a window that has been open the whole
+				// time.
+				if warned {
+					reveal(notice)
+				}
+			case bridge.AlarmClear:
+				// The app it is warning about has gone, so the warning is now
+				// false. Hiding it is the only honest thing to do with a notice
+				// whose subject no longer exists.
+				notice.Hide()
+			}
+		}
+
 		// Chosen after each pass rather than by a fixed ticker, so dismissing
-		// the notice drops the rate from the next tick.
+		// the notice drops the rate from the next tick. At the end of the loop
+		// so that a failed pass waits with the rest of them rather than
+		// spinning.
 		wait := desktopInterval
 		if notice.IsVisible() {
 			wait = desktopOpen
@@ -620,37 +663,6 @@ func watchDesktop(app *application.App, svc *bridge.Desktop, notice *application
 			timer.Stop()
 			return
 		case <-timer.C:
-		}
-		v, err := svc.Get(ctx)
-		if err != nil {
-			continue
-		}
-		// Emitted every pass, not only on a transition: a notice left open
-		// while a second profile window opens should say so rather than
-		// describe the machine as it was when it appeared.
-		notice.EmitEvent(desktopEvent, v)
-
-		// The notice's own "don't warn again" writes the preference; the tray
-		// tick is the only place that shows it. Re-reading here is what stops
-		// the menu claiming a warning that was turned off from the window.
-		if w := svc.Warn(); w != warned {
-			warned = w
-			syncWarn(w)
-		}
-
-		switch alarm.Step(v) {
-		case bridge.AlarmRaise:
-			// Stepped either way, warned or not: the state has to keep tracking
-			// the app so turning the warning back on does not immediately fire
-			// over a window that has been open the whole time.
-			if warned {
-				reveal(notice)
-			}
-		case bridge.AlarmClear:
-			// The app it is warning about has gone, so the warning is now
-			// false. Hiding it is the only honest thing to do with a notice
-			// whose subject no longer exists.
-			notice.Hide()
 		}
 	}
 }
