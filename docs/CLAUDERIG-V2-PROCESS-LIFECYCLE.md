@@ -205,16 +205,19 @@ Selection alone neither acquires a lease nor enables supervision.
 
 Buffered commands in `core/gitrepo` and Claude backup attribute preparation use
 this boundary, including finite stdin, temporary-index environment overrides,
-ignore/exit probes, and binary archive output. The exit-code probe accepts only a
-direct `*exec.ExitError` as an ordinary Git status under selection; a joined or
-wrapped runner failure stays an error. Streaming `ShowPrefix` and terminal-attached
+ignore/exit probes, and binary archive output. The exit-code probe and the semantic answers in `DeleteRef`/`MergeBase` accept
+only a direct `*exec.ExitError` as an ordinary Git status under selection; a joined
+or wrapped runner failure stays an error even after Git diagnostics are added. Streaming `ShowPrefix` and terminal-attached
 merge tools reject selection before creating a process: their independent
 Start/Kill/Wait and interactive stdin contracts are not supported by this runner.
 Ordinary previews and interactive merge tools keep their existing behavior.
 
 This is command plumbing, not complete canonical workflow supervision. Legacy
 boolean/fallback helpers can still normalize errors, and workflows also modify
-files in process. All eight canonical Claude service guards remain in place.
+files in process. In particular, `IsIgnored` cannot distinguish a non-ignored path
+from a failed probe through its boolean result; callers such as
+`ensureLocalIgnored` need an error-bearing probe before accepting a selected
+runner for mutation. That adaptation is deferred to 6b.6b.2d.2. All eight canonical Claude service guards remain in place.
 Before removing them, the adapter must bind the active staging lease, stop the
 workflow on uncertain command cleanup (including through fallback helpers), and
 verify that no later in-process mutation or publication can follow that failure.

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -128,5 +129,36 @@ func TestCommandRunnerRejectsUnsupportedExecution(t *testing.T) {
 	}
 	if err := runGitInteractive(ctx, r.Dir, "--version"); err == nil {
 		t.Fatal("interactive Git bypassed selected runner")
+	}
+}
+
+func TestCommandRunnerSemanticProbesPreserveCleanupFailure(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "left", "before")
+	write(t, dir, "right", "after")
+	cmd := exec.Command("git", "diff", "--no-index", "--quiet", "left", "right")
+	cmd.Dir = dir
+	exit, ok := cmd.Run().(*exec.ExitError)
+	if !ok || exit.ExitCode() != 1 {
+		t.Fatal("fixture did not produce Git exit 1")
+	}
+	cleanup := errors.New("cleanup unverified")
+	for _, failure := range []error{exit, errors.Join(exit, cleanup), fmt.Errorf("cleanup uncertain: %w", exit)} {
+		ctx := commandrun.WithRunner(t.Context(), func(context.Context, *exec.Cmd) error { return failure })
+		r := &Repo{Dir: dir}
+		deleteErr := r.DeleteRef(ctx, "refs/heads/missing")
+		ancestor, mergeErr := r.MergeBase(ctx, "left", "right")
+		if ancestor != "" {
+			t.Fatalf("unexpected ancestor: %q", ancestor)
+		}
+		for _, err := range []error{deleteErr, mergeErr} {
+			if failure == exit {
+				if err != nil {
+					t.Fatalf("ordinary exit 1 lost: %v", err)
+				}
+			} else if !errors.Is(err, failure) {
+				t.Fatalf("cleanup failure became benign answer: %v", err)
+			}
+		}
 	}
 }

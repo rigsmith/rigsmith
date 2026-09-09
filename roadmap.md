@@ -44,7 +44,7 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Unix parent-death supervision (6b.6b.2b) | Merged: [#369](https://github.com/rigsmith/rigsmith/pull/369). Explicit supervisor entry point, inherited staging lease, queued phase/retry integration and forced worker-death tests at startup/running boundaries. |
 | OS restart fencing and lifecycle validation (6b.6b.2c) | Merged: [#370](https://github.com/rigsmith/rigsmith/pull/370). Persist command intent before process creation; clear only after verified cleanup. Block replacement writers after supervisor/owner failure, including asynchronous Windows termination. |
 | Canonical Git command-runner plumbing (6b.6b.2d.1) | In review (current PR). Shared runner selection for buffered Git and backup attribute commands, with supervised byte-preservation tests. Streaming/interactive calls reject selection; service guards remain. |
-| Canonical workflow supervision and fenced-store recovery (6b.6b.2d.2) | Next. Bind staging leases, propagate command/cleanup failures through canonical workflows, and prove old writers stopped before recovery. Both are required before queued hooks. |
+| Canonical workflow supervision and fenced-store recovery (6b.6b.2d.2) | Next. Bind staging leases, propagate command/cleanup failures through canonical workflows and boolean probes such as `IsIgnored`, and prove old writers stopped before recovery. Both are required before queued hooks. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |

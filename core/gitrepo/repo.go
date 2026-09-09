@@ -553,7 +553,15 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := commandrun.Run(ctx, cmd); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		diagnostic := fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		if commandrun.Configured(ctx) {
+			code := -1
+			if exit, ok := err.(*exec.ExitError); ok {
+				code = exit.ExitCode()
+			}
+			return "", &selectedGitError{diagnostic, code}
+		}
+		return "", diagnostic
 	}
 	return out.String(), nil
 }
@@ -589,12 +597,25 @@ func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
 // git tells "no" from "could not answer" by exit status alone: 1 for a
 // question with a negative answer, 128 for one it could not process.
 func exitStatus(err error) int {
+	if selected, ok := err.(*selectedGitError); ok {
+		return selected.exitCode
+	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return exit.ExitCode()
 	}
 	return -1
 }
+
+// Keep the direct runner result's classification before adding Git diagnostics.
+// Unwrapping still preserves errors.Is/As for callers, but semantic probes must
+// never turn a joined/wrapped cleanup failure into an ordinary Git answer.
+type selectedGitError struct {
+	error
+	exitCode int
+}
+
+func (e *selectedGitError) Unwrap() error { return e.error }
 
 // SetRef points ref at sha, creating it if need be.
 func (r *Repo) SetRef(ctx context.Context, ref, sha string) error {

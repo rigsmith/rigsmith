@@ -29,21 +29,28 @@ func TestRunnerOwnsCancellationAndPreservesFailure(t *testing.T) {
 }
 
 func TestInvalidSelectionNeverFallsBack(t *testing.T) {
-	for _, canceled := range []bool{false, true} {
-		ctx, cancel := context.WithCancel(t.Context())
-		ctx = WithRunner(ctx, nil)
-		if canceled {
-			ctx = WithRunner(ctx, func(context.Context, *exec.Cmd) error {
-				t.Fatal("canceled operation reached runner")
-				return nil
-			})
-			cancel()
-		}
-		cmd := Command(ctx, os.Args[0])
-		err := Run(ctx, cmd)
-		cancel()
-		if err == nil || cmd.Process != nil || !Configured(ctx) {
-			t.Fatalf("invalid selection fell back: process=%v err=%v", cmd.Process, err)
-		}
+	for _, mode := range []string{"nil", "canceled-nil", "canceled-callback"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			ctx = WithRunner(ctx, nil)
+			if mode == "canceled-callback" {
+				ctx = WithRunner(ctx, func(context.Context, *exec.Cmd) error {
+					t.Fatal("canceled operation reached runner")
+					return nil
+				})
+			}
+			if mode != "nil" {
+				cancel()
+			}
+			cmd := Command(ctx, os.Args[0])
+			err := Run(ctx, cmd)
+			if err == nil || cmd.Process != nil || !Configured(ctx) {
+				t.Fatalf("invalid selection fell back: process=%v err=%v", cmd.Process, err)
+			}
+			if mode != "nil" && !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation lost: %v", err)
+			}
+		})
 	}
 }
