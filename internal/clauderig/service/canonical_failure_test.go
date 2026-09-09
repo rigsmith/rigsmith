@@ -120,3 +120,28 @@ func TestCanonicalMaintenanceFailureCannotBecomeSuccess(t *testing.T) {
 		t.Fatalf("maintenance hid failure or kept executing: %+v %v later=%d", result, err, callsAfterFailure)
 	}
 }
+
+func TestCanonicalRepairPreservesInvalidRepository(t *testing.T) {
+	for _, metadata := range []bool{false, true} {
+		stage := t.TempDir()
+		if metadata {
+			if err := os.WriteFile(filepath.Join(stage, ".git"), []byte("invalid metadata\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		ctx := context.WithValue(t.Context(), canonicalRunnerKey{}, true)
+		ctx = commandrun.WithRunner(ctx, func(_ context.Context, cmd *exec.Cmd) error { return cmd.Run() })
+		r := (Service{}).RepairMerge(ctx, stage, false)
+		if metadata {
+			if r.Safe || r.Err == nil {
+				t.Fatalf("invalid repository authorized capture: %+v", r)
+			}
+			data, err := os.ReadFile(filepath.Join(stage, ".git"))
+			if err != nil || string(data) != "invalid metadata\n" {
+				t.Fatalf("changed invalid metadata: %q %v", data, err)
+			}
+		} else if !r.Safe || r.Err != nil {
+			t.Fatalf("uninitialized capture destination rejected: %+v", r)
+		}
+	}
+}

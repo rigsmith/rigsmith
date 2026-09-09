@@ -49,14 +49,22 @@ func Init(ctx context.Context, dir string) (*Repo, error) {
 	if _, err := runGit(ctx, dir, "init", "-b", "main"); err != nil {
 		return nil, err
 	}
-	_, _ = runGit(ctx, dir, "config", "commit.gpgsign", "false")
+	if _, err := runGit(ctx, dir, "config", "commit.gpgsign", "false"); err != nil && commandrun.Configured(ctx) {
+		return nil, err
+	}
 	// Set name and email independently so a partial global config (e.g. email set
 	// but not name) can't cause "Please tell me who you are" on commit.
-	if _, err := runGit(ctx, dir, "config", "user.email"); err != nil {
-		_, _ = runGit(ctx, dir, "config", "user.email", "clauderig@localhost")
-	}
-	if _, err := runGit(ctx, dir, "config", "user.name"); err != nil {
-		_, _ = runGit(ctx, dir, "config", "user.name", "clauderig")
+	for _, identity := range [][2]string{{"user.email", "clauderig@localhost"}, {"user.name", "clauderig"}} {
+		if _, err := runGit(ctx, dir, "config", identity[0]); err != nil {
+			// Exit 1 means the identity is unset. Other selected-runner errors
+			// cannot authorize a fallback configuration write.
+			if commandrun.Configured(ctx) && exitStatus(err) != 1 {
+				return nil, err
+			}
+			if _, err := runGit(ctx, dir, "config", identity[0], identity[1]); err != nil && commandrun.Configured(ctx) {
+				return nil, err
+			}
+		}
 	}
 	if err := commandrun.Check(ctx); err != nil {
 		return nil, err

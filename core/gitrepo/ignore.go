@@ -2,7 +2,6 @@ package gitrepo
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/rigsmith/rigsmith/core/commandrun"
 )
@@ -20,15 +19,12 @@ func (r *Repo) IsIgnored(ctx context.Context, path string) bool {
 
 // CheckIgnored distinguishes a non-ignored path (exit 1) from a failed probe.
 func (r *Repo) CheckIgnored(ctx context.Context, path string) (bool, error) {
-	code, err := gitExitCode(ctx, r.Dir, "check-ignore", "-q", path)
-	if err != nil {
-		return false, err
-	}
-	switch code {
-	case 0:
+	_, err := runGit(ctx, r.Dir, "check-ignore", "-q", path)
+	if err == nil {
 		return true, nil
-	case 1:
+	}
+	if exitStatus(err) == 1 {
 		return false, nil
 	}
-	return false, fmt.Errorf("git check-ignore failed with exit status %d", code)
+	return false, err
 }

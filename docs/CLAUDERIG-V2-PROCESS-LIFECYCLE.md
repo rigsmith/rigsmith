@@ -271,3 +271,24 @@ no publication or failure-journal write after supervision is lost. Existing proc
 ownership tests cover helper lifetime and Windows job cleanup. Pinned ordinary v1
 compatibility remains a separate required check. Fenced-store recovery is next;
 this milestone does not add a timer-based reset or expose queued hooks.
+
+### Canonical review clarifications
+
+Under selected supervision, repository initialization propagates signing and
+identity configuration failures; only an unset identity (Git exit 1) permits a
+fallback write. Merge repair preserves an existing directory without Git
+metadata as a valid first-capture destination, but rejects failed repository
+probes when Git metadata exists or cannot be inspected. Ordinary synchronous
+behavior remains unchanged.
+
+Side-branch history maintenance remains best-effort for ordinary Git failures
+with verified cleanup. Runner or cleanup uncertainty always fails the workflow
+and blocks later commands. A repeated subtree commit reaches the checked Git
+directory probe before temporary-index removal, so an operation's retained
+failure also prevents retry cleanup.
+
+An active lease for a different store is rejected by acquisition's inode check
+before canonical runner binding, Git execution, or capture. Acquisition can
+create the requested store's sibling lock file and parent while resolving that
+identity; this is existing lock behavior, not permission to mutate the store.
+Lock files must not be removed to undo a rejected acquisition.

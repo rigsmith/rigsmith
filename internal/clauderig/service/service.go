@@ -22,11 +22,14 @@ import (
 // Interactive merge tools cannot obey the finite-input supervised runner contract.
 var ErrSupervisedMergeToolUnavailable = errors.New("supervised canonical workflows do not support interactive merge tools")
 
+// ErrCanonicalRunnerRequired rejects a caller-supplied runner at canonical boundaries.
+var ErrCanonicalRunnerRequired = errors.New("canonical service requires its own command runner")
+
 type canonicalRunnerKey struct{}
 
 func requireCanonicalRunner(ctx context.Context, allowMergeTool bool) error {
 	if commandrun.Configured(ctx) && ctx.Value(canonicalRunnerKey{}) != true {
-		return errors.New("canonical service requires its own command runner")
+		return ErrCanonicalRunnerRequired
 	}
 	if process.SupervisionEnabled(ctx) && allowMergeTool {
 		return ErrSupervisedMergeToolUnavailable

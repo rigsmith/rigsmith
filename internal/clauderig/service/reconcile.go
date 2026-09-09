@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -100,6 +101,14 @@ func (s Service) RepairMerge(ctx context.Context, staging string, allowMergeTool
 	}
 	repo, err := gitrepo.Open(ctx, staging)
 	if err != nil {
+		if commandrun.Configured(ctx) {
+			// An existing directory without Git metadata is a valid first
+			// capture destination. Existing or unreadable metadata must not
+			// turn a failed repository probe into permission to overwrite it.
+			if _, metadataErr := os.Lstat(filepath.Join(staging, ".git")); !os.IsNotExist(metadataErr) {
+				return RepairResult{Err: err}
+			}
+		}
 		return RepairResult{Safe: true} // no staging repo yet — nothing to wedge
 	}
 	if !repo.InMerge(ctx) {

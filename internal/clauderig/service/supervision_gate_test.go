@@ -2,9 +2,9 @@ package service_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/commandrun"
@@ -45,7 +45,7 @@ func TestCanonicalGitBoundariesRejectForeignRunner(t *testing.T) {
 	}
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) {
-			if err := run(ctx); err == nil || !strings.Contains(err.Error(), "requires its own command runner") {
+			if err := run(ctx); !errors.Is(err, service.ErrCanonicalRunnerRequired) {
 				t.Fatalf("canonical boundary bypassed supervision: %v", err)
 			}
 			// Acquire would create this parent and its sibling lock, even before Git.
