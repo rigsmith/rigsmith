@@ -528,12 +528,57 @@ publication tree still passes the existing secret audit. Journal rotation that
 removes the common prefix remains blocked for explicit recovery.
 
 The Claude integration fixture initializes a shared Git history before worker
-startup. Unrelated root histories remain unsupported; platform startup must verify
-or establish the initial common ancestry before enabling queued execution.
+startup. Unrelated root histories remain unsupported. The optional startup check below
+verifies initial common ancestry; initialization remains an explicit foreground
+operation before enabling queued execution.
 
 This does not close the parent-death supervision gate. A crashed process releases
 its OS leases, but this alone cannot prove that orphaned external helpers have
-stopped. Platform worker supervision, safe child ownership during startup and
-validated OS restart behavior are milestone 6b.6b. Production worker commands,
+stopped. Milestone 6b.6b.2 still covers platform worker supervision, safe child
+ownership during startup, and validated OS restart behavior. Production worker commands,
 producer stop/drain coordination and rollback wiring remain rollout work; installed
 synchronous commands and hooks keep their existing behavior.
+
+
+## Startup history check (milestone 6b.6b.1)
+
+`RunOptions.CheckStartup` is an optional composition point for a supervisor. It
+runs once per `Queue.Run`, including an empty drain, after acquiring the runner
+lease and before any claim. It receives the queue binding and independent
+operation context. An error stops startup without changing attempts, retry
+schedules, saved phases or receipts. Restart runs the check again. A stop already
+observed before startup skips the check; a stop during the check waits for it to
+finish and prevents the next claim. Context cancellation reaches the check,
+which must finish its child cleanup before returning. Startup errors are returned
+directly with context, not converted into durable batch failure codes.
+
+Claude's `Service.CheckQueueStartup` accepts freshly resolved `QueueInputs` and
+the runner-supplied binding. It verifies the destination/branch and disjoint
+private stores, owns staging, then recomputes the capture binding and reads a
+settled canonical HEAD. It does not read the worker's account or native transcript
+files. Missing/unborn history, an unfinished merge or a binding mismatch
+stops before contacting the destination. The check creates a temporary directory under the commit store for its private
+repository and removes that temporary directory on success and failure.
+
+The shared `commitartifact.CheckStartupHistory` imports the exact canonical
+commit and freshly fetches the destination through the existing Git/`gh`
+transport. Both histories must be complete and have a common ancestor. Either
+side may be ahead, and divergence from a common ancestor is allowed. An absent
+remote branch or unrelated roots returns `ErrSharedHistory`; network failures,
+false returned refs and shallow histories remain errors. It never trusts cached
+remote-tracking refs, creates an initial commit, pushes, or changes canonical
+refs, index or working files. Initialize or repair history explicitly through
+foreground workflows, then retry startup.
+
+This is an observation, not a publication receipt or content audit. A remote
+rewrite or canonical change after startup can still invalidate a later batch;
+existing capture/publication binding, history, conflict and secret checks remain
+in force. The callback is optional for generic callers and low-level `RunOne`
+recovery is unchanged. Production supervision must supply the Claude check with
+fresh inputs; no worker command or installed hook enables it yet. Parent-death
+cleanup and OS restart validation remain the next gate.
+
+Synthetic tests cover SHA-1/SHA-256 ancestry, diverged/ahead tips, fresh remote
+rewrites, missing/shallow/false histories, offline/canceled fetches, unchanged
+queue attempts and staging bytes, lease/scratch cleanup, and a checked Claude
+worker stop/drain/restart round trip.
