@@ -84,6 +84,34 @@ which defeats every `$`-anchored pattern. Fixtures from both producers live in
 
 [komac]: https://github.com/russellbanks/Komac
 
+## The window is a sixth package, on its own tag
+
+`clauderig-ui` ships on `ui/vX.Y.Z` at its own version (see `ui/README.md`), so
+its submission cannot derive either the version or the release URL the way the
+CLIs' does. `winget-submit.sh` takes both from the environment instead:
+
+```sh
+WINGET_TAG=ui/v0.2.0 \
+WINGET_PACKAGES=RigSmith.ClaudeRigUi:clauderigUi \
+  sh scripts/winget-submit.sh 0.2.0 --submit
+```
+
+Defaults are unchanged — `v<version>` and the four CLIs plus the bundle — so the
+CLI release calls it exactly as before.
+
+**The first submission is a `komac new`, done by hand.** Everything here is
+built on komac *updating* a published manifest, which is the whole reason this
+lane exists; a package winget has never seen has nothing to update. Until
+`RigSmith.ClaudeRigUi` exists upstream, the step in `release-ui.yml` will fail —
+which is why it is `continue-on-error`, like the CLI one, and why a release is
+never held up by it.
+
+One thing to fix before that first submission: the UI's Windows `.exe` carries
+no version resources at all. `build/winres/` has an entry per CLI and none for
+the window, so `scripts/winres.sh` never embeds a FileDescription for it. komac
+reads exactly that field to classify a binary, and a manifest is better with a
+real description than with none.
+
 ## What we control
 
 

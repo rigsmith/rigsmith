@@ -5,6 +5,12 @@
 #   sh scripts/winget-submit.sh 1.5.1              # generate + verify, submit nothing
 #   sh scripts/winget-submit.sh 1.5.1 --submit     # open the PRs
 #
+# Env:
+#   WINGET_TAG       the release holding the archives (default v<version>)
+#   WINGET_PACKAGES  identifier:archive-prefix lines (default: the four CLIs
+#                    and the bundle). The claudeRig UI release passes its own.
+#   OUTPUT_DIR       where manifests are generated (default dist/winget)
+#
 # Why komac rather than GoReleaser's winget publisher, which we used for 1.5.0
 # and 1.5.1: komac updates the *published* manifest, carrying forward everything
 # the package already declares and rewriting only version, URLs and hashes.
@@ -30,15 +36,25 @@ set -eu
 version="${1:?usage: winget-submit.sh <version> [--submit]}"
 submit="${2:-}"
 out="${OUTPUT_DIR:-dist/winget}"
-base="https://github.com/rigsmith/rigsmith/releases/download/v${version}"
+
+# WINGET_TAG is the release the archives live in. It defaults to the CLIs'
+# convention, v<version>, because that is the case with four callers; the window
+# overrides it, since it ships on its own tag (ui/vX.Y.Z) at its own version and
+# neither number can be derived from the other.
+tag="${WINGET_TAG:-v${version}}"
+base="https://github.com/rigsmith/rigsmith/releases/download/${tag}"
 
 # identifier:archive-prefix. The bundle's archive is named for the repo rather
 # than the package, so one cannot be derived from the other.
-packages="RigSmith.Rig:rig
+#
+# WINGET_PACKAGES overrides the set for a release that is not the CLIs'. Every
+# rule below still applies to whatever is in it: each package is a single Go
+# binary in a zip, named <prefix>_<version>_windows_<arch>.zip.
+packages="${WINGET_PACKAGES:-RigSmith.Rig:rig
 RigSmith.ShipRig:shiprig
 RigSmith.ChangeRig:changerig
 RigSmith.ClaudeRig:clauderig
-RigSmith.Rigsmith:rigsmith"
+RigSmith.Rigsmith:rigsmith}"
 
 rm -rf "$out"
 mkdir -p "$out"
@@ -51,7 +67,7 @@ for entry in $packages; do
     --urls "${base}/${prefix}_${version}_windows_amd64.zip" \
            "${base}/${prefix}_${version}_windows_arm64.zip" \
     --output "$out" \
-    --release-notes-url "https://github.com/rigsmith/rigsmith/releases/tag/v${version}" \
+    --release-notes-url "https://github.com/rigsmith/rigsmith/releases/tag/${tag}" \
     --dry-run >/dev/null
 done
 

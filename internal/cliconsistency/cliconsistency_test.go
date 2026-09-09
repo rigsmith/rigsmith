@@ -122,7 +122,10 @@ func TestTheWindowIsStampedWithItsOwnVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile(filepath.Join(root, ".goreleaser.yaml"))
+	// .goreleaser.ui.yaml, not .goreleaser.yaml: the window has its own release
+	// lane now, on its own tag. The guard follows it there rather than passing
+	// because the build it was watching is no longer in the file it was reading.
+	body, err := os.ReadFile(filepath.Join(root, ".goreleaser.ui.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +152,17 @@ func TestTheWindowIsStampedWithItsOwnVersion(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("no clauderig-ui build in .goreleaser.yaml — this guard is checking nothing")
+		t.Fatal("no clauderig-ui build in .goreleaser.ui.yaml — this guard is checking nothing")
+	}
+
+	// And it is not back in the CLIs' lane, which would ship it twice — once
+	// per release — under two different versions.
+	cli, err := os.ReadFile(filepath.Join(root, ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cli), "id: clauderig-ui") {
+		t.Error("the window is built by the CLIs' release too — it ships on ui/vX.Y.Z now")
 	}
 
 	// And the module it comes from carries a version for the release to read.
@@ -161,8 +174,9 @@ func TestTheWindowIsStampedWithItsOwnVersion(t *testing.T) {
 		t.Error("ui/go.mod has no rigsmith:version, so nothing decides what the window reports")
 	}
 
-	// The workflow is what puts it in the environment.
-	wf, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "goreleaser.yml"))
+	// The workflow is what puts it in the environment — the window's own one,
+	// since it ships on ui/vX.Y.Z rather than with the CLIs.
+	wf, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release-ui.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,23 +185,29 @@ func TestTheWindowIsStampedWithItsOwnVersion(t *testing.T) {
 		t.Error("the release workflow never sets UI_VERSION, so the stamp would be empty")
 	}
 
-	// The window ships from two jobs — GoReleaser builds the Windows binary,
-	// a macOS job packages the app — and both need the same number. They read
-	// it through one script, because two copies of "where the version comes
-	// from" is how the same window ends up shipping under two of them.
-	if n := strings.Count(wfText, "scripts/ui-version.sh"); n < 2 {
-		t.Errorf("only %d job(s) read the window's version through scripts/ui-version.sh; "+
-			"both the Windows build and the macOS packaging need it", n)
+	// The window ships from two jobs — GoReleaser builds the Windows binary, a
+	// macOS job packages the app — and a third publishes them. All of them need
+	// the same number, and they read it through one script, because two copies
+	// of "where the version comes from" is how the same window ends up shipping
+	// under two of them. That script also refuses a tag the module disagrees
+	// with, which is the check that cannot be written in YAML.
+	if n := strings.Count(wfText, "scripts/ui-release-version.sh"); n < 2 {
+		t.Errorf("only %d job(s) read the window's version through scripts/ui-release-version.sh; "+
+			"the Windows build, the macOS packaging and the publish all need it", n)
 	}
-	// And neither takes it from the tag, which names the CLIs.
+	// And the app is not packaged straight from the tag. The tag does name this
+	// version now, but only after ui-release-version.sh has checked it against
+	// the module — taking it raw would skip the one thing standing between a
+	// mistyped tag and a window that reports a number nothing else agrees with.
 	for _, line := range strings.Split(wfText, "\n") {
 		if strings.Contains(line, "package-ui.sh") && strings.Contains(line, "GITHUB_REF_NAME") {
 			t.Error("the macOS app is packaged with the repository's tag, not the window's version")
 		}
-		// The cask is the one place that needs both numbers: it is named for the
-		// window's version and downloads from the release the repository tagged.
-		// It must take UI_VERSION first — naming it after the tag is the bug —
-		// and it must still be told the tag, or the URL it writes 404s.
+		// The cask needs both: the version it is named for, and the tag whose
+		// release holds the download. They encode the same number now that the
+		// window has its own tag, but they are still different strings — "0.2.0"
+		// and "ui/v0.2.0" — and writing either where the other belongs gives a
+		// cask that 404s or one that claims the wrong version.
 		if strings.Contains(line, "publish-ui-cask.sh") {
 			if !strings.Contains(line, "$UI_VERSION") {
 				t.Error("the Homebrew cask is named for the repository's tag, not the window's version")

@@ -1,0 +1,261 @@
+# Build and publish the claudeRig UI on its own tag.
+#
+# The window is a separate Go module on its own version — 0.x while the command
+# line tools are at 1.x — so it ships on `ui/vX.Y.Z` rather than riding the
+# CLIs' `vX.Y.Z`. `shiprig tag` already renders that tag from the module
+# directory; nothing consumed it until this workflow.
+#
+# Two moments, the same shape as the CLI release:
+#   1. changerig bumps ui/go.mod's `// rigsmith:version`; you commit, push, and
+#      push a `ui/vX.Y.Z` tag.
+#   2. This workflow fires on that tag: GoReleaser builds and Authenticode-signs
+#      the Windows binaries, a macOS runner builds, signs and notarizes the .app,
+#      and the two are published together as one GitHub release, a Homebrew cask
+#      and a winget submission.
+#
+# GoReleaser BUILDS here but does not publish: `ui/v0.2.0` is not a semver tag
+# and OSS GoReleaser cannot be told about a prefix (`monorepo.tag_prefix` is
+# Pro), so it runs as a snapshot against .goreleaser.ui.yaml and the publish job
+# below creates the release. The macOS half has always worked this way — a cgo
+# .app bundle is not something GoReleaser builds — so this is the existing
+# arrangement extended to the other half, not a new one.
+#
+# Run it manually (Actions → Release the UI → Run workflow) for a dry run: it
+# builds and signs with the real secrets, publishes nothing, and uploads the
+# artifacts to inspect.
+name: Release the UI
+
+on:
+  push:
+    tags:
+      - "ui/v*"
+  workflow_dispatch: {} # manual dry run — build + sign, publish nothing
+
+permissions:
+  contents: write # create the GitHub Release and upload assets
+
+jobs:
+  windows:
+    name: Build + sign for Windows
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      # Fail fast on half-configured Windows signing, exactly as the CLI release
+      # does: scripts/sign-windows.sh auto-enables once TRUSTED_SIGNING_ACCOUNT
+      # is set and then hard-requires the rest, at a post-build hook minutes in.
+      - name: Preflight — Windows signing secrets
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+        run: |
+          if [ -z "${TRUSTED_SIGNING_ACCOUNT:-}" ]; then
+            echo "Windows signing not configured (TRUSTED_SIGNING_ACCOUNT unset) — the window will ship unsigned."
+            exit 0
+          fi
+          missing=
+          for v in AZURE_TENANT_ID AZURE_CLIENT_ID AZURE_CLIENT_SECRET \
+                   TRUSTED_SIGNING_ENDPOINT TRUSTED_SIGNING_ACCOUNT TRUSTED_SIGNING_PROFILE; do
+            eval "val=\${$v:-}"
+            [ -n "$val" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Windows signing is enabled (TRUSTED_SIGNING_ACCOUNT set) but these secrets are empty or unset:$missing"
+            exit 1
+          fi
+          echo "All Trusted Signing secrets present and non-empty."
+
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      # The tag and ui/go.mod have to agree about what is being released; the
+      # script refuses when they do not, and marks a dry run so its artifacts
+      # can never be mistaken for a release build.
+      - name: Resolve the version
+        run: |
+          v=$(sh scripts/ui-release-version.sh "${{ github.event_name == 'push' && github.ref_name || '' }}")
+          echo "UI_VERSION=$v" >> "$GITHUB_ENV"
+          echo "releasing the window as $v"
+
+      # Wails v3 links against GTK 4 and WebKitGTK 6.0 on Linux — not the GTK 3 /
+      # WebKit2GTK 4.1 pairing most guides still name. The Windows build itself
+      # is cgo-free and needs none of this; the tests below compile for the host,
+      # and they are the gate on whether this release happens at all.
+      - name: Linux GUI headers (for ./ui)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
+      # CI runs on branches but not on tags, so the tests run here too: never
+      # publish a window whose own tests fail at the exact tagged commit.
+      - name: Test ./ui
+        working-directory: ui
+        run: go test ./... -count=1
+
+      # jsign signs the .exe with Azure Trusted Signing during the build (see
+      # scripts/sign-windows.sh); it is a Java jar and needs a JRE.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Fetch jsign
+        run: |
+          curl -fsSL -o /tmp/jsign.jar \
+            https://github.com/ebourg/jsign/releases/download/7.4/jsign-7.4.jar
+          echo "JSIGN_JAR=/tmp/jsign.jar" >> "$GITHUB_ENV"
+
+      # --snapshot on purpose, tag or no tag: see the header. The version comes
+      # from UI_VERSION either way, so the artifacts are named the same in both.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean -f .goreleaser.ui.yaml
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-zips
+          path: dist/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  macos:
+    name: Package the macOS app
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 40 # notarization waits on Apple
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Resolve the version
+        run: |
+          v=$(sh scripts/ui-release-version.sh "${{ github.event_name == 'push' && github.ref_name || '' }}")
+          echo "UI_VERSION=$v" >> "$GITHUB_ENV"
+
+      # Reuses the release's own Developer ID certificate and App Store Connect
+      # key — the same credentials quill uses for the CLIs, not a second
+      # identity. Without them the bundle is built unsigned, which still runs
+      # locally and keeps this usable before the secrets are wired.
+      - name: Build, sign and notarize
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+        run: sh scripts/package-ui.sh "$UI_VERSION" dist-ui
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-zip
+          path: dist-ui/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [windows, macos]
+    # Tag pushes only. A dry run has built and signed everything; publishing it
+    # is the one thing a dry run must not do.
+    if: github.event_name == 'push'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: windows-zips
+          path: dist
+      - uses: actions/download-artifact@v6
+        with:
+          name: macos-zip
+          path: dist-ui
+
+      - name: Resolve the version
+        run: |
+          v=$(sh scripts/ui-release-version.sh "$GITHUB_REF_NAME")
+          echo "UI_VERSION=$v" >> "$GITHUB_ENV"
+
+      # The notes are the section changerig already wrote for this version. A
+      # version with no section is not an error worth stopping a release for —
+      # GitHub's generated notes are a worse answer, not a missing one.
+      - name: Release notes
+        run: |
+          awk -v v="## $UI_VERSION" '
+            $0 == v { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' ui/CHANGELOG.md > /tmp/notes.md
+          if [ ! -s /tmp/notes.md ]; then
+            echo "::warning::no '## $UI_VERSION' section in ui/CHANGELOG.md — falling back to generated notes"
+            echo "GENERATE_NOTES=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -- --title "claudeRig UI $UI_VERSION"
+          if [ -n "${GENERATE_NOTES:-}" ]; then
+            set -- "$@" --generate-notes
+          else
+            set -- "$@" --notes-file /tmp/notes.md
+          fi
+          gh release create "$GITHUB_REF_NAME" "$@" dist/*.zip dist-ui/*.zip
+
+      # The cask names the app's version and points at the release it lives in.
+      # Both are the same number now that the window has its own tag — the third
+      # argument used to be the CLIs' tag, which is what made the two disagree.
+      - name: Publish the Homebrew cask
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: sh scripts/publish-ui-cask.sh "$UI_VERSION" dist-ui "$GITHUB_REF_NAME"
+
+      # Same lane as the CLIs: komac updates the PUBLISHED manifest, so Commands,
+      # Tags, Copyright and the rest survive a version bump.
+      #
+      # Never fatal, for the same reason it is not there — the release is already
+      # out, and a submission can be re-run by hand. Note that komac can only
+      # UPDATE a package winget already has: the very first submission of
+      # RigSmith.ClaudeRigUi is a `komac new`, done once by hand. See
+      # docs/WINGET-SUBMISSIONS.md.
+      - name: Submit to winget (komac)
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          WINGET_TAG: ${{ github.ref_name }}
+          WINGET_PACKAGES: RigSmith.ClaudeRigUi:clauderigUi
+        run: |
+          # The secrets context is not available in a step `if`, so gate here.
+          if [ -z "${GITHUB_TOKEN:-}" ]; then
+            echo "WINGET_TOKEN unset — skipping the winget submission."
+            exit 0
+          fi
+          curl -fsSL -o /tmp/komac.tar.gz \
+            https://github.com/russellbanks/Komac/releases/download/v2.16.0/komac-2.16.0-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/komac.tar.gz -C /tmp
+          sudo install -m 0755 /tmp/komac /usr/local/bin/komac
+          komac --version
+          sh scripts/winget-submit.sh "$UI_VERSION" --submit
