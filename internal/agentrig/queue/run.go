@@ -38,6 +38,12 @@ func (e *DrainPending) Unwrap() error { return ErrUndrained }
 // the run or arrive after the final empty observation. No generation watermark
 // acknowledges work. Stop and context cancellation also apply while draining.
 type RunOptions struct {
+	// CheckStartup runs once under runner ownership, before claiming any work,
+	// including an empty drain. It receives the independent operation context
+	// and queue binding, and must own any staging reads and child cleanup. A
+	// failure returns directly without changing attempts or retry state. This
+	// observation does not replace per-batch validation or OS supervision.
+	CheckStartup func(context.Context, Binding) error
 	Stop, Wake   <-chan struct{}
 	PollInterval time.Duration
 	Drain        bool
@@ -73,6 +79,19 @@ func (q *Queue) Run(ctx context.Context, adapter Adapter, opts RunOptions) (resu
 		return result, fmt.Errorf("acquire queue runner ownership: %w", err)
 	}
 	defer release()
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	select {
+	case <-opts.Stop:
+		return result, nil
+	default:
+	}
+	if opts.CheckStartup != nil {
+		if err := opts.CheckStartup(ctx, q.binding); err != nil {
+			return result, fmt.Errorf("queue startup check: %w", err)
+		}
+	}
 	wake := opts.Wake
 	for {
 		if err := ctx.Err(); err != nil {

@@ -672,7 +672,11 @@ func TestQueueAdapterRunnerStopAndDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := &queuedTransport{ArtifactTransport: transport}
-	q, _, adapter := queueAdapterFixture(t, req, artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}, remote)
+	commits := artifact.Store{Dir: filepath.Join(t.TempDir(), "commits")}
+	q, _, adapter := queueAdapterFixture(t, req, commits, remote)
+	startup := func(ctx context.Context, binding queue.Binding) error {
+		return adapter.Service.CheckQueueStartup(ctx, binding, service.QueueInputs{Sync: req.Sync, Profiles: req.Profiles, Captures: req.Store, Commits: commits, Remote: remote})
+	}
 	stop := make(chan struct{})
 	remote.afterPush = func() {
 		remote.afterPush = nil
@@ -685,7 +689,7 @@ func TestQueueAdapterRunnerStopAndDrain(t *testing.T) {
 		// must still finish the active retained publication and cleanup.
 		close(stop)
 	}
-	result, err := q.Run(t.Context(), adapter, queue.RunOptions{Stop: stop})
+	result, err := q.Run(t.Context(), adapter, queue.RunOptions{Stop: stop, CheckStartup: startup})
 	if err != nil || result.CompletedBatches != 1 {
 		t.Fatal(result, err)
 	}
@@ -698,7 +702,7 @@ func TestQueueAdapterRunnerStopAndDrain(t *testing.T) {
 		t.Fatal("runner returned before staging cleanup", err)
 	}
 	release()
-	result, err = q.Run(t.Context(), adapter, queue.RunOptions{Drain: true})
+	result, err = q.Run(t.Context(), adapter, queue.RunOptions{Drain: true, CheckStartup: startup})
 	if err != nil || result.CompletedBatches != 1 {
 		t.Fatal("restart/drain", result, err)
 	}

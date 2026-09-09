@@ -363,3 +363,75 @@ func TestRunnerStopBeforeClaimAndBusyDrainLeaveAttemptsUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRunnerStartupCheckBeforeClaimsAndOnEveryRestart(t *testing.T) {
+	q := fixture(t)
+	enqueue(t, q, request("a"))
+	before, err := os.ReadFile(filepath.Join(q.dir, "queue.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := errors.New("startup rejected")
+	calls := 0
+	check := func(ctx context.Context, binding Binding) error {
+		calls++
+		if binding != fixtureBinding || ctx.Err() != nil {
+			t.Fatal("wrong startup inputs", binding, ctx.Err())
+		}
+		if _, err := q.Run(ctx, &executionFixture{}, RunOptions{Drain: true}); !errors.Is(err, storelock.ErrBusy) {
+			t.Fatal("startup did not own runner lease", err)
+		}
+		return rejected
+	}
+	f := &executionFixture{}
+	if result, err := q.Run(t.Context(), f, RunOptions{Drain: true, CheckStartup: check}); !errors.Is(err, rejected) || result.CompletedBatches != 0 {
+		t.Fatal(result, err)
+	}
+	after, err := os.ReadFile(filepath.Join(q.dir, "queue.json"))
+	if err != nil || string(after) != string(before) {
+		t.Fatal("failed startup changed attempts or durable state", err)
+	}
+	rejected = nil
+	if result, err := q.Run(t.Context(), f, RunOptions{Drain: true, CheckStartup: check}); err != nil || result.CompletedBatches != 1 {
+		t.Fatal(result, err)
+	}
+	if _, err := q.Run(t.Context(), f, RunOptions{Drain: true, CheckStartup: check}); err != nil || calls != 3 {
+		t.Fatal("restart/empty drain skipped startup", calls, err)
+	}
+}
+
+func TestRunnerStartupCancellationAndStopPreventClaims(t *testing.T) {
+	for _, mode := range []string{"cancel-during", "stop-during", "stop-before"} {
+		t.Run(mode, func(t *testing.T) {
+			q := fixture(t)
+			enqueue(t, q, request("a"))
+			stop := make(chan struct{})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if mode == "stop-before" {
+				close(stop)
+			}
+			calls := 0
+			check := func(ctx context.Context, _ Binding) error {
+				calls++
+				if mode == "cancel-during" {
+					cancel()
+					return ctx.Err()
+				}
+				close(stop)
+				return nil
+			}
+			_, err := q.Run(ctx, &executionFixture{}, RunOptions{Drain: true, Stop: stop, CheckStartup: check})
+			if (mode == "cancel-during" && !errors.Is(err, context.Canceled)) || (mode != "cancel-during" && err != nil) {
+				t.Fatal(err)
+			}
+			if mode == "stop-before" && calls != 0 {
+				t.Fatal("stopped runner invoked check")
+			}
+			jobs, err := q.Snapshot(t.Context())
+			if err != nil || len(jobs) != 1 || jobs[0].Attempts != 0 {
+				t.Fatal("startup stop claimed work", jobs, err)
+			}
+		})
+	}
+}
