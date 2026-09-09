@@ -17,6 +17,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/core/commandrun"
 )
 
 // Repo is a git working tree at Dir.
@@ -511,12 +513,18 @@ func dirSize(path string) (int64, error) {
 // e.g. `merge-base --is-ancestor` exits 1 for "no". A failure to even run git
 // (binary missing, etc.) returns a negative code and the error.
 func gitExitCode(ctx context.Context, dir string, args ...string) (int, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := commandrun.Command(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	if err := cmd.Run(); err != nil {
+	if err := commandrun.Run(ctx, cmd); err != nil {
 		var ee *exec.ExitError
+		if commandrun.Configured(ctx) {
+			if direct, ok := err.(*exec.ExitError); ok {
+				return direct.ExitCode(), nil
+			}
+			return -1, err
+		}
 		if errors.As(err, &ee) {
 			return ee.ExitCode(), nil
 		}
@@ -533,7 +541,7 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 // belong in env, never in args: the error below quotes every argument, and argv
 // is readable by any process on the machine.
 func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := commandrun.Command(ctx, "git", args...)
 	cmd.Dir = dir
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
@@ -544,8 +552,16 @@ func runGitStdin(ctx context.Context, dir, stdin string, env []string, args ...s
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+	if err := commandrun.Run(ctx, cmd); err != nil {
+		diagnostic := fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		if commandrun.Configured(ctx) {
+			code := -1
+			if exit, ok := err.(*exec.ExitError); ok {
+				code = exit.ExitCode()
+			}
+			return "", &selectedGitError{diagnostic, code}
+		}
+		return "", diagnostic
 	}
 	return out.String(), nil
 }
@@ -581,12 +597,25 @@ func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
 // git tells "no" from "could not answer" by exit status alone: 1 for a
 // question with a negative answer, 128 for one it could not process.
 func exitStatus(err error) int {
+	if selected, ok := err.(*selectedGitError); ok {
+		return selected.exitCode
+	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return exit.ExitCode()
 	}
 	return -1
 }
+
+// Keep the direct runner result's classification before adding Git diagnostics.
+// Unwrapping still preserves errors.Is/As for callers, but semantic probes must
+// never turn a joined/wrapped cleanup failure into an ordinary Git answer.
+type selectedGitError struct {
+	error
+	exitCode int
+}
+
+func (e *selectedGitError) Unwrap() error { return e.error }
 
 // SetRef points ref at sha, creating it if need be.
 func (r *Repo) SetRef(ctx context.Context, ref, sha string) error {
@@ -662,13 +691,15 @@ func (r *Repo) TopLevelNames(ctx context.Context, rev string) ([]string, error) 
 // without a checkout.
 func (r *Repo) ArchiveTar(ctx context.Context, rev string, paths []string) ([]byte, error) {
 	args := append([]string{"archive", "--format=tar", rev, "--"}, paths...)
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := commandrun.Command(ctx, "git", args...)
 	cmd.Dir = r.Dir
 	var errb strings.Builder
 	cmd.Stderr = &errb
-	out, err := cmd.Output()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := commandrun.Run(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git archive: %w: %s", err, strings.TrimSpace(errb.String()))
 	}
-	return out, nil
+	return out.Bytes(), nil
 }

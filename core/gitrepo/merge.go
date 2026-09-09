@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/rigsmith/rigsmith/core/commandrun"
 )
 
 // FetchMerge fetches remote/branch and merges it into the current branch (a real
@@ -191,12 +192,15 @@ func (r *Repo) AbortMerge(ctx context.Context) error {
 
 // runGitInteractive runs git attached to the real terminal (for mergetool).
 func runGitInteractive(ctx context.Context, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	if commandrun.Configured(ctx) {
+		return fmt.Errorf("interactive Git is unavailable with a custom command runner")
+	}
+	cmd := commandrun.Command(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	return commandrun.Run(ctx, cmd)
 }
 
 // InMerge reports whether a merge is in progress (MERGE_HEAD present). A staging

@@ -10,10 +10,10 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 **Current position:** the shared engine, Claude adapter, durable queue,
 retained snapshots, conflict recovery, confirmed publication and worker loop are
 merged into `codex/v2`. Startup history checks (#367) and Windows command ownership
-at creation (#368) and Unix worker-death supervision (#369) are merged. Persistent
-restart fencing is in review.
+at creation (#368), Unix worker-death supervision (#369), and persistent restart
+fencing (#370) are merged. Canonical Git command-runner plumbing is in review.
 
-The release path is now: finish restart fencing and its recovery remedy, add capacity/cleanup controls,
+The release path is now: finish canonical Git supervision and fenced-store recovery, add capacity/cleanup controls,
 enable opt-in queued Claude sync, then connect the separate `codexrig` adapter.
 Ordinary Claude commands and hooks still use their existing synchronous workflow.
 
@@ -42,8 +42,9 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Startup shared-history validation (6b.6b.1) | Merged: [#367](https://github.com/rigsmith/rigsmith/pull/367). Check freshly fetched destination ancestry before claiming work; reject uninitialized/unrelated stores without changing queue attempts or staging. |
 | Windows child ownership at creation (6b.6b.2a) | Merged: [#368](https://github.com/rigsmith/rigsmith/pull/368). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
 | Unix parent-death supervision (6b.6b.2b) | Merged: [#369](https://github.com/rigsmith/rigsmith/pull/369). Explicit supervisor entry point, inherited staging lease, queued phase/retry integration and forced worker-death tests at startup/running boundaries. |
-| OS restart fencing and lifecycle validation (6b.6b.2c) | In review (current PR). Persist command intent before process creation; clear only after verified cleanup. Block replacement writers after supervisor/owner failure, including asynchronous Windows termination. |
-| Fenced-store recovery and canonical Git supervision (6b.6b.2d) | Next. Prove old writers stopped before recovery, and adapt canonical manual-sync Git calls to supervision. All canonical service boundaries reject supervised contexts until then. Both are required before queued hooks. |
+| OS restart fencing and lifecycle validation (6b.6b.2c) | Merged: [#370](https://github.com/rigsmith/rigsmith/pull/370). Persist command intent before process creation; clear only after verified cleanup. Block replacement writers after supervisor/owner failure, including asynchronous Windows termination. |
+| Canonical Git command-runner plumbing (6b.6b.2d.1) | In review (current PR). Shared runner selection for buffered Git and backup attribute commands, with supervised byte-preservation tests. Streaming/interactive calls reject selection; service guards remain. |
+| Canonical workflow supervision and fenced-store recovery (6b.6b.2d.2) | Next. Bind staging leases, propagate command/cleanup failures through canonical workflows and boolean probes such as `IsIgnored`, and prove old writers stopped before recovery. Both are required before queued hooks. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
