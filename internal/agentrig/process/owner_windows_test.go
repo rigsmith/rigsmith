@@ -240,17 +240,15 @@ func TestWindowsStartFailureSurfacesCleanupError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Closing the job initiates kill-on-close, then replacing its handle with
-	// zero deterministically makes the cleanup API reject inspection/termination.
-	// Do not retain a stale handle value that another goroutine could reuse.
-	if err := windows.CloseHandle(owner.job); err != nil {
-		_ = owner.close()
-		t.Fatal(err)
-	}
+	// Keep the real job and anchor alive while invalidating only the ownership
+	// object's handle. Otherwise the dead ParentProcess could make Start itself
+	// return ERROR_INVALID_HANDLE, hiding a lost cleanup error.
+	job := owner.job
+	defer windows.CloseHandle(job)
 	owner.job = 0
 	err = runOwned(t.Context(), cmd, owner)
 	var startErr *os.PathError
-	if !errors.As(err, &startErr) || !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
+	if !errors.As(err, &startErr) || !errors.Is(startErr, os.ErrNotExist) || !errors.Is(err, windows.ERROR_INVALID_HANDLE) {
 		t.Fatalf("start and cleanup errors not both surfaced: %v", err)
 	}
 }
