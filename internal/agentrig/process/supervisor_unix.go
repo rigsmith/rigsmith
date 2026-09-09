@@ -128,6 +128,8 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 	stop := context.AfterFunc(ctx, func() { _ = lifeW.Close() })
 	defer stop()
 	resultBytes, readErr := io.ReadAll(io.LimitReader(resultR, supervisorLimit+1))
+	// Unblock a writer that exceeds the protocol limit before waiting for it.
+	_ = resultR.Close()
 	waitErr := cmd.Wait()
 	writeErr := <-written
 	var result supervisorResult
@@ -189,7 +191,16 @@ func ServeSupervisor() int {
 		if err != nil {
 			result.Failure = err.Error()
 		}
-		if err := json.NewEncoder(resultW).Encode(result); err != nil {
+		data, err := json.Marshal(result)
+		if err != nil {
+			return 125
+		}
+		if len(data) > supervisorLimit {
+			code = 125
+			data, _ = json.Marshal(supervisorResult{Completed: true, ExitCode: code,
+				Failure: "command failed; diagnostic exceeds size limit"})
+		}
+		if _, err := resultW.Write(data); err != nil {
 			return 125
 		}
 		return code

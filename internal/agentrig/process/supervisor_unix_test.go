@@ -278,6 +278,8 @@ func TestUnixSupervisorRejectsInvalidStartup(t *testing.T) {
 		{"relative-supervisor", WithSupervisor(ctx, "relative"), helperCommand("exit", "")},
 		{"missing-supervisor", WithSupervisor(ctx, filepath.Join(t.TempDir(), "missing")), helperCommand("exit", "")},
 		{"oversized", supervisorContext(ctx), exec.Command(os.Args[0], strings.Repeat("x", supervisorLimit))},
+		{"oversized-diagnostic", supervisorContext(ctx), &exec.Cmd{Path: strings.Repeat("\x00", 400000), Args: []string{"invalid"}}},
+		{"oversized-completion", WithSupervisor(ctx, os.Args[0], "-test.run=^TestUnixSupervisorOversizedResult$"), helperCommand("exit", "")},
 		{"missing-completion", WithSupervisor(ctx, os.Args[0], "-test.run=^NoMatchingTest$"), helperCommand("exit", "")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -343,4 +345,19 @@ func TestUnixSupervisorCancelsIncompleteRequest(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("lifetime EOF did not interrupt incomplete request")
 	}
+}
+
+// This deliberately violates the trusted protocol without starting a command.
+// A bounded reader must close its pipe before waiting, or this writer hangs.
+func TestUnixSupervisorOversizedResult(t *testing.T) {
+	if len(os.Args) != 2 || os.Args[1] != "-test.run=^TestUnixSupervisorOversizedResult$" {
+		return
+	}
+	request := os.NewFile(3, "request")
+	_, _ = io.Copy(io.Discard, request)
+	_ = request.Close()
+	result := os.NewFile(5, "result")
+	_, _ = io.WriteString(result, strings.Repeat("x", supervisorLimit*2))
+	_ = result.Close()
+	os.Exit(125)
 }
