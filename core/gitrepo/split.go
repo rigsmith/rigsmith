@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/core/commandrun"
 )
 
 // CommitSubtree commits the working-tree files matching pathspecs to branch using
@@ -23,7 +25,11 @@ func (r *Repo) CommitSubtree(ctx context.Context, branch string, pathspecs []str
 	}
 	idx := filepath.Join(gd, "clauderig-idx-"+branch)
 	_ = os.Remove(idx)
-	defer os.Remove(idx)
+	defer func() {
+		if commandrun.Check(ctx) == nil {
+			_ = os.Remove(idx)
+		}
+	}()
 	env := []string{"GIT_INDEX_FILE=" + idx}
 
 	add := append([]string{"add", "-A", "--"}, pathspecs...)

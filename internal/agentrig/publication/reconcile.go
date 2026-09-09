@@ -2,8 +2,10 @@ package publication
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 )
 
@@ -15,7 +17,15 @@ type ReconcileRequest struct {
 }
 
 // Reconcile repairs a pending merge or merges the remote through supplied policy.
-func (w Workflow) Reconcile(ctx context.Context, req ReconcileRequest) error {
+func (w Workflow) Reconcile(ctx context.Context, req ReconcileRequest) (rerr error) {
+	defer func() {
+		if failure := commandrun.Check(ctx); failure != nil && !errors.Is(rerr, failure) {
+			rerr = errors.Join(rerr, failure)
+		}
+	}()
+	if err := commandrun.Check(ctx); err != nil {
+		return err
+	}
 	if err := w.Policy.check(); err != nil {
 		return err
 	}
@@ -53,7 +63,15 @@ func (w Workflow) Reconcile(ctx context.Context, req ReconcileRequest) error {
 // FinishMerge audits a pending merge before committing. Refused merges remain
 // resumable. Working files must match the index so cleaning only a working copy
 // cannot hide a credential still staged for commit.
-func (w Workflow) FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
+func (w Workflow) FinishMerge(ctx context.Context, repo *gitrepo.Repo) (rerr error) {
+	defer func() {
+		if failure := commandrun.Check(ctx); failure != nil && !errors.Is(rerr, failure) {
+			rerr = errors.Join(rerr, failure)
+		}
+	}()
+	if err := commandrun.Check(ctx); err != nil {
+		return err
+	}
 	if err := w.Policy.check(); err != nil {
 		return err
 	}

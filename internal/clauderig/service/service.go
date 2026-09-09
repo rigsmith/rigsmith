@@ -9,25 +9,59 @@ package service
 import (
 	"context"
 	"errors"
+	"runtime"
 	"time"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
-// ErrSupervisedCanonicalGitUnavailable gates workflows that still use the
-// synchronous Git runner. Every external writer must be supervised before these
-// boundaries can accept a supervised context. Retained artifact APIs use their
-// separate owned runner and remain available.
-var ErrSupervisedCanonicalGitUnavailable = errors.New("supervised canonical Git workflows are unavailable until their command runner is adapted")
+// Interactive merge tools cannot obey the finite-input supervised runner contract.
+var ErrSupervisedMergeToolUnavailable = errors.New("supervised canonical workflows do not support interactive merge tools")
 
-func requireCanonicalRunner(ctx context.Context) error {
-	if process.SupervisionEnabled(ctx) {
-		return ErrSupervisedCanonicalGitUnavailable
+// ErrCanonicalRunnerRequired rejects a caller-supplied runner at canonical boundaries.
+var ErrCanonicalRunnerRequired = errors.New("canonical service requires its own command runner")
+
+type canonicalRunnerKey struct{}
+
+func requireCanonicalRunner(ctx context.Context, allowMergeTool bool) error {
+	if commandrun.Configured(ctx) && ctx.Value(canonicalRunnerKey{}) != true {
+		return ErrCanonicalRunnerRequired
 	}
-	return nil
+	if process.SupervisionEnabled(ctx) && allowMergeTool {
+		return ErrSupervisedMergeToolUnavailable
+	}
+	if process.SupervisionEnabled(ctx) && runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		return errors.New("canonical command supervision is unsupported on this platform")
+	}
+	if err := process.CheckSupervisorLease(ctx); err != nil {
+		return err
+	}
+	return commandrun.Check(ctx)
+}
+
+// Called only after acquiring staging. Nested canonical services reuse the
+// selection and its failure state, binding command supervision to the active
+// staging lease rather than an unrelated caller-provided private-store lease.
+func canonicalContext(ctx context.Context) context.Context {
+	if !process.SupervisionEnabled(ctx) {
+		return ctx
+	}
+	ctx = process.WithSupervisorLease(ctx, ctx)
+	if commandrun.Configured(ctx) {
+		return ctx
+	}
+	return context.WithValue(commandrun.WithRunner(ctx, process.Run), canonicalRunnerKey{}, true)
+}
+
+func canonicalResult(ctx context.Context, err error) error {
+	if failure := commandrun.Check(ctx); failure != nil && !errors.Is(err, failure) {
+		return errors.Join(err, failure)
+	}
+	return err
 }
 
 // StoreWait bounds contention for requested operations; SessionStart pull tries

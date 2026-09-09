@@ -94,6 +94,9 @@ func EnsureContext(ctx context.Context, root string) error {
 // otherwise reuses cached normalized blobs for files whose stat data is unchanged.
 // The caller must audit the working bytes before committing the resulting index.
 func Prepare(ctx context.Context, root string) error {
+	if err := commandrun.Check(ctx); err != nil {
+		return err
+	}
 	if err := Ensure(root); err != nil {
 		return err
 	}

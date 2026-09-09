@@ -46,6 +46,11 @@ func TestCommandRunnerGitRoundTrip(t *testing.T) {
 			if !r.IsIgnored(ctx, "ignored") || r.IsIgnored(ctx, "data") {
 				t.Fatal("check-ignore exit semantics changed")
 			}
+			for path, want := range map[string]bool{"ignored": true, "data": false} {
+				if ignored, err := r.CheckIgnored(ctx, path); err != nil || ignored != want {
+					t.Fatalf("CheckIgnored(%q) = %v, %v; want %v", path, ignored, err, want)
+				}
+			}
 			if code, err := gitExitCode(ctx, r.Dir, "diff", "--quiet"); err != nil || code != 0 {
 				t.Fatalf("exit status: %d %v", code, err)
 			}
@@ -151,7 +156,11 @@ func TestCommandRunnerSemanticProbesPreserveCleanupFailure(t *testing.T) {
 		if ancestor != "" {
 			t.Fatalf("unexpected ancestor: %q", ancestor)
 		}
-		for _, err := range []error{deleteErr, mergeErr} {
+		ignored, ignoreErr := r.CheckIgnored(ctx, "data")
+		if ignored {
+			t.Fatal("failed probe reported ignored")
+		}
+		for _, err := range []error{deleteErr, mergeErr, ignoreErr} {
 			if failure == exit {
 				if err != nil {
 					t.Fatalf("ordinary exit 1 lost: %v", err)
@@ -160,5 +169,22 @@ func TestCommandRunnerSemanticProbesPreserveCleanupFailure(t *testing.T) {
 				t.Fatalf("cleanup failure became benign answer: %v", err)
 			}
 		}
+	}
+}
+
+func TestCheckIgnoredPreservesDiagnostic(t *testing.T) {
+	t.Setenv("LC_ALL", "C")
+	for _, selected := range []bool{false, true} {
+		t.Run(fmt.Sprintf("selected=%v", selected), func(t *testing.T) {
+			ctx := t.Context()
+			if selected {
+				ctx = commandrun.WithRunner(ctx, func(_ context.Context, cmd *exec.Cmd) error { return cmd.Run() })
+			}
+			r := &Repo{Dir: t.TempDir()}
+			ignored, err := r.CheckIgnored(ctx, "data")
+			if ignored || err == nil || !strings.Contains(err.Error(), "not a git repository") {
+				t.Fatalf("lost failed probe diagnostic: %v, %v", ignored, err)
+			}
+		})
 	}
 }

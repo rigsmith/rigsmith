@@ -54,3 +54,22 @@ func TestInvalidSelectionNeverFallsBack(t *testing.T) {
 		})
 	}
 }
+
+func TestRunnerFailureSurvivesIgnoredErrorAndDerivedContext(t *testing.T) {
+	failure := errors.New("unverified cleanup")
+	calls := 0
+	ctx := WithRunner(t.Context(), func(context.Context, *exec.Cmd) error { calls++; return failure })
+	_ = Run(ctx, Command(ctx, os.Args[0])) // Model a legacy boolean/fallback caller.
+	derived, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if err := Check(derived); err != failure {
+		t.Fatalf("failure disappeared: %v", err)
+	}
+	cmd := Command(derived, os.Args[0])
+	if err := Run(derived, cmd); err != failure || calls != 1 || cmd.Process != nil {
+		t.Fatalf("later command ran: calls=%d process=%v err=%v", calls, cmd.Process, err)
+	}
+	if err := Check(t.Context()); err != nil {
+		t.Fatalf("failure leaked into another operation: %v", err)
+	}
+}

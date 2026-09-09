@@ -44,7 +44,7 @@ type CoverageSyncResult struct {
 // No worker/producer is installed. External merge tools remain unsupported here
 // until their process lifetime can be fenced by the worker lifecycle integration.
 func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue) (result CoverageSyncResult, err error) {
-	if err := requireCanonicalRunner(ctx); err != nil {
+	if err := requireCanonicalRunner(ctx, req.AllowMergeTool); err != nil {
 		return result, err
 	}
 	if q == nil || req.Config == nil {
@@ -89,6 +89,8 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 		return result, err
 	}
 	defer release()
+	staging = canonicalContext(staging)
+	defer func() { err = canonicalResult(staging, err) }()
 	ctx = process.WithSupervisorLease(ctx, staging)
 	c := &manualCoverage{operation: ctx, worker: worker, queueDir: q.Directory()}
 	// Validate exclusion even for local-only/dry runs: their capture still walks.

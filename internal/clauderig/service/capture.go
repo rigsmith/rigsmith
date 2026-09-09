@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
@@ -32,9 +33,9 @@ type captureInputs struct {
 	attributionSessions map[string]bool
 }
 
-func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureInputs) (*engine.Report, error) {
+func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureInputs) (report *engine.Report, rerr error) {
 	if inputs == nil {
-		if err := requireCanonicalRunner(ctx); err != nil {
+		if err := requireCanonicalRunner(ctx, req.AllowMergeTool); err != nil {
 			return nil, err
 		}
 	}
@@ -46,7 +47,10 @@ func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureIn
 		return nil, err
 	}
 	defer release()
-	var report *engine.Report
+	if inputs == nil {
+		ctx = canonicalContext(ctx)
+	}
+	defer func() { rerr = canonicalResult(ctx, rerr) }()
 	cfg, me, staging, dryRun := req.Config, req.Machine, req.StagingDir, req.DryRun
 
 	s.emit(SyncStarted{})
@@ -55,7 +59,13 @@ func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureIn
 	// publish the conflict markers themselves. If it cannot be settled,
 	// STOP: this path stages and commits, so carrying on is the hazard.
 	if inputs == nil && !s.RepairMerge(ctx, staging, req.AllowMergeTool).Safe {
+		if err := commandrun.Check(ctx); err != nil {
+			return report, err
+		}
 		return report, fmt.Errorf("the staging repo is still mid-merge — resolve it in %s, or run `clauderig doctor --fix`", staging)
+	}
+	if err := commandrun.Check(ctx); err != nil {
+		return report, err
 	}
 	claudeVer := ""
 	if cliLoc, st := cfg.RootLocation("cli", me); st == pathmap.StatusResolved {

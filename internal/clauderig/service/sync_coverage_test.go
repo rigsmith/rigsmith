@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
@@ -563,21 +562,4 @@ func TestSyncWithCoverageDoesNotShareEvidenceBetweenFileAliases(t *testing.T) {
 	if err != nil || len(result.Acknowledged) != 1 {
 		t.Fatalf("alias flush: %+v %v", result, err)
 	}
-}
-
-func TestSyncWithCoverageSupervisedCanonicalGitIsGated(t *testing.T) {
-	ctx := process.WithSupervisor(t.Context(), "unused")
-	req, q, request, svc := coverageFixture(t)
-	enqueueCoverage(t, q, request)
-	svc.ReadIdentity = func() (service.Identity, error) {
-		t.Fatal("gated sync reached capture")
-		return service.Identity{}, nil
-	}
-	if _, err := svc.SyncWithCoverage(ctx, req, q); !errors.Is(err, service.ErrSupervisedCanonicalGitUnavailable) {
-		t.Fatal("canonical coverage bypassed supervision", err)
-	}
-	if _, err := svc.Sync(ctx, req); !errors.Is(err, service.ErrSupervisedCanonicalGitUnavailable) {
-		t.Fatal("canonical sync bypassed supervision", err)
-	}
-	pendingCoverage(t, q, 1)
 }

@@ -119,14 +119,12 @@ phase, stop/drain and offline replay after source removal under supervision.
 The inherited-lease test separately checks that an expired context cannot
 produce another duplicate and that closing the final duplicate releases the lock.
 
-Canonical service workflows still use `core/gitrepo` directly. `Capture`, `Sync`,
-`SyncWithCoverage`, `Publish`, `Pull`, `Reconcile`, `RepairMerge`, and `FinishMerge`
-therefore reject explicitly supervised contexts before acquiring worker/staging
-ownership or changing data. Their ordinary synchronous paths remain available.
-The private sealed-capture path skips canonical repair and remains available to
-the retained queue adapter; its owned Git phases have separate lifecycle tests. The earlier supervised coverage fixture exercised retained confirmation,
-not every canonical Git command; it is now a refusal test on every platform.
-Adapting those canonical calls is an explicit 6b.6b.2d gate before queued rollout.
+The initial restart-fence milestone refused supervised contexts at all eight
+canonical service boundaries because those Git paths had not been adapted. The
+canonical workflow integration below replaces that blanket gate with staging
+lease validation, service-owned runner selection, and failure propagation. The
+private sealed-capture path continues to skip canonical repair and retains its
+separate owned Git phases.
 
 ## Persistent restart fence (6b.6b.2c)
 
@@ -175,7 +173,7 @@ even if truncation already took effect. That differs from uncertain process clea
 `Clear` is called only after all writers are verified stopped, so an empty or
 retained record is safe after such a flush failure. No timer, worker restart, ordinary retry, or
 operator bypass clears an unconfirmed record. This deliberately prefers a blocked
-store to overlapping writers. **Proof-based recovery and canonical Git supervision (6b.6b.2d) are still
+store to overlapping writers. **Proof-based recovery (6b.6b.2d.3) is still
 required before production queued hooks:** this milestone does not expose an
 unfence command, advise deleting lock files, or claim automatic recovery after
 supervisor/Windows owner death. Queue data and retained artifacts remain intact.
@@ -212,19 +210,85 @@ merge tools reject selection before creating a process: their independent
 Start/Kill/Wait and interactive stdin contracts are not supported by this runner.
 Ordinary previews and interactive merge tools keep their existing behavior.
 
-This is command plumbing, not complete canonical workflow supervision. Legacy
-boolean/fallback helpers can still normalize errors, and workflows also modify
-files in process. In particular, `IsIgnored` cannot distinguish a non-ignored path
-from a failed probe through its boolean result; callers such as
-`ensureLocalIgnored` need an error-bearing probe before accepting a selected
-runner for mutation. That adaptation is deferred to 6b.6b.2d.2. All eight canonical Claude service guards remain in place.
-Before removing them, the adapter must bind the active staging lease, stop the
-workflow on uncertain command cleanup (including through fallback helpers), and
-verify that no later in-process mutation or publication can follow that failure.
-Proof-based fenced-store recovery remains a separate requirement. There is no
-production runner selection or new CLI/hook behavior in this step.
+The plumbing milestone alone did not enable canonical workflows: boolean/fallback
+helpers could still normalize failures before in-process writes. The next
+milestone below binds leases and adds explicit failure checks. Proof-based
+fenced-store recovery remains a separate rollout requirement.
 
 Synthetic tests compare selected/default Git byte round trips and distinguish
 nonzero exits from cleanup failures. Native Unix-supervisor/Windows-job tests run
 attribute preparation, canonical commits, temporary-index history, and tar export
 under a staging lease, verifying exact binary bytes and cleared command fences.
+
+
+## Canonical workflow supervision (6b.6b.2d.2)
+
+An explicitly supervised `Capture`, `Sync`, `SyncWithCoverage`, `Publish`, `Pull`,
+`Reconcile`, `RepairMerge`, or `FinishMerge` now acquires/borrows staging and installs
+its own `process.Run` selection. Nested services retain the same operation failure
+state. An external command-runner override is refused before acquisition. An
+explicit supervisor lease must match the operation's live staging capability;
+expired or unrelated leases cannot be silently replaced. Private artifact/queue
+contexts still keep their separate store identities. Unsupported platforms and
+interactive merge-tool requests fail before side effects. Ordinary contexts keep
+their synchronous behavior, and no command or hook selects supervision yet.
+
+`commandrun` retains the first runner error other than a direct `*exec.ExitError`.
+A direct exit can be a valid Git answer, such as a missing ref or a merge conflict,
+with cleanup already verified by `process.Run`. Wrapped/joined failures, failed
+startup, and cancellation cannot become benign answers: subsequent commands are
+refused, and `commandrun.Check` exposes the failure even through boolean/fallback
+helpers. Selection remains a sequential operation capability, not a concurrent
+runner or a substitute for the persistent OS fence. A fresh selection must never
+be used to recover an uncertain operation.
+
+Canonical boundaries report retained failures before returning success. Capture
+checks repair before writing snapshots. Conflict replacement, attribute preparation,
+and directory creation check the operation before file writes. Temporary merge
+files and indexes are retained when cleanup is uncertain rather than removed
+under a potentially live helper. Pull skips restore and journal writes after a
+runner failure; sync skips its deferred failure-journal append. `CheckIgnored`
+distinguishes exit 1 from failed probes, and selected scope operations propagate
+both repository-open and ignore-probe errors before changing `.gitignore`.
+
+A nonexistent staging directory is handled before asking Git to run there; it is
+an initial capture state rather than a failed command startup. Supervised manual
+coverage sync holds worker ownership and staging through capture/publication, then
+uses the existing retained confirmation path before acknowledging exact batches.
+Failures leave queued work pending and never acknowledge a partially completed
+publication. `PullResult.CommandError` exposes lifecycle failures separately from
+its existing best-effort phase results.
+
+Native synthetic tests exercise supervised capture, local Git publication,
+confirmation/acknowledgement, fresh clone, and conflict-union merge completion on
+Unix and Windows.
+They verify released fences and matching/expired/unrelated lease handling. Injected
+failures cover fallback probes, conflict-file preservation, temporary indexes,
+scope ignore writes, deferred journals, and failure reporting from best-effort
+history maintenance. Unix supervisor-loss tests before and
+after capture verify a persistent fence and unchanged queue attempts, including
+no publication or failure-journal write after supervision is lost. Existing process
+ownership tests cover helper lifetime and Windows job cleanup. Pinned ordinary v1
+compatibility remains a separate required check. Fenced-store recovery is next;
+this milestone does not add a timer-based reset or expose queued hooks.
+
+### Canonical review clarifications
+
+Under selected supervision, repository initialization propagates signing and
+identity configuration failures; only an unset identity (Git exit 1) permits a
+fallback write. Merge repair preserves an existing directory without Git
+metadata as a valid first-capture destination, but rejects failed repository
+probes when Git metadata exists or cannot be inspected. Ordinary synchronous
+behavior remains unchanged.
+
+Side-branch history maintenance remains best-effort for ordinary Git failures
+with verified cleanup. Runner or cleanup uncertainty always fails the workflow
+and blocks later commands. A repeated subtree commit reaches the checked Git
+directory probe before temporary-index removal, so an operation's retained
+failure also prevents retry cleanup.
+
+An active lease for a different store is rejected by acquisition's inode check
+before canonical runner binding, Git execution, or capture. Acquisition can
+create the requested store's sibling lock file and parent while resolving that
+identity; this is existing lock behavior, not permission to mutate the store.
+Lock files must not be removed to undo a rejected acquisition.

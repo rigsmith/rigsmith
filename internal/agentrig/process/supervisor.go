@@ -1,6 +1,11 @@
 package process
 
-import "context"
+import (
+	"context"
+	"errors"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
+)
 
 type supervisorKey struct{}
 
@@ -43,4 +48,16 @@ func WithSupervisorLease(ctx, staging context.Context) context.Context {
 func SupervisionEnabled(ctx context.Context) bool {
 	_, ok := ctx.Value(supervisorKey{}).(supervisorCommand)
 	return ok
+}
+
+// CheckSupervisorLease rejects an explicit command lease that differs from the
+// operation's active store ownership. Canonical workflows call this before
+// acquiring/borrowing staging and rebinding their runner. Private artifact
+// workflows intentionally use separate identities and do not use this check.
+func CheckSupervisorLease(ctx context.Context) error {
+	supervisor, ok := ctx.Value(supervisorKey{}).(supervisorCommand)
+	if ok && supervisor.lease != nil && !storelock.SameActiveLease(ctx, supervisor.lease) {
+		return errors.New("explicit supervisor lease does not match active staging ownership")
+	}
+	return nil
 }

@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
@@ -78,6 +79,9 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 	}
 	for _, p := range paths {
 		res, ok := resolveOne(ctx, repo, p)
+		if err := commandrun.Check(ctx); err != nil {
+			return rep, err
+		}
 		if !ok {
 			rep.Unresolved = append(rep.Unresolved, p)
 			continue

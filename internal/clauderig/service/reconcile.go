@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/publication"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
@@ -22,8 +25,8 @@ import (
 // allowMergeTool says the caller can afford to block on a person — `sync` can,
 // the SessionStart hook cannot. Otherwise the merge is aborted, which leaves the
 // repo usable even though the sync did not land.
-func (s Service) Reconcile(ctx context.Context, req ReconcileRequest) error {
-	if err := requireCanonicalRunner(ctx); err != nil {
+func (s Service) Reconcile(ctx context.Context, req ReconcileRequest) (rerr error) {
+	if err := requireCanonicalRunner(ctx, req.AllowMergeTool); err != nil {
 		return err
 	}
 	if req.Repo == nil {
@@ -34,13 +37,15 @@ func (s Service) Reconcile(ctx context.Context, req ReconcileRequest) error {
 		return err
 	}
 	defer release()
+	ctx = canonicalContext(ctx)
+	defer func() { rerr = canonicalResult(ctx, rerr) }()
 	return s.publication().Reconcile(ctx, req)
 }
 
 // FinishMerge audits before committing a pending merge. Native audit and byte
 // preparation remain Claude policies.
-func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
-	if err := requireCanonicalRunner(ctx); err != nil {
+func FinishMerge(ctx context.Context, repo *gitrepo.Repo) (rerr error) {
+	if err := requireCanonicalRunner(ctx, false); err != nil {
 		return err
 	}
 	if repo == nil {
@@ -51,6 +56,8 @@ func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
 		return err
 	}
 	defer release()
+	ctx = canonicalContext(ctx)
+	defer func() { rerr = canonicalResult(ctx, rerr) }()
 	return (Service{}).publication().FinishMerge(ctx, repo)
 }
 
@@ -70,7 +77,7 @@ func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
 // merge standing). Pull does not capture a new snapshot over the conflicted
 // tree; it retains its best-effort behavior instead of blocking SessionStart.
 func (s Service) RepairMerge(ctx context.Context, staging string, allowMergeTool bool) (result RepairResult) {
-	if err := requireCanonicalRunner(ctx); err != nil {
+	if err := requireCanonicalRunner(ctx, allowMergeTool); err != nil {
 		return RepairResult{Err: err}
 	}
 	ctx, release, err := storelock.Acquire(ctx, staging, StoreWait)
@@ -78,8 +85,30 @@ func (s Service) RepairMerge(ctx context.Context, staging string, allowMergeTool
 		return RepairResult{Err: err}
 	}
 	defer release()
+	ctx = canonicalContext(ctx)
+	defer func() {
+		if failure := canonicalResult(ctx, nil); failure != nil {
+			result.Safe = false
+			result.Err = canonicalResult(ctx, result.Err)
+		}
+	}()
+	if commandrun.Configured(ctx) {
+		if _, err := os.Stat(staging); os.IsNotExist(err) {
+			return RepairResult{Safe: true}
+		} else if err != nil {
+			return RepairResult{Err: err}
+		}
+	}
 	repo, err := gitrepo.Open(ctx, staging)
 	if err != nil {
+		if commandrun.Configured(ctx) {
+			// An existing directory without Git metadata is a valid first
+			// capture destination. Existing or unreadable metadata must not
+			// turn a failed repository probe into permission to overwrite it.
+			if _, metadataErr := os.Lstat(filepath.Join(staging, ".git")); !os.IsNotExist(metadataErr) {
+				return RepairResult{Err: err}
+			}
+		}
 		return RepairResult{Safe: true} // no staging repo yet — nothing to wedge
 	}
 	if !repo.InMerge(ctx) {
