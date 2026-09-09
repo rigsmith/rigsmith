@@ -7,12 +7,14 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 
 ### V2: separate `clauderig` and `codexrig` with shared infrastructure
 
-**Current position:** shared infrastructure, queue execution, retry policy and
-retained metadata/native append recovery are merged into `codex/v2` through
-[#341](https://github.com/rigsmith/rigsmith/pull/341). [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded
-chunked-transcript recovery. Ordinary-file snapshot ordering merged in [#343](https://github.com/rigsmith/rigsmith/pull/343). Completion of already-staged canonical merges is included in [#344](https://github.com/rigsmith/rigsmith/pull/344). Merged [#345](https://github.com/rigsmith/rigsmith/pull/345) strengthens the fresh-capture state guard (including active bisects) and corrects a Windows chunk fixture. Unresolved merge recovery through queue completion merged in [#357](https://github.com/rigsmith/rigsmith/pull/357).
-Worker lifecycle/capacity remain before queued Claude
-hooks and the separate Codex adapter. The queue work is split into concrete steps below.
+**Current position:** the shared engine, Claude adapter, durable queue,
+retained snapshots, conflict recovery, confirmed publication and worker loop are
+merged into `codex/v2`. Startup history checks (#367) and Windows command ownership
+at creation (#368) are merged. Unix worker-death supervision is in review.
+
+The release path is now: finish restart fencing, add capacity/cleanup controls,
+enable opt-in queued Claude sync, then connect the separate `codexrig` adapter.
+Ordinary Claude commands and hooks still use their existing synchronous workflow.
 
 | Milestone | Status |
 | --- | --- |
@@ -37,9 +39,9 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Manual-sync queue coverage: Claude integration (6b.5b) | Merged: [#363](https://github.com/rigsmith/rigsmith/pull/363). Capture fresh session/subagent evidence and verify the exact remote snapshot before acknowledging complete batches. Internal service; command/hook wiring remains in rollout. |
 | Worker loop, graceful stop and draining (6b.6a) | Merged: [#365](https://github.com/rigsmith/rigsmith/pull/365). Poll accepted work, honor durable retries, yield to foreground operations, and retain unfinished work on stop/restart. |
 | Startup shared-history validation (6b.6b.1) | Merged: [#367](https://github.com/rigsmith/rigsmith/pull/367). Check freshly fetched destination ancestry before claiming work; reject uninitialized/unrelated stores without changing queue attempts or staging. |
-| Windows child ownership at creation (6b.6b.2a) | In review (current PR). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
-| Unix parent-death supervision (6b.6b.2b) | Next. Retain ownership until orphaned helpers stop after abrupt worker death. |
-| OS restart fencing and lifecycle validation (6b.6b.2c) | Planned. Prevent restarted workers from overlapping old helpers; validate platform startup/restart before command rollout. |
+| Windows child ownership at creation (6b.6b.2a) | Merged: [#368](https://github.com/rigsmith/rigsmith/pull/368). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
+| Unix parent-death supervision (6b.6b.2b) | In review (current PR). Explicit supervisor entry point, inherited staging lease and forced worker-death tests at startup/running boundaries. |
+| OS restart fencing and lifecycle validation (6b.6b.2c) | Next. Fence supervisor failure/uncertain cleanup and asynchronous Windows termination; prevent restarted workers from overlapping old helpers; validate platform startup/restart before command rollout. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |

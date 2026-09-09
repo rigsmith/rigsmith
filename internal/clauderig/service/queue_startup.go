@@ -32,7 +32,7 @@ func (s Service) CheckQueueStartup(ctx context.Context, binding queue.Binding, i
 	if err != nil {
 		return err
 	}
-	_, release, err := storelock.Acquire(ctx, stage, StoreWait)
+	ctx, release, err := storelock.Acquire(ctx, stage, StoreWait)
 	if err != nil {
 		return err
 	}
