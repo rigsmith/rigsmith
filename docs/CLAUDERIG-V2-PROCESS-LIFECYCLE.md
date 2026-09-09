@@ -62,6 +62,71 @@ cross-compilation alone cannot validate kernel behavior.
 These tests prove child cleanup after owner death, not safe lease reacquisition.
 Job termination is asynchronous, so another worker could acquire an OS-released
 lease before every old child has exited. Milestone 6b.6b.2c must fence replacement
-workers against that interval and validate platform restart behavior. Unix
-parent-death supervision is still 6b.6b.2b. Production worker commands, service
-registration and queued hooks remain disabled until those gates are complete.
+workers against that interval and validate platform restart behavior. The Unix
+worker-death boundary is described below. Production worker commands, service
+registration and queued hooks remain disabled until the remaining gates are complete.
+
+
+## Unix worker-death supervision (6b.6b.2b)
+
+An opt-in internal `process.WithSupervisor` context selects a dedicated executable
+entry point that calls `process.ServeSupervisor` and immediately exits with its
+result. No package initialization, environment-variable dispatch or shell wrapper
+is involved. Command/hook wiring has not been enabled; ordinary synchronous
+Claude operations continue to use their existing process runner. Windows ignores
+this Unix selection and retains its native job ownership.
+
+For each retained command on Linux/macOS:
+
+1. Require an active staging lease and duplicate its descriptor with close-on-exec.
+   Pass the duplicate explicitly to the supervisor during process creation. The
+   duplicate shares the existing flock; it does not reacquire or unlock it.
+2. Start the supervisor in its own session. A separate process group alone is
+   insufficient: Unix job control can send SIGHUP/CONT to an orphaned stopped
+   group when the worker dies. A fresh session also isolates terminal signals.
+3. Pass a bounded command request, a parent-lifetime pipe and a completion pipe
+   alongside the lease. Preserve the resolved command path, arguments, environment,
+   directory and standard streams, including non-UTF-8 argument/environment bytes.
+   No requests are written to disk.
+4. The supervisor marks all protocol/lease descriptors close-on-exec before
+   starting the command in its own process group through the existing runner.
+   Neither Git nor its helpers inherit the lifetime pipe or staging lease.
+5. Cancellation closes the worker's lifetime pipe; abrupt worker death closes it
+   in the kernel. The supervisor cancels and drains the command group, then exits.
+   While it remains alive, its inherited lease excludes another staging writer,
+   even if the worker is gone. Normal completion also drains leftover helpers.
+6. The worker requires a bounded completion record matching the supervisor's exit
+   code. Ordinary command exits retain direct `*exec.ExitError` classification;
+   startup/protocol/cleanup errors cannot be classified as ordinary Git exits.
+
+The startup history check passes its acquired staging context into retained Git
+calls. Artifact services use `WithSupervisorLease` to attach that capability only
+to command supervision: capture, commit, publication, retries and manual coverage
+confirmation keep the staging lease while private stores/queue persistence retain
+the operation context's independent lock identity and cancellation. An expired
+explicit lease is rejected; it cannot fall back to a private store's lease.
+
+Synthetic native tests pause the supervisor before command startup and after a
+writer starts, then kill the worker without defers. While cleanup is paused, a
+replacement staging writer must receive `ErrBusy`. After resuming the supervisor,
+all inherited output pipes must close, the store must become available, and the
+old helper must not perform a later write. Both boundaries repeat with a fresh
+worker. Other tests cover cancellation, normal exit, startup failure, missing
+completion, request limits, command IO and ordinary exit-code classification. The existing retained-command
+cleanup suite also runs through supervision, including its command/transport/stream
+builders and their `WaitDelay` settings; real Git tests check refs, semantic exit
+codes and binary blob IO. Claude queue integration tests cover startup, every
+phase, stop/drain and offline replay after source removal under supervision.
+The inherited-lease test separately checks that an expired context cannot
+produce another duplicate and that closing the final duplicate releases the lock.
+
+### Remaining restart fence
+
+This proves cleanup after **worker** death while the supervisor survives. It does
+not yet fence a supervisor killed independently, a failed cleanup inspection, or
+Windows job termination still in progress after its owner's death. A failed
+supervisor/cleanup must leave durable evidence that prevents a replacement worker
+from treating the released OS lock as proof that all old writers stopped. That is
+6b.6b.2c, required before production worker startup and queued-hook rollout.
+There is one additional running supervisor per retained Unix command. Trusted
+helpers must stay in their inherited process group; this is not a sandbox.

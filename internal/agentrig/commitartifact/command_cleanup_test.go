@@ -30,6 +30,10 @@ type rejectedOutput struct{}
 func (rejectedOutput) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestRetainedCommandCleanup(t *testing.T) {
+	retainedCommandCleanup(t, nil)
+}
+
+func retainedCommandCleanup(t *testing.T, configure func(*testing.T, context.Context, string) context.Context) {
 	// Use a real executable on each OS, so Windows also exercises job ownership
 	// rather than going through a shell with different process/pipe behavior.
 	bin := t.TempDir()
@@ -67,6 +71,9 @@ func TestRetainedCommandCleanup(t *testing.T) {
 			t.Setenv("RIG_RETAINED_HELPER_MODE", tc.mode)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
+			if configure != nil {
+				ctx = configure(t, ctx, repo.dir)
+			}
 			if tc.mode == "wait" || strings.HasSuffix(tc.mode, "-cancel") {
 				go func() {
 					if waitCleanupMarker(ctx, marker) {
@@ -155,6 +162,9 @@ func TestRetainedCommandCleanup(t *testing.T) {
 		t.Setenv("RIG_RETAINED_HELPER_MODE", "copy")
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
+		if configure != nil {
+			ctx = configure(t, ctx, repo.dir)
+		}
 		payload := strings.Repeat("binary\x00bytes\r\n", 128<<10)
 		var got strings.Builder
 		err := repo.stream(ctx, strings.NewReader(payload), func(r io.Reader) error {
@@ -167,7 +177,11 @@ func TestRetainedCommandCleanup(t *testing.T) {
 	})
 	t.Run("clean-exit-status", func(t *testing.T) {
 		t.Setenv("RIG_RETAINED_HELPER_MODE", "exit")
-		_, err := repo.run(t.Context(), nil, "synthetic")
+		ctx := t.Context()
+		if configure != nil {
+			ctx = configure(t, ctx, repo.dir)
+		}
+		_, err := repo.run(ctx, nil, "synthetic")
 		if !gitExited(err, 1) {
 			t.Fatal("lost clean exit status", err)
 		}
@@ -185,6 +199,9 @@ func TestRetainedCommandCleanup(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 		defer cancel()
+		if configure != nil {
+			ctx = configure(t, ctx, repo.dir)
+		}
 		err := repo.stream(ctx, nil, func(r io.Reader) error { _, err := io.Copy(io.Discard, r); return err }, "synthetic")
 		if err == nil || ctx.Err() != nil {
 			t.Fatal("startup failure did not close stream promptly", err)

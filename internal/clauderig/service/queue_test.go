@@ -65,6 +65,10 @@ func queueAdapterFixture(t *testing.T, req service.ArtifactCaptureRequest, commi
 }
 
 func TestQueueAdapterOfflineRecoveryPreservesLaterGeneration(t *testing.T) {
+	queueAdapterOfflineRecovery(t, t.Context())
+}
+
+func queueAdapterOfflineRecovery(t *testing.T, ctx context.Context) {
 	req := artifactCaptureFixture(t, "queued original bytes")
 	remoteDir := filepath.Join(t.TempDir(), "remote.git")
 	git(t, filepath.Dir(remoteDir), "init", "--bare", remoteDir)
@@ -108,7 +112,7 @@ func TestQueueAdapterOfflineRecoveryPreservesLaterGeneration(t *testing.T) {
 		}
 		return offline
 	}
-	result, err := q.RunOne(t.Context(), time.Now(), adapter)
+	result, err := q.RunOne(ctx, time.Now(), adapter)
 	if !errors.Is(err, offline) || result.Phase != queue.Committed || result.Acknowledged {
 		t.Fatalf("offline result: %+v %v", result, err)
 	}
@@ -126,7 +130,7 @@ func TestQueueAdapterOfflineRecoveryPreservesLaterGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote.beforeFetch = nil
-	result, err = q.RunOne(t.Context(), before[0].NotBefore, adapter)
+	result, err = q.RunOne(ctx, before[0].NotBefore, adapter)
 	if err != nil || !result.Acknowledged || result.Phase != queue.Pushed || remote.pushes != 1 {
 		t.Fatalf("recovery: %+v %v pushes=%d", result, err, remote.pushes)
 	}
@@ -651,6 +655,10 @@ func TestQueueAdapterRetainedChunkRoundTrip(t *testing.T) {
 }
 
 func TestQueueAdapterRunnerStopAndDrain(t *testing.T) {
+	queueAdapterRunnerStopAndDrain(t, t.Context())
+}
+
+func queueAdapterRunnerStopAndDrain(t *testing.T, ctx context.Context) {
 	req := artifactCaptureFixture(t, "runner confirmed bytes")
 	remoteDir := filepath.Join(t.TempDir(), "remote.git")
 	git(t, filepath.Dir(remoteDir), "init", "--bare", remoteDir)
@@ -689,7 +697,7 @@ func TestQueueAdapterRunnerStopAndDrain(t *testing.T) {
 		// must still finish the active retained publication and cleanup.
 		close(stop)
 	}
-	result, err := q.Run(t.Context(), adapter, queue.RunOptions{Stop: stop, CheckStartup: startup})
+	result, err := q.Run(ctx, adapter, queue.RunOptions{Stop: stop, CheckStartup: startup})
 	if err != nil || result.CompletedBatches != 1 {
 		t.Fatal(result, err)
 	}
@@ -702,7 +710,7 @@ func TestQueueAdapterRunnerStopAndDrain(t *testing.T) {
 		t.Fatal("runner returned before staging cleanup", err)
 	}
 	release()
-	result, err = q.Run(t.Context(), adapter, queue.RunOptions{Drain: true, CheckStartup: startup})
+	result, err = q.Run(ctx, adapter, queue.RunOptions{Drain: true, CheckStartup: startup})
 	if err != nil || result.CompletedBatches != 1 {
 		t.Fatal("restart/drain", result, err)
 	}

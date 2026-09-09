@@ -15,11 +15,18 @@ import (
 // the group/job, including helpers holding inherited output pipes. The caller
 // retains its staging lease until Run returns. Use exec.Command, not a command
 // whose independent cancellation or Wait is managed elsewhere.
-// Abrupt parent death on Unix still requires worker lifecycle supervision.
+// Unix workers can select an explicit parent-death supervisor with WithSupervisor.
 func Run(ctx context.Context, cmd *exec.Cmd) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if supervisor, ok := ctx.Value(supervisorKey{}).(supervisorCommand); ok {
+		return runSupervised(ctx, cmd, supervisor)
+	}
+	return runDirect(ctx, cmd)
+}
+
+func runDirect(ctx context.Context, cmd *exec.Cmd) error {
 	owner, err := prepare(cmd)
 	if err != nil {
 		return err
