@@ -573,10 +573,10 @@ func TestSyncWithCoverageSupervisedCanonicalGitIsGated(t *testing.T) {
 		t.Fatal("gated sync reached capture")
 		return service.Identity{}, nil
 	}
-	if _, err := svc.SyncWithCoverage(ctx, req, q); !errors.Is(err, service.ErrSupervisedSyncUnavailable) {
+	if _, err := svc.SyncWithCoverage(ctx, req, q); !errors.Is(err, service.ErrSupervisedCanonicalGitUnavailable) {
 		t.Fatal("canonical coverage bypassed supervision", err)
 	}
-	if _, err := svc.Sync(ctx, req); !errors.Is(err, service.ErrSupervisedSyncUnavailable) {
+	if _, err := svc.Sync(ctx, req); !errors.Is(err, service.ErrSupervisedCanonicalGitUnavailable) {
 		t.Fatal("canonical sync bypassed supervision", err)
 	}
 	pendingCoverage(t, q, 1)

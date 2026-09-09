@@ -33,6 +33,11 @@ type captureInputs struct {
 }
 
 func (s Service) capture(ctx context.Context, req SyncRequest, inputs *captureInputs) (*engine.Report, error) {
+	if inputs == nil {
+		if err := requireCanonicalRunner(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if req.Config == nil {
 		return nil, fmt.Errorf("capture requires a configuration")
 	}

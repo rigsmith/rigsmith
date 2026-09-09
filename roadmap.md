@@ -43,7 +43,7 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Windows child ownership at creation (6b.6b.2a) | Merged: [#368](https://github.com/rigsmith/rigsmith/pull/368). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
 | Unix parent-death supervision (6b.6b.2b) | Merged: [#369](https://github.com/rigsmith/rigsmith/pull/369). Explicit supervisor entry point, inherited staging lease, queued phase/retry integration and forced worker-death tests at startup/running boundaries. |
 | OS restart fencing and lifecycle validation (6b.6b.2c) | In review (current PR). Persist command intent before process creation; clear only after verified cleanup. Block replacement writers after supervisor/owner failure, including asynchronous Windows termination. |
-| Fenced-store recovery and canonical Git supervision (6b.6b.2d) | Next. Prove old writers stopped before recovery, and adapt canonical manual-sync Git calls to supervision. Explicitly supervised manual sync is blocked until then. Both are required before queued hooks. |
+| Fenced-store recovery and canonical Git supervision (6b.6b.2d) | Next. Prove old writers stopped before recovery, and adapt canonical manual-sync Git calls to supervision. All canonical service boundaries reject supervised contexts until then. Both are required before queued hooks. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |

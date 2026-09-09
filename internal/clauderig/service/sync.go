@@ -2,10 +2,8 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
@@ -49,15 +47,11 @@ type SyncResult struct {
 	Publication PublishResult
 }
 
-// ErrSupervisedSyncUnavailable gates canonical Git paths that still use the
-// synchronous runner. Supervision must cover every writer before enabling them.
-var ErrSupervisedSyncUnavailable = errors.New("supervised manual sync is unavailable until canonical Git supervision is implemented")
-
 // Sync repairs, captures, scans, records metadata/journal entries and publishes.
 // Debounce and terminal input remain caller responsibilities.
 func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, rerr error) {
-	if process.SupervisionEnabled(ctx) {
-		return result, ErrSupervisedSyncUnavailable
+	if err := requireCanonicalRunner(ctx); err != nil {
+		return result, err
 	}
 	if req.Config == nil {
 		return result, fmt.Errorf("sync requires a configuration")

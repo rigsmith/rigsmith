@@ -119,10 +119,12 @@ phase, stop/drain and offline replay after source removal under supervision.
 The inherited-lease test separately checks that an expired context cannot
 produce another duplicate and that closing the final duplicate releases the lock.
 
-Canonical manual sync still uses `core/gitrepo` directly. `Sync` and
-`SyncWithCoverage` therefore reject explicitly supervised contexts before acquiring
-worker/staging ownership or changing data. Their ordinary synchronous paths remain
-available. The earlier supervised coverage fixture exercised retained confirmation,
+Canonical service workflows still use `core/gitrepo` directly. `Capture`, `Sync`,
+`SyncWithCoverage`, `Publish`, `Pull`, `Reconcile`, `RepairMerge`, and `FinishMerge`
+therefore reject explicitly supervised contexts before acquiring worker/staging
+ownership or changing data. Their ordinary synchronous paths remain available.
+The private sealed-capture path skips canonical repair and remains available to
+the retained queue adapter; its owned Git phases have separate lifecycle tests. The earlier supervised coverage fixture exercised retained confirmation,
 not every canonical Git command; it is now a refusal test on every platform.
 Adapting those canonical calls is an explicit 6b.6b.2d gate before queued rollout.
 

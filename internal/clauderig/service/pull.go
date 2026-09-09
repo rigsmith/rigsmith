@@ -37,6 +37,11 @@ type PullResult struct {
 // keeps its successful exit on these operational failures; callers can inspect
 // the result without scraping rendered output.
 func (s Service) Pull(ctx context.Context, req PullRequest) (result PullResult) {
+	if err := requireCanonicalRunner(ctx); err != nil {
+		result.RequestError = err
+		s.emit(PullFailed{Err: err})
+		return result
+	}
 	if req.Config == nil {
 		result.RequestError = fmt.Errorf("pull requires a configuration")
 		s.emit(PullFailed{Err: result.RequestError})

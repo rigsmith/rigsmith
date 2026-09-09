@@ -44,8 +44,8 @@ type CoverageSyncResult struct {
 // No worker/producer is installed. External merge tools remain unsupported here
 // until their process lifetime can be fenced by the worker lifecycle integration.
 func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue) (result CoverageSyncResult, err error) {
-	if process.SupervisionEnabled(ctx) {
-		return result, ErrSupervisedSyncUnavailable
+	if err := requireCanonicalRunner(ctx); err != nil {
+		return result, err
 	}
 	if q == nil || req.Config == nil {
 		return result, fmt.Errorf("coverage sync requires configuration and queue")
