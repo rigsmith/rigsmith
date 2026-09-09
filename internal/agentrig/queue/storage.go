@@ -17,7 +17,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 )
 
-const formatVersion = 1
+const formatVersion = 2
 
 type envelope struct {
 	Version int
@@ -125,7 +125,7 @@ func (q *Queue) load() (*state, error) {
 	if err = decode(data, &env); err != nil {
 		return nil, fmt.Errorf("invalid queue envelope: %w", err)
 	}
-	if env.Version != formatVersion {
+	if env.Version != 1 && env.Version != formatVersion {
 		return nil, fmt.Errorf("unsupported queue schema %d", env.Version)
 	}
 	hash := sha256.Sum256(env.Payload)
@@ -135,6 +135,14 @@ func (q *Queue) load() (*state, error) {
 	var s state
 	if err = decode(env.Payload, &s); err != nil {
 		return nil, fmt.Errorf("invalid queue state: %w", err)
+	}
+	s.version = env.Version
+	if s.version == 1 {
+		for _, b := range s.Batches {
+			if b.CoverageSealed {
+				return nil, fmt.Errorf("coverage seal requires queue schema 2")
+			}
+		}
 	}
 	if s.Binding != q.binding {
 		return nil, ErrBinding
@@ -164,7 +172,11 @@ func (q *Queue) persist(s *state) error {
 		return err
 	}
 	sum := sha256.Sum256(payload)
-	data, err := json.Marshal(envelope{Version: formatVersion, Payload: payload, SHA256: hex.EncodeToString(sum[:])})
+	version := s.version
+	if version == 0 {
+		version = formatVersion
+	}
+	data, err := json.Marshal(envelope{Version: version, Payload: payload, SHA256: hex.EncodeToString(sum[:])})
 	if err != nil {
 		return err
 	}

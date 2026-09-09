@@ -102,8 +102,14 @@ type batch struct {
 	Attempts              uint64
 	NotBefore             time.Time
 	FailureCode           string
+	// CoverageSealed freezes membership before an external synchronous capture.
+	// It does not consume a worker attempt or change the saved execution phase.
+	CoverageSealed bool `json:",omitempty"`
 }
 type state struct {
+	// version preserves an older schema until coverage upgrades it under both
+	// worker ownership and the queue transaction lock. It is not payload data.
+	version int
 	Binding Binding
 	Next    uint64
 	Owner   string
@@ -165,7 +171,7 @@ func (q *Queue) Enqueue(ctx context.Context, req Request, at time.Time) (Event, 
 		// batch. Preserve any retry deadline on an otherwise coalescible queued batch.
 		for i := len(s.Batches) - 1; i >= 0; i-- {
 			b := &s.Batches[i]
-			if provenance(s, *b) == req.ProvenanceID && b.Status == Pending && b.Phase == Queued && b.Attempts == 0 {
+			if provenance(s, *b) == req.ProvenanceID && b.Status == Pending && b.Phase == Queued && b.Attempts == 0 && !b.CoverageSealed {
 				event.BatchID = b.ID
 				s.Events[req.EventID] = event
 				b.EventIDs = append(b.EventIDs, req.EventID)

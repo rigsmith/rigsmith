@@ -32,8 +32,9 @@ hooks and the separate Codex adapter. The queue work is split into concrete step
 | Unresolved merge recovery: private audited plan | Merged: [#347](https://github.com/rigsmith/rigsmith/pull/347). Recreate supported conflicts privately, validate index provenance, and export an audited candidate without changing staging. |
 | Unresolved merge recovery: safe application and restart | Merged: [#348](https://github.com/rigsmith/rigsmith/pull/348). Seal a repair intent, preserve later edits, durably install files/index, and resume interrupted staging. |
 | Unresolved merge recovery: queue integration | Merged: [#357](https://github.com/rigsmith/rigsmith/pull/357). Resume the exact sealed repair across staging, commit and cleanup before capture/publication. |
-| Windows CI parallelization | In review: [#358](https://github.com/rigsmith/rigsmith/pull/358). Run the existing test groups concurrently while preserving coverage and the required aggregate check. |
-| Manual-sync queue coverage | Planned. Acknowledge only the exact generations included in manual sync. |
+| Windows CI parallelization | Merged: [#358](https://github.com/rigsmith/rigsmith/pull/358). Run the existing test groups concurrently while preserving coverage and the required aggregate check. |
+| Manual-sync queue coverage: shared checkpoint (6b.5a) | In review (current PR). Seal candidate membership before capture and acknowledge only fully covered batches; preserve later arrivals, partial coverage and saved recovery work. |
+| Manual-sync queue coverage: Claude integration (6b.5b) | Next. Establish per-request capture evidence and confirmed publication before acknowledging queue work. |
 | Worker startup/restart, parent death and draining | Planned. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |

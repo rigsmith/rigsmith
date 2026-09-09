@@ -35,7 +35,7 @@ looks at a current login or stamps old events with a new account.
 Only never-claimed, pending batches with the same provenance coalesce. Selected
 flushes union their path sets; all-flush supersedes selected/normal intent while
 the individual events remain recorded. Different provenance stays separate.
-The first claim seals a batch's event membership permanently. Input arriving
+The first claim or manual-coverage preparation seals a batch's event membership permanently. Input arriving
 during capture or retry creates later work, even if the old batch has not reached
 its captured phase. Acknowledgement removes that batch alone; `Through` is a
 batch high-water mark, not permission to delete every lower global generation.
@@ -132,8 +132,14 @@ explicit producer replay horizon, operational status reporting and a full-queue
 remedy are required before enabling high-volume hooks. Rewriting a complete
 snapshot is deliberately simple and bounded; measure it with the integrated
 worker before choosing a journal or database. Unknown versions fail closed.
-Schema migration/rollback must run under both ownership locks and preserve
-pending work and deduplication receipts; there is no automatic migration yet.
+Schema upgrades must preserve pending work and deduplication receipts under
+both ownership locks. New queues use schema 2. Existing schema-1 queues remain
+readable, and ordinary operations preserve schema 1; the first successful
+coverage preparation upgrades to schema 2 atomically under worker ownership and
+the queue transaction lock. The only new persisted field seals batch membership.
+Existing events, completed receipts, phases and retry metadata are preserved.
+Old binaries reject schema 2 rather than dropping seals. There is no downgrade
+operation; continue using a compatible build to drain an upgraded queue.
 
 ## Execution driver and Claude service boundary (milestone 6b.2, first slice)
 
@@ -194,8 +200,9 @@ remains the gate for synchronous behavior.
   below.
 - Protect requested sources from retention until captured; handle deletion and
   unavailable source attribution explicitly, without acknowledging missing data.
-- Integrate manual sync acknowledgements only for the exact events its capture
-  covered. A queue high-water mark alone cannot establish coverage.
+- The shared coverage checkpoint below is implemented. Integrate Claude
+  per-request capture evidence and confirmed manual publication before calling
+  its acknowledgement API. A queue high-water mark alone cannot establish coverage.
 - Keep lock order consistent: worker ownership before staging ownership; queue
   transactions stay short. Pass the original cancellation context to queue APIs,
   not a borrowed staging-store capability, which rejects nesting another store.
@@ -333,3 +340,57 @@ and remain blocked. Existing blocked batches require explicit Unblock; recovery
 does not clear queue state on its own. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-metadata-recovery).
 
 Already-staged canonical merges can be completed before retrying committed work; see the [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion). The retained artifact is verified before any HEAD change. Secret rejection leaves the batch committed and blocked, and transport failure after completion reuses the same retained batch. Supported unresolved canonical conflicts now use [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md) before capture and publication.
+
+
+## Manual-sync coverage checkpoint (milestone 6b.5a)
+
+The shared queue now exposes `Worker.PrepareCoverage` and a session-bound
+`Coverage` ticket. This is an internal integration boundary: Claude's synchronous
+commands do not call it yet, and queued hooks remain disabled. Claude's current
+aggregate capture report cannot establish coverage of individual queued requests;
+that evidence and publication wiring are milestone 6b.5b.
+
+The caller acquires worker ownership, validates its actual binding and source
+provenance, and prepares candidates **before reading sources**, with worker
+ownership held through capture, publication and acknowledgement. It acquires
+staging after worker ownership and uses an independent context for queue
+transactions. Preparation refuses an active execution and seals the unattempted,
+pending prefix for that provenance. Previously attempted, delayed, blocked or
+retained work stops the prefix, preserving its recovery path. Other provenance
+is not selected. Preparation does not increment attempts, claim execution or
+create an artifact reference.
+
+Producers can still enqueue. New events get later batches, even when they name
+the same source and flush intent. `Coverage.Batches` returns detached snapshots
+of the candidates. The vendor must prove that each reported generation's native
+sources and requested flush were included in the published result, respecting
+identity, source availability and retention. A success return, a global generation
+watermark or a local-only commit is insufficient. The shared queue trusts this
+vendor evidence just as it trusts the retained execution adapter's phase results;
+it does not inspect native files or contact a remote.
+
+After confirmed remote publication, `Coverage.Acknowledge` accepts explicit
+covered generations from that ticket. It rejects foreign generations and changed
+candidate state, and records only batches whose **every** event is covered.
+Partially covered batches remain pending in full; already-covered events in those
+batches may be captured again. The method returns only acknowledged generations,
+never a global watermark. Completed producer receipts remain available for
+idempotent event retries. It neither manufactures captured/committed/pushed
+references nor acknowledges saved artifacts using unrelated live input.
+
+Abandoning a ticket leaves sealed work pending. A replacement worker can execute
+it normally with its retry budget intact, or prepare a new ticket before a new
+capture. The old ticket cannot write after its worker closes or loses ownership.
+A failed or uncertain preparation returns no usable ticket. Retry preparation
+before reading sources; a repeated preparation may include newly accepted work.
+An uncertain acknowledgement returns no confirmed generations; retry the same
+ticket and generation list under the same owner to reflush receipts. Process
+death before a durable acknowledgement leaves work to replay, including when
+publication had already happened. Process death after the receipt write preserves
+completion and producer deduplication. Exactly-once publication is not promised.
+
+Tests cover selected/all intent, noncontiguous generations and other provenance,
+partial coverage, later arrivals, detached inputs, recovery barriers, stale owners,
+failed/uncertain persistence, cancellation, real process death and acknowledgement
+crash boundaries. Schema-1 fixtures retain completed receipts, committed artifacts
+and retry metadata through the additive schema-2 upgrade.
