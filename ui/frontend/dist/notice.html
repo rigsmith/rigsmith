@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>clauderig — Claude Desktop</title>
+<style>
+  /* Tokens lifted from design/RigSmith Brand.html — the brand page is the source. */
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --ink-3:#1c1c24;
+    --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#7b7b87; --muted-2:#52525c;
+    --ok:#4CB86A; --warn:#E4B750; --err:#EF6661;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,
+      'Cascadia Mono','Cascadia Code',Consolas,
+      'DejaVu Sans Mono','Liberation Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:var(--ink);color:var(--paper);
+    font-family:var(--mono);font-weight:400;line-height:1.55;
+    -webkit-font-smoothing:antialiased;font-feature-settings:"liga" 0;
+    user-select:none;height:100vh;overflow:hidden;
+    display:flex;flex-direction:column;font-size:12px;
+  }
+  /* 38px clears the macOS traffic lights, which are drawn over the page with
+     the hidden-inset title bar. Windows and Linux keep a native frame with
+     nothing overlapping, so they need none of it. */
+  .head{flex:none;padding:38px 24px 0;--wails-draggable:drag;}
+  :root[data-os="windows"] .head,
+  :root[data-os="linux"] .head{padding-top:18px;}
+  .eyebrow{
+    font-size:10px;letter-spacing:0.22em;text-transform:uppercase;
+    color:var(--warn);font-weight:500;
+    display:flex;align-items:center;gap:12px;
+  }
+  .eyebrow .rule{flex:1;height:1px;background:var(--line);}
+  h1{font-size:14px;font-weight:500;margin:14px 0 0;line-height:1.45;}
+  .body{flex:1;min-height:0;overflow-y:auto;padding:12px 24px 0;}
+  p{margin:0 0 12px;color:var(--muted);}
+  code{color:var(--paper);background:var(--ink-3);border:1px solid var(--line-soft);
+    border-radius:4px;padding:1px 5px;font-size:11px;}
+  /* One row per live Claude Desktop window. The main app is the one this
+     notice is about, so it is the one that is coloured. */
+  /* Scrolls at four rows rather than growing. A machine with six Desktop
+     windows open is exactly the machine that needs the remedy below to still
+     be on screen. */
+  .wins{list-style:none;margin:0 0 12px;padding:0;max-height:136px;overflow-y:auto;
+    border:1px solid var(--line);border-radius:6px;background:var(--ink-2);}
+  .wins li{display:flex;align-items:baseline;gap:10px;
+    padding:7px 10px;border-bottom:1px solid var(--line-soft);}
+  .wins li:last-child{border-bottom:0;}
+  .wins .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;color:var(--muted);}
+  .wins li[data-main] .name{color:var(--warn);}
+  .wins .pid{flex:none;color:var(--muted-2);font-size:11px;}
+  .foot{flex:none;display:flex;gap:8px;align-items:center;
+    padding:14px 24px 18px;border-top:1px solid var(--line-soft);}
+  /* The off switch sits apart from the two actions, and reads quieter than
+     both: it is the choice you make once, not the one you make now. */
+  .foot .off{margin-right:auto;background:transparent;border-color:transparent;
+    color:var(--muted-2);padding-left:0;}
+  .foot .off:hover{color:var(--muted);border-color:var(--line);}
+  button{
+    background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:7px 12px;cursor:pointer;
+    font-family:var(--mono);font-size:10px;letter-spacing:0.12em;
+    text-transform:uppercase;
+  }
+  button:hover{border-color:var(--muted-2);}
+  button:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+  button:focus:not(:focus-visible){outline:none;}
+  button.primary{background:var(--paper);color:var(--ink);border-color:var(--paper);}
+  button.primary:hover{background:#fff;}
+  .err{color:var(--err);}
+</style>
+</head>
+<body>
+<div class="head">
+  <div class="eyebrow"><span>Claude Desktop</span><span class="rule"></span></div>
+  <h1 id="title">The main Claude Desktop app just opened</h1>
+</div>
+<div class="body">
+  <p>
+    Deep links are routed by scheme, not by window, so while this one is open
+    <em>Open in Desktop</em> can land here instead of the profile you picked —
+    and <code>desktop send --session</code> refuses rather than guess. Whatever
+    you start in it is filed under the account it is signed into.
+  </p>
+  <ul class="wins" id="wins"></ul>
+  <p id="note"></p>
+  <p id="remedy"></p>
+</div>
+<div class="foot">
+  <button id="mute" class="off">Don't warn again</button>
+  <button id="sessions">Sessions…</button>
+  <button id="dismiss" class="primary">Dismiss</button>
+</div>
+
+<script type="module">
+import { Call, Events } from '/wails/runtime.js';
+
+const $ = id => document.getElementById(id);
+
+// Wails keys bound methods by "<go import path>.<type>.<method>". Spelled out
+// because we call the runtime directly rather than running `wails3 generate
+// bindings` — that would add a Node step to a Go-only CI. Keep in sync with
+// ui/bridge; ui/bridge/binding_test.go fails if this drifts.
+const DESKTOP_GET = 'github.com/rigsmith/rigsmith/ui/bridge.Desktop.Get';
+const DESKTOP_MUTE = 'github.com/rigsmith/rigsmith/ui/bridge.Desktop.Mute';
+const WINDOWS_OPEN = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Open';
+const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
+
+// The page styles itself per platform: macOS draws its traffic lights over the
+// header, the other two keep a native frame. There is no snapshot carrying the
+// OS on this page, so it reads the one thing a webview always knows.
+const ua = navigator.userAgent.toLowerCase();
+document.documentElement.dataset.os =
+  ua.includes('windows') ? 'windows' : ua.includes('mac') ? 'darwin' : 'linux';
+
+// ⌘Q on macOS, Alt+F4 elsewhere — naming the wrong one reads as advice written
+// for somebody else's machine.
+const quitKeys = document.documentElement.dataset.os === 'darwin' ? '⌘Q' : 'Alt+F4';
+
+function label(w) {
+  if (w.main) return 'the main Claude Desktop app';
+  if (w.profile) return `${w.profile} (clauderig profile)`;
+  return w.dataDir ? `a window on ${w.dataDir}` : 'a Claude Desktop window';
+}
+
+function render(v) {
+  if (!v) return;
+
+  const wins = $('wins');
+  wins.replaceChildren();
+  for (const w of v.windows || []) {
+    const li = document.createElement('li');
+    if (w.main) li.dataset.main = '';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = label(w);
+    const pid = document.createElement('span');
+    pid.className = 'pid';
+    pid.textContent = `pid ${w.pid}`;
+    li.append(name, pid);
+    wins.append(li);
+  }
+  wins.hidden = wins.childElementCount === 0;
+
+  // A store we could not read costs the NAMES, not the warning — so the rows
+  // above still list every window, and this says why some of them are unnamed.
+  const note = $('note');
+  note.className = v.storeError ? 'err' : '';
+  note.textContent = v.storeError
+    ? `Profile names unavailable: ${v.storeError}`
+    : '';
+  note.hidden = !v.storeError;
+
+  // The remedy, and the state it belongs to. Once the app is gone the window is
+  // on its way out anyway, but a stale instruction in the half-second before
+  // that would be one instruction too many.
+  $('title').textContent = v.mainOpen
+    ? 'The main Claude Desktop app just opened'
+    : 'The main Claude Desktop app has closed';
+  $('remedy').textContent = v.mainOpen
+    ? `Quit it (${quitKeys}) and clauderig can route a session to the profile you choose.`
+    : 'clauderig can route a session to the profile you choose again.';
+
+  // Shown only while the warning is still on. Offering to turn off something
+  // already off is how a setting stops meaning anything.
+  $('mute').hidden = v.warn === false;
+}
+
+Events.On('clauderig:desktop', e => render(e?.data?.[0] ?? e?.data));
+
+// Asked for directly as well as listened for: the window is revealed the
+// instant the launch is seen, which is up to one watch tick before the next
+// event would arrive.
+Call.ByName(DESKTOP_GET).then(render).catch(() => {});
+
+$('dismiss').addEventListener('click', () => Call.ByName(WINDOWS_HIDE, 'notice'));
+
+// Off for good, not for now. Dismiss already covers "not this time" — the
+// notice will not come back until the app is closed and opened again — so this
+// button only earns its place by being the permanent one. The way back is the
+// tray's "Warn when Claude Desktop opens", which is what the line below says
+// out loud rather than leaving someone to find a JSON file.
+$('mute').addEventListener('click', async () => {
+  await Call.ByName(DESKTOP_MUTE);
+  await Call.ByName(WINDOWS_HIDE, 'notice');
+});
+$('sessions').addEventListener('click', async () => {
+  await Call.ByName(WINDOWS_OPEN, 'sessions');
+  await Call.ByName(WINDOWS_HIDE, 'notice');
+});
+</script>
+</body>
+</html>

@@ -530,14 +530,14 @@ func otherRunningWindows(app desktop.App, dirs map[string]string, target desktop
 	}
 	byDir := map[string]string{}
 	for name, d := range dirs {
-		byDir[canonicalDir(d)] = name
+		byDir[desktop.CanonicalDir(d)] = name
 	}
-	targetDir := canonicalDir(target.DataDir())
+	targetDir := desktop.CanonicalDir(target.DataDir())
 
 	seen := map[string]bool{}
 	var others []string
 	for _, inst := range instances {
-		dir := canonicalDir(inst.DataDir)
+		dir := desktop.CanonicalDir(inst.DataDir)
 		// Identity from the COMMAND first: a flattened command line cannot be
 		// split back into arguments reliably, so the parsed DataDir can be wrong
 		// for an awkward path — and being wrong here means the target's own
@@ -562,19 +562,6 @@ func otherRunningWindows(app desktop.App, dirs map[string]string, target desktop
 	}
 	sort.Strings(others)
 	return others, nil
-}
-
-// canonicalDir normalises a data directory for comparison: symlinks resolved
-// where possible, and case folded, so a store entry that is a directory symlink
-// or a case-insensitive filesystem cannot make one window look like two.
-func canonicalDir(dir string) string {
-	if dir == "" {
-		return ""
-	}
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		dir = resolved
-	}
-	return strings.ToLower(filepath.Clean(dir))
 }
 
 // quittableByName reports whether `clauderig desktop quit <name>` would work for
