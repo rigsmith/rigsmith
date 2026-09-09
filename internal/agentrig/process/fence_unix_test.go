@@ -96,9 +96,17 @@ func TestUnixFenceSurvivesSupervisorDeathWithLiveWriter(t *testing.T) {
 	if err := syscall.Kill(writer, 0); err != nil {
 		t.Fatal("writer not alive", err)
 	}
+	group, err := syscall.Getpgid(writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupGone := false
 	t.Cleanup(func() {
-		_ = syscall.Kill(-writer, syscall.SIGKILL)
-		stopped, err := confirmGroupExit(func() (bool, error) { return groupAlive(writer) }, 10*time.Second)
+		if groupGone {
+			return // Recovery proved absence; this ID can now be reused.
+		}
+		_ = syscall.Kill(-group, syscall.SIGKILL)
+		stopped, err := confirmGroupExit(func() (bool, error) { return groupAlive(group) }, 10*time.Second)
 		if !stopped || err != nil {
 			t.Error("writer did not stop during cleanup", err)
 		}
@@ -124,12 +132,36 @@ func TestUnixFenceSurvivesSupervisorDeathWithLiveWriter(t *testing.T) {
 			t.Fatalf("replacement overlapped live old writer: %v", err)
 		}
 	}
+	if recovered, err := RecoverStore(t.Context(), store); recovered || !errors.Is(err, ErrWritersActive) {
+		t.Fatalf("recovered over a live orphan: %v %v", recovered, err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "writer.release"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
 	if !waitMarker(filepath.Join(dir, "writer.late")) {
 		t.Fatal("fixture did not retain a live writer after both guardians died")
 	}
+	// The fixture owns this exact group; recovery itself never sends signals.
+	if err := syscall.Kill(-group, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		recovered, err := RecoverStore(t.Context(), store)
+		if recovered && err == nil {
+			groupGone = true
+			break
+		}
+		if !errors.Is(err, ErrWritersActive) || time.Now().After(deadline) {
+			t.Fatalf("could not recover stopped orphan group: %v %v", recovered, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, release, err := storelock.Acquire(t.Context(), store, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
 }
 
 func TestUnixUnconfirmedSupervisorFencesNextCommand(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
@@ -69,6 +70,21 @@ func TestCanonicalSupervisorLossStopsCaptureAndLaterJournal(t *testing.T) {
 				}
 				t.Fatalf("lost supervisor did not fence replacement: %v", err)
 			}
+			if recovered, err := process.RecoverStore(t.Context(), req.StagingDir); err != nil || !recovered {
+				t.Fatalf("prelaunch recovery: %v %v", recovered, err)
+			}
+			pendingCoverage(t, q, 1) // Recovery itself cannot acknowledge work.
+			rows, err = journal.Read(req.StagingDir, 0)
+			if err != nil || len(rows) != want {
+				t.Fatalf("recovery changed journal: %v %v", rows, err)
+			}
+			t.Setenv("RIG_TEST_CANONICAL_SUPERVISOR_FAILURE", "0")
+			retry := service.Service{ReadIdentity: func() (service.Identity, error) { return coverageIdentity, nil }}
+			completed, err := retry.SyncWithCoverage(canonicalSupervisor(t.Context()), req, q)
+			if err != nil || !completed.Sync.Publication.Pushed || len(completed.Acknowledged) != 1 {
+				t.Fatalf("recovered workflow failed confirmation: %+v %v", completed, err)
+			}
+			pendingCoverage(t, q, 0)
 		})
 	}
 }

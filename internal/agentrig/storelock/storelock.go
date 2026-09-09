@@ -145,7 +145,10 @@ func (l *lease) release() func() {
 	})
 }
 
-func lockPath(dir string) (string, error) {
+func lockPath(dir string) (string, error)         { return resolveLockPath(dir, true) }
+func existingLockPath(dir string) (string, error) { return resolveLockPath(dir, false) }
+
+func resolveLockPath(dir string, createParent bool) (string, error) {
 	if strings.TrimSpace(dir) == "" {
 		return "", fmt.Errorf("staging store path is empty")
 	}
@@ -176,8 +179,10 @@ func lockPath(dir string) (string, error) {
 	}
 	// Do not create the store itself: git clone requires a missing or empty
 	// destination. Resolving its parent also handles aliases before first clone.
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return "", err
+	if createParent {
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			return "", err
+		}
 	}
 	parent, err = filepath.EvalSymlinks(parent)
 	if err != nil {
