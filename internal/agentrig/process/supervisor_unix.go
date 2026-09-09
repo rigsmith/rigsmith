@@ -67,7 +67,11 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 	if len(request) > supervisorLimit {
 		return errors.New("supervised command request exceeds size limit")
 	}
-	lease, err := storelock.Inherit(ctx)
+	leaseContext := ctx
+	if supervisor.lease != nil {
+		leaseContext = supervisor.lease
+	}
+	lease, err := storelock.Inherit(leaseContext)
 	if err != nil {
 		return err
 	}

@@ -15,6 +15,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
@@ -160,11 +161,12 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 	}
 	// All Claude artifact services take staging before private artifact stores.
 	// This also lets a queue execution retain staging across phase markers.
-	_, release, err := storelock.Acquire(staging, stage, StoreWait)
+	staging, release, err := storelock.Acquire(staging, stage, StoreWait)
 	if err != nil {
 		return "", err
 	}
 	defer release()
+	ctx = process.WithSupervisorLease(ctx, staging)
 	req.Store.Dir = store
 	return req.Store.BuildWithMetadata(ctx, key, func(ctx context.Context, tree string, meta *artifact.Metadata) error {
 		current, err := CaptureBinding(req.Sync, req.Profiles)

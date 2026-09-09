@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
@@ -79,11 +80,12 @@ func (s Service) publishArtifact(ctx, staging context.Context, input ArtifactPub
 	if err != nil {
 		return fail, err
 	}
-	_, release, err := storelock.Acquire(staging, stage, StoreWait)
+	staging, release, err := storelock.Acquire(staging, stage, StoreWait)
 	if err != nil {
 		return fail, err
 	}
 	defer release()
+	ctx = process.WithSupervisorLease(ctx, staging)
 	binding, err := artifactPhaseBinding(req, queue.Committed)
 	if err != nil {
 		return fail, err

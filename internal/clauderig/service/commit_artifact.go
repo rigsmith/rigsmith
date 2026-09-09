@@ -7,6 +7,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
@@ -45,11 +46,12 @@ func (s Service) commitArtifact(ctx, staging context.Context, input ArtifactComm
 		return "", err
 	}
 	// Staging precedes private artifact stores. Capture extraction is read-only.
-	_, release, err := storelock.Acquire(staging, stage, StoreWait)
+	staging, release, err := storelock.Acquire(staging, stage, StoreWait)
 	if err != nil {
 		return "", err
 	}
 	defer release()
+	ctx = process.WithSupervisorLease(ctx, staging)
 	binding, err := artifactPhaseBinding(req, queue.Captured)
 	if err != nil {
 		return "", err

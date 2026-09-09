@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
@@ -85,6 +86,7 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 		return result, err
 	}
 	defer release()
+	ctx = process.WithSupervisorLease(ctx, staging)
 	c := &manualCoverage{operation: ctx, worker: worker, queueDir: q.Directory()}
 	// Validate exclusion even for local-only/dry runs: their capture still walks.
 	if err := c.checkLayout(req, engine.LocalProfileNames()); err != nil {

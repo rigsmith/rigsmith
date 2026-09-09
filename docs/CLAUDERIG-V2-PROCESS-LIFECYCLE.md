@@ -99,8 +99,12 @@ For each retained command on Linux/macOS:
    code. Ordinary command exits retain direct `*exec.ExitError` classification;
    startup/protocol/cleanup errors cannot be classified as ordinary Git exits.
 
-The startup history check now passes its acquired staging context into retained
-Git calls, so selecting supervision there does not lose the lease capability.
+The startup history check passes its acquired staging context into retained Git
+calls. Artifact services use `WithSupervisorLease` to attach that capability only
+to command supervision: capture, commit, publication, retries and manual coverage
+confirmation keep the staging lease while private stores/queue persistence retain
+the operation context's independent lock identity and cancellation. An expired
+explicit lease is rejected; it cannot fall back to a private store's lease.
 
 Synthetic native tests pause the supervisor before command startup and after a
 writer starts, then kill the worker without defers. While cleanup is paused, a
@@ -111,7 +115,8 @@ worker. Other tests cover cancellation, normal exit, startup failure, missing
 completion, request limits, command IO and ordinary exit-code classification. The existing retained-command
 cleanup suite also runs through supervision, including its command/transport/stream
 builders and their `WaitDelay` settings; real Git tests check refs, semantic exit
-codes and binary blob IO.
+codes and binary blob IO. Claude queue integration tests cover startup, every
+phase, stop/drain and offline replay after source removal under supervision.
 The inherited-lease test separately checks that an expired context cannot
 produce another duplicate and that closing the final duplicate releases the lock.
 

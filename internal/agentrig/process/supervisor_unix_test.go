@@ -377,3 +377,34 @@ func TestUnixSupervisorOversizedResult(t *testing.T) {
 	_ = result.Close()
 	os.Exit(125)
 }
+
+func TestSupervisorLeaseDoesNotChangePrivateStoreOwnership(t *testing.T) {
+	staging, release, err := storelock.Acquire(t.Context(), t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	operation, cancel := context.WithCancel(supervisorContext(t.Context()))
+	defer cancel()
+	operation = WithSupervisorLease(operation, staging)
+	private, freePrivate, err := storelock.Acquire(operation, t.TempDir(), 0)
+	if err != nil {
+		t.Fatal("supervisor lease polluted private store ownership", err)
+	}
+	defer freePrivate()
+	err = Run(private, helperCommand("exit", ""))
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 7 {
+		t.Fatal("command did not use explicit staging lease", err)
+	}
+	release()
+	cmd := helperCommand("exit", "")
+	err = Run(private, cmd)
+	if err == nil || cmd.Process != nil || !strings.Contains(err.Error(), "active staging lease") {
+		t.Fatal("fell back to private store after staging expired", err)
+	}
+	cancel()
+	if !errors.Is(private.Err(), context.Canceled) {
+		t.Fatal("lost operation cancellation")
+	}
+}

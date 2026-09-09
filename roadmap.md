@@ -40,7 +40,7 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Worker loop, graceful stop and draining (6b.6a) | Merged: [#365](https://github.com/rigsmith/rigsmith/pull/365). Poll accepted work, honor durable retries, yield to foreground operations, and retain unfinished work on stop/restart. |
 | Startup shared-history validation (6b.6b.1) | Merged: [#367](https://github.com/rigsmith/rigsmith/pull/367). Check freshly fetched destination ancestry before claiming work; reject uninitialized/unrelated stores without changing queue attempts or staging. |
 | Windows child ownership at creation (6b.6b.2a) | Merged: [#368](https://github.com/rigsmith/rigsmith/pull/368). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
-| Unix parent-death supervision (6b.6b.2b) | In review (current PR). Explicit supervisor entry point, inherited staging lease and forced worker-death tests at startup/running boundaries. |
+| Unix parent-death supervision (6b.6b.2b) | In review (current PR). Explicit supervisor entry point, inherited staging lease, queued phase/retry integration and forced worker-death tests at startup/running boundaries. |
 | OS restart fencing and lifecycle validation (6b.6b.2c) | Next. Fence supervisor failure/uncertain cleanup and asynchronous Windows termination; prevent restarted workers from overlapping old helpers; validate platform startup/restart before command rollout. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |

@@ -124,8 +124,9 @@ func (a QueueAdapter) Begin(ctx context.Context, binding queue.Binding, work que
 }
 
 // A single sequential RunOne owns this execution and its detached inputs. Private
-// store operations receive the driver's independent context; only the staging
-// acquisition borrows staging. Close follows completion of all service children.
+// store operations receive the driver's independent context. Artifact services
+// attach staging only to command supervision, without changing private-store
+// lock identity. Close follows completion of all service children.
 type queueExecution struct {
 	service Service
 	staging context.Context
