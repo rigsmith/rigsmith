@@ -85,7 +85,7 @@ func runOwnedChecked(ctx context.Context, cmd *exec.Cmd, owner commandOwnership)
 			observed = fmt.Errorf("observe command exit: %w", observed)
 		}
 		if stopped != nil {
-			stopped = fmt.Errorf("cleanupVerified up command helpers: %w", stopped)
+			stopped = fmt.Errorf("clean up command helpers: %w", stopped)
 		}
 		waitErr := cmd.Wait()
 		if observed == nil && stopped == nil {
