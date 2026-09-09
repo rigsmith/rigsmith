@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/rigsmith/rigsmith/core/commandrun"
 )
 
 // Deletion is a path git no longer tracks, and the commit that removed it. The
@@ -86,6 +88,9 @@ func (r *Repo) LastCommitTime(ctx context.Context, rev, path string) (time.Time,
 // through memory per file. The early close makes git's own write fail, which is
 // expected and not an error here.
 func (r *Repo) ShowPrefix(ctx context.Context, rev, path string, max int) ([]byte, error) {
+	if commandrun.Configured(ctx) {
+		return nil, fmt.Errorf("prefix streaming is unavailable with a custom command runner")
+	}
 	cmd := exec.CommandContext(ctx, "git", "show", rev+":"+path)
 	cmd.Dir = r.Dir
 	stdout, err := cmd.StdoutPipe()

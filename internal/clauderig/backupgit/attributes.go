@@ -9,10 +9,10 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/commandrun"
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
 )
 
@@ -160,15 +160,17 @@ func Validate(ctx context.Context, root string) error {
 }
 
 func git(ctx context.Context, root string, input []byte, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := commandrun.Command(ctx, "git", args...)
 	cmd.Dir, cmd.Stdin = root, bytes.NewReader(input)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	err := commandrun.Run(ctx, cmd)
 	if err != nil {
 		return nil, fmt.Errorf("backup git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
 	}
-	return out, nil
+	return out.Bytes(), nil
 }
 
 type attributeReader struct {

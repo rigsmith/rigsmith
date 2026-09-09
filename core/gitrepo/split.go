@@ -5,9 +5,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/core/commandrun"
 )
 
 // CommitSubtree commits the working-tree files matching pathspecs to branch using
@@ -117,13 +118,13 @@ func (r *Repo) gitDir(ctx context.Context) (string, error) {
 }
 
 func runGitEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := commandrun.Command(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
+	if err := commandrun.Run(ctx, cmd); err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
 	}
 	return out.String(), nil

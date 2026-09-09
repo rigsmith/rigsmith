@@ -191,3 +191,37 @@ supervisor successfully cleans up.
 
 There is one additional running supervisor per retained Unix command. Trusted
 helpers must stay in their inherited process group; this is not a sandbox.
+
+
+## Canonical Git command-runner plumbing (6b.6b.2d.1)
+
+`core/commandrun.WithRunner` selects a synchronous command runner on one operation
+context. Core Git stays independent of vendor adapters, store locks, and process
+supervision. Without a selection, command construction and execution retain their
+ordinary `exec.CommandContext` / `cmd.Run` behavior. A selected runner receives a
+fresh plain command and owns cancellation, output copying, cleanup, and waiting;
+it must return cleanup uncertainty as an error. A nil selection fails closed.
+Selection alone neither acquires a lease nor enables supervision.
+
+Buffered commands in `core/gitrepo` and Claude backup attribute preparation use
+this boundary, including finite stdin, temporary-index environment overrides,
+ignore/exit probes, and binary archive output. The exit-code probe accepts only a
+direct `*exec.ExitError` as an ordinary Git status under selection; a joined or
+wrapped runner failure stays an error. Streaming `ShowPrefix` and terminal-attached
+merge tools reject selection before creating a process: their independent
+Start/Kill/Wait and interactive stdin contracts are not supported by this runner.
+Ordinary previews and interactive merge tools keep their existing behavior.
+
+This is command plumbing, not complete canonical workflow supervision. Legacy
+boolean/fallback helpers can still normalize errors, and workflows also modify
+files in process. All eight canonical Claude service guards remain in place.
+Before removing them, the adapter must bind the active staging lease, stop the
+workflow on uncertain command cleanup (including through fallback helpers), and
+verify that no later in-process mutation or publication can follow that failure.
+Proof-based fenced-store recovery remains a separate requirement. There is no
+production runner selection or new CLI/hook behavior in this step.
+
+Synthetic tests compare selected/default Git byte round trips and distinguish
+nonzero exits from cleanup failures. Native Unix-supervisor/Windows-job tests run
+attribute preparation, canonical commits, temporary-index history, and tar export
+under a staging lease, verifying exact binary bytes and cleared command fences.
