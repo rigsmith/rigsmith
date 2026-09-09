@@ -1,0 +1,80 @@
+# GoReleaser configuration for the claudeRig UI — the window's own release lane.
+#
+# Separate from .goreleaser.yaml because the app is a separate module on its own
+# version: it is at 0.x while the command line tools are at 1.x, and it ships on
+# its own tag (ui/vX.Y.Z) rather than riding theirs. Same builds, same
+# Authenticode hook, same archive names as when it rode along — only the trigger
+# and the release it lands in are its own.
+#
+# It BUILDS and SIGNS here and publishes nothing. A prefixed tag is not a semver
+# tag, and OSS GoReleaser has no way to be told the difference — `monorepo.tag_prefix`
+# is a Pro feature — so this always runs as a snapshot and
+# .github/workflows/release-ui.yml creates the release from the artifacts. That
+# is not a workaround bolted on for this: the macOS .app has always been
+# packaged and published by scripts after GoReleaser had finished, because a
+# cgo bundle is not something it can build.
+#
+# Run `goreleaser check -f .goreleaser.ui.yaml` after editing to validate.
+version: 2
+
+project_name: clauderig-ui
+
+# The version comes from the module, never from a tag. --snapshot would
+# otherwise stamp a git-describe string into the archive names and the binary,
+# and the whole point of the separate lane is that this number is the app's own.
+# The workflow reads it out of ui/go.mod (scripts/ui-version.sh) into UI_VERSION
+# and checks it against the tag before anything is built.
+snapshot:
+  version_template: "{{ .Env.UI_VERSION }}"
+
+# No changelog: GoReleaser is not writing the release here, the workflow is, and
+# it takes the notes from ui/CHANGELOG.md — the one changerig maintains.
+changelog:
+  disable: true
+
+# Nothing to publish from here. See the header.
+release:
+  disable: true
+
+# Embed the window's icon + version-info into the .exe before building, exactly
+# as the CLIs' lane does for theirs. `ui`, not the whole set: the CLIs' resources
+# are not part of this release, and their version comes from a different tag.
+before:
+  hooks:
+    - sh ./scripts/winres.sh ui
+
+builds:
+  # The UI on Windows. Wails v3 reaches WebView2 through syscall rather than
+  # cgo there, so it cross-compiles from the Linux runner like the CLIs do and
+  # Authenticode-signs through the same script. macOS is not here: that build
+  # needs cgo, a real macOS runner and a .app bundle, which is scripts/package-ui.sh.
+  - id: clauderig-ui
+    main: ./ui
+    binary: clauderigUi
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Env.UI_VERSION }}
+    hooks:
+      post:
+        - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
+
+archives:
+  - id: clauderig-ui
+    ids:
+      - clauderig-ui
+    name_template: "clauderigUi_{{ .Env.UI_VERSION }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - zip
+
+# The macOS zip is built on a different runner and is not in dist/, so a
+# checksums file written here would list half of what the release ships and read
+# as the whole of it. The cask takes the zip's real sha256, and komac hashes
+# what it downloads.
+checksum:
+  disable: true

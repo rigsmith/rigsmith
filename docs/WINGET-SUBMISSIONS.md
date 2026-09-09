@@ -84,6 +84,39 @@ which defeats every `$`-anchored pattern. Fixtures from both producers live in
 
 [komac]: https://github.com/russellbanks/Komac
 
+## The window is a sixth package, on its own tag
+
+`clauderig-ui` ships on `ui/vX.Y.Z` at its own version (see `ui/README.md`), so
+its submission cannot derive either the version or the release URL the way the
+CLIs' does. `winget-submit.sh` takes both from the environment instead:
+
+```sh
+WINGET_TAG=ui/v0.2.0 \
+WINGET_PACKAGES=RigSmith.ClaudeRigUi:clauderigUi \
+  sh scripts/winget-submit.sh 0.2.0 --submit
+```
+
+Defaults are unchanged — `v<version>` and the four CLIs plus the bundle — so the
+CLI release calls it exactly as before.
+
+**The first submission is a `komac new`, done by hand.** Everything here is
+built on komac *updating* a published manifest, which is the whole reason this
+lane exists; a package winget has never seen has nothing to update. Until
+`RigSmith.ClaudeRigUi` exists upstream, the step in `release-ui.yml` will fail —
+which is why it is `continue-on-error`, like the CLI one, and why a release is
+never held up by it.
+
+The window's `.exe` does carry version resources — `build/winres/clauderigUi.json`,
+embedded by `scripts/winres.sh ui` — so komac reads a real FileDescription and
+OriginalFilename for it rather than guessing from an empty PE. It shipped
+without any for its whole life, because `build/winres/` had an entry per CLI and
+nothing said the window needed one; `TestEveryWindowsBinaryHasVersionResources`
+now says it.
+
+Its description is written to the same rule as the CLIs': no `installer`,
+`setup`, `7zs.sfx` or `7zsd.sfx` anywhere in it, which
+`TestDescriptionsDoNotLookLikeInstallers` pins.
+
 ## What we control
 
 

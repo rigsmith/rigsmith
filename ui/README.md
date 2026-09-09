@@ -133,3 +133,34 @@ launch, a failed process scan holds the previous state rather than reading as
 `~/.clauderig/ui-state.json` — the UI's own machine-local settings, deliberately
 not a `clauderig` config key. The tray's **Warn when Claude Desktop opens**
 checkbox is the way back on.
+
+## Releasing
+
+The window ships on its **own tag**, `ui/vX.Y.Z`, not on the CLIs' `vX.Y.Z`. It
+is a separate module at 0.x while they are at 1.x, and it no longer has to wait
+for a toolchain release to reach anyone.
+
+1. `changerig add --scope clauderig-ui` as usual; `shiprig version` bumps the
+   `// rigsmith:version` comment in `ui/go.mod` and writes `ui/CHANGELOG.md`.
+2. `shiprig tag` renders `ui/vX.Y.Z` from the module directory — it has always
+   done this; nothing consumed the tag until now.
+3. Pushing it fires `.github/workflows/release-ui.yml`: GoReleaser builds and
+   Authenticode-signs the Windows binaries from `.goreleaser.ui.yaml`, a macOS
+   runner builds, signs and notarizes the `.app` via `scripts/package-ui.sh`,
+   and the two are published together as one GitHub release, a Homebrew cask and
+   a winget submission.
+
+`scripts/ui-release-version.sh` refuses a tag that disagrees with `ui/go.mod`.
+The two are written at different moments, and a mismatch would ship a window
+reporting one number under a tag promising another — with the cask and the
+winget manifest each believing a different one.
+
+Actions → **Release the UI** → Run workflow is a dry run: it builds and signs
+with the real secrets, publishes nothing, marks the version `-dryrun`, and
+uploads the artifacts.
+
+GoReleaser builds here but never publishes. `ui/v0.2.0` is not a semver tag and
+OSS GoReleaser cannot be told about a prefix (`monorepo.tag_prefix` is a Pro
+feature), so the run is a snapshot and the workflow creates the release. The
+macOS half has always worked that way — a cgo `.app` bundle is not something
+GoReleaser builds.
