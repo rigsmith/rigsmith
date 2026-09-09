@@ -536,9 +536,23 @@ func desktopFolders(loc location) []PlaceGroup {
 	for _, sc := range scanSidecars(filepath.Join(loc.base, codeSessions)) {
 		who := labels[strings.ToLower(sc.account)]
 		if who == "" {
-			who = shortSessionID(sc.account)
+			// The directory name itself, in full. shortSessionID stops at the
+			// first "-", which is a fine way to make one uuid readable and a
+			// bad way to name several: two accounts whose ids share a prefix
+			// got the same name, and sortGroups builds its account headings by
+			// comparing that name — so they ran together under one heading
+			// whichever way the groups were keyed. This is the fallback for a
+			// store clauderig has no email on file for at all, which is the
+			// rare case; being long is a smaller fault than being ambiguous.
+			who = sc.account
 		}
-		key := who + "\x00" + sc.folder
+		// Keyed by the account ID, never by the name shown for it. With no
+		// email on file that name is shortSessionID(account), which stops at
+		// the first "-" — so two accounts whose directory names share a prefix
+		// collapsed into one group. It then counted both accounts' sessions
+		// while carrying only one account's id, and Items filters on that id:
+		// the group advertised sessions it could not show.
+		key := sc.account + "\x00" + sc.folder
 		g := byFolder[key]
 		if g == nil {
 			g = &PlaceGroup{
@@ -617,14 +631,21 @@ func scanSidecars(root string) []sidecarRef {
 			out = append(out, sidecarRef{folder: deletedFolder, account: account, item: it})
 			return nil
 		}
-		folder := readSidecar(path, &it)
+		folder, parsed := readSidecar(path, &it)
 		if folder == "" {
 			folder = unknownFolder
 		}
 		// A record with no title of its own reads better as its own id than as
 		// the filename that id is wrapped in: "local_051bc295-…json" is the
 		// same string with noise either side.
-		if it.Label == name {
+		//
+		// Only for a record we actually READ, though. A sidecar that will not
+		// parse tells us nothing — not even its id — so calling it
+		// "(untitled) broken" would dress the middle of a filename up as a
+		// session id. The filename is the one fact such a record has, and
+		// showing it unaltered is also what makes it recognisable as the file
+		// somebody has to go and look at.
+		if parsed && it.Label == name {
 			id := strings.TrimSuffix(strings.TrimPrefix(name, "local_"), ".json")
 			it.Label = "(untitled) " + shortSessionID(id)
 		}
@@ -697,10 +718,14 @@ func groupDir(loc location, groupID string) (string, error) {
 // readSidecar fills in what the file itself says. Best-effort throughout: a
 // sidecar that will not parse still belongs in the listing, because its
 // existence is the fact being looked for.
-func readSidecar(path string, it *PlaceItem) (folder string) {
+// parsed is false when the file could not be read or would not parse, which the
+// caller needs to tell apart from a record that parsed and simply said nothing
+// about where it was opened. Both leave folder empty; only one of them leaves us
+// knowing nothing at all about the session.
+func readSidecar(path string, it *PlaceItem) (folder string, parsed bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	var s struct {
 		SessionID      string `json:"sessionId"`
@@ -719,7 +744,7 @@ func readSidecar(path string, it *PlaceItem) (folder string) {
 		} `json:"prs"`
 	}
 	if json.Unmarshal(b, &s) != nil {
-		return ""
+		return "", false
 	}
 	it.Worktree = s.WorktreeName
 	for _, pr := range s.PRs {
@@ -753,7 +778,7 @@ func readSidecar(path string, it *PlaceItem) (folder string) {
 	if s.LastActivityAt > 0 {
 		it.When = time.UnixMilli(s.LastActivityAt)
 	}
-	return folder
+	return folder, true
 }
 
 // cliItems lists one project's transcripts, and the directories a transcript
