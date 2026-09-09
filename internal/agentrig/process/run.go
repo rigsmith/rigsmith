@@ -54,18 +54,18 @@ type commandOwnership interface {
 	close() error
 }
 
-func runOwnedChecked(ctx context.Context, cmd *exec.Cmd, owner commandOwnership) (err error, clean bool) {
-	clean = true // No command has been created yet; close also retires any anchor.
+func runOwnedChecked(ctx context.Context, cmd *exec.Cmd, owner commandOwnership) (err error, cleanupVerified bool) {
+	cleanupVerified = true // No command has been created yet; close also retires any anchor.
 	defer func() {
 		if closeErr := owner.close(); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("close command ownership: %w", closeErr))
-			clean = false
+			cleanupVerified = false
 		}
 	}()
 	if err = cmd.Start(); err != nil {
-		return err, clean
+		return err, cleanupVerified
 	}
-	clean = false
+	cleanupVerified = false
 	if err = owner.started(cmd); err != nil {
 		stopErr := owner.stop()
 		killErr := cmd.Process.Kill()
@@ -74,8 +74,8 @@ func runOwnedChecked(ctx context.Context, cmd *exec.Cmd, owner commandOwnership)
 		return errors.Join(err, stopErr, killErr, finishErr, waitErr), finishErr == nil
 	}
 	type outcome struct {
-		err   error
-		clean bool
+		err             error
+		cleanupVerified bool
 	}
 	done := make(chan outcome, 1)
 	go func() {
@@ -85,7 +85,7 @@ func runOwnedChecked(ctx context.Context, cmd *exec.Cmd, owner commandOwnership)
 			observed = fmt.Errorf("observe command exit: %w", observed)
 		}
 		if stopped != nil {
-			stopped = fmt.Errorf("clean up command helpers: %w", stopped)
+			stopped = fmt.Errorf("cleanupVerified up command helpers: %w", stopped)
 		}
 		waitErr := cmd.Wait()
 		if observed == nil && stopped == nil {
@@ -102,9 +102,9 @@ func runOwnedChecked(ctx context.Context, cmd *exec.Cmd, owner commandOwnership)
 		result = <-done
 		result.err = errors.Join(stopErr, result.err)
 	}
-	err, clean = result.err, result.clean
+	err, cleanupVerified = result.err, result.cleanupVerified
 	if ctx.Err() != nil {
-		return errors.Join(ctx.Err(), err), clean
+		return errors.Join(ctx.Err(), err), cleanupVerified
 	}
-	return err, clean
+	return err, cleanupVerified
 }

@@ -104,7 +104,7 @@ func TestUnixSupervisedCommand(t *testing.T) {
 			release()
 			_, next, acquireErr := storelock.Acquire(t.Context(), store, 0)
 			if acquireErr != nil {
-				t.Fatal("verified cleanup retained fence", acquireErr)
+				t.Fatalf("verified cleanup retained fence: %v; command error: %v; supervisor stderr: %s", acquireErr, err, stderr.String())
 			}
 			next()
 			if mode == "return" || mode == "wait" {

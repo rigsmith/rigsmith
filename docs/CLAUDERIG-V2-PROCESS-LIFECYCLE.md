@@ -152,6 +152,11 @@ cleanup. Abrupt worker death leaves the record in place even if the job's
 asynchronous termination subsequently succeeds. Losing the OS lock is not proof
 that the helpers have stopped. Unsupported platforms reject supervised execution.
 
+Darwin may reject a repeated kill while helpers are still exiting. On `EPERM`,
+cleanup observes the group for at most one second and succeeds only when no
+executing member remains. Expiry with live members, or an inspection failure,
+retains the error and fence; the delay itself is never evidence of cleanup.
+
 Cleanup observation failures keep the fence. A stale completion token cannot
 clear a newer command's intent. No timer, worker restart, ordinary retry, or
 operator bypass clears an unconfirmed record. This deliberately prefers a blocked

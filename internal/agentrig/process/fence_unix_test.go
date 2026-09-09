@@ -7,7 +7,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strconv"
 	"syscall"
@@ -40,8 +39,6 @@ func TestUnixFencedWriter(t *testing.T) {
 	if dir == "" {
 		return
 	}
-	// A trusted helper may ignore job-control hangup; it must still be fenced.
-	signal.Ignore(syscall.SIGHUP)
 	marker := filepath.Join(dir, "writer")
 	if err := os.WriteFile(marker+".tmp", []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		os.Exit(2)
@@ -66,7 +63,16 @@ func TestUnixFenceSurvivesSupervisorDeathWithLiveWriter(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	waited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(waited) }()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		select {
+		case <-waited:
+		case <-time.After(10 * time.Second):
+			t.Error("worker did not exit during cleanup")
+		}
+	})
 	readPID := func(name string) int {
 		t.Helper()
 		path := filepath.Join(dir, name)
@@ -84,19 +90,30 @@ func TestUnixFenceSurvivesSupervisorDeathWithLiveWriter(t *testing.T) {
 		return pid
 	}
 	supervisor := readPID("supervisor")
-	// Keep the writer stopped while killing both guardians. It cannot naturally
-	// exit (or reuse its PID) before the acquisition assertion and test cleanup.
+	// Keep an idle writer alive behind its release marker while killing the
+	// supervisor. No stopped process group/job-control signal is involved.
 	writer := readPID("writer")
-	if err := syscall.Kill(writer, syscall.SIGSTOP); err != nil {
-		t.Fatal(err)
+	if err := syscall.Kill(writer, 0); err != nil {
+		t.Fatal("writer not alive", err)
 	}
-	t.Cleanup(func() { _ = syscall.Kill(-writer, syscall.SIGKILL) })
+	t.Cleanup(func() {
+		_ = syscall.Kill(-writer, syscall.SIGKILL)
+		stopped, err := confirmGroupExit(func() (bool, error) { return groupAlive(writer) }, 10*time.Second)
+		if !stopped || err != nil {
+			t.Error("writer did not stop during cleanup", err)
+		}
+	})
 	if err := syscall.Kill(supervisor, syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	// Either the failed Run or this kill ends the worker without cleaning writers.
-	_ = cmd.Process.Kill()
-	_ = cmd.Wait()
+	// Let Run observe supervisor death before the worker exits. Killing both
+	// concurrently lets the supervisor receive lifetime EOF and kill the writer
+	// before its own SIGKILL takes effect, defeating this orphan fixture.
+	select {
+	case <-waited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("worker did not observe supervisor death")
+	}
 	store := filepath.Join(dir, "store")
 	for range 2 {
 		_, release, err := storelock.Acquire(t.Context(), store, time.Second)
@@ -108,9 +125,6 @@ func TestUnixFenceSurvivesSupervisorDeathWithLiveWriter(t *testing.T) {
 		}
 	}
 	if err := os.WriteFile(filepath.Join(dir, "writer.release"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := syscall.Kill(writer, syscall.SIGCONT); err != nil {
 		t.Fatal(err)
 	}
 	if !waitMarker(filepath.Join(dir, "writer.late")) {

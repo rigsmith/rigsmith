@@ -22,9 +22,9 @@ func TestCommandFailureIsNotCleanupEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err, clean := runOwnedChecked(t.Context(), cmd, uncertainOwnership{owner})
-			if clean || !errors.Is(err, errUnconfirmedCleanup) {
-				t.Fatalf("uncertain cleanup accepted: clean=%v err=%v", clean, err)
+			err, cleanupVerified := runOwnedChecked(t.Context(), cmd, uncertainOwnership{owner})
+			if cleanupVerified || !errors.Is(err, errUnconfirmedCleanup) {
+				t.Fatalf("uncertain cleanup accepted: cleanupVerified=%v err=%v", cleanupVerified, err)
 			}
 		})
 	}

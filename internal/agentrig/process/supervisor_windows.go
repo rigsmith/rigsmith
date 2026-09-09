@@ -19,8 +19,8 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 	if err != nil {
 		return err
 	}
-	err, clean := runDirectChecked(ctx, cmd)
-	if clean {
+	err, cleanupVerified := runDirectChecked(ctx, cmd)
+	if cleanupVerified {
 		if clearErr := fence.Clear(); clearErr != nil {
 			return errors.Join(err, fmt.Errorf("clear command fence: %w", clearErr))
 		}

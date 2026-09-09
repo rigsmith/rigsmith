@@ -189,7 +189,7 @@ func ServeSupervisor() int {
 	if err != nil {
 		return 125
 	}
-	clean := true // No command exists yet.
+	cleanupVerified := true // No command exists yet.
 	requestR, lifeR, resultW := files[0], files[1], files[2]
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -202,7 +202,7 @@ func ServeSupervisor() int {
 	finish := func(code int, err error) int {
 		// Clear before reporting completion, including when the worker is dead
 		// and its completion reader is gone. Never clear on uncertain cleanup.
-		if clean {
+		if cleanupVerified {
 			if clearErr := fence.Clear(); clearErr != nil {
 				err = errors.Join(err, fmt.Errorf("clear command fence: %w", clearErr))
 				code = 125
@@ -240,8 +240,8 @@ func ServeSupervisor() int {
 	// Path was already resolved by the worker; never search the supervisor's PATH.
 	cmd := &exec.Cmd{Path: string(request.Path), Args: commandStrings(request.Args), Env: commandStrings(request.Env), Dir: string(request.Dir),
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
-	clean = false
-	err, clean = runDirectChecked(ctx, cmd)
+	cleanupVerified = false
+	err, cleanupVerified = runDirectChecked(ctx, cmd)
 	if err == nil {
 		return finish(0, nil)
 	}
