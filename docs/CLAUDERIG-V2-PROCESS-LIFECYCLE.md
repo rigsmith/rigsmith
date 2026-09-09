@@ -108,7 +108,10 @@ replacement staging writer must receive `ErrBusy`. After resuming the supervisor
 all inherited output pipes must close, the store must become available, and the
 old helper must not perform a later write. Both boundaries repeat with a fresh
 worker. Other tests cover cancellation, normal exit, startup failure, missing
-completion, request limits, command IO and ordinary exit-code classification.
+completion, request limits, command IO and ordinary exit-code classification. The existing retained-command
+cleanup suite also runs through supervision, including its command/transport/stream
+builders and their `WaitDelay` settings; real Git tests check refs, semantic exit
+codes and binary blob IO.
 The inherited-lease test separately checks that an expired context cannot
 produce another duplicate and that closing the final duplicate releases the lock.
 

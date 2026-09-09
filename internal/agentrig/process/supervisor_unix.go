@@ -54,7 +54,7 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 	if !filepath.IsAbs(supervisor.path) {
 		return errors.New("supervisor executable must be absolute")
 	}
-	if cmd.SysProcAttr != nil || cmd.Cancel != nil || len(cmd.ExtraFiles) != 0 || cmd.Process != nil || cmd.WaitDelay != 0 {
+	if cmd.SysProcAttr != nil || cmd.Cancel != nil || len(cmd.ExtraFiles) != 0 || cmd.Process != nil {
 		return errors.New("supervised command already has process ownership")
 	}
 	if cmd.Err != nil {
