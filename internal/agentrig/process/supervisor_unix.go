@@ -114,8 +114,12 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := cmd.Start(); err != nil {
+	fence, err := storelock.BeginFence(leaseContext)
+	if err != nil {
 		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return errors.Join(err, fence.Clear())
 	}
 	_ = requestR.Close()
 	_ = lifeR.Close()
@@ -157,7 +161,7 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 // supplied by runSupervised: request, parent lifetime, completion, staging lease.
 // Call only from a dedicated executable entry point and immediately os.Exit with
 // its result. The supervisor must remain alive to handle worker death. Killing
-// the supervisor itself is a separate restart-fencing gate, not covered here.
+// the supervisor itself leaves a persistent fence that blocks new writers.
 func ServeSupervisor() int {
 	files := make([]*os.File, 4)
 	for i := range files {
@@ -181,6 +185,11 @@ func ServeSupervisor() int {
 		files[i] = os.NewFile(fd, "agentrig-supervisor")
 		defer files[i].Close()
 	}
+	fence, err := storelock.InheritedFence(files[3])
+	if err != nil {
+		return 125
+	}
+	clean := true // No command exists yet.
 	requestR, lifeR, resultW := files[0], files[1], files[2]
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -191,6 +200,14 @@ func ServeSupervisor() int {
 		_ = requestR.Close() // Also interrupt an incomplete startup request.
 	}()
 	finish := func(code int, err error) int {
+		// Clear before reporting completion, including when the worker is dead
+		// and its completion reader is gone. Never clear on uncertain cleanup.
+		if clean {
+			if clearErr := fence.Clear(); clearErr != nil {
+				err = errors.Join(err, fmt.Errorf("clear command fence: %w", clearErr))
+				code = 125
+			}
+		}
 		result := supervisorResult{Completed: true, ExitCode: code}
 		if err != nil {
 			result.Failure = err.Error()
@@ -223,7 +240,8 @@ func ServeSupervisor() int {
 	// Path was already resolved by the worker; never search the supervisor's PATH.
 	cmd := &exec.Cmd{Path: string(request.Path), Args: commandStrings(request.Args), Env: commandStrings(request.Env), Dir: string(request.Dir),
 		Stdin: os.Stdin, Stdout: os.Stdout, Stderr: os.Stderr}
-	err = runDirect(ctx, cmd)
+	clean = false
+	err, clean = runDirectChecked(ctx, cmd)
 	if err == nil {
 		return finish(0, nil)
 	}

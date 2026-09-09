@@ -10,9 +10,10 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 **Current position:** the shared engine, Claude adapter, durable queue,
 retained snapshots, conflict recovery, confirmed publication and worker loop are
 merged into `codex/v2`. Startup history checks (#367) and Windows command ownership
-at creation (#368) are merged. Unix worker-death supervision is in review.
+at creation (#368) and Unix worker-death supervision (#369) are merged. Persistent
+restart fencing is in review.
 
-The release path is now: finish restart fencing, add capacity/cleanup controls,
+The release path is now: finish restart fencing and its recovery remedy, add capacity/cleanup controls,
 enable opt-in queued Claude sync, then connect the separate `codexrig` adapter.
 Ordinary Claude commands and hooks still use their existing synchronous workflow.
 
@@ -40,8 +41,9 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Worker loop, graceful stop and draining (6b.6a) | Merged: [#365](https://github.com/rigsmith/rigsmith/pull/365). Poll accepted work, honor durable retries, yield to foreground operations, and retain unfinished work on stop/restart. |
 | Startup shared-history validation (6b.6b.1) | Merged: [#367](https://github.com/rigsmith/rigsmith/pull/367). Check freshly fetched destination ancestry before claiming work; reject uninitialized/unrelated stores without changing queue attempts or staging. |
 | Windows child ownership at creation (6b.6b.2a) | Merged: [#368](https://github.com/rigsmith/rigsmith/pull/368). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
-| Unix parent-death supervision (6b.6b.2b) | In review (current PR). Explicit supervisor entry point, inherited staging lease, queued phase/retry integration and forced worker-death tests at startup/running boundaries. |
-| OS restart fencing and lifecycle validation (6b.6b.2c) | Next. Fence supervisor failure/uncertain cleanup and asynchronous Windows termination; prevent restarted workers from overlapping old helpers; validate platform startup/restart before command rollout. |
+| Unix parent-death supervision (6b.6b.2b) | Merged: [#369](https://github.com/rigsmith/rigsmith/pull/369). Explicit supervisor entry point, inherited staging lease, queued phase/retry integration and forced worker-death tests at startup/running boundaries. |
+| OS restart fencing and lifecycle validation (6b.6b.2c) | In review (current PR). Persist command intent before process creation; clear only after verified cleanup. Block replacement writers after supervisor/owner failure, including asynchronous Windows termination. |
+| Fenced-store recovery remedy (6b.6b.2d) | Next. Provide a recovery path backed by proof that old writers stopped; no timeout, PID guess or lock-file deletion. Required before queued hooks. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
