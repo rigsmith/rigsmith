@@ -106,6 +106,76 @@ lane exists; a package winget has never seen has nothing to update. Until
 which is why it is `continue-on-error`, like the CLI one, and why a release is
 never held up by it.
 
+### Doing that first submission
+
+Written out because it happens once per package, which means roughly never, and
+the last time anyone did it the details were reconstructed from a moderator's
+review comments.
+
+**The release has to exist first.** komac downloads each installer to hash and
+analyse it, so push `ui/vX.Y.Z`, let the lane publish, and only then submit.
+
+```sh
+export GITHUB_TOKEN=<the WINGET_TOKEN PAT>   # public_repo scope
+V=0.2.0
+BASE=https://github.com/rigsmith/rigsmith/releases/download/ui/v$V
+
+komac new RigSmith.ClaudeRigUi \
+  --version "$V" \
+  --urls "$BASE/clauderigUi_${V}_windows_amd64.zip" \
+         "$BASE/clauderigUi_${V}_windows_arm64.zip" \
+  --package-name "claudeRig UI" \
+  --publisher RigSmith \
+  --moniker clauderig-ui \
+  --license MIT \
+  --package-url https://rigsmith.dev \
+  --publisher-url https://rigsmith.dev \
+  --publisher-support-url https://github.com/rigsmith/rigsmith/issues \
+  --copyright "Copyright (c) 2026 John Campion Jr" \
+  --release-notes-url "https://github.com/rigsmith/rigsmith/releases/tag/ui/v$V" \
+  --output dist/winget
+```
+
+Interactively — no `--dry-run`, no `-s`. `--dry-run` suppresses the prompts, and
+the prompts are where komac asks about the nested installer inside the zip,
+which is the one thing this package has been wrong about twice. `--output`
+writes the manifests without submitting them, so the check below still runs
+before anything reaches winget-pkgs.
+
+`--moniker` is set explicitly for the same reason it is on the CLIs: derived
+from the package name it comes out as `ClaudeRigUi`, and the moniker is what
+people type.
+
+**Then fix what komac has no flag for.** `new` takes every metadata field above
+and none of `Commands`, `NestedInstallerType` or `PortableCommandAlias` — those
+come from its analysis of the zip and from the prompts. In
+`dist/winget/*.installer.yaml`, confirm:
+
+- `NestedInstallerType: portable`, never `exe`;
+- every nested file has a `PortableCommandAlias` — `clauderigUi`;
+- `Commands` is present, or `winget search` and `winget install --command` have
+  nothing to match.
+
+Then run the gate that exists because a moderator caught this 23 days late:
+
+```sh
+sh scripts/check-winget-manifests.sh dist/winget
+komac submit dist/winget --all --yes
+```
+
+The window's `.exe` now carries a real FileDescription, so komac should read it
+as a portable rather than guessing from an empty PE — but verify it rather than
+trust it, since that guess is exactly what went wrong before.
+
+After that one submission, nothing about the window is manual again: every later
+`ui/v` tag runs the automated step above, and komac carries forward everything
+set here.
+
+**The identifier is `RigSmith.ClaudeRigUi`** — `Ui`, matching `RigSmith.ClaudeRig`
+rather than shouting the acronym. Decided rather than defaulted, because a
+published winget package cannot be renamed: it is a new package plus a removal
+request for the old one. `release-ui.yml` passes this exact string.
+
 The window's `.exe` does carry version resources — `build/winres/clauderigUi.json`,
 embedded by `scripts/winres.sh ui` — so komac reads a real FileDescription and
 OriginalFilename for it rather than guessing from an empty PE. It shipped
