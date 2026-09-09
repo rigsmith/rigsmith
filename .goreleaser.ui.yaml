@@ -36,6 +36,13 @@ changelog:
 release:
   disable: true
 
+# Embed the window's icon + version-info into the .exe before building, exactly
+# as the CLIs' lane does for theirs. `ui`, not the whole set: the CLIs' resources
+# are not part of this release, and their version comes from a different tag.
+before:
+  hooks:
+    - sh ./scripts/winres.sh ui
+
 builds:
   # The UI on Windows. Wails v3 reaches WebView2 through syscall rather than
   # cgo there, so it cross-compiles from the Linux runner like the CLIs do and
