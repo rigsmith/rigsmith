@@ -85,6 +85,8 @@ or invalid profile store also refuses reopening with a queue-isolation diagnosti
 Repair the local path/permissions and retry using the same runtime; do not reset
 its descriptor, copy its children or bypass the check. This conservative refusal
 also applies to status, because reopening cannot establish the isolation boundary.
+Windows resolves existing paths through an opened handle, including directory
+junctions; unresolved junctions refuse before missing suffix directories are created.
 
 The default runtime is `~/.clauderig/queue-runtime`. Use `--dir` to select another
 private, stable root outside sources and staging. The managed stores belong

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
@@ -549,7 +550,7 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 	}
 	paths := []string{profileStore.Root}
 	for _, entry := range entries {
-		if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 {
+		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
 			continue
 		}
 		profile := filepath.Join(profileStore.Root, entry.Name())
@@ -580,23 +581,36 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 }
 
 // queueIsolationPath permits missing directories but refuses any unresolved
-// existing symlink ancestor before canonicalCapturePath reconstructs a path.
+// existing link ancestor before reconstructing missing suffix components.
 func queueIsolationPath(path string) (resolved string, err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("cannot verify queue path isolation; repair unresolved links or path permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
 		}
 	}()
-	for existing := filepath.Clean(path); ; existing = filepath.Dir(existing) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("queue path is empty")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var suffix []string
+	for existing := abs; ; existing = filepath.Dir(existing) {
 		_, err := os.Lstat(existing)
 		if err == nil {
-			if _, err := filepath.EvalSymlinks(existing); err != nil {
+			resolved, err := queueResolveExistingPath(existing)
+			if err != nil {
 				return "", err
 			}
-			return canonicalCapturePath(path)
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return resolved, nil
 		}
 		if !os.IsNotExist(err) || filepath.Dir(existing) == existing {
 			return "", err
 		}
+		suffix = append(suffix, filepath.Base(existing))
 	}
 }
