@@ -18,6 +18,10 @@ import (
 // requires explicit foreground initialization/recovery before starting the loop.
 // No commands or hooks use this internal entry point yet.
 func (s Service) CheckQueueStartup(ctx context.Context, binding queue.Binding, inputs QueueInputs) error {
+	return s.checkQueueStartup(ctx, binding, inputs, false)
+}
+
+func (s Service) checkQueueStartup(ctx context.Context, binding queue.Binding, inputs QueueInputs, retainedPolicy bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -42,7 +46,12 @@ func (s Service) CheckQueueStartup(ctx context.Context, binding queue.Binding, i
 	}
 	defer release()
 	ctx = process.WithSupervisorLease(ctx, ctx)
-	current, err := CaptureBinding(inputs.Sync, inputs.Profiles)
+	var current queue.Binding
+	if retainedPolicy {
+		current, err = artifactPhaseBinding(ArtifactCaptureRequest{Binding: binding, Sync: inputs.Sync, Profiles: inputs.Profiles}, queue.Committed)
+	} else {
+		current, err = CaptureBinding(inputs.Sync, inputs.Profiles)
+	}
 	if err != nil {
 		return err
 	}
