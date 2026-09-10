@@ -399,3 +399,74 @@ func TestQueueRuntimeManualCoverageRevalidatesAfterCaptureAndPublication(t *test
 		}
 	}
 }
+
+func TestQueueRuntimeManualCoverageRevalidatesAfterDryRunWalk(t *testing.T) {
+	for _, change := range []string{"profile", "runtime"} {
+		t.Run(change, func(t *testing.T) {
+			req, _, event, svc := coverageFixture(t)
+			dir := filepath.Join(t.TempDir(), "runtime")
+			r, err := service.CreateQueueRuntime(t.Context(), dir, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			req.DryRun = true
+			changed := false
+			svc.Observe = func(e service.Event) {
+				if _, ok := e.(service.DryRunStaged); !ok {
+					return
+				}
+				changed = true
+				if change == "runtime" {
+					if err := os.WriteFile(filepath.Join(dir, "runtime.json"), []byte("changed"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.MkdirAll(filepath.Join(req.Machine.Home, ".clauderig", "desktop", "omitted"), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			result, err := r.SyncWithCoverage(t.Context(), svc, req)
+			if !changed || !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 || result.Sync.Publication.Pushed {
+				t.Fatalf("dry-run validation bypassed: %+v %v changed=%v", result, err, changed)
+			}
+			pending, err := r.Snapshot(t.Context())
+			if err != nil || len(pending) != 1 || pending[0].Phase != queue.Queued || pending[0].Attempts != 0 {
+				t.Fatalf("work mutated: %+v %v", pending, err)
+			}
+		})
+	}
+}
+
+func TestQueueRuntimeManualCoverageRefusesDivergentProcessHomeProfiles(t *testing.T) {
+	req, _, event, svc := coverageFixture(t)
+	store := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+	if _, err := store.Create("source-profile", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	r, err := service.CreateQueueRuntime(t.Context(), filepath.Join(t.TempDir(), "runtime"), req, engine.LocalProfileNames())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	otherHome := t.TempDir()
+	t.Setenv("HOME", otherHome)
+	t.Setenv("USERPROFILE", otherHome)
+	svc.ReadIdentity = func() (service.Identity, error) {
+		t.Fatal("divergent home reached capture")
+		return service.Identity{}, nil
+	}
+	result, err := r.SyncWithCoverage(t.Context(), svc, req)
+	if !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 {
+		t.Fatalf("changed actual profile selection accepted: %+v %v", result, err)
+	}
+	pending, err := r.Snapshot(t.Context())
+	if err != nil || len(pending) != 1 || pending[0].Attempts != 0 {
+		t.Fatalf("work mutated: %+v %v", pending, err)
+	}
+}

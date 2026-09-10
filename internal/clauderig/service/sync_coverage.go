@@ -110,6 +110,11 @@ func (s Service) syncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 		req.coverage = c
 	}
 	result.Sync, err = s.Sync(staging, req)
+	// Sync returns before its captured hook on dry runs. Validate the completed
+	// preview here without preparing a coverage ticket or acknowledging work.
+	if err == nil && runtime != nil && req.DryRun {
+		_, err = runtime.validateCoverageBinding(ctx, req, engine.LocalProfileNames())
+	}
 	if err != nil || req.coverage == nil || c.ticket == nil || len(c.proven) == 0 {
 		return result, err
 	}

@@ -177,12 +177,16 @@ policy again before engine capture, even on dry runs or failed/invalid identity
 observations. Those cases never prepare or acknowledge coverage. Only an exact
 policy match is translated
 to the lifecycle binding; the underlying queue remains private. Revalidation
-also runs after the source walk before publication, and after remote confirmation
+also runs after the source walk (including dry-run previews) before publication,
+and after remote confirmation
 before acknowledgement. Profile/lifecycle changes leave pending work intact; a
 snapshot already published before a later validation failure is not rolled back.
 
-Manual capture discovers all local Desktop profiles, as ordinary sync does. Its
-profile selection must match the initialized runtime. Missing, malformed or
+Manual capture discovers Desktop profiles from the process home, as ordinary
+sync does. That actual selection must match the complete profile set under
+`SyncRequest.Machine.Home` and the initialized runtime. Alternate-home requests
+with a different profile set are refused; this bridge does not change ordinary
+capture discovery or provide a cross-machine capture mode. Missing, malformed or
 unreadable profile metadata refuses coverage; discovery cannot silently omit
 profiles. Directory links and Windows junctions must appear in the actual capture
 selection too. Changed configuration or

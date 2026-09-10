@@ -573,6 +573,8 @@ func discoverQueueDesktopProfiles(req SyncRequest) (*desktop.Store, []string, er
 	}
 	var directories []string
 	for _, entry := range entries {
+		// Native os.ReadDir resolves unknown Unix types with lstat before
+		// returning entries. Include ModeIrregular for Windows junctions.
 		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
 			continue
 		}
