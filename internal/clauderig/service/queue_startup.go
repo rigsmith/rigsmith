@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
@@ -18,6 +19,9 @@ import (
 // No commands or hooks use this internal entry point yet.
 func (s Service) CheckQueueStartup(ctx context.Context, binding queue.Binding, inputs QueueInputs) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := process.CheckSupervisorLease(ctx); err != nil {
 		return err
 	}
 	if inputs.Sync.Config == nil || inputs.Remote == nil || inputs.Sync.Config.Remote == "" {
@@ -37,6 +41,7 @@ func (s Service) CheckQueueStartup(ctx context.Context, binding queue.Binding, i
 		return err
 	}
 	defer release()
+	ctx = process.WithSupervisorLease(ctx, ctx)
 	current, err := CaptureBinding(inputs.Sync, inputs.Profiles)
 	if err != nil {
 		return err

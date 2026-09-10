@@ -232,3 +232,65 @@ func TestRecoveryRefusesSubstitutedLockPath(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryTransitionPersistenceFailures(t *testing.T) {
+	for _, phase := range []string{"owned", "stopped"} {
+		for _, failure := range []string{"write", "partial", "sync"} {
+			t.Run(phase+"/"+failure, func(t *testing.T) {
+				dir := filepath.Join(t.TempDir(), "store")
+				ctx, release := take(t, t.Context(), dir)
+				defer release()
+				previous := "prepared"
+				if phase == "stopped" {
+					previous = "owned"
+				}
+				fence, err := BeginRecoverableFence(ctx, []byte(previous))
+				if err != nil {
+					t.Fatal(err)
+				}
+				original := bytes.Clone(fence.token)
+				fault := errors.New("injected persistence error")
+				err = fence.setRecoveryEvidence([]byte(phase), func(next []byte) error {
+					if failure == "write" {
+						return fault
+					}
+					data := next
+					if failure == "partial" {
+						data = data[:len(data)/2]
+					}
+					if _, err := fence.file.WriteAt(data, 0); err != nil {
+						t.Fatal(err)
+					}
+					// For sync failure, a complete new frame is visible even
+					// though durability could not be confirmed to the caller.
+					return fault
+				})
+				if !errors.Is(err, fault) || !bytes.Equal(fence.token, original) {
+					t.Fatalf("failed transition advanced completion token: %v", err)
+				}
+				info, err := fence.file.Stat()
+				if err != nil || info.Size() != int64(recoverySize) {
+					t.Fatal("transition changed record size", err)
+				}
+				if failure != "write" {
+					if err := fence.Clear(); !errors.Is(err, ErrFenced) {
+						t.Fatal("stale token cleared failed transition", err)
+					}
+				}
+				release()
+				verified := false
+				changed, err := RecoverFence(t.Context(), dir, func(data []byte) error {
+					verified = true
+					if string(data) == "prepared" || string(data) == "stopped" {
+						return nil
+					}
+					return errors.New("owned phase has no cleanup proof")
+				})
+				want := failure == "write" && previous == "prepared" || failure == "sync" && phase == "stopped"
+				if changed != want || (err == nil) != want || (failure == "partial" && verified) {
+					t.Fatalf("unsafe recovery after %s/%s: %v %v (verified %v)", phase, failure, changed, err, verified)
+				}
+			})
+		}
+	}
+}
