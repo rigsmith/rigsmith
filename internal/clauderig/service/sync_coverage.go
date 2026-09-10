@@ -106,7 +106,7 @@ func (s Service) syncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 	if err := c.checkLayout(req, engine.LocalProfileNames()); err != nil {
 		return result, err
 	}
-	if !req.DryRun && req.Config.Remote != "" {
+	if runtime != nil || (!req.DryRun && req.Config.Remote != "") {
 		req.coverage = c
 	}
 	result.Sync, err = s.Sync(staging, req)
@@ -198,7 +198,17 @@ func (c *manualCoverage) prepare(req SyncRequest, identity Identity, identityErr
 	if err := c.checkLayout(req, profiles); err != nil {
 		return err
 	}
-	if identityErr != nil {
+	var binding queue.Binding
+	var err error
+	if c.runtime != nil {
+		binding, err = c.runtime.validateCoverageBinding(c.operation, req, profiles)
+		if err != nil {
+			return err
+		}
+	}
+	// Invalid identity suppresses acknowledgement, never runtime validation.
+	// Dry runs also revalidate but must not prepare a coverage transaction.
+	if identityErr != nil || req.DryRun {
 		return nil
 	}
 	provenance, err := CaptureProvenance(identity)
@@ -210,14 +220,11 @@ func (c *manualCoverage) prepare(req SyncRequest, identity Identity, identityErr
 	bindingReq.ResolveFlush = nil
 	bindingReq.AllowMergeTool = false
 	bindingReq.DryRun = false
-	var binding queue.Binding
-	if c.runtime != nil {
-		binding, err = c.runtime.validateCoverageBinding(c.operation, bindingReq, profiles)
-	} else {
+	if c.runtime == nil {
 		binding, err = CaptureBinding(bindingReq, profiles)
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	c.ticket, err = c.worker.PrepareCoverage(c.operation, binding, provenance)
 	if errors.Is(err, queue.ErrEmpty) {

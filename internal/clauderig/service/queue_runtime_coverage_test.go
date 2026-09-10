@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -292,5 +293,58 @@ func TestQueueRuntimeManualCoverageChecksLinkedProfileMetadata(t *testing.T) {
 	pending, err := r.Snapshot(t.Context())
 	if err != nil || len(pending) != 1 || pending[0].Attempts != 0 {
 		t.Fatalf("work mutated: %+v %v", pending, err)
+	}
+}
+
+func TestQueueRuntimeManualCoverageRevalidationSurvivesIdentityFailureAndDryRun(t *testing.T) {
+	for _, dry := range []bool{false, true} {
+		for _, identityMode := range []string{"error", "invalid", "valid"} {
+			for _, change := range []string{"runtime", "profile"} {
+				t.Run(fmt.Sprintf("dry=%v/%s/%s", dry, identityMode, change), func(t *testing.T) {
+					req, _, event, svc := coverageFixture(t)
+					dir := filepath.Join(t.TempDir(), "runtime")
+					r, err := service.CreateQueueRuntime(t.Context(), dir, req, nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+						t.Fatal(err)
+					}
+					req.DryRun = dry
+					svc.ReadIdentity = func() (service.Identity, error) {
+						if change == "runtime" {
+							if err := os.WriteFile(filepath.Join(dir, "runtime.json"), []byte("changed after preflight"), 0600); err != nil {
+								t.Fatal(err)
+							}
+						} else {
+							if err := os.MkdirAll(filepath.Join(req.Machine.Home, ".clauderig", "desktop", "omitted"), 0700); err != nil {
+								t.Fatal(err)
+							}
+						}
+						switch identityMode {
+						case "error":
+							return service.Identity{}, errors.New("identity unavailable")
+						case "invalid":
+							return service.Identity{AccountUUID: "invalid"}, nil
+						default:
+							return coverageIdentity, nil
+						}
+					}
+					svc.Observe = func(e service.Event) {
+						if _, ok := e.(service.Captured); ok {
+							t.Fatal("changed runtime reached captured state")
+						}
+					}
+					result, err := r.SyncWithCoverage(t.Context(), svc, req)
+					if !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 || result.Sync.Publication.Pushed {
+						t.Fatalf("validation bypassed: %+v %v", result, err)
+					}
+					pending, err := r.Snapshot(t.Context())
+					if err != nil || len(pending) != 1 || pending[0].Phase != queue.Queued || pending[0].Attempts != 0 {
+						t.Fatalf("work mutated: %+v %v", pending, err)
+					}
+				})
+			}
+		}
 	}
 }

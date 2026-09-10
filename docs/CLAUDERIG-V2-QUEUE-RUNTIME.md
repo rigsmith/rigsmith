@@ -173,7 +173,9 @@ The pinned v1 compatibility baseline remains unchanged.
 `QueueRuntime.SyncWithCoverage` uses the existing manual coverage workflow with
 this runtime's private queue. It validates fresh configuration, path isolation,
 and persisted lifecycle metadata before capture, then checks the actual capture
-policy again before preparing coverage. Only an exact policy match is translated
+policy again before engine capture, even on dry runs or failed/invalid identity
+observations. Those cases never prepare or acknowledge coverage. Only an exact
+policy match is translated
 to the lifecycle binding; the underlying queue remains private.
 
 Manual capture discovers all local Desktop profiles, as ordinary sync does. Its
