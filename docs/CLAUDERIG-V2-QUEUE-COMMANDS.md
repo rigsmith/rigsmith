@@ -26,14 +26,17 @@ clauderig queue drain
 
 Choose a private directory for request files, outside synced source/staging and
 the managed runtime tree. Both prepare and enqueue reject these trees after
-canonicalizing existing ancestors, including symlink aliases. `prepare` creates a new file with mode 0600, refuses an
+canonicalizing existing ancestors, including symlink aliases. The entire Desktop
+profile store and discovered profile targets are excluded, including profiles
+not selected for the queue. `prepare` creates a new file with mode 0600, refuses an
 existing file and flushes the saved request before succeeding. Keep Windows
 runtime/request files under a private user directory: inherited ACLs are a caller
 prerequisite, not validated or repaired by these commands. Linux/macOS runtime
 reopening checks effective ownership and private directory/descriptor modes.
 
 `prepare` reads account identity once, generates one event ID and timestamp, and
-pins the runtime binding. It saves intent and validated attribution, not transcript
+pins the runtime binding. Session IDs are trimmed and lowercased to match native
+transcript lookup. It saves intent and validated attribution, not transcript
 bytes. `--session` is required; `--flush` captures every changed transcript tail.
 Without it, normal capture policy applies. Valid email/organization observations
 are retained even without an account UUID. A completely empty identity requires the explicit
@@ -68,6 +71,74 @@ Changing profiles, source roots, machine or capture configuration refuses old
 work rather than redirecting it. Reopening saved phases retains the original
 chunk mode even after loss of the live staging marker; fresh captures still
 validate the live mode.
+
+## Saved request format (version 1)
+
+Only `prepare` writes new request documents. It emits every field below, including
+empty identity strings and `Flush.Paths: null`. Enqueue checks the exact member
+spelling and types before decoding; unknown, duplicate or case-aliased fields,
+invalid UTF-8, missing required members and extra JSON objects are refused.
+No missing identity or timestamp is filled from the current account or clock.
+
+| Member | JSON type | Writer / purpose |
+| --- | --- | --- |
+| `Checksum` | string, required | Prepare: lowercase SHA-256 described below; detects corruption, not authentication. |
+| `Version` | integer, required | Prepare: exactly `1`; other versions refuse. |
+| `Scope` | string, required | Prepare: runtime ScopeID digest, checked against the opened lifecycle before admission. |
+| `At` | timestamp string, required | Prepare: original UTC time in Go's RFC3339Nano representation; must be nonzero and retained across retries. |
+| `Identity` | object, required | Prepare: the single producer observation; null or omission is invalid. |
+| `Identity.AccountUUID` | string, required | Observed account UUID or empty. |
+| `Identity.OrganizationUUID` | string, required | Observed organization UUID or empty. |
+| `Identity.Email` | string, required | Observed validated email or empty. |
+| `Request` | object, required | Prepare: immutable intent; null or omission is invalid. |
+| `Request.EventID` | string, required | Prepare: new random event identifier; retained across retries. |
+| `Request.SessionID` | string, required | Prepare: trimmed, lowercase `--session` value. |
+| `Request.ProvenanceID` | string, required | Prepare: `service.CaptureProvenance(Identity)`; enqueue recomputes and checks it. |
+| `Request.Flush` | object, required | Prepare: selected capture intent; null or omission is invalid. |
+| `Request.Flush.Mode` | string, required | Prepare: `normal` by default, `all` with `--flush`. |
+| `Request.Flush.Paths` | array of strings or null, optional | Prepare emits null. Omission and null decode to no selected paths. Only `selected` mode accepts a nonempty path list. |
+
+The reader supports the shared `selected` flush mode with a nonempty list of
+bounded paths, but this manual CLI produces only `normal` and `all`. Normal/all
+require no paths; omission does not default `Mode`. Queue admission also enforces
+bounded event/session/provenance identifiers and the existing 64 KiB intent limit.
+The entire producer document is limited to 128 KiB.
+
+For the checksum, decode the exact typed `queueSubmission` representation, set
+its `Checksum` to the empty string, and SHA-256 its compact Go `encoding/json`
+serialization. Field order is the table order (including nested struct order);
+null/omitted `Paths` is represented as null. String escaping and timestamp
+serialization follow Go `encoding/json` and `time.Time.MarshalJSON`. Whitespace
+and object member order in the input document do not affect this digest.
+The supported way to generate a request is `prepare`; do not hand-edit documents
+or compute a new checksum to replay an old event with changed intent.
+
+A prepared unknown-identity, non-flush request has this shape (digest, random ID
+and timestamp values below are explanatory placeholders, not an enqueueable file):
+
+```json
+{
+  "Checksum": "<lowercase SHA-256>",
+  "Version": 1,
+  "Scope": "<runtime ScopeID>",
+  "At": "2026-09-10T12:00:00Z",
+  "Identity": {"AccountUUID": "", "OrganizationUUID": "", "Email": ""},
+  "Request": {
+    "EventID": "<new random ID>",
+    "SessionID": "abcdefab-1234-4123-8123-abcdefabcdef",
+    "ProvenanceID": "<CaptureProvenance of the empty identity>",
+    "Flush": {"Mode": "normal", "Paths": null}
+  }
+}
+```
+
+`--unknown-identity` explicitly creates the empty identity object above without
+reading the live account. Without that flag, a wholly empty observation refuses
+preparation; a valid partial email/organization observation is preserved in the
+request and runtime descriptor. The existing session ledger still records account
+UUID attribution only. Missing UUIDs do not become email/organization ledger keys,
+and delayed captures do not rewrite the current device registry with old identity.
+This command does not change the ledger or device-registry schema.
 
 ## Run, stop, retry and drain
 

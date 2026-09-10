@@ -29,6 +29,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
+	claudesession "github.com/rigsmith/rigsmith/internal/clauderig/session"
 	"github.com/spf13/cobra"
 )
 
@@ -158,7 +159,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		if flush {
 			mode = queue.All
 		}
-		submission := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: session, ProvenanceID: provenance, Flush: queue.Flush{Mode: mode}}}
+		submission := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: claudesession.CanonicalID(strings.TrimSpace(session)), ProvenanceID: provenance, Flush: queue.Flush{Mode: mode}}}
 		submission.Checksum = queueRequestChecksum(submission)
 		data, err := json.MarshalIndent(submission, "", "  ")
 		if err != nil {
@@ -423,7 +424,7 @@ func loadQueueRequest(path string) (*savedQueueRequest, error) {
 		return nil, fmt.Errorf("request must be regular")
 	}
 
-	if err := queueRequestSingleLink(f); err != nil {
+	if err := validateQueueRequestSingleLink(f); err != nil {
 		return nil, err
 	}
 	data, err := io.ReadAll(io.LimitReader(f, queueRequestLimit+1))

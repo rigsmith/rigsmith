@@ -20,6 +20,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 )
 
 const runtimeLimit = 1 << 20
@@ -498,6 +499,28 @@ func (r *QueueRuntime) CheckRequestPath(path string) error {
 	if err != nil {
 		return err
 	}
+	// Ordinary sync discovers profiles independently of the queue selection.
+	// Exclude the whole local profile container (including future profiles) and
+	// each existing profile directory target, including unselected symlink aliases.
+	profileStore := desktop.NewStore(filepath.Join(r.request.Machine.Home, ".clauderig", "desktop"))
+	profileDirs, err := profileStore.CandidateDataDirs()
+	if err != nil {
+		return err
+	}
+	paths := []string{profileStore.Root}
+	for _, dataDir := range profileDirs {
+		paths = append(paths, filepath.Dir(dataDir))
+	}
+	for _, path := range paths {
+		root, err := canonicalCapturePath(path)
+		if err != nil {
+			return err
+		}
+		if overlapsCapture(root, candidate) {
+			return fmt.Errorf("queue request files must be outside all Desktop profile trees: %w", queue.ErrBinding)
+		}
+	}
+
 	stage, err := canonicalCapturePath(r.request.StagingDir)
 	if err != nil {
 		return err

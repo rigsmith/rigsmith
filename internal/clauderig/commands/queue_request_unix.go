@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-func queueRequestSingleLink(f *os.File) error {
+func validateQueueRequestSingleLink(f *os.File) error {
 	info, err := f.Stat()
 	if err != nil {
 		return err

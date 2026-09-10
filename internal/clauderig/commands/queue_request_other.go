@@ -7,6 +7,6 @@ import (
 	"os"
 )
 
-func queueRequestSingleLink(*os.File) error {
+func validateQueueRequestSingleLink(*os.File) error {
 	return fmt.Errorf("queue request hard-link checks require Linux, macOS or Windows")
 }

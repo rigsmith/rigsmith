@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-func queueRequestSingleLink(f *os.File) error {
+func validateQueueRequestSingleLink(f *os.File) error {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &info); err != nil {
 		return err

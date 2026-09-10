@@ -24,6 +24,7 @@ func validateQueueRequestJSON(data []byte) error {
 		return fmt.Errorf("request JSON must be valid UTF-8")
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber()
 	var walk func(string, int) error
 	walk = func(path string, depth int) error {
 		if depth > 32 {
@@ -35,6 +36,24 @@ func validateQueueRequestJSON(data []byte) error {
 		}
 		delim, container := token.(json.Delim)
 		if !container {
+			if _, object := queueRequestFields[path]; object {
+				return fmt.Errorf("request field must be an object")
+			}
+			if path == "Request.Flush.Paths" {
+				if token == nil {
+					return nil
+				}
+				return fmt.Errorf("flush paths must be an array or null")
+			}
+			if path == "Version" {
+				if _, ok := token.(json.Number); ok {
+					return nil
+				}
+				return fmt.Errorf("request version must be a number")
+			}
+			if _, ok := token.(string); !ok {
+				return fmt.Errorf("request field must be a string")
+			}
 			return nil
 		}
 		switch delim {
@@ -60,6 +79,11 @@ func validateQueueRequestJSON(data []byte) error {
 				}
 				if err := walk(child, depth+1); err != nil {
 					return err
+				}
+			}
+			for _, name := range allowed {
+				if !seen[name] && !(path == "Request.Flush" && name == "Paths") {
+					return fmt.Errorf("missing required request field")
 				}
 			}
 			end, err := d.Token()

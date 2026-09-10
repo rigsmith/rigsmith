@@ -620,3 +620,112 @@ func TestQueueCommandRejectsHardLinkedRequest(t *testing.T) {
 	}
 	f.must(t, "enqueue", path)
 }
+
+func TestQueueCommandExcludesUnselectedDesktopProfiles(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		if linked && runtime.GOOS == "windows" {
+			continue
+		}
+		f := newQueueFixture(t)
+		f.must(t, "init") // No selected profiles.
+		store := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop")
+		profile := filepath.Join(store, "unselected")
+		if linked {
+			target := t.TempDir()
+			if err := os.MkdirAll(store, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, profile); err != nil {
+				t.Fatal(err)
+			}
+			profile = target // Request via the symlink target's outside spelling.
+		}
+		if err := os.MkdirAll(filepath.Join(profile, "data", "nested"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(profile, "profile.json"), []byte(`{"name":"unselected"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(profile, "data", "nested", "request.json")
+		if _, err := f.execute(t.Context(), "prepare", "--session", "s", "--output", path); !errors.Is(err, queue.ErrBinding) {
+			t.Fatal("accepted unselected profile", linked, err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("wrote into unselected profile", err)
+		}
+		valid := filepath.Join(t.TempDir(), "request")
+		f.must(t, "prepare", "--session", "s", "--output", valid)
+		data, _ := os.ReadFile(valid)
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.execute(t.Context(), "enqueue", path); !errors.Is(err, queue.ErrBinding) {
+			t.Fatal("admitted unselected profile", linked, err)
+		}
+	}
+}
+
+func TestQueueCommandCanonicalSessionID(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "ABCDEFAB-1234-4123-8123-ABCDEFABCDEF", "--output", path)
+	saved, err := readQueueRequest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Request.SessionID != "abcdefab-1234-4123-8123-abcdefabcdef" {
+		t.Fatal(saved.Request.SessionID)
+	}
+	f.must(t, "enqueue", path)
+	jobs, _ := f.open(t).Snapshot(t.Context())
+	if len(jobs) != 1 || jobs[0].Events[0].Request.SessionID != saved.Request.SessionID {
+		t.Fatal(jobs)
+	}
+}
+
+func TestQueueRequestRequiresTypedIdentityAndMembers(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", path, "--unknown-identity")
+	data, _ := os.ReadFile(path)
+	var original map[string]any
+	if err := json.Unmarshal(data, &original); err != nil {
+		t.Fatal(err)
+	}
+	for _, which := range []string{"null-identity", "omitted-identity", "null-email", "omitted-email", "null-request", "null-flush", "null-version", "omitted-scope"} {
+		var edited map[string]any
+		json.Unmarshal(data, &edited)
+		switch which {
+		case "null-identity":
+			edited["Identity"] = nil
+		case "omitted-identity":
+			delete(edited, "Identity")
+		case "null-email":
+			edited["Identity"].(map[string]any)["Email"] = nil
+		case "omitted-email":
+			delete(edited["Identity"].(map[string]any), "Email")
+		case "null-request":
+			edited["Request"] = nil
+		case "null-flush":
+			edited["Request"].(map[string]any)["Flush"] = nil
+		case "null-version":
+			edited["Version"] = nil
+		case "omitted-scope":
+			delete(edited, "Scope")
+		}
+		raw, _ := json.Marshal(edited)
+		copy := filepath.Join(t.TempDir(), "request")
+		os.WriteFile(copy, raw, 0600)
+		if _, err := f.execute(t.Context(), "enqueue", copy); err == nil {
+			t.Fatal("accepted", which)
+		}
+	}
+	// Paths is explicitly optional: omission and null both mean no selected paths.
+	delete(original["Request"].(map[string]any)["Flush"].(map[string]any), "Paths")
+	raw, _ := json.Marshal(original)
+	copy := filepath.Join(t.TempDir(), "request")
+	os.WriteFile(copy, raw, 0600)
+	f.must(t, "enqueue", copy)
+}
