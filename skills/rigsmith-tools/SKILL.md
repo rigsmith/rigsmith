@@ -283,7 +283,10 @@ reads one complete Stop/SessionEnd JSON document from stdin (EOF within 2 second
 and on every retry. Use a new private file only for a new event. Do not install
 this preparation-only command as an automatic hook. SessionEnd saves selected
 flush intent for its transcript; malformed/empty input never requests all-flush.
-Queued workers still capture full unthrottled snapshots; saved flush intent
-governs manual-sync coverage, not a promise to throttle other worker input.
+Queued workers fully capture requested sessions and subagents. Selected paths
+also flush their subagents; unrelated plain transcripts keep normal throttling
+unless any batched request asks for all-flush. Chunked tails always flush.
+The worker still freezes the configured source tree; saved artifacts replay
+unchanged. Saved flush intent also governs manual-sync coverage.
 It conflicts with `--session`/`--flush`, observes identity once, and sends success
 to stderr. Installed hooks remain synchronous until the opt-in installer lands.

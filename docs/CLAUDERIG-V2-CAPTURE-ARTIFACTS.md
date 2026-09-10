@@ -121,8 +121,19 @@ files, so the native manifest preserves the alias without copying excluded data.
 Requested transcripts' seeded copies are removed from the private output before
 capture. They must be readable in the resulting output and have ledger entries;
 an old staged copy cannot stand in for a missing or oversized requested source.
-Queued capture disables age pruning and large-file throttling for this frozen
-snapshot. The configured maximum-file policy and secret checks still apply.
+Queued capture disables age pruning. Every requested parent and explicitly
+selected path bypasses large-file throttling, including its subagent subtree.
+The flush scope is mapped to private frozen source paths before invoking the
+engine. Unrelated plain transcripts retain the normal throttle and may keep
+seeded bytes until enough growth or quiet time; any event with all-flush intent
+bypasses the throttle for the whole batch. Chunked transcripts always capture
+changed tails under the existing engine policy. The configured maximum-file
+policy and secret checks still apply.
+
+The full configured source walk, freezing and capture-space budget are unchanged;
+this limits publication churn, not source I/O. Previously sealed captures and
+commits are reused unchanged, including captures made when workers flushed all
+transcripts. Saved event intent, binding and artifact formats remain compatible.
 Retention/space cleanup moves to a later publication/lifecycle policy; synchronous
 capture keeps its existing retention and throttle behavior.
 

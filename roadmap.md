@@ -22,7 +22,7 @@ attribution ([#379](https://github.com/rigsmith/rigsmith/pull/379)); explicit qu
 
 The runtime manual-sync bridge merged in [#381](https://github.com/rigsmith/rigsmith/pull/381);
 the explicit manual command merged in [#382](https://github.com/rigsmith/rigsmith/pull/382).
-Bounded hook-request preparation is in review in [#384](https://github.com/rigsmith/rigsmith/pull/384).
+Bounded hook-request preparation merged in [#384](https://github.com/rigsmith/rigsmith/pull/384).
 
 The release path is now: finish opt-in queued Claude commands and hook routing,
 validate rollback and OS lifecycle behavior, then connect the separate `codexrig` adapter.
@@ -66,8 +66,9 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Explicit queued Claude commands (7b) | Merged: [#380](https://github.com/rigsmith/rigsmith/pull/380): init, saved producer requests, enqueue, supervised foreground worker, status/retry and drain with existing Git credentials and GitHub/GitLab privacy checks. [Contract](docs/CLAUDERIG-V2-QUEUE-COMMANDS.md). |
 | Runtime manual-sync coverage (7c.1) | Merged: [#381](https://github.com/rigsmith/rigsmith/pull/381). Validate the saved lifecycle before acknowledging fully covered requests; retain later arrivals and other identities. |
 | Manual queue sync command (7c.2a) | Merged: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
-| Hook-request preparation (7c.2b.1) | In review: [#384](https://github.com/rigsmith/rigsmith/pull/384). Decode bounded Stop/SessionEnd payloads into saved, retryable producer requests; require direct parent transcripts during capture. |
-| Opt-in hook installation and rollback (7c.2b.2) | Planned: install opt-in routing, coordinate ordinary sync, settle worker capture policy, and validate producer recovery, stop/drain and rollback. |
+| Hook-request preparation (7c.2b.1) | Merged: [#384](https://github.com/rigsmith/rigsmith/pull/384). Decode bounded Stop/SessionEnd payloads into saved, retryable producer requests; require direct parent transcripts during capture. |
+| Queued worker capture/flush policy (7c.2b.2a) | In progress: fully capture requested sessions/subagents, honor all-flush and preserve normal throttling for unrelated plain transcripts; replay saved artifacts unchanged. |
+| Opt-in hook installation and rollback (7c.2b.2b) | Planned: install opt-in routing, coordinate ordinary sync, and validate producer recovery, stop/drain and rollback. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
 The v1/v2 foundation was aligned after v1.15.1; that alignment did not publish a
