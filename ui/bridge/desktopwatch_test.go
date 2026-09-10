@@ -22,6 +22,8 @@ type fakeDesktop struct {
 func (f fakeDesktop) Instances() ([]desktop.Instance, error) { return f.instances, f.scanErr }
 func (f fakeDesktop) Running(string) ([]int, error)          { return nil, f.scanErr }
 func (f fakeDesktop) RunningDefault() ([]int, error)         { return nil, f.scanErr }
+func (f fakeDesktop) LaunchDefault() error                   { return nil }
+func (f fakeDesktop) Raise(int) error                        { return nil }
 func (f fakeDesktop) Launch(string) error                    { return nil }
 func (f fakeDesktop) Focus(string) error                     { return nil }
 func (f fakeDesktop) Quit(string, time.Duration) error       { return nil }

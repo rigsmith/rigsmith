@@ -155,6 +155,8 @@ type fakeApp struct {
 }
 
 func (f *fakeApp) RunningDefault() ([]int, error) { return nil, nil }
+func (f *fakeApp) LaunchDefault() error           { return nil }
+func (f *fakeApp) Raise(int) error                { return nil }
 
 // Instances mirrors the real scan: one process per running data dir.
 func (f *fakeApp) Instances() ([]Instance, error) {

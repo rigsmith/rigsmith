@@ -37,6 +37,26 @@ type App interface {
 	// Counting PROCESSES has no such list to be incomplete. A window either
 	// exists or it does not.
 	Instances() ([]Instance, error)
+	// LaunchDefault starts the MACHINE-WIDE install: a new instance carrying no
+	// --user-data-dir at all.
+	//
+	// It cannot be expressed as Launch(""), and not only because that would name
+	// a profile directory. With any instance already running, asking the OS to
+	// open the app activates THAT one — the profile window you are trying to get
+	// away from — so this has to insist on a new instance and then say nothing
+	// about a profile, which is what leaves it on the app's own data directory.
+	LaunchDefault() error
+	// Raise brings ONE running instance to the front, named by pid.
+	//
+	// Focus cannot do this: it activates the application, and every instance
+	// shares one application as far as the OS is concerned, so with several
+	// windows open it raises whichever the OS prefers. Naming the process is the
+	// only way to say which one is meant.
+	//
+	// Returns ErrRaiseUnsupported where that cannot be done at all, so a caller
+	// can say "it is running, switch to it yourself" rather than reporting a
+	// failure over a window that is fine.
+	Raise(pid int) error
 	// Focus brings an already-running instance to the foreground. Best effort:
 	// on platforms with no reliable way to raise one window of several, this may
 	// raise whichever instance the OS considers frontmost.
@@ -73,6 +93,11 @@ var ErrUnsupported = errors.New("Claude Desktop profiles are not supported on th
 
 // ErrNotInstalled means the app itself is missing.
 var ErrNotInstalled = errors.New("Claude Desktop is not installed")
+
+// ErrRaiseUnsupported means this platform has no way to bring one named
+// instance forward. Not a failure: the window is there, and the caller should
+// say so rather than imply something went wrong.
+var ErrRaiseUnsupported = errors.New("bringing one Claude Desktop window forward is not supported on this platform")
 
 // New returns the platform's App implementation.
 func New() App { return newApp() }

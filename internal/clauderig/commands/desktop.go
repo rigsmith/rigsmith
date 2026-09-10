@@ -51,6 +51,7 @@ func NewDesktopCmd() *cobra.Command {
 			"safe where moving a session around was not.\n\n" +
 			"  add       create a profile and open a window to log into\n" +
 			"  open      open (or focus) a profile's window, optionally on a session\n" +
+			"  main      open (or bring forward) the machine-wide app, which is not a profile\n" +
 			"  list      show saved profiles and which are open\n" +
 			"  quit      close a profile's window\n" +
 			"  map       bind a directory to a profile, for a bare `open` there\n" +
@@ -65,11 +66,86 @@ func NewDesktopCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopListCmd(),
+	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopMainCmd(), newDesktopListCmd(),
 		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd(),
 		newDesktopShortcutCmd(), newDesktopPruneCmd())
 	return cmd
 }
+
+// newDesktopMainCmd opens, or brings forward, the Claude Desktop that is not a
+// profile — the one the Dock and Spotlight start.
+//
+// It exists because that app becomes unreachable once a profile window is up.
+// Every instance is one application as far as macOS is concerned, so asking for
+// Claude activates whichever instance is running: with a profile open, clicking
+// the Dock icon gets you the profile, and there is no gesture anywhere in the
+// OS that means "the other one".
+func newDesktopMainCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "main",
+		Aliases: []string{"default"},
+		Short:   "Open (or bring forward) the machine-wide Claude Desktop",
+		Long: "Opens the ordinary Claude Desktop — the one with no profile behind it,\n" +
+			"the one the Dock and Spotlight start — or brings it forward when it is\n" +
+			"already running.\n\n" +
+			"With a profile window open, the OS has no way to say which you meant:\n" +
+			"every instance is the same application to it, so asking for Claude\n" +
+			"activates the instance that is already there. This starts a NEW instance\n" +
+			"against no profile, which is what the machine-wide install is.\n\n" +
+			"It is not a clauderig profile, and this is the one verb that touches it:\n" +
+			"no account is bound to it, `desktop open`, `quit` and `send` cannot name\n" +
+			"it, and it competes for a claude:// deep link like any other window. Its\n" +
+			"history IS backed up — `clauderig sync` walks it as the `desktop` root,\n" +
+			"the same as every profile — but which account those sessions belong to is\n" +
+			"whatever that install happens to be signed into.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			app := newDesktopApp()
+			if _, ok := app.Installed(); !ok {
+				return desktopUnavailable()
+			}
+
+			// Asked before acting, because the two answers need opposite things
+			// and getting it wrong is visible: launching while it runs gives a
+			// SECOND machine-wide window on the same data directory, which is
+			// two of the same app arguing over one history.
+			pids, err := app.RunningDefault()
+			if err != nil {
+				return fmt.Errorf("could not tell whether the main Claude Desktop is open: %w", err)
+			}
+
+			if len(pids) == 0 {
+				if lerr := app.LaunchDefault(); lerr != nil {
+					return lerr
+				}
+				fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), "the main Claude Desktop app")
+				fmt.Fprintln(out, DimStyle.Render(mainNotAProfile))
+				return nil
+			}
+
+			switch rerr := app.Raise(pids[0]); {
+			case rerr == nil:
+				fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ brought forward"), "the main Claude Desktop app")
+			case errors.Is(rerr, desktop.ErrRaiseUnsupported):
+				// Running is running. Reporting a failure here would be a lie
+				// about the window, which is exactly where the user wants to go.
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
+					"the main Claude Desktop app is already open (pid %d) — switch to it from the taskbar", pids[0])))
+			default:
+				return rerr
+			}
+			fmt.Fprintln(out, DimStyle.Render(mainNotAProfile))
+			return nil
+		},
+	}
+}
+
+// mainNotAProfile is the sentence that keeps this verb honest about what it
+// just opened. Printed every time on purpose: the window looks identical to a
+// profile's, and the difference only shows up later, when a session lands in it
+// under an account nobody chose.
+const mainNotAProfile = "not a clauderig profile: no account is bound to it, and it competes for deep links"
 
 // desktopStore roots the profiles beside the rest of clauderig's local state.
 // Deliberately under ~/.clauderig and NOT under ~/.claude: these directories

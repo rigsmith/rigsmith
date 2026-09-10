@@ -113,6 +113,30 @@ const (
 	windowsDetachedProcess       = 0x00000008
 )
 
+// LaunchDefault starts the machine-wide install: the same detached start as
+// Launch, with no --user-data-dir. Windows has no LaunchServices to activate an
+// existing instance instead, so there is no -n equivalent to insist on here.
+func (w windowsApp) LaunchDefault() error {
+	exe, ok := w.Installed()
+	if !ok {
+		return requireInstalled(w)
+	}
+	cmd := exec.Command(exe)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CreationFlags: windowsCreateNewProcessGroup | windowsDetachedProcess,
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("launch Claude Desktop: %w", err)
+	}
+	return cmd.Process.Release()
+}
+
+// Raise is not available here for the same reason Focus is not: bringing one
+// window of several forward needs window-handle work that is not worth the
+// dependency. Reported as unsupported so the caller can say the window is
+// there rather than imply something failed.
+func (w windowsApp) Raise(int) error { return ErrRaiseUnsupported }
+
 // procRow is the shape asked of PowerShell — an array of {ProcessId, CommandLine}.
 type procRow struct {
 	ProcessID   int    `json:"ProcessId"`

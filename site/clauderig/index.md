@@ -26,6 +26,7 @@ clauderig account list         # show stored Claude Code logins (alias: ls / sta
 clauderig account run me@x.com # launch Claude Code as another account, isolated session
 clauderig mcp add ctx7 npx -y @upstash/context7-mcp   # manage MCP servers (list/add/remove/enable)
 clauderig desktop open work    # a Claude Desktop window per account, each its own profile
+clauderig desktop main         # back to the plain Claude Desktop, which a profile window hides
 clauderig desktop prune --vm   # reclaim the Cowork VM image + caches; keeps login and history
 rig worktree new feat/x        # sibling worktree + review window; never moves this session
 clauderig doctor               # health-check env + sync + worktree discipline + ignored settings (--fix repairs what it can; ignored settings are advisory)
