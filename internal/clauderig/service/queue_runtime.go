@@ -344,7 +344,7 @@ func (r *QueueRuntime) Enqueue(ctx context.Context, identity Identity, request q
 		return fail, err
 	}
 	event, err := r.q.Enqueue(ctx, request, at)
-	if !existed && !errors.Is(err, queue.ErrUncertain) && (errors.Is(err, queue.ErrDuplicate) || errors.Is(err, queue.ErrFull) || errors.Is(err, queue.ErrExpired)) {
+	if !existed && err != nil && !errors.Is(err, queue.ErrUncertain) {
 		delete(s.Identities, provenance)
 		err = errors.Join(err, r.persist(ctx, s))
 	}

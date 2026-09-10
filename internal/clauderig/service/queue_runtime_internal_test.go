@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -364,5 +365,34 @@ func TestQueueRuntimeDuplicateDoesNotConsumeIdentityCapacity(t *testing.T) {
 	s, err := r.load()
 	if err != nil || len(s.Identities) != 1 {
 		t.Fatal(len(s.Identities), err)
+	}
+}
+
+func TestQueueRuntimeInvalidRequestsDoNotConsumeIdentityCapacity(t *testing.T) {
+	r, _ := runtimeFixture(t)
+	cases := []struct {
+		name    string
+		request queue.Request
+		at      time.Time
+	}{
+		{"missing-session", queue.Request{EventID: "missing", Flush: queue.Flush{Mode: queue.Normal}}, time.Now()},
+		{"invalid-mode", queue.Request{EventID: "mode", SessionID: "s", Flush: queue.Flush{Mode: "invalid"}}, time.Now()},
+		{"oversized", queue.Request{EventID: strings.Repeat("x", 10000), SessionID: "s", Flush: queue.Flush{Mode: queue.Normal}}, time.Now()},
+		{"zero-time", runtimeRequest("zero"), time.Time{}},
+	}
+	for i, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := r.Enqueue(t.Context(), Identity{Email: fmt.Sprintf("invalid%d@example.com", i)}, tt.request, tt.at); err == nil {
+				t.Fatal("accepted invalid request")
+			}
+			s, err := r.load()
+			if err != nil || len(s.Identities) != 0 {
+				t.Fatal("leaked attribution", s.Identities, err)
+			}
+			jobs, err := r.Snapshot(t.Context())
+			if err != nil || len(jobs) != 0 {
+				t.Fatal(jobs, err)
+			}
+		})
 	}
 }

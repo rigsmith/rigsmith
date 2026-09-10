@@ -76,10 +76,9 @@ Concurrent producers serialize descriptor updates and do not lose identities.
 
 The producer must retain the original identity, event ID and timestamp across
 retries. A later login is not a substitute. Explicit unknown identity is stored
-as such; a missing identity record during execution is an error. A definite duplicate, capacity or replay-cutoff rejection removes an identity
+as such; a missing identity record during execution is an error. Every definite queue rejection, including malformed requests, removes an identity
 newly added by that attempt under the same runtime lease. Existing identity
-records are never removed. Uncertain writes, other failures, or a failed cleanup
-write can still leave an unused record; removing possibly accepted attribution
+records are never removed. Uncertain writes or a failed cleanup write can still leave an unused record; removing possibly accepted attribution
 would be unsafe. Identities are retained and bounded; reaching
 the identity limit refuses new identities while allowing known producers to
 continue. This slice does not compact identity history.
