@@ -53,6 +53,7 @@ type workspaceRoot struct {
 	path     string
 	prefixes []string
 	root     *os.Root
+	borrowed bool
 }
 type workspaceCandidate struct {
 	root *os.Root
@@ -61,6 +62,10 @@ type workspaceCandidate struct {
 }
 
 func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*os.Root, string) error) (WorkspaceCleanupResult, error) {
+	return cleanupOwnedArtifacts(ctx, req, remove, nil)
+}
+
+func cleanupOwnedArtifacts(ctx context.Context, req WorkspaceCleanup, remove func(*os.Root, string) error, reclamation *queueReclamation) (WorkspaceCleanupResult, error) {
 	result := WorkspaceCleanupResult{}
 	if err := ctx.Err(); err != nil {
 		return result, err
@@ -69,6 +74,12 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 		return result, fmt.Errorf("workspace cleanup requires an independent context")
 	}
 	paths := []string{req.StagingDir, req.Captures.Dir, req.Commits.Dir}
+	if reclamation != nil {
+		if err := reclamation.proof.Check(); err != nil {
+			return result, err
+		}
+		paths = append(paths, reclamation.proof.Directory())
+	}
 	for i, path := range paths {
 		if !filepath.IsAbs(path) || filepath.Clean(path) == filepath.Dir(filepath.Clean(path)) {
 			return result, ErrInvalid
@@ -107,6 +118,9 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 		{path: filepath.Join(paths[1], "seeds"), prefixes: []string{".capture-work-"}},
 		{path: paths[2], prefixes: []string{".capture-work-", ".publication-", ".startup-history-", ".confirmation-"}},
 	}
+	if reclamation != nil {
+		roots = append(roots, workspaceRoot{path: paths[3], prefixes: []string{".confirmation-"}, borrowed: true})
+	}
 	// Take all locks before inventory/deletion: a later busy/fenced store cannot
 	// cause partial cleanup of an earlier store.
 	for i := range roots {
@@ -125,11 +139,13 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 		if err != nil {
 			return result, err
 		}
-		_, release, err := storelock.Acquire(ctx, r.path, 0)
-		if err != nil {
-			return result, err
+		if !r.borrowed {
+			_, release, err := storelock.Acquire(ctx, r.path, 0)
+			if err != nil {
+				return result, err
+			}
+			defer release()
 		}
-		defer release()
 		r.root, err = openWorkspaceRoot(r.path, st)
 		if err != nil {
 			return result, err
@@ -151,6 +167,11 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 			return result, err
 		}
 		candidates = append(candidates, found...)
+	}
+	if reclamation != nil {
+		if err := reclamation.prepare(ctx, req, roots); err != nil {
+			return result, err
+		}
 	}
 	for _, c := range candidates {
 		if err := ctx.Err(); err != nil {
@@ -174,6 +195,11 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 			return result, err
 		}
 		result.RemovedWorkspaces++
+	}
+	if reclamation != nil {
+		if err := reclamation.remove(ctx); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
 }

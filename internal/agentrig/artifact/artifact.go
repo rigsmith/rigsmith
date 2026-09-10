@@ -216,6 +216,14 @@ func (s Store) Verify(ctx context.Context, ref string) error {
 	_, err := s.inspect(ctx, key, sum)
 	return err
 }
+
+// Reference verifies an existing archive by immutable key and returns its full
+// checksum reference. It does not reflush or authorize deletion; maintenance
+// callers must hold store ownership and establish that no work needs the archive.
+func (s Store) Reference(ctx context.Context, key string) (string, error) {
+	return s.inspect(ctx, key, "")
+}
+
 func (s Store) inspect(ctx context.Context, key, want string) (string, error) {
 	f, err := s.open(key)
 	if err != nil {

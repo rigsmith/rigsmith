@@ -15,7 +15,8 @@ const seedRefName = "refs/rig/seed"
 // SeedStore is the reserved private seed-bundle substore of a capture store.
 // It inherits per-archive and sealed-store limits; its aggregate quota is
 // independent of the parent capture store. Keep the entire capture directory
-// outside vendor sources and backups; neither captures nor seeds expire yet.
+// outside vendor sources and backups. Neither expires automatically; explicit
+// queue-exclusive reclamation can remove both after confirmed completion.
 func SeedStore(captures artifact.Store) artifact.Store {
 	return artifact.Store{Dir: filepath.Join(captures.Dir, "seeds"), MaxBytes: captures.MaxBytes, MaxStoredBytes: captures.MaxStoredBytes}
 }

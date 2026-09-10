@@ -216,7 +216,7 @@ Sealed archives, `.capture-work-*` directories, seed/recovery substores,
 publication scratch and entries outside the reserved namespace are never deleted. Build workspaces may
 still have external Git writers protected by staging ownership after the parent
 exits; an artifact lease alone does not prove those writers stopped. Writer-owned workspace cleanup is described below. Reference-aware sealed-artifact
-cleanup remains in 6b.7b.2b before automatic worker/hook integration.
+cleanup is described in 6b.7b.2b below; automatic worker/hook integration remains separate.
 
 Synthetic native tests cover admission, concurrent builders, retained reuse over
 a lowered quota, corruption accounting, cancellation/partial removal, store
@@ -270,9 +270,7 @@ particular, cleanup does not traverse merge intents or scan the OS temporary
 directory for relocated merge workspaces: the private stores' leases do not
 identify ownership of those external paths. Those paths remain retained.
 `SyncWithCoverage` also places `.confirmation-*` workspaces under the queue
-directory, not the commit store. This API never scans that queue parent; adding
-queue-worker ownership to reclaim those confirmations remains in 6b.7b.2b before
-hook rollout.
+directory, not the commit store. This API never scans that queue parent; the queue-aware operation below adds queue-worker ownership to reclaim them.
 
 Existing root aliases are canonicalized, overlaps are rejected, and the `seeds`
 substore cannot be a link. Missing artifact stores are skipped without creation;
@@ -296,7 +294,7 @@ is checked between directories; an in-progress recursive removal may finish
 first. Retry handles remaining scratch. This is space reclamation, not a durable
 acknowledgement; power loss can resurrect deleted entries. It neither changes
 queue state nor authorizes deletion or rebuilding of sealed output. Reclaiming
-sealed captures, seeds and commits still needs reference checks in 6b.7b.2b.
+sealed captures, seeds and commits uses the separate queue-aware operation below.
 
 Synthetic tests cover every reserved namespace, retained/recovery bytes, all
 writer locks and fences, invalid late candidates, linked roots/candidates/nested
@@ -310,3 +308,89 @@ staging lease between request preparation and cleanup, and verifies refusal with
 all scratch retained. Shared tests prove the validator holds all writer leases and
 reject leaf/ancestor replacement before opening a workspace root.
 Native CI runs these checks alongside the unchanged pinned v1 compatibility suite.
+
+## Queue-aware archive reclamation (6b.7b.2b)
+
+`Service.ReclaimQueueArtifacts` composes queue maintenance with shared artifact
+cleanup. It accepts trusted, freshly resolved private stores used exclusively by
+one queue and staging directory. They must not be shared with another queue,
+manual artifact consumer or independent reader. The existing queue lifecycle must
+be retained: resetting/replacing a queue loses its dependency history and is not
+reclamation. The adapter validates binding and source/staging/store/queue path
+separation before entering maintenance, then revalidates staging-backed binding
+under the writer leases. There is no command, hook or automatic call site.
+
+Queue/store association is a caller precondition, not a persisted identity check.
+`CaptureBinding` identifies capture policy, and `Maintenance` proves ownership of
+the supplied queue; neither proves that arbitrary supplied stores belong to that
+queue. A same-binding replacement queue with completed history would pass these
+checks, so the empty-history guard does not make queue replacement safe. Before
+exposing reclamation through rollout wiring, the production resolver must enforce
+one retained queue lifecycle per private store set and refuse ambiguous or reset
+associations. Persisted lifecycle identity is an option if that cannot be guaranteed
+by construction; this internal API does not provide it.
+
+`Queue.Maintain` acquires worker ownership and the queue transaction lock without
+waiting, loads and validates the existing binding/schema/state, and durably
+reflushes that state before issuing a callback-scoped `Maintenance` proof. A failed
+or uncertain save never invokes cleanup. This order matters: an acknowledgement
+visible in memory/on disk may not yet survive power loss; its archives cannot be
+deleted until the queue state is confirmed durable. Logical queue state, owner,
+attempts, receipts, schema and replay cutoff remain unchanged. Missing/corrupt
+queues are never initialized or repaired. Proofs cannot authorize work after the
+callback returns, and callers must not retain them or use concurrent callbacks.
+
+The shared operation then acquires staging, capture, seed and commit leases, while
+queue producers, workers and manual coverage remain excluded. It holds all leases
+through validation and deletion. The lock order is worker, queue transaction,
+staging, capture, seeds, commits. Operations inside the callback must not reenter
+the queue. A busy owner or persistent fence refuses cleanup. The queue directory
+is a fourth confined inventory root for direct `.confirmation-*` directories;
+other queue files, receipts and directories are retained.
+
+Sealed archives follow a conservative policy:
+
+| Queue/store state | Sealed archives | Disposable workspaces |
+| --- | --- | --- |
+| Any pending, running, blocked or saved-phase batch | Preserve all (`pending-work`) | Reclaim under writer ownership |
+| Brand-new queue with no accepted-generation history | Preserve all (`empty-history`) | Reclaim under writer ownership |
+| Recovery directory or unrecognized state in any artifact store | Preserve all (`retained-state`) | Reclaim under writer ownership |
+| Empty queue with completed history and only recognized store entries | Verify every archive, then reclaim | Reclaim after complete validation |
+
+Protecting every archive while work remains also protects captures saved before
+an uncertain phase marker, commits not yet recorded in queue state and shared
+seed dependencies. Reclamation does not infer reachability from references alone.
+Completed history survives receipt compaction through the monotonic generation
+counter. Selective pruning while work remains is deferred: a quota-blocked queue
+requires an explicit capacity increase or recovery so it can drain first.
+
+When sealed reclamation is eligible, all direct `.capture` candidates must be regular files with valid immutable keys
+and verified archive checksums. Candidate directories/links, invalid keys,
+corruption, inaccessible entries, excessive inventory or size overflow refuse the
+operation before deleting any workspace or archive. The existing direct inventory
+bound is 100,000 entries per store. Recovery directories and unknown entries are
+never traversed or deleted. `seeds`, its regular lock file, recognized disposable
+workspaces and regular interrupted `.durable-*` files are known namespaces; the
+latter remain retained by this operation. Recovery state intentionally keeps
+archives until separately inspected/resolved; cleanup does not guess that an old
+intent is disposable.
+
+Deletion checks eager handle-based file identity and size again. Commits are
+removed before captures, then seeds, preserving shared seeds during partial
+cleanup. Results include fully removed workspace/archive counts and logical
+archive bytes for this attempt, plus the protection reason. Failure/cancellation
+can leave partial progress; retry revalidates and reflushes queue state before
+handling the remainder. No queue acknowledgement is created by reclamation.
+Deletion itself is not a durability receipt: power loss may resurrect discarded
+archives, but the already-reflushed queue must not resurrect their completed work.
+Missing artifact stores stay missing; relocated OS-temp scratch remains outside
+these private namespaces.
+
+Synthetic tests exercise durable-save failure/uncertainty before authorization,
+callback lifetime and producer/worker exclusion, compacted history, all unfinished
+phases, fresh-queue refusal, corrupt/linked archives, recovery/unknown state,
+queue-parent confirmations, store fences, partial deletion order and retry. A
+Claude integration test retains a real capture before its queue phase is saved,
+deletes its synthetic source, and proves the identical archive remains reusable.
+After fixture completion is acknowledged, explicit reclamation removes it.
+Ordinary synchronous Claude behavior and the pinned v1 baseline are unchanged.
