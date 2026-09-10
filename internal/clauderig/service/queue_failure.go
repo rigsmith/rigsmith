@@ -36,7 +36,7 @@ func (s Service) queueFailure(ctx context.Context, work queue.Work, err error) e
 		code = "publication-conflict"
 	case errors.Is(err, artifact.ErrInvalid), errors.Is(err, commitartifact.ErrInvalid), errors.Is(err, commitartifact.ErrAttributes):
 		code = "artifact-invalid"
-	case errors.Is(err, artifact.ErrTooLarge):
+	case errors.Is(err, artifact.ErrTooLarge), errors.Is(err, artifact.ErrStoreFull):
 		code = "capacity-exceeded"
 	case errors.Is(err, ErrCaptureSourceUnavailable), errors.Is(err, fs.ErrNotExist):
 		code = "data-unavailable"

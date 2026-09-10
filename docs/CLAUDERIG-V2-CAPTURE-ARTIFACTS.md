@@ -122,23 +122,24 @@ snapshot. The configured maximum-file policy and secret checks still apply.
 Retention/space cleanup moves to a later publication/lifecycle policy; synchronous
 capture keeps its existing retention and throttle behavior.
 
-Lock order is worker ownership (when used by the driver), artifact-store ownership,
-canonical staging ownership, seed-store ownership while retaining ancestry, then
-private capture ownership. Original contexts
-are used for independent stores; derived contexts are only borrowed by operations
-on the same store. The future concrete adapter must follow this order rather than
-holding canonical staging ownership before calling CaptureArtifact.
+Claude artifact services acquire worker ownership when run by the queue, then
+canonical staging ownership, then private artifact-store ownership. Capture can
+acquire the seed-substore lease while retaining ancestry. Independent operation
+contexts acquire separate stores; a derived store context is borrowed only for
+sequential work on that same store. Staging ownership is attached separately to
+command supervision and protects external writers after worker death.
 
 ## Limits and remaining work
 
 One archive defaults to a 32 GiB limit. Claude also bounds the combined bytes it
 copies from staging and sources by that limit, so workspace admission can be more
-conservative than final archive size. This is not a total-store quota. Archives
-are retained indefinitely for now. No automatic compaction, expiry, startup
-cleanup, or migration is enabled. A process killed during a build can leave a
-private temporary workspace containing raw inputs; startup cleanup under the
-ownership locks is a rollout gate. Successful and ordinarily failed builds attempt to clean
-up their own workspace. Unknown versions and corrupted captures fail closed.
+conservative than final archive size. Optional aggregate admission and interrupted
+archive-write cleanup are described below. Archives remain retained indefinitely;
+there is no automatic expiry, compaction, cleanup, CLI or hook wiring. A process
+killed during a build can leave a private workspace containing raw inputs. Such
+workspaces require reference and external-writer checks before reclamation.
+Successful and ordinarily failed builds attempt to remove their own workspace.
+Unknown versions and corrupted captures fail closed.
 
 The [commit adapter](CLAUDERIG-V2-RETAINED-COMMITS.md) now seals retained Git
 bundles, and captures retain seeds before acknowledgement. Queue execution now
@@ -157,3 +158,58 @@ binding changes, audited merge completion before capture, seed survival after
 canonical history disappears, source-failure retry, and queue blocking/offline
 replay. Index and worktree bytes remain unchanged. The unchanged six-scenario Claude
 compatibility baseline continues to guard existing sync behavior.
+
+## Store capacity and interrupted archive writes (6b.7b.1)
+
+`artifact.Store.MaxStoredBytes` optionally limits the logical bytes of direct
+sealed `.capture` files in that store. Zero preserves unlimited aggregate
+admission; the separate 32 GiB default per-archive limit still applies. A negative
+aggregate limit is invalid. Every cooperating writer of a store must use the same
+configured limit. This remains an internal policy field, with no user config key.
+
+New builds inventory existing archive sizes while holding the artifact-store
+lease, then bound the archive stream to the smaller of the per-archive limit and
+remaining sealed capacity, including archive framing and checksum. No header
+space means rejection before invoking the builder. Exceeding the aggregate bound returns
+`artifact.ErrStoreFull` without publishing a partial archive; the Claude queue
+classifies it as `capacity-exceeded` and blocks for explicit repair. Existing
+verified archives still reflush and resume even if their aggregate limit was
+lowered below current usage. Limits never authorize deletion or recapture.
+
+The quota excludes build workspaces, in-progress archive files, publication
+scratch and substores; it is not a disk-free-space reservation or a bound on peak
+filesystem usage. Builders can use scratch before archive size is known. A seed
+substore inherits the same numerical policy as its capture store, but has its own
+independent quota. Commit stores use their explicitly supplied policy.
+
+`Store.Capacity` observes direct archive bytes/counts, interrupted archive-write
+bytes/counts, build-workspace count, other entries and configured sealed headroom.
+It does not hash files, traverse directories, follow links, or report recursive
+storage/free space. Corrupt and unrecognized regular `.capture` files still count
+against admission. Nonregular archive/write candidates, inaccessible entries,
+size overflow and directories over 100,000 entries refuse the inventory; no
+partial inventory authorizes a build or deletion. The private canonical store
+directory and its ancestors must remain stable, as required by Build.
+
+`Store.CleanupInterruptedWrites` acquires artifact ownership without waiting and
+removes only direct regular `.durable-*` files left by interrupted archive writes
+or reflushes. It validates the whole inventory before deleting anything and checks
+file identity again before each removal. Live owners and persistent store fences
+block cleanup. Missing stores remain missing. Failure or cancellation during
+removal returns partial counts; retry safely handles what remains. This is space
+reclamation, not a durable acknowledgement: deleted scratch can reappear after
+power loss and require another cleanup.
+
+Sealed archives, `.capture-work-*` directories, seed/recovery substores,
+publication scratch and unknown entries are never deleted. Build workspaces may
+still have external Git writers protected by staging ownership after the parent
+exits; an artifact lease alone does not prove those writers stopped. Reference-
+aware sealed-artifact cleanup and acquisition of all relevant writer leases stay
+in 6b.7b.2 before automatic worker/hook integration.
+
+Synthetic native tests cover admission, concurrent builders, retained reuse over
+a lowered quota, corruption accounting, cancellation/partial removal, store
+fences and process death during a real durable rewrite. The process test verifies
+that a live writer blocks cleanup and that its death leaves the sealed archive
+and build workspace intact. Symlink-refusal cases skip on platforms where creating
+symlinks is unavailable.

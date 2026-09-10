@@ -13,10 +13,11 @@ import (
 const seedRefName = "refs/rig/seed"
 
 // SeedStore is the reserved private seed-bundle substore of a capture store.
-// It inherits the per-artifact size limit. Keep the entire capture directory
+// It inherits per-archive and sealed-store limits; its aggregate quota is
+// independent of the parent capture store. Keep the entire capture directory
 // outside vendor sources and backups; neither captures nor seeds expire yet.
 func SeedStore(captures artifact.Store) artifact.Store {
-	return artifact.Store{Dir: filepath.Join(captures.Dir, "seeds"), MaxBytes: captures.MaxBytes}
+	return artifact.Store{Dir: filepath.Join(captures.Dir, "seeds"), MaxBytes: captures.MaxBytes, MaxStoredBytes: captures.MaxStoredBytes}
 }
 
 // RetainSeed seals a complete Git seed bundle before a capture can acknowledge
