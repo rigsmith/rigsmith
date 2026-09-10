@@ -126,7 +126,7 @@ func TestWindowsRecoveryCrashHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := helperCommand("return", "")
+	cmd := helperCommand("return", filepath.Join(root, "completed-leaf"))
 	if stage == "owned" {
 		cmd = windowsOwnerHelper("command", filepath.Join(root, "leaf"))
 	}
