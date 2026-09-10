@@ -622,15 +622,15 @@ func TestQueueCommandRejectsHardLinkedRequest(t *testing.T) {
 }
 
 func TestQueueCommandExcludesUnselectedDesktopProfiles(t *testing.T) {
-	for _, linked := range []bool{false, true} {
-		if linked && runtime.GOOS == "windows" {
+	for _, link := range []string{"none", "profile", "data"} {
+		if link != "none" && runtime.GOOS == "windows" {
 			continue
 		}
 		f := newQueueFixture(t)
 		f.must(t, "init") // No selected profiles.
 		store := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop")
 		profile := filepath.Join(store, "unselected")
-		if linked {
+		if link == "profile" {
 			target := t.TempDir()
 			if err := os.MkdirAll(store, 0700); err != nil {
 				t.Fatal(err)
@@ -646,9 +646,23 @@ func TestQueueCommandExcludesUnselectedDesktopProfiles(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(profile, "profile.json"), []byte(`{"name":"unselected"}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-		path := filepath.Join(profile, "data", "nested", "request.json")
+		dataRoot := filepath.Join(profile, "data")
+		if link == "data" {
+			target := t.TempDir()
+			if err := os.RemoveAll(dataRoot); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, dataRoot); err != nil {
+				t.Fatal(err)
+			}
+			dataRoot = target
+			if err := os.MkdirAll(filepath.Join(dataRoot, "nested"), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		path := filepath.Join(dataRoot, "nested", "request.json")
 		if _, err := f.execute(t.Context(), "prepare", "--session", "s", "--output", path); !errors.Is(err, queue.ErrBinding) {
-			t.Fatal("accepted unselected profile", linked, err)
+			t.Fatal("accepted unselected profile", link, err)
 		}
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatal("wrote into unselected profile", err)
@@ -660,7 +674,7 @@ func TestQueueCommandExcludesUnselectedDesktopProfiles(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := f.execute(t.Context(), "enqueue", path); !errors.Is(err, queue.ErrBinding) {
-			t.Fatal("admitted unselected profile", linked, err)
+			t.Fatal("admitted unselected profile", link, err)
 		}
 	}
 }
@@ -728,4 +742,76 @@ func TestQueueRequestRequiresTypedIdentityAndMembers(t *testing.T) {
 	copy := filepath.Join(t.TempDir(), "request")
 	os.WriteFile(copy, raw, 0600)
 	f.must(t, "enqueue", copy)
+}
+
+func TestQueueCommandRuntimeExcludesAllDesktopProfiles(t *testing.T) {
+	for _, link := range []string{"none", "profile", "data"} {
+		t.Run(link, func(t *testing.T) {
+			if link != "none" && runtime.GOOS == "windows" {
+				t.Skip("symlink creation requires privileges")
+			}
+			f := newQueueFixture(t)
+			store := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop")
+			profile := filepath.Join(store, "unselected")
+			if err := os.MkdirAll(filepath.Join(profile, "data"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			dataRoot := filepath.Join(profile, "data")
+			if link != "none" {
+				target := t.TempDir()
+				alias := profile
+				if link == "data" {
+					alias = dataRoot
+				}
+				if err := os.RemoveAll(alias); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, alias); err != nil {
+					t.Fatal(err)
+				}
+				dataRoot = target
+				if link == "profile" {
+					dataRoot = filepath.Join(target, "data")
+				}
+				if err := os.MkdirAll(dataRoot, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.dir = filepath.Join(dataRoot, "claude-code-sessions", "runtime")
+			if _, err := f.execute(t.Context(), "init"); !errors.Is(err, queue.ErrBinding) {
+				t.Fatal("accepted runtime in unselected profile", err)
+			}
+			if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
+				t.Fatal("created unsafe runtime", err)
+			}
+			if _, err := f.execute(t.Context(), "status"); !errors.Is(err, queue.ErrBinding) {
+				t.Fatal("reopened unsafe location", err)
+			}
+		})
+	}
+	// A previously private runtime becomes unsafe if a profile later targets it.
+	if runtime.GOOS != "windows" {
+		f := newQueueFixture(t)
+		f.must(t, "init")
+		before, err := os.ReadFile(filepath.Join(f.dir, "runtime.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		profile := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop", "later")
+		if err := os.MkdirAll(profile, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(f.dir, filepath.Join(profile, "data")); err != nil {
+			t.Fatal(err)
+		}
+		for _, verb := range []string{"init", "status"} {
+			if _, err := f.execute(t.Context(), verb); !errors.Is(err, queue.ErrBinding) {
+				t.Fatal("reopened newly exposed runtime", verb, err)
+			}
+		}
+		after, err := os.ReadFile(filepath.Join(f.dir, "runtime.json"))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatal("modified refused runtime", err)
+		}
+	}
 }

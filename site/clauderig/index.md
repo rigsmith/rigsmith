@@ -52,9 +52,9 @@ clauderig ui                   # interactive dashboard
   while restore writes native JSONL. Existing backups migrate on the next sync.
   Upgrade every participating client before enabling it. See
   [enabling chunking](./commands#transcript-chunking).
-- **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
-  confirms is private — created with `gh repo create --private` or an existing
-  one verified via `gh repo view`.
+- **Private repo, no exceptions.** The remote must be a GitHub or GitLab repo
+  verified private with `gh`/`glab` or the matching provider token. Git uses
+  your configured credential helpers.
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
 - **Bounded repo, unbounded memory.** 90-day retention on transcripts + a
@@ -86,6 +86,8 @@ curl -fsSL https://rigsmith.sh/clauderig | sh    # once the release exists
 go build -o clauderig ./cmd/clauderig
 ```
 
-Requires `git` and the GitHub CLI (`gh`, authenticated) for the private-repo gate.
+Requires `git` with credentials for the remote. Privacy verification uses
+`gh` for GitHub or `glab` for GitLab. Without the matching CLI, set
+`GITHUB_TOKEN`/`GH_TOKEN` or `GITLAB_TOKEN`/`GL_TOKEN`, respectively.
 
 - [All commands →](./commands)

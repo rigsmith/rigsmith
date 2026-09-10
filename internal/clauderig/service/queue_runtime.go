@@ -155,6 +155,9 @@ func prepareQueueRuntime(dir string, req SyncRequest, profiles []string) (*Queue
 			return nil, queue.ErrBinding
 		}
 	}
+	if err := checkQueueProfilePath(req, root); err != nil {
+		return nil, err
+	}
 	return &QueueRuntime{dir: root, capture: binding, save: durable.Write, request: req, profiles: slices.Clone(profiles)}, nil
 }
 
@@ -499,26 +502,8 @@ func (r *QueueRuntime) CheckRequestPath(path string) error {
 	if err != nil {
 		return err
 	}
-	// Ordinary sync discovers profiles independently of the queue selection.
-	// Exclude the whole local profile container (including future profiles) and
-	// each existing profile directory target, including unselected symlink aliases.
-	profileStore := desktop.NewStore(filepath.Join(r.request.Machine.Home, ".clauderig", "desktop"))
-	profileDirs, err := profileStore.CandidateDataDirs()
-	if err != nil {
+	if err := checkQueueProfilePath(r.request, candidate); err != nil {
 		return err
-	}
-	paths := []string{profileStore.Root}
-	for _, dataDir := range profileDirs {
-		paths = append(paths, filepath.Dir(dataDir))
-	}
-	for _, path := range paths {
-		root, err := canonicalCapturePath(path)
-		if err != nil {
-			return err
-		}
-		if overlapsCapture(root, candidate) {
-			return fmt.Errorf("queue request files must be outside all Desktop profile trees: %w", queue.ErrBinding)
-		}
 	}
 
 	stage, err := canonicalCapturePath(r.request.StagingDir)
@@ -530,5 +515,33 @@ func (r *QueueRuntime) CheckRequestPath(path string) error {
 			return fmt.Errorf("queue request files must be outside source, staging and runtime trees: %w", queue.ErrBinding)
 		}
 	}
+	return nil
+}
+
+// checkQueueProfilePath applies the same exclusion to runtime roots and saved
+// producer files, independently of which Desktop profiles the queue selects.
+func checkQueueProfilePath(req SyncRequest, candidate string) error {
+	// Ordinary sync discovers profiles independently of the queue selection.
+	// Exclude the whole local profile container (including future profiles) and
+	// each existing profile and data directory target, including unselected aliases.
+	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+	profileDirs, err := profileStore.CandidateDataDirs()
+	if err != nil {
+		return err
+	}
+	paths := []string{profileStore.Root}
+	for _, dataDir := range profileDirs {
+		paths = append(paths, filepath.Dir(dataDir), dataDir)
+	}
+	for _, path := range paths {
+		root, err := canonicalCapturePath(path)
+		if err != nil {
+			return err
+		}
+		if overlapsCapture(root, candidate) {
+			return fmt.Errorf("queue private state must be outside all Desktop profile trees: %w", queue.ErrBinding)
+		}
+	}
+
 	return nil
 }

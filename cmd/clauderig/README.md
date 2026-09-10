@@ -55,9 +55,9 @@ the same in the gitignored `.claude/settings.local.json`). See
   ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy of a conversation: the transcript, the tool results written beside it, and notes under `memory/`. Upgrading redaction restages these files once. Restore merges the
   synced config back without clobbering your local secrets — a new machine
   re-authenticates.
-- **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
-  confirms is private — created with `gh repo create --private` or an existing
-  one verified via `gh repo view`.
+- **Private repo, no exceptions.** The remote must be a GitHub or GitLab repo
+  verified private with `gh`/`glab` or the matching provider token. Git uses
+  your configured credential helpers.
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
 - **Bounded repo, unbounded memory.** 90-day retention on transcripts + a
@@ -133,4 +133,6 @@ curl -fsSL https://rigsmith.sh | sh -s clauderig    # once the release exists
 go build -o clauderig ./cmd/clauderig
 ```
 
-Requires `git` and the GitHub CLI (`gh`, authenticated) for the private-repo gate.
+Requires `git` with credentials for the remote. Privacy verification uses
+`gh` for GitHub or `glab` for GitLab. Without the matching CLI, set
+`GITHUB_TOKEN`/`GH_TOKEN` or `GITLAB_TOKEN`/`GL_TOKEN`, respectively.

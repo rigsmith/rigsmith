@@ -13,7 +13,8 @@ require explicit command arguments; off a terminal, bare `queue` prints help.
 Run an ordinary `clauderig sync` first to initialize local and remote history.
 The queue uses the configured private HTTPS GitHub/GitLab remote and existing
 Git credential helpers (`gh auth setup-git` where appropriate). Privacy checks use
-the existing `gh`/`glab` or token verification. It adds no authentication store or
+`gh` for GitHub and `glab` for GitLab, falling back to `GITHUB_TOKEN`/`GH_TOKEN`
+or `GITLAB_TOKEN`/`GL_TOKEN` when the matching CLI is absent. It adds no authentication store or
 SSH transport. Existing SSH users continue with ordinary sync.
 
 ```sh
@@ -27,8 +28,8 @@ clauderig queue drain
 Choose a private directory for request files, outside synced source/staging and
 the managed runtime tree. Both prepare and enqueue reject these trees after
 canonicalizing existing ancestors, including symlink aliases. The entire Desktop
-profile store and discovered profile targets are excluded, including profiles
-not selected for the queue. `prepare` creates a new file with mode 0600, refuses an
+profile store and discovered profile/data-directory targets are excluded, including
+profiles not selected for the queue and separately symlinked data directories. `prepare` creates a new file with mode 0600, refuses an
 existing file and flushes the saved request before succeeding. Keep Windows
 runtime/request files under a private user directory: inherited ACLs are a caller
 prerequisite, not validated or repaired by these commands. Linux/macOS runtime
@@ -59,6 +60,11 @@ shape and a checksum to detect accidental corruption (not authentication). Symbo
 unknown fields, invalid attribution and a foreign
 runtime binding refuse admission. Failed preparation may leave a partial or
 complete file; inspect it instead of overwriting it. Do not edit saved requests.
+
+Runtime creation and reopening enforce the same exclusion of all Desktop
+profile and data-directory targets, even when no profiles are selected. A runtime
+that becomes exposed through a new profile link refuses reopening without changing
+its saved state. Keep filesystem roots and profile links stable during operations.
 
 The default runtime is `~/.clauderig/queue-runtime`. Use `--dir` to select another
 private, stable root outside sources and staging. The managed stores belong

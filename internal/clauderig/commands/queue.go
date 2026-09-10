@@ -86,7 +86,7 @@ func NewQueueCmd() *cobra.Command {
 func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var dir string
 	var profiles []string
-	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request, enqueue it, then run a foreground worker or drain.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use existing Git/gh authentication and require an HTTPS private remote.\nStop producers before draining. No background service is installed.", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request, enqueue it, then run a foreground worker or drain.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nStop producers before draining. No background service is installed.", Args: cobra.NoArgs}
 	cmd.PersistentFlags().StringVar(&dir, "dir", "", "private runtime directory (default ~/.clauderig/queue-runtime)")
 	_ = cmd.MarkPersistentFlagDirname("dir")
 	cmd.PersistentFlags().StringArrayVar(&profiles, "profile", nil, "explicit Desktop profile to include (repeatable; default none)")

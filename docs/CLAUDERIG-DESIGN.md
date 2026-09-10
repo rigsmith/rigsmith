@@ -591,5 +591,6 @@ hooks remain disabled. See [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md) and
 
 The [foreground queue workflow](CLAUDERIG-V2-QUEUE-COMMANDS.md) saves producer
 requests before admission and selects the audited supervisor for worker Git
-commands. It uses existing Git/gh authentication and private remote checks.
+commands. Git uses existing credentials for private HTTPS GitHub/GitLab remotes;
+privacy checks use `gh`/`glab` or the matching provider token.
 Ordinary sync and hooks remain synchronous; hook routing and coverage are 7c.
