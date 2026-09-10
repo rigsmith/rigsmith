@@ -675,3 +675,10 @@ Producers, workers and manual coverage stay excluded until cleanup finishes.
 Callbacks must not reenter queue operations. See [queue-aware artifact
 reclamation](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md#queue-aware-archive-reclamation-6b7b2b)
 for the idle-only sealed-archive policy and queue-parent confirmation cleanup.
+
+## Persisted Claude runtime
+
+The internal [Claude queue runtime](CLAUDERIG-V2-QUEUE-RUNTIME.md) binds one local
+lifecycle to fixed private stores and durably saves producer identity before
+accepting events. Its adapter validates the lifecycle binding before entering the
+existing capture-policy layer. Commands and hooks remain synchronous.
