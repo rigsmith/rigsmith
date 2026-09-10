@@ -455,3 +455,32 @@ func (r *QueueRuntime) CheckStartup(ctx context.Context, s Service, in QueueRunt
 	}
 	return s.checkQueueStartup(ctx, r.capture, inputs, true)
 }
+
+// ScopeID identifies this immutable runtime binding without exposing stores or
+// queue mutators. Saved producer requests must match it before admission.
+func (r *QueueRuntime) ScopeID() string {
+	data, _ := json.Marshal(r.binding)
+	return artifact.Key(data)
+}
+
+// Capacity reports queue metadata headroom; it does not count archive disk use.
+func (r *QueueRuntime) Capacity(ctx context.Context) (queue.Capacity, error) {
+	return r.q.Capacity(ctx)
+}
+
+// RetryBlocked explicitly permits a repaired batch to run again. Worker
+// ownership preserves saved phases and excludes an active execution attempt.
+// No staging process fence or timed backoff is cleared.
+func (r *QueueRuntime) RetryBlocked(ctx context.Context, id uint64) error {
+	_, release, err := r.lockState(ctx)
+	if err != nil {
+		return err
+	}
+	release() // Never wait for worker ownership while holding runtime ownership.
+	worker, err := r.q.Worker(ctx)
+	if err != nil {
+		return err
+	}
+	defer worker.Close()
+	return worker.Unblock(ctx, id)
+}

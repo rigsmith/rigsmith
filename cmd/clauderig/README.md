@@ -10,6 +10,7 @@ installable by `curl | sh` / Homebrew / Scoop on any machine.
 
 ```sh
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
+clauderig queue                # v2: explicit saved requests, foreground worker, status/retry/drain
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
@@ -87,7 +88,7 @@ repository maintenance, ledger backfill and device removal wait up to 15 seconds
 for another operation to finish. Ordinary sync hooks and SessionStart pull skip
 a busy repo; `sync --flush` waits. A running operation keeps ownership until it
 finishes or exits, even if it takes longer than the wait limit. No background
-worker or queue is enabled. Use the same v2 client for operations sharing a
+worker or queued hook is enabled automatically. Use the same v2 client for operations sharing a
 local backup; older clients do not participate in this coordination.
 
 ## Commands
@@ -95,6 +96,7 @@ local backup; older clients do not participate in this coordination.
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
+| `queue` | V2 preview: `init`, `prepare`, `enqueue`, `status`, `retry`, `run`, `drain`. [Explicit workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md); hooks remain synchronous |
 | `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; all syncs take the staging lock; `--hook` also debounces the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |

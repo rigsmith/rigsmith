@@ -18,7 +18,7 @@ compaction (#375), artifact-store limits and interrupted archive-write cleanup
 (#376) and writer-owned workspace cleanup (#377) are merged. Queue-aware
 archive reclamation and queue-parent confirmation cleanup (#378) are merged.
 Opt-in rollout has started with persisted queue/store lifecycle and producer
-attribution (7a, in review).
+attribution ([#379](https://github.com/rigsmith/rigsmith/pull/379)); explicit queue commands (7b) are in review.
 
 The release path is now: finish opt-in queued Claude commands and hook routing,
 validate rollback and OS lifecycle behavior, then connect the separate `codexrig` adapter.
@@ -58,8 +58,8 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Artifact-store capacity and interrupted archive writes (6b.7b.1) | Merged: [#376](https://github.com/rigsmith/rigsmith/pull/376). Optional per-store sealed-byte limits, capacity reporting and exclusive cleanup of interrupted archive-write files. |
 | Writer-owned build/publication workspace cleanup (6b.7b.2a) | Merged: [#377](https://github.com/rigsmith/rigsmith/pull/377). Hold staging, capture, seed and commit leases; reclaim only reserved disposable workspaces. Preserve sealed artifacts, recovery stores, queue-parent confirmations and relocated OS-temp scratch. |
 | Queue-aware archive reclamation (6b.7b.2b) | Merged: [#378](https://github.com/rigsmith/rigsmith/pull/378). Reflush queue state under worker/transaction ownership; reclaim verified archives only after all work completes and no recovery/unknown private state remains. Clean queue-parent confirmation scratch under the same ownership. Reclamation wiring must first enforce exclusive queue/store lifecycle association. |
-| Persisted Claude queue runtime (7a) | In review (current PR). Fixed private stores, unique lifecycle binding and durable producer attribution; resume saved work after restart or staging-marker loss. [Contract](docs/CLAUDERIG-V2-QUEUE-RUNTIME.md). |
-| Explicit queued Claude commands (7b) | Next: initialization, enqueue, supervised worker, status/retry and drain. |
+| Persisted Claude queue runtime (7a) | Merged: [#379](https://github.com/rigsmith/rigsmith/pull/379). Fixed private stores, unique lifecycle binding and durable producer attribution; resume saved work after restart or staging-marker loss. [Contract](docs/CLAUDERIG-V2-QUEUE-RUNTIME.md). |
+| Explicit queued Claude commands (7b) | In review (current PR): init, saved producer requests, enqueue, supervised foreground worker, status/retry and drain. [Contract](docs/CLAUDERIG-V2-QUEUE-COMMANDS.md). |
 | Opt-in queued Claude hooks and rollback (7c) | Planned: route opted-in hooks, coordinate synchronous coverage and validate rollback. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 

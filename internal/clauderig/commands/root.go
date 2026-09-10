@@ -23,6 +23,7 @@ func NewRootCmd(version string) *cobra.Command {
 	root.AddCommand(
 		NewInitCmd(),
 		NewSyncCmd(),
+		NewQueueCmd(),
 		NewPullCmd(),
 		NewMergeCmd(),
 		NewPeekCmd(),

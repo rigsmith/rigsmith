@@ -467,3 +467,29 @@ refusal leaves the merge in progress. Clean and stage the affected files, then
 retry `clauderig merge` or `clauderig sync`, or use `clauderig merge --abort`.
 Unstaged tracked edits must be staged before retrying so the audit checks the
 bytes Git will commit. These checks do not remove secrets from existing history.
+
+## Explicit queue workflow (v2 preview)
+
+Run an ordinary sync first, then `clauderig queue init`. Save a request with
+`clauderig queue prepare --session my-session --output request.json --flush`,
+then `clauderig queue enqueue request.json`. Retry enqueue with the same private
+file to preserve its event ID, timestamp and original account attribution.
+Preparation refuses existing files; missing identity requires an explicit
+`--unknown-identity` choice. Request files must remain stable during admission.
+
+`queue status` prints batch progress and queue capacity as JSON. `queue run`
+starts one supervised foreground worker. Ctrl-C or SIGTERM stops after the
+current batch; a second signal cancels active work and waits for cleanup.
+After repairing a blocked batch, `queue retry <batch-id>` unblocks it without
+losing saved progress. Stop producers before `queue drain`; blocked or delayed
+work remains saved and returns a nonzero result.
+
+The default private runtime is `~/.clauderig/queue-runtime`; select another with
+`--dir`. Repeat the same explicit `--profile` selection on every command. Workers
+require initialized shared Git history and a verified private HTTPS remote,
+using existing Git/gh authentication. `--max-archive-bytes` and
+`--max-stored-bytes` on `run`/`drain` control archive admission, not total disk use.
+Keep runtime/request files in private user directories (including inherited
+Windows ACLs). Never copy/reset runtime children. Hooks remain synchronous;
+no background service is installed. General release still requires actual OS
+restart/hibernation validation.
