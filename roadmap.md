@@ -24,6 +24,7 @@ The runtime manual-sync bridge merged in [#381](https://github.com/rigsmith/rigs
 the explicit manual command merged in [#382](https://github.com/rigsmith/rigsmith/pull/382).
 Bounded hook-request preparation merged in [#384](https://github.com/rigsmith/rigsmith/pull/384).
 Queued worker capture/flush policy merged in [#385](https://github.com/rigsmith/rigsmith/pull/385).
+Durable hook admission and recovery are in review in [#387](https://github.com/rigsmith/rigsmith/pull/387).
 
 The release path is now: finish opt-in queued Claude commands and hook routing,
 validate rollback and OS lifecycle behavior, then connect the separate `codexrig` adapter.
@@ -69,7 +70,7 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Manual queue sync command (7c.2a) | Merged: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
 | Hook-request preparation (7c.2b.1) | Merged: [#384](https://github.com/rigsmith/rigsmith/pull/384). Decode bounded Stop/SessionEnd payloads into saved, retryable producer requests; require direct parent transcripts during capture. |
 | Queued worker capture/flush policy (7c.2b.2a) | Merged: [#385](https://github.com/rigsmith/rigsmith/pull/385). Fully capture requested sessions/subagents, honor all-flush and preserve normal throttling for unrelated plain transcripts; replay saved artifacts unchanged. |
-| Durable hook producer and recovery (7c.2b.2b.1) | In progress: save hook requests before admission, recover original attribution/events, and remove only confirmed producer records. |
+| Durable hook producer and recovery (7c.2b.2b.1) | In review: [#387](https://github.com/rigsmith/rigsmith/pull/387). Save hook requests before admission, recover original attribution/events, and remove only confirmed producer records. |
 | Opt-in hook installation and rollback (7c.2b.2b.2) | Planned: install opt-in routing, coordinate ordinary sync, and validate producer recovery, stop/drain and rollback. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
