@@ -18,6 +18,31 @@ effective user with no group/other permission bits; it refuses rather than repai
 unsafe permissions. On Windows, POSIX bits do not describe inherited ACLs: the
 caller must provision a private parent. This API does not inspect or rewrite ACLs.
 
+Both `CreateQueueRuntime` and `OpenQueueRuntime` check path isolation before
+creating directories or opening mutable queue state. They exclude every enabled
+source root, canonical staging, and the entire Desktop profile store plus each
+discovered profile and data-directory target, even when that profile is not
+selected for the queue. This includes directory junctions and symlink targets.
+The runtime root contains the queue, capture/seed, commit and recovery stores;
+`CheckRequestPath` additionally excludes that entire runtime tree from saved
+producer-file locations.
+
+Missing ordinary directories are allowed. Existing unresolved links, an invalid
+or unreadable Desktop store, and source/staging/profile overlap refuse with
+`queue.ErrBinding` and a queue-isolation diagnostic. This precondition also applies
+to reopening for status: intact metadata alone cannot prove isolation. Repair the
+local link/path/permissions and retry the same runtime; no descriptor migration,
+reset, child copying or bypass is performed. Roots, profile links and volume
+mappings must remain stable during operations and across runtime use.
+
+On Windows, existing paths are resolved through an open handle so junctions are
+compared by target. Broken junctions fail before missing suffix directories can
+be created. DOS/UNC paths use normalized names; local volumes without DOS drive
+names can use a rooted volume-GUID result. Permission failures remain errors.
+Unix uses symlink resolution with the same unresolved-ancestor refusal. These
+checks are local queue policy; ordinary synchronous capture keeps its existing
+path handling.
+
 A new runtime owns this layout:
 
 ```text

@@ -3,6 +3,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -33,10 +34,20 @@ func queueResolveExistingPath(path string) (string, error) {
 		return "", err
 	}
 	defer windows.CloseHandle(handle)
+	return queueFinalWindowsPath(handle, windows.GetFinalPathNameByHandle)
+}
+
+// The query argument lets the Windows regression force DOS-name lookup failure
+// while still resolving the same real file handle with the native GUID query.
+func queueFinalWindowsPath(handle windows.Handle, query func(windows.Handle, *uint16, uint32, uint32) (uint32, error)) (string, error) {
 	// FILE_NAME_NORMALIZED | VOLUME_NAME_DOS are both zero. The final name uses
 	// the extended DOS/UNC prefix; normalize it to the spelling used by our paths.
 	buffer := make([]uint16, 32768)
-	n, err := windows.GetFinalPathNameByHandle(handle, &buffer[0], uint32(len(buffer)), 0)
+	n, err := query(handle, &buffer[0], uint32(len(buffer)), 0)
+	if errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
+		// A local volume without a DOS drive name can still have a stable GUID.
+		n, err = query(handle, &buffer[0], uint32(len(buffer)), 1) // VOLUME_NAME_GUID
+	}
 	if err != nil {
 		return "", err
 	}
@@ -46,7 +57,7 @@ func queueResolveExistingPath(path string) (string, error) {
 	resolved := windows.UTF16ToString(buffer[:n])
 	if strings.HasPrefix(resolved, `\\?\UNC\`) {
 		resolved = `\\` + strings.TrimPrefix(resolved, `\\?\UNC\`)
-	} else {
+	} else if !strings.HasPrefix(resolved, `\\?\Volume{`) {
 		resolved = strings.TrimPrefix(resolved, `\\?\`)
 	}
 	if !filepath.IsAbs(resolved) {

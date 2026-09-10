@@ -1069,3 +1069,75 @@ func queueTestLinkDir(t *testing.T, target, link string) {
 		}
 	}
 }
+
+func TestQueueCommandRejectsNoncanonicalSavedUUIDs(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", path)
+	original, err := readQueueRequest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, organization := range []bool{false, true} {
+		for _, id := range []string{"ABCDEFAB-1234-4123-8123-ABCDEFABCDEF", " abcdefab-1234-4123-8123-abcdefabcdef "} {
+			saved := original
+			if organization {
+				saved.Identity.OrganizationUUID = id
+			} else {
+				saved.Identity.AccountUUID = id
+			}
+			saved.Request.ProvenanceID, err = service.CaptureProvenance(saved.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved.Checksum = queueRequestChecksum(saved)
+			data, err := json.Marshal(saved)
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate := filepath.Join(t.TempDir(), "request")
+			if err := os.WriteFile(candidate, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.execute(t.Context(), "enqueue", candidate); err == nil {
+				t.Fatal("accepted noncanonical identity", organization, id)
+			}
+			after, err := os.ReadFile(candidate)
+			if err != nil || !bytes.Equal(data, after) {
+				t.Fatal("rewrote refused identity", err)
+			}
+		}
+	}
+	jobs, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(jobs) != 0 {
+		t.Fatal("admitted invalid work", jobs, err)
+	}
+	f.must(t, "enqueue", path)
+}
+
+func TestQueueRequestLeaseDirectoryAliasesContend(t *testing.T) {
+	target := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "alias")
+	queueTestLinkDir(t, target, alias)
+	release, err := queueRequestLease(t.Context(), filepath.Join(target, "request"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	second, err := queueRequestLease(ctx, filepath.Join(alias, "request"))
+	if second != nil {
+		second()
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("alias bypassed request ownership", err)
+	}
+	release()
+	second, err = queueRequestLease(t.Context(), filepath.Join(alias, "request"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second()
+}

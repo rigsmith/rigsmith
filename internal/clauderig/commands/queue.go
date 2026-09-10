@@ -470,6 +470,11 @@ func loadQueueRequest(path string) (*savedQueueRequest, error) {
 	if err := validateQueueSessionID(s.Request.SessionID); err != nil {
 		return nil, err
 	}
+	for _, id := range []string{s.Identity.AccountUUID, s.Identity.OrganizationUUID} {
+		if id != "" && id != account.CanonicalUUID(id) {
+			return nil, fmt.Errorf("saved identity UUIDs must already be canonical")
+		}
+	}
 	provenance, err := service.CaptureProvenance(s.Identity)
 	if err != nil {
 		return nil, err
