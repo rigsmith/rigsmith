@@ -8,12 +8,13 @@ are now implemented; see [capture artifacts](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md).
 Retained commit bundles and Claude commit/sealing are also implemented; see
 [retained commits](CLAUDERIG-V2-RETAINED-COMMITS.md). Capture-time seed retention
 now keeps ancestry available before the first commit. Claude QueueAdapter now
-connects these services to RunOne, including confirmed retained publication. A
-worker command and hook activation are still pending.
+connects these services to RunOne, including confirmed retained publication.
+[Explicit foreground queue commands](CLAUDERIG-V2-QUEUE-COMMANDS.md) now provide
+init, prepare/enqueue, status, retry, supervised run and drain (7b).
 The v2 queue has end-user changesets for its planned release behavior, including
 completion of staged merges before retrying committed batches. Shipped
-synchronous commands remain unchanged; worker commands and queued hooks are not
-yet enabled.
+synchronous commands remain unchanged. Queued hook routing and manual-sync
+coverage/rollback wiring remain 7c work; no background service is installed.
 
 ## Identity and generations
 
@@ -129,8 +130,8 @@ automatically discarded to make room.
 
 Completed receipts remain indefinitely unless the caller explicitly establishes a
 producer replay cutoff and compacts them. The shared capacity report and
-compaction API are described below; hook/status command wiring and artifact
-capacity/cleanup remain rollout work. Rewriting a complete snapshot is deliberately
+compaction API are described below; status is exposed by the foreground commands.
+Hook routing and command exposure of receipt/artifact cleanup remain rollout work. Rewriting a complete snapshot is deliberately
 simple and bounded; measure it with the integrated worker before choosing a
 journal or database. Unknown versions fail closed.
 
@@ -255,29 +256,25 @@ now has additional end-to-end queue tests described below; production lifecycle
 and rollout gates remain open. The unchanged six-scenario compatibility baseline
 remains the gate for synchronous behavior.
 
-## Remaining integration gates (milestone 6b.2)
+## Integration status after 7b
 
-- Add production producers and a resolver that persist/retrieve source provenance
-  and freshly resolve configuration for QueueAdapter. The adapter now validates
-  binding and provenance without consulting the worker's login.
-- Durable captures, capture-time seed bundles and retained commits now preserve
-  their dependencies independently of staging and now feed Push/recovery through
-  QueueAdapter. Define safe artifact cleanup; classified retry policy is described
-  below.
-- Protect requested sources from retention until captured; handle deletion and
-  unavailable source attribution explicitly, without acknowledging missing data.
-- The shared coverage checkpoint and Claude evidence/confirmation service below
-  are implemented. Production commands must explicitly call `SyncWithCoverage`;
+- The [persisted runtime](CLAUDERIG-V2-QUEUE-RUNTIME.md) saves producer identity
+  and resolves fresh inputs without reading a worker login. Explicit foreground
+  producers/workers are wired; opt-in hook producers remain 7c work.
+- Durable capture/seed/commit dependencies, native conflict recovery and internal
+  capacity/reclamation APIs are implemented. Cleanup commands remain deferred.
+- Hook routing must preserve requested sources until capture and handle missing
+  sources/attribution without acknowledging missing data.
+- Shared coverage checkpoints and Claude evidence/confirmation services are
+  implemented. Connecting ordinary sync to `SyncWithCoverage` remains 7c work;
   a queue high-water mark alone cannot establish coverage.
-- Keep lock order consistent: worker ownership before staging ownership; queue
-  transactions stay short. Pass the original cancellation context to queue APIs,
-  not a borrowed staging-store capability, which rejects nesting another store.
-- Retained Git commands now own cancellation cleanup. Establish parent-death
-  recovery and ownership of future external merge tools before offering a worker
-  command or queued hooks. Offline and unmarked-push replay now have integrated
-  queue tests. Queue owner recovery alone does not terminate orphaned external processes.
-- Add the Claude command/status surface, local-only completion policy, queue
-  capacity remedy and supported worker startup/draining/rollback behavior.
+- Keep worker-before-staging lock order and short queue transactions. Pass the
+  independent cancellation context, not a borrowed staging-store capability.
+- Foreground workers select the audited Unix/Windows process supervision and
+  startup check. Actual OS restart/hibernation validation remains a release gate;
+  external merge tools remain unsupported by queued execution.
+- Foreground status/retry/drain are exposed. Hook stop/drain coordination and
+  rollback remain 7c; local-only queued completion remains unsupported.
 
 Validation covers duplicate IDs and conflicting retries, coalescing, provenance
 separation, sealed generations, progress guards, blocked work, retry deadlines,
@@ -341,8 +338,9 @@ source deletion, later-generation preservation, cancellation between remote push
 and phase persistence, absent saved artifacts, changed bindings/provenance,
 conflict blocking, detached inputs, and staging ownership across phase gaps and
 manual-sync attempts. Existing artifact, queue and fixed-baseline compatibility
-tests remain required. Worker startup, parent-death recovery, capacity remedies,
-artifact/receipt cleanup, explicit status and opt-in hook rollout remain future work.
+tests remain required. Foreground startup, supervised execution and status are
+now wired in 7b; hook rollout, manual-sync coverage and rollback remain 7c.
+Artifact/receipt cleanup command exposure and actual OS restart validation remain separate gates.
 
 ## Bounded failure policy
 
@@ -518,9 +516,10 @@ can be covered by worker lifecycle controls. Configured transport validation run
 before capture; the existing HTTPS/Git authentication path and absolute local
 fixture paths are reused without adding credentials or transport mechanisms.
 
-This service is not yet wired into installed commands or hooks. Ordinary `Sync`
-keeps its existing behavior. Production queue discovery, worker lifecycle,
-capacity/cleanup and opt-in command/hook integration remain rollout gates;
+This manual-sync coverage service is not yet wired into commands or hooks.
+Ordinary `Sync` keeps its existing behavior. Explicit foreground queue commands
+are wired in 7b; coverage/hook routing and rollback remain 7c. Cleanup command
+exposure and actual OS restart validation remain separate gates;
 Desktop request routing and the separate Codex adapter remain future work.
 
 Synthetic tests cover later arrivals, worker/staging exclusion, identity/flush
@@ -598,12 +597,12 @@ startup. Unrelated root histories remain unsupported. The optional startup check
 verifies initial common ancestry; initialization remains an explicit foreground
 operation before enabling queued execution.
 
-This does not close the parent-death supervision gate. A crashed process releases
-its OS leases, but this alone cannot prove that orphaned external helpers have
-stopped. Milestone 6b.6b.2 still covers platform worker supervision, safe child
-ownership during startup, and validated OS restart behavior. Production worker commands,
-producer stop/drain coordination and rollback wiring remain rollout work; installed
-synchronous commands and hooks keep their existing behavior.
+A crashed process releasing its OS leases alone cannot prove orphaned helpers
+have stopped. The later 6b.6b.2 process-supervision and fencing work supplies that
+ownership boundary, selected by the 7b foreground commands. Actual OS restart/
+hibernation validation remains a release gate. Hook producer stop/drain
+coordination and rollback remain 7c; synchronous commands and hooks keep their
+existing behavior.
 
 
 ## Startup history check (milestone 6b.6b.1)
@@ -641,8 +640,9 @@ rewrite or canonical change after startup can still invalidate a later batch;
 existing capture/publication binding, history, conflict and secret checks remain
 in force. The callback is optional for generic callers and low-level `RunOne`
 recovery is unchanged. Production supervision must supply the Claude check with
-fresh inputs; no worker command or installed hook enables it yet. Parent-death
-cleanup and OS restart validation remain the next gate.
+fresh inputs. The 7b foreground worker calls it before claims, with explicit
+process supervision. Queued hooks remain disabled and actual OS restart/
+hibernation validation remains a release gate.
 
 Synthetic tests cover SHA-1/SHA-256 ancestry, diverged/ahead tips, fresh remote
 rewrites, missing/shallow/false histories, offline/canceled fetches, unchanged
@@ -660,8 +660,8 @@ mechanism, its extra-process cost, and synthetic crash tests.
 This closes the Windows suspended-child assignment gap. It does not establish
 that cleanup has finished before another worker acquires a crash-released lease:
 Windows job termination is asynchronous. Unix parent-death supervision and
-cross-platform restart fencing remain milestones 6b.6b.2b and 6b.6b.2c. Worker
-commands and queued hooks remain disabled.
+cross-platform restart fencing are supplied by the later 6b.6b.2b/6b.6b.2c
+work. The 7b foreground commands select those controls; queued hooks remain disabled.
 
 
 ## Explicit maintenance ownership
@@ -681,4 +681,5 @@ for the idle-only sealed-archive policy and queue-parent confirmation cleanup.
 The internal [Claude queue runtime](CLAUDERIG-V2-QUEUE-RUNTIME.md) binds one local
 lifecycle to fixed private stores and durably saves producer identity before
 accepting events. Its adapter validates the lifecycle binding before entering the
-existing capture-policy layer. Commands and hooks remain synchronous.
+existing capture-policy layer. The [7b foreground commands](CLAUDERIG-V2-QUEUE-COMMANDS.md)
+use this runtime; ordinary sync and hooks remain synchronous.

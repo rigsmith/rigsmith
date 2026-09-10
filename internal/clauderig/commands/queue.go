@@ -423,12 +423,18 @@ func loadQueueRequest(path string) (*savedQueueRequest, error) {
 		return nil, fmt.Errorf("request must be regular")
 	}
 
+	if err := queueRequestSingleLink(f); err != nil {
+		return nil, err
+	}
 	data, err := io.ReadAll(io.LimitReader(f, queueRequestLimit+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(data) > queueRequestLimit {
 		return nil, fmt.Errorf("request exceeds 128 KiB")
+	}
+	if err := validateQueueRequestJSON(data); err != nil {
+		return nil, err
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()

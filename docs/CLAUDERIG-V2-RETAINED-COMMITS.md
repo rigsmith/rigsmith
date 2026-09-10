@@ -8,9 +8,10 @@ now closes the interval between those phases. The shared
 snapshot and retains its complete ancestry in a self-contained bundle. Claude's
 `Service.CommitArtifact` supplies native audit, attributes, labels and queue
 binding validation. Claude now also has a retained-publication adapter and queue
-execution, with end-user changesets for planned v2 behavior. Worker commands,
-manual-sync acknowledgement and queued hooks remain pending. Shipped synchronous
-commands are unchanged.
+execution, with end-user changesets for planned v2 behavior. The [7b foreground
+commands](CLAUDERIG-V2-QUEUE-COMMANDS.md) expose supervised run/drain, saved producer
+requests, status and retry. Manual-sync acknowledgement, queued hooks and rollback
+remain 7c work. Ordinary synchronous commands are unchanged.
 
 ## Identity and durability
 
@@ -127,13 +128,17 @@ Queue operations continue to use the original cancellation context.
   recovery are implemented. The private publisher leaves canonical staging
   untouched; the Claude queued adapter can first audit and complete an
   already-staged canonical merge while preserving the index and unstaged files.
-  Unresolved canonical recovery and fresh-capture integration remain next; see
+  Supported unresolved canonical recovery and fresh-capture integration are
+  implemented; see [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md) and
   the [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion).
   Broad credential discovery remains deferred.
-- Establish parent-death recovery and ownership for future external merge tools.
-  Retained Git cancellation cleanup does not establish abrupt-death recovery.
-- Add exact manual-sync event coverage, local-only completion policy, queue/status
-  commands, rollback/draining, artifact/receipt cleanup and capacity remedies.
+- Foreground workers select the audited process-supervision/fencing controls.
+  Actual OS restart/hibernation validation remains a release gate; external merge
+  tools remain unsupported in queued execution.
+- Explicit queue/status/retry/drain commands and internal coverage/capacity/
+  reclamation APIs are implemented. Hook routing, synchronous coverage wiring
+  and rollback remain 7c. Cleanup command exposure and local-only queued
+  completion remain outside the foreground workflow.
 
 Seeds are deduplicated by exact commit SHA, but seed and final commit bundles
 retain complete ancestry, so history can still be duplicated across artifacts. The artifact limit bounds each final archive; temporary Git

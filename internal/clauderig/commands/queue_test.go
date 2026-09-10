@@ -547,3 +547,76 @@ func TestQueueCommandPreservesPartialIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueRequestRejectsAmbiguousJSON(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", path)
+	data, _ := os.ReadFile(path)
+	// Each shadow value is followed by the original: ordinary decoding retains
+	// the original value and checksum, so only member validation rejects these.
+	for _, field := range []string{"Version", "Scope", "Identity", "AccountUUID", "Request", "EventID", "Flush", "Mode"} {
+		for _, alias := range []bool{false, true} {
+			name := field
+			if alias {
+				name = strings.ToLower(field)
+			}
+			needle := []byte(`"` + field + `":`)
+			edited := bytes.Replace(data, needle, []byte(`"`+name+`": null, `+string(needle)), 1)
+			if bytes.Equal(edited, data) {
+				t.Fatal("fixture lacks field", field)
+			}
+			copy := filepath.Join(t.TempDir(), "request")
+			if err := os.WriteFile(copy, edited, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.execute(t.Context(), "enqueue", copy); err == nil {
+				t.Fatal("accepted ambiguous field", field, alias)
+			}
+		}
+	}
+	if _, err := f.execute(t.Context(), "enqueue", path); err != nil {
+		t.Fatal("rejected original", err)
+	}
+	jobs, _ := f.open(t).Snapshot(t.Context())
+	if len(jobs) != 1 || len(jobs[0].Events) != 1 {
+		t.Fatal(jobs)
+	}
+}
+
+func TestQueueCommandRejectsHardLinkedRequest(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", path)
+	data, _ := os.ReadFile(path)
+	alias := filepath.Join(f.req.Machine.Home, ".claude", "projects", "fixture", "request.jsonl")
+	if err := os.MkdirAll(filepath.Dir(alias), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(path, alias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.execute(t.Context(), "prepare", "--session", "s", "--output", path); !os.IsExist(err) {
+		t.Fatal("prepare replaced linked file", err)
+	}
+	if _, err := f.execute(t.Context(), "enqueue", path); err == nil || !strings.Contains(err.Error(), "hard link") {
+		t.Fatal("admitted linked request", err)
+	}
+	for _, p := range []string{path, alias} {
+		got, err := os.ReadFile(p)
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatal("modified link", err)
+		}
+	}
+	jobs, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(jobs) != 0 {
+		t.Fatal(jobs, err)
+	}
+	// After the operator removes the source alias, normal admission resumes.
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	f.must(t, "enqueue", path)
+}

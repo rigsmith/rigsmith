@@ -48,8 +48,12 @@ Keep the sibling lock file in place while producers may be running. A successful
 reports its `generation` and `batch`, including on duplicate receipt retries. The
 file must remain stable while the command runs. Retain it until acceptance is
 confirmed; keeping it through completion makes a lost CLI response retryable.
-Request inputs are regular files, bounded to 128 KiB, with a strict versioned JSON
-shape and a checksum to detect accidental corruption (not authentication). Linked files, extra JSON, unknown fields, invalid attribution and a foreign
+Request link counts are checked through open file handles on Linux/macOS/Windows
+both on load and before confirmation. Existing multiply linked outputs are never
+overwritten; remove aliases from synced trees before retrying. Request inputs
+are regular files, bounded to 128 KiB, with a strict versioned JSON
+shape and a checksum to detect accidental corruption (not authentication). Symbolic or multiple-hard-linked files, extra JSON, duplicate/case-aliased or
+unknown fields, invalid attribution and a foreign
 runtime binding refuse admission. Failed preparation may leave a partial or
 complete file; inspect it instead of overwriting it. Do not edit saved requests.
 
