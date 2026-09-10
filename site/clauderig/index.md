@@ -11,6 +11,7 @@ Windows.
 
 ```sh
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
+clauderig queue                # v2: explicit saved requests, foreground worker, status/retry/drain
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
@@ -51,9 +52,9 @@ clauderig ui                   # interactive dashboard
   while restore writes native JSONL. Existing backups migrate on the next sync.
   Upgrade every participating client before enabling it. See
   [enabling chunking](./commands#transcript-chunking).
-- **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
-  confirms is private — created with `gh repo create --private` or an existing
-  one verified via `gh repo view`.
+- **Private repo, no exceptions.** The remote must be a GitHub or GitLab repo
+  verified private with `gh`/`glab` or the matching provider token. Git uses
+  your configured credential helpers.
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
 - **Bounded repo, unbounded memory.** 90-day retention on transcripts + a
@@ -85,6 +86,11 @@ curl -fsSL https://rigsmith.sh/clauderig | sh    # once the release exists
 go build -o clauderig ./cmd/clauderig
 ```
 
-Requires `git` and the GitHub CLI (`gh`, authenticated) for the private-repo gate.
+Requires `git` with credentials for the remote. Privacy verification uses
+`gh` for GitHub or `glab` for GitLab. Without the matching CLI, set
+`GITHUB_TOKEN`/`GH_TOKEN` or `GITLAB_TOKEN`/`GL_TOKEN`, respectively.
+For GitLab/token-only setup, use `clauderig config set remote <url>` or
+`clauderig init --yes --remote <url>`; the interactive wizard and doctor still
+have older `gh`-availability gates. Queue commands verify privacy independently.
 
 - [All commands →](./commands)

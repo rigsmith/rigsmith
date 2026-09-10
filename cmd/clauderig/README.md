@@ -10,6 +10,7 @@ installable by `curl | sh` / Homebrew / Scoop on any machine.
 
 ```sh
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
+clauderig queue                # v2: explicit saved requests, foreground worker, status/retry/drain
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
@@ -54,9 +55,9 @@ the same in the gitignored `.claude/settings.local.json`). See
   ones in large transcripts. Optional `redactTranscripts` scrubs the staged copy of a conversation: the transcript, the tool results written beside it, and notes under `memory/`. Upgrading redaction restages these files once. Restore merges the
   synced config back without clobbering your local secrets — a new machine
   re-authenticates.
-- **Private repo, no exceptions.** The remote must be a GitHub repo that `gh`
-  confirms is private — created with `gh repo create --private` or an existing
-  one verified via `gh repo view`.
+- **Private repo, no exceptions.** The remote must be a GitHub or GitLab repo
+  verified private with `gh`/`glab` or the matching provider token. Git uses
+  your configured credential helpers.
 - **Allowlist, default-deny.** Only curated files sync; the ~12 GB Desktop cache
   tree is pruned, never descended.
 - **Bounded repo, unbounded memory.** 90-day retention on transcripts + a
@@ -87,7 +88,7 @@ repository maintenance, ledger backfill and device removal wait up to 15 seconds
 for another operation to finish. Ordinary sync hooks and SessionStart pull skip
 a busy repo; `sync --flush` waits. A running operation keeps ownership until it
 finishes or exits, even if it takes longer than the wait limit. No background
-worker or queue is enabled. Use the same v2 client for operations sharing a
+worker or queued hook is enabled automatically. Use the same v2 client for operations sharing a
 local backup; older clients do not participate in this coordination.
 
 ## Commands
@@ -95,6 +96,7 @@ local backup; older clients do not participate in this coordination.
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
+| `queue` | V2 preview: `init`, `prepare`, `enqueue`, `status`, `retry`, `run`, `drain`. [Explicit workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md); hooks remain synchronous |
 | `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; all syncs take the staging lock; `--hook` also debounces the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
@@ -131,4 +133,9 @@ curl -fsSL https://rigsmith.sh | sh -s clauderig    # once the release exists
 go build -o clauderig ./cmd/clauderig
 ```
 
-Requires `git` and the GitHub CLI (`gh`, authenticated) for the private-repo gate.
+Requires `git` with credentials for the remote. Privacy verification uses
+`gh` for GitHub or `glab` for GitLab. Without the matching CLI, set
+`GITHUB_TOKEN`/`GH_TOKEN` or `GITLAB_TOKEN`/`GL_TOKEN`, respectively.
+For GitLab/token-only setup, use `clauderig config set remote <url>` or
+`clauderig init --yes --remote <url>`; the interactive wizard and doctor still
+have older `gh`-availability gates. Queue commands verify privacy independently.

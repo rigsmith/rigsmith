@@ -12,10 +12,13 @@ func NewRootCmd(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:     "clauderig",
 		Version: version,
-		Short:   "Sync your Claude Code configuration across machines, path-correct on restore",
+		Short:   "Sync and restore Claude Code across machines, with an explicit foreground queue",
 		Long: "claudeRig syncs your Claude Code config, skills, and session history to your\n" +
 			"own git remote and restores it on any machine — rewriting paths across OSes\n" +
-			"and never leaking secrets. Pick up where you left off on a different computer.",
+			"and never leaking secrets. Pick up where you left off on a different computer.\n\n" +
+			"Use queue to save requests, enqueue, inspect/retry work, and run or drain a\n" +
+			"supervised foreground worker (v2 preview). Ordinary sync and hooks remain\n" +
+			"synchronous; no background service is installed.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
@@ -23,6 +26,7 @@ func NewRootCmd(version string) *cobra.Command {
 	root.AddCommand(
 		NewInitCmd(),
 		NewSyncCmd(),
+		NewQueueCmd(),
 		NewPullCmd(),
 		NewMergeCmd(),
 		NewPeekCmd(),

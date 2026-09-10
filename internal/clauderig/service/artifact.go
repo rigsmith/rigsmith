@@ -353,6 +353,10 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 }
 
 func captureRoots(req SyncRequest, profiles []string) (map[string]string, error) {
+	return captureRootsWithPathResolver(req, profiles, canonicalCapturePath)
+}
+
+func captureRootsWithPathResolver(req SyncRequest, profiles []string, resolve func(string) (string, error)) (map[string]string, error) {
 	roots := map[string]string{}
 	for _, root := range adapter.Roots(req.Config, profiles) {
 		if !root.Enabled {
@@ -368,7 +372,7 @@ func captureRoots(req SyncRequest, profiles []string) (map[string]string, error)
 		if status != pathmap.StatusResolved {
 			return nil, fmt.Errorf("unresolved capture root")
 		}
-		path, err := canonicalCapturePath(loc)
+		path, err := resolve(loc)
 		if err != nil {
 			return nil, err
 		}

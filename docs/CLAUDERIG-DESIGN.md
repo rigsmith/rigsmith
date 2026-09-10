@@ -586,3 +586,11 @@ batch checkpoints even when Git reports settled HEAD; empty failed-build folders
 do not count as checkpoints. The synchronous repair path is unchanged, and queued
 hooks remain disabled. See [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md) and the
 [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion).
+
+### Explicit queue commands (v2, 7b)
+
+The [foreground queue workflow](CLAUDERIG-V2-QUEUE-COMMANDS.md) saves producer
+requests before admission and selects the audited supervisor for worker Git
+commands. Git uses existing credentials for private HTTPS GitHub/GitLab remotes;
+privacy checks use `gh`/`glab` or the matching provider token.
+Ordinary sync and hooks remain synchronous; hook routing and coverage are 7c.

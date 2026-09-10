@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
@@ -20,6 +21,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 )
 
 const runtimeLimit = 1 << 20
@@ -137,15 +139,15 @@ func prepareQueueRuntime(dir string, req SyncRequest, profiles []string) (*Queue
 	if req.Config.Remote == "" {
 		return nil, queue.ErrBinding
 	}
-	root, err := canonicalCapturePath(dir)
+	root, err := queueIsolationPath(dir)
 	if err != nil {
 		return nil, err
 	}
-	stage, err := canonicalCapturePath(req.StagingDir)
+	stage, err := queueIsolationPath(req.StagingDir)
 	if err != nil {
 		return nil, err
 	}
-	roots, err := captureRoots(req, profiles)
+	roots, err := captureRootsWithPathResolver(req, profiles, queueIsolationPath)
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +155,9 @@ func prepareQueueRuntime(dir string, req SyncRequest, profiles []string) (*Queue
 		if overlapsCapture(root, path) {
 			return nil, queue.ErrBinding
 		}
+	}
+	if err := checkQueueDesktopProfilePaths(req, root); err != nil {
+		return nil, err
 	}
 	return &QueueRuntime{dir: root, capture: binding, save: durable.Write, request: req, profiles: slices.Clone(profiles)}, nil
 }
@@ -454,4 +459,158 @@ func (r *QueueRuntime) CheckStartup(ctx context.Context, s Service, in QueueRunt
 		return err
 	}
 	return s.checkQueueStartup(ctx, r.capture, inputs, true)
+}
+
+// ScopeID identifies this immutable runtime binding without exposing stores or
+// queue mutators. Saved producer requests must match it before admission.
+func (r *QueueRuntime) ScopeID() string {
+	data, _ := json.Marshal(r.binding)
+	return artifact.Key(data)
+}
+
+// Capacity reports queue metadata headroom; it does not count archive disk use.
+func (r *QueueRuntime) Capacity(ctx context.Context) (queue.Capacity, error) {
+	return r.q.Capacity(ctx)
+}
+
+// RetryBlocked explicitly permits a repaired batch to run again. Worker
+// ownership preserves saved phases and excludes an active execution attempt.
+// No staging process fence or timed backoff is cleared.
+func (r *QueueRuntime) RetryBlocked(ctx context.Context, id uint64) error {
+	_, release, err := r.lockState(ctx)
+	if err != nil {
+		return err
+	}
+	release() // Never wait for worker ownership while holding runtime ownership.
+	worker, err := r.q.Worker(ctx)
+	if err != nil {
+		return err
+	}
+	defer worker.Close()
+	return worker.Unblock(ctx, id)
+}
+
+// CheckRequestPath excludes producer metadata from capture/staging and managed
+// runtime trees. Resolve existing ancestors too, so symlink aliases do not make
+// a synchronized path appear private. Filesystem roots must remain stable while
+// the caller creates or reads the file, as with the runtime's other path checks.
+func (r *QueueRuntime) CheckRequestPath(path string) error {
+	candidate, err := queueIsolationPath(path)
+	if err != nil {
+		return err
+	}
+	roots, err := captureRootsWithPathResolver(r.request, r.profiles, queueIsolationPath)
+	if err != nil {
+		return err
+	}
+	if err := checkQueueDesktopProfilePaths(r.request, candidate); err != nil {
+		return err
+	}
+
+	stage, err := queueIsolationPath(r.request.StagingDir)
+	if err != nil {
+		return err
+	}
+	for _, root := range append(mapValues(roots), stage, r.dir) {
+		if overlapsCapture(root, candidate) {
+			return fmt.Errorf("queue request files must be outside source, staging and runtime trees: %w", queue.ErrBinding)
+		}
+	}
+	return nil
+}
+
+// checkQueueDesktopProfilePaths applies the same exclusion to runtime roots and saved
+// producer files, independently of which Desktop profiles the queue selects.
+func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("cannot verify queue isolation from Desktop profiles; repair profile paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
+		}
+	}()
+	// Ordinary sync discovers profiles independently of the queue selection.
+	// Exclude the whole local profile container (including future profiles) and
+	// each existing profile and data directory target, including unselected aliases.
+	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+	if _, err := queueIsolationPath(profileStore.Root); err != nil {
+		return err
+	}
+	info, err := os.Stat(profileStore.Root)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var entries []os.DirEntry
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("Desktop profile store must be a directory")
+		}
+		entries, err = os.ReadDir(profileStore.Root)
+		if err != nil {
+			return err
+		}
+	}
+	paths := []string{profileStore.Root}
+	for _, entry := range entries {
+		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
+			continue
+		}
+		profile := filepath.Join(profileStore.Root, entry.Name())
+		// Unlike display-oriented profile discovery, safety checks cannot skip
+		// broken links: creating their missing target would activate the profile.
+		if _, err := queueIsolationPath(profile); err != nil {
+			return err
+		}
+		info, err := os.Stat(profile)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			paths = append(paths, profile, filepath.Join(profile, "data"))
+		}
+	}
+	for _, path := range paths {
+		root, err := queueIsolationPath(path)
+		if err != nil {
+			return err
+		}
+		if overlapsCapture(root, candidate) {
+			return fmt.Errorf("queue private state must be outside all Desktop profile trees: %w", queue.ErrBinding)
+		}
+	}
+
+	return nil
+}
+
+// queueIsolationPath permits missing directories but refuses any unresolved
+// existing link ancestor before reconstructing missing suffix components.
+func queueIsolationPath(path string) (resolved string, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("cannot verify queue path isolation; repair unresolved links or path permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
+		}
+	}()
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("queue path is empty")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var suffix []string
+	for existing := abs; ; existing = filepath.Dir(existing) {
+		_, err := os.Lstat(existing)
+		if err == nil {
+			resolved, err := queueResolveExistingPath(existing)
+			if err != nil {
+				return "", err
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) || filepath.Dir(existing) == existing {
+			return "", err
+		}
+		suffix = append(suffix, filepath.Base(existing))
+	}
 }

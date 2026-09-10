@@ -9,7 +9,9 @@ before retaining its seed. It does not push, expose a worker
 command, acknowledge a queue batch, or enable hooks. Installed sync behavior and
 backup formats stay unchanged. The initial internal capture foundation had no
 end-user changeset; subsequent v2 queue behavior has release changesets while
-worker commands and queued hooks remain disabled.
+the [7b foreground commands](CLAUDERIG-V2-QUEUE-COMMANDS.md) now expose supervised
+run/drain, producer requests, status and retry. Queued hooks and synchronous
+coverage/rollback wiring remain 7c work.
 
 ## Shared archive and durability layers
 
@@ -23,7 +25,7 @@ bundle and its immutable artifact reference is recorded in `SeedReference`. See
 Retained publication and native conflict recovery are implemented; staged
 canonical merge completion merged in #344, with refusal guard fixes in #345.
 Fresh capture now invokes that completion before retaining ancestry. Unresolved
-canonical conflict recovery remains pending.
+canonical conflict recovery is implemented through [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
 
 A build runs in a private workspace, then streams regular files and directories
 into one archive. Source symlinks, devices and Git metadata are not allowed in the
@@ -135,7 +137,8 @@ One archive defaults to a 32 GiB limit. Claude also bounds the combined bytes it
 copies from staging and sources by that limit, so workspace admission can be more
 conservative than final archive size. Optional aggregate admission and interrupted
 archive-write cleanup are described below. Archives remain retained indefinitely;
-there is no automatic expiry, compaction, cleanup, CLI or hook wiring. A process
+there is no automatic expiry or cleanup. Explicit foreground commands are wired
+in 7b; cleanup commands and queued hooks are not. A process
 killed during a build can leave a private workspace containing raw inputs. Such
 workspaces require reference and external-writer checks before reclamation.
 Successful and ordinarily failed builds attempt to remove their own workspace.
@@ -144,10 +147,10 @@ Unknown versions and corrupted captures fail closed.
 The [commit adapter](CLAUDERIG-V2-RETAINED-COMMITS.md) now seals retained Git
 bundles, and captures retain seeds before acknowledgement. Queue execution now
 connects capture, commit and confirmed publication, with owned child cleanup.
-Unresolved canonical recovery, exact manual-sync
-coverage and worker lifecycle remain activation gates. Local-only
-completion, artifact/receipt cleanup, status and capacity remedies also remain
-rollout gates. A mutable extracted working copy or recorded seed SHA alone does
+Supported unresolved canonical recovery and supervised foreground workers are
+implemented. Manual-sync coverage/hook routing and rollback remain 7c work.
+Actual OS restart/hibernation validation and cleanup command exposure remain
+separate gates; local-only queued completion is unsupported. A mutable extracted working copy or recorded seed SHA alone does
 not satisfy those requirements.
 
 Validation uses synthetic sources: byte/mtime/chunk round trips, immutable reuse,

@@ -16,7 +16,7 @@ import (
 // checks. It does not read identity or native transcript files, claim work, recover
 // merges, initialize Git history or push. An uninitialized or unrelated store
 // requires explicit foreground initialization/recovery before starting the loop.
-// No commands or hooks use this internal entry point yet.
+// Runtime commands use the retained-policy variant; hooks remain synchronous.
 func (s Service) CheckQueueStartup(ctx context.Context, binding queue.Binding, inputs QueueInputs) error {
 	return s.checkQueueStartup(ctx, binding, inputs, false)
 }

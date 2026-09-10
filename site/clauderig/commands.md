@@ -6,6 +6,7 @@
 | `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`, `--hook` debounces) |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
+| `queue` | Explicit v2 saved requests, enqueue, supervised run/drain, status and retry; [workflow](#explicit-queue-workflow-v2-preview) |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
@@ -32,7 +33,7 @@ repository maintenance, ledger backfill and device removal wait up to 15 seconds
 for another operation to finish. Ordinary sync hooks and SessionStart pull skip
 a busy repo; `sync --flush` waits. A running operation keeps ownership until it
 finishes or exits, even if it takes longer than the wait limit. No background
-worker or queue is enabled. Use the same v2 client for operations sharing a
+worker or queued hook is enabled automatically. Use the same v2 client for operations sharing a
 local backup; older clients do not participate in this coordination.
 
 ## The sync → restore loop
@@ -467,3 +468,33 @@ refusal leaves the merge in progress. Clean and stage the affected files, then
 retry `clauderig merge` or `clauderig sync`, or use `clauderig merge --abort`.
 Unstaged tracked edits must be staged before retrying so the audit checks the
 bytes Git will commit. These checks do not remove secrets from existing history.
+
+## Explicit queue workflow (v2 preview)
+
+Run an ordinary sync first, then `clauderig queue init`. Save a request with
+`clauderig queue prepare --session my-session --output request.json --flush`,
+then `clauderig queue enqueue request.json`. Retry enqueue with the same private
+file to preserve its event ID, timestamp and original account attribution.
+Preparation refuses existing files; missing identity requires an explicit
+`--unknown-identity` choice. Request files must remain stable during admission.
+
+`queue status` prints batch progress and queue capacity as JSON. `queue run`
+starts one supervised foreground worker. Ctrl-C or SIGTERM stops after the
+current batch; a second signal cancels active work and waits for cleanup.
+After repairing a blocked batch, `queue retry <batch-id>` unblocks it without
+losing saved progress. Stop producers before `queue drain`; blocked or delayed
+work remains saved and returns a nonzero result.
+
+The default private runtime is `~/.clauderig/queue-runtime`; select another with
+`--dir`. Repeat the same explicit `--profile` selection on every command. Workers
+require initialized shared Git history and a verified private HTTPS GitHub/GitLab
+remote, using existing Git credentials. Privacy checks use `gh`/`glab`, or
+`GITHUB_TOKEN`/`GH_TOKEN` and `GITLAB_TOKEN`/`GL_TOKEN` when the matching CLI is absent.
+Configure GitLab/token-only remotes with `config set remote <url>` or
+`init --yes --remote <url>`: the existing interactive wizard and doctor still
+have `gh`-availability gates, while queue commands verify privacy independently. `--max-archive-bytes` and
+`--max-stored-bytes` on `run`/`drain` control archive admission, not total disk use.
+Keep runtime/request files in private user directories (including inherited
+Windows ACLs). Never copy/reset runtime children. Hooks remain synchronous;
+no background service is installed. General release still requires actual OS
+restart/hibernation validation.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/fang"
+	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/clauderig/commands"
 )
 
@@ -22,6 +23,9 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "__queue-supervisor" {
+		os.Exit(process.ServeSupervisor())
+	}
 	if err := run(context.Background()); err != nil {
 		os.Exit(1)
 	}
