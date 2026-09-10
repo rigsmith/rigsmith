@@ -364,12 +364,64 @@ simulated boot changes, malformed records, stale completions, cancellation,
 exclusive ownership and preserving retained bytes. Native CI supplies Linux and
 macOS execution; simulated boot tests do not reboot the host.
 
-Windows keeps its existing v1 fence and native job cleanup. Recovery remains
-refused pending 6b.6b.2d.3b: neither losing the worker lock nor failing to open a
-job by name is used as proof that asynchronous child termination completed. The
-same shared recovery transaction can be reused when Windows has adequate durable
-evidence. No production command, hook, or automatic reset is added here.
+Windows recovery is specified in the following extension. Neither losing the
+worker lock nor failing to open a job by name proves asynchronous termination
+completed. Legacy Windows records remain blocked. No production command, hook,
+or automatic reset is added here.
 
 Platform references: [Linux signal group semantics](https://man7.org/linux/man-pages/man2/kill.2.html),
 [Apple syscall definitions](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/syscalls.master),
 and [Windows job lifetime](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+## Windows fenced-store recovery (6b.6b.2d.3b)
+
+Explicit Windows supervision now uses the shared checksummed v2 fence and
+recovery transaction. It retains native job ownership at process creation and
+asynchronous termination checks. Three durable phases describe what was
+authorized:
+
+- `prepared`: no Git writer has been authorized. The worker may have created a
+  suspended anchor, but it never resumes that process. Recovery can clear this
+  phase after obtaining exclusive store ownership.
+- `owned`: the worker flushed intent before starting Git in its job. Losing a
+  worker, job name, or PID never proves that every descendant stopped. In this
+  phase, recovery requires a different verified kernel incarnation on the same
+  host. An ordinary worker restart within the same boot remains blocked.
+- `stopped`: native cleanup reported zero active job processes and waited for
+  the direct process and suspended anchor to signal. The worker flushed this
+  checkpoint before clearing. Recovery can finish clearing if the worker died
+  between that checkpoint and `Clear`.
+
+Failed or torn phase updates never authorize a later command. Invalid phases,
+Unix group fields in Windows evidence, changed hosts, and legacy v1 fences are
+refused. The protocol adds one durable transition before Git and one after
+verified cleanup. Ordinary synchronous execution does not select this protocol.
+
+Windows scope uses the validated, hashed machine GUID from the native registry
+view and the creation identity of the kernel's System process (PID 4, parent 0,
+session 0). `NtQuerySystemInformation(SystemProcessInformation)` supplies the
+identity; reads have bounded allocation and retries, and malformed/unavailable
+data fails closed. The process creation identity identifies the kernel lifetime,
+including across sleep or hibernation. It is not calculated from the current
+clock or uptime. A boot-entry GUID, logon session, and a boot-attempt counter are
+not used as restart proof. Machine/VM clones, edited identities, and stores moved
+between live Windows containers or hosts remain outside the local coordination
+contract.
+
+The conservative Windows limitation is intentional: an unconfirmed job may need
+an OS restart even after its processes appear gone. Recovery never reopens a job
+to terminate it, enumerates descendants to guess completion, or accepts an
+operator assertion. It changes only the existing lock record; staging repair,
+secret scanning and confirmed publication remain required before acknowledgement.
+There is no automatic recovery at worker startup and no reset command.
+
+Native tests kill owners at prepared, running-with-descendants, and durably
+stopped boundaries, verify retained data, and ensure a drained but unconfirmed
+job remains fenced in the same boot. Tests cover native scope stability,
+synthetic prior-kernel evidence, malformed snapshots/phases and legacy refusal.
+The restart test changes fixture evidence; CI does not reboot or hibernate the
+host. Full restart and sleep/resume remain part of release lifecycle validation
+before queued hooks are enabled.
+
+References: [Microsoft process information and creation identity](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntquerysysteminformation)
+and [Windows job termination](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).

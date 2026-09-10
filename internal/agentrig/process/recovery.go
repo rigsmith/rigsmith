@@ -29,6 +29,7 @@ type commandEvidence struct {
 	Platform string
 	Scope    recoveryScope
 	Group    int
+	State    string `json:",omitempty"`
 }
 
 func newEvidence() (commandEvidence, error) {
@@ -36,7 +37,11 @@ func newEvidence() (commandEvidence, error) {
 	if err != nil {
 		return commandEvidence{}, fmt.Errorf("read command ownership scope: %w", err)
 	}
-	return commandEvidence{Version: 1, Platform: runtime.GOOS, Scope: scope}, nil
+	e := commandEvidence{Version: 1, Platform: runtime.GOOS, Scope: scope}
+	if runtime.GOOS == "windows" {
+		e.State = "prepared"
+	}
+	return e, nil
 }
 
 func (e commandEvidence) bytes() []byte { data, _ := json.Marshal(e); return data }
@@ -57,6 +62,13 @@ func parseEvidence(data []byte) (commandEvidence, error) {
 	if e.Group < 0 || e.Group == 1 || e.Group > 1<<31-1 {
 		return e, errors.New("invalid recorded process group")
 	}
+	if runtime.GOOS == "windows" {
+		if e.Group != 0 || (e.State != "prepared" && e.State != "owned" && e.State != "stopped") {
+			return e, errors.New("invalid recorded job phase")
+		}
+	} else if e.State != "" {
+		return e, errors.New("unexpected recorded job phase")
+	}
 	return e, nil
 }
 
@@ -74,7 +86,8 @@ func validDigest(value string) bool {
 // legacy records. A live owner, damaged record, or unverifiable scope stays
 // fenced. Recovery only restores coordination: callers must still repair/audit
 // staging and confirm publication before acknowledging any queued work.
-// This milestone supports Linux/macOS; Windows fences remain unrecoverable.
+// Windows unconfirmed jobs require a verified kernel restart; prelaunch and
+// durably confirmed cleanup can recover in the same kernel lifetime.
 func RecoverStore(ctx context.Context, dir string) (bool, error) {
 	return storelock.RecoverFence(ctx, dir, func(data []byte) error {
 		e, err := parseEvidence(data)

@@ -12,8 +12,8 @@ retained snapshots, conflict recovery, confirmed publication and worker loop are
 merged into `codex/v2`. Startup history checks (#367) and Windows command ownership
 at creation (#368), Unix worker-death supervision (#369), and persistent restart
 fencing (#370) and canonical Git command-runner plumbing (#371) are merged.
-Canonical workflow supervision (#372) is merged. Linux/macOS fenced-store recovery
-is in review; Windows recovery follows.
+Canonical workflow supervision (#372) and Linux/macOS fenced-store recovery
+(#373) are merged. Windows recovery is in review; capacity and cleanup follow.
 
 The release path is now: finish fenced-store recovery, add capacity/cleanup controls,
 enable opt-in queued Claude sync, then connect the separate `codexrig` adapter.
@@ -47,8 +47,8 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | OS restart fencing and lifecycle validation (6b.6b.2c) | Merged: [#370](https://github.com/rigsmith/rigsmith/pull/370). Persist command intent before process creation; clear only after verified cleanup. Block replacement writers after supervisor/owner failure, including asynchronous Windows termination. |
 | Canonical Git command-runner plumbing (6b.6b.2d.1) | Merged: [#371](https://github.com/rigsmith/rigsmith/pull/371). Shared runner selection for buffered Git and backup attribute commands, with supervised byte-preservation tests. Streaming/interactive calls reject selection; workflow adaptation follows below. |
 | Canonical workflow supervision (6b.6b.2d.2) | Merged: [#372](https://github.com/rigsmith/rigsmith/pull/372). Bind active staging leases across capture/sync/publication/pull/merge, retain cleanup failures across fallback helpers, and stop later commands/file writes. Supervised manual sync confirms publication before queue acknowledgement; interactive tools remain refused. |
-| Linux/macOS fenced-store recovery (6b.6b.2d.3a) | In review (current PR). Seal process-group ownership before Git starts; recover only after OS proof under the existing store lock. Preserve capture and queue state; no command/hook wiring. |
-| Windows fenced-store recovery (6b.6b.2d.3b) | Next. Prove asynchronous job termination before clearing a stranded fence. Existing Windows and legacy fences remain blocked. |
+| Linux/macOS fenced-store recovery (6b.6b.2d.3a) | Merged: [#373](https://github.com/rigsmith/rigsmith/pull/373). Seal process-group ownership before Git starts; recover only after OS proof under the existing store lock. Preserve capture and queue state; no command/hook wiring. |
+| Windows fenced-store recovery (6b.6b.2d.3b) | In review (current PR). Recover durable prelaunch/cleanup phases; unconfirmed jobs require a verified kernel restart. Same-boot job disappearance and legacy records never authorize clearing. |
 | Capacity remedies and artifact/receipt cleanup | Planned before queued hooks. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
