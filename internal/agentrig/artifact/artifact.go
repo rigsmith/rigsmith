@@ -29,14 +29,23 @@ const DefaultMaxBytes int64 = 32 << 30
 
 var ErrInvalid = errors.New("invalid capture artifact")
 var ErrTooLarge = errors.New("capture artifact exceeds size limit")
+var ErrStoreFull = errors.New("artifact store limit reached; retained artifacts were preserved")
 
 // Store lives outside every backup and source root. Its directory and ancestors
 // must stay stable during operations. MaxBytes bounds one archive (zero uses
 // 32 GiB); capacity cleanup/replay horizons are caller responsibilities.
+// Direct .durable-* names are reserved for disposable archive-write scratch;
+// callers must never place unrelated data in that namespace (see cleanup).
 type Store struct {
 	Dir      string
 	MaxBytes int64
-	reflush  func(context.Context, string) error // nil uses durable.Rewrite; per-store fault injection
+	// MaxStoredBytes bounds new sealed archives in this directory, excluding
+	// temporary files and substores. Zero disables the aggregate admission limit.
+	// All writers sharing the store must use the same configured limit.
+	// This is runtime admission policy, not capture identity: callers may change
+	// it between attempts to repair capacity exhaustion without replacing work.
+	MaxStoredBytes int64
+	reflush        func(context.Context, string) error // nil uses durable.Rewrite; per-store fault injection
 }
 
 func (s Store) limit() int64 {
@@ -55,7 +64,7 @@ func validHash(v string) bool {
 	return err == nil && len(b) == sha256.Size && v == strings.ToLower(v)
 }
 func (s Store) path(key string) (string, error) {
-	if !validHash(key) || !filepath.IsAbs(s.Dir) || s.limit() < headerSize+sha256.Size {
+	if !validHash(key) || !filepath.IsAbs(s.Dir) || s.limit() < headerSize+sha256.Size || s.MaxStoredBytes < 0 {
 		return "", ErrInvalid
 	}
 	return filepath.Join(s.Dir, key+".capture"), nil
@@ -135,6 +144,20 @@ func (s Store) BuildWithMetadata(ctx context.Context, key string, build func(con
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
+	archiveLimit, capacityError := s.limit(), ErrTooLarge
+	if s.MaxStoredBytes > 0 {
+		usage, _, err := s.inventory(ctx)
+		if err != nil {
+			return "", err
+		}
+		remaining := max(int64(0), s.MaxStoredBytes-usage.StoredBytes)
+		if remaining < headerSize+sha256.Size {
+			return "", ErrStoreFull
+		}
+		if remaining < archiveLimit {
+			archiveLimit, capacityError = remaining, ErrStoreFull
+		}
+	}
 	work, err := os.MkdirTemp(s.Dir, ".capture-work-*")
 	if err != nil {
 		return "", err
@@ -158,7 +181,7 @@ func (s Store) BuildWithMetadata(ctx context.Context, key string, build func(con
 	var sum string
 	err = durable.Write(ctx, path, func(f *os.File) error {
 		h := sha256.New()
-		out := &limitedWriter{w: io.MultiWriter(f, h), left: s.limit() - sha256.Size}
+		out := &limitedWriter{w: io.MultiWriter(f, h), left: archiveLimit - sha256.Size, limitError: capacityError}
 		if _, err := io.WriteString(out, magic+key); err != nil {
 			return err
 		}
@@ -345,12 +368,16 @@ func (r *contextReader) Read(b []byte) (int, error) {
 }
 
 type limitedWriter struct {
-	w    io.Writer
-	left int64
+	w          io.Writer
+	left       int64
+	limitError error
 }
 
 func (w *limitedWriter) Write(b []byte) (int, error) {
 	if int64(len(b)) > w.left {
+		if w.limitError != nil {
+			return 0, w.limitError
+		}
 		return 0, ErrTooLarge
 	}
 	n, err := w.w.Write(b)

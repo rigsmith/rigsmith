@@ -30,6 +30,7 @@ func TestQueueFailureClassification(t *testing.T) {
 		{commitartifact.ErrInvalid, "artifact-invalid", false},
 		{commitartifact.ErrAttributes, "artifact-invalid", false},
 		{artifact.ErrTooLarge, "capacity-exceeded", false},
+		{artifact.ErrStoreFull, "capacity-exceeded", false},
 		{fs.ErrNotExist, "data-unavailable", false},
 		{ErrCaptureSourceUnavailable, "data-unavailable", false},
 		{fs.ErrPermission, "permission-denied", false},
