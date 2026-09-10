@@ -321,6 +321,7 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 		// Requested parents and selected paths must include every changed tail,
 		// including their subagents. Match against the private frozen source paths
 		// used by capture, while retaining normal throttling for unrelated files.
+		// Allowed seeded subagents missing from the source remain backed up.
 		syncReq.Flush = FlushIntent{Mode: FlushSelected}
 		for rel := range required {
 			syncReq.Flush.Paths = append(syncReq.Flush.Paths, filepath.Join(frozen, "cli", filepath.FromSlash(rel)))

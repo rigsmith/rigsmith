@@ -28,7 +28,8 @@ func TestCaptureArtifactScopesTranscriptFlush(t *testing.T) {
 			}
 			root := filepath.Join(req.Sync.Machine.Home, ".claude", "projects", "-workspace-acme")
 			old := time.Now().Add(-5 * time.Minute)
-			files := []string{"s.jsonl", "s/subagents/agent-s.jsonl", "extra.jsonl", "extra/subagents/agent-extra.jsonl", "other.jsonl", "other/subagents/agent-other.jsonl"}
+			deleted := "s/subagents/agent-removed.jsonl"
+			files := []string{deleted, "s.jsonl", "s/subagents/agent-s.jsonl", "extra.jsonl", "extra/subagents/agent-extra.jsonl", "other.jsonl", "other/subagents/agent-other.jsonl"}
 			for _, rel := range files {
 				id := strings.Split(strings.TrimSuffix(rel, ".jsonl"), "/")[0]
 				body := fmt.Sprintf("{\"type\":\"user\",\"sessionId\":%q,\"uuid\":\"original\",\"cwd\":\"/workspace/acme\",\"message\":{\"role\":\"user\",\"content\":%q}}\n", id, strings.Repeat("fixture ", 400))
@@ -43,6 +44,13 @@ func TestCaptureArtifactScopesTranscriptFlush(t *testing.T) {
 			}
 			for _, rel := range files {
 				path := filepath.Join(root, filepath.FromSlash(rel))
+				if rel == deleted {
+					// Source deletion must not erase already backed-up subagent history.
+					if err := os.Remove(path); err != nil {
+						t.Fatal(err)
+					}
+					continue
+				}
 				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 				if err != nil {
 					t.Fatal(err)
@@ -97,6 +105,10 @@ func TestCaptureArtifactScopesTranscriptFlush(t *testing.T) {
 					t.Fatal(err, closeErr)
 				}
 				wantFresh := mode == queue.All || mode == "mixed-all" || chunked || strings.HasPrefix(rel, "s.") || strings.HasPrefix(rel, "s/") || ((mode == queue.Selected || mode == "multiple-normal") && strings.HasPrefix(rel, "extra"))
+				wantFresh = wantFresh && rel != deleted
+				if rel == deleted && !strings.Contains(body.String(), "fixture ") {
+					t.Error("lost previously backed-up subagent content")
+				}
 				if strings.Contains(body.String(), "new_tail") != wantFresh {
 					t.Errorf("%s fresh=%t, want %t", rel, strings.Contains(body.String(), "new_tail"), wantFresh)
 				}

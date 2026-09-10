@@ -128,7 +128,11 @@ engine. Unrelated plain transcripts retain the normal throttle and may keep
 seeded bytes until enough growth or quiet time; any event with all-flush intent
 bypasses the throttle for the whole batch. Chunked transcripts always capture
 changed tails under the existing engine policy. The configured maximum-file
-policy and secret checks still apply.
+policy and secret checks still apply. Complete capture means reading the eligible
+files present in the frozen source, subject to those checks. Previously backed-up,
+still-allowed subagents remain retained when removed from the source; queued
+capture does not treat source deletion as permission to erase history. An
+explicitly named parent or selected path must still exist to satisfy the request.
 
 The full configured source walk, freezing and capture-space budget are unchanged;
 this limits publication churn, not source I/O. Previously sealed captures and

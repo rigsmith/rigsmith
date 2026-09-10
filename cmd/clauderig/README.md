@@ -95,7 +95,8 @@ local backup; older clients do not participate in this coordination.
 
 V2 queue workers fully capture requested sessions and subagents. Other plain
 transcripts keep the normal throttle unless the batch includes an all-flush
-request; chunked transcripts always capture changed tails. Saved captures replay
+request; chunked transcripts always capture changed tails. Previously backed-up
+subagents remain retained after source deletion. Saved captures replay
 unchanged. See the [queue workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md).
 
 ## Commands

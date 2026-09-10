@@ -27,7 +27,10 @@ is periodically squashed so the repo stays bounded.
 Sync, pull, restore, merge and staging maintenance now share OS-owned store locks.
 See [the coordination contract](CLAUDERIG-V2-COORDINATION.md) for ownership,
 contention, crash release, supported filesystems and legacy-client limitations.
-Installed hooks remain synchronous; durable work is the next milestone.
+The durable queue, sealed capture, retained publication and supervised foreground
+worker are available through the [explicit queue workflow](CLAUDERIG-V2-QUEUE-COMMANDS.md).
+Installed hooks remain synchronous; opt-in automatic hook routing and rollback
+are the next rollout milestone.
 
 ## Roots (claudeRig is multi-root)
 
@@ -508,14 +511,14 @@ The shared foundation provides callable Claude-specific sync, publication, recon
 services under `internal/clauderig/service`. Sync owns capture, identity and
 journal orchestration. Command handlers retain terminal rendering, hook input,
 debounce and existing lock acquisition. The services preserve the
-existing Git policies and backup formats; shared vendor adapters and store
-coordination are later steps. See [the service boundary and validation
+existing Git policies and backup formats. V2 now provides shared vendor-adapter
+and store-coordination layers. See [the service boundary and validation
 contracts](CLAUDERIG-V2-SERVICES.md).
 
 The compatibility harness and synchronous-service foundation are shared by
-`main` and `codex/v2` after v1.15.1. Later vendor adapters, store coordination,
-and the durable queue remain v2 work; this alignment introduces no queue or
-Codex runtime dependency.
+`main` and `codex/v2` after v1.15.1. Subsequent vendor adapters, store
+coordination and durable queue work are v2-only; the shared foundation introduces
+no queue or Codex runtime dependency.
 
 V2 centralizes root, artifact, merge-selection and flush-group
 policy in `internal/clauderig/adapter`, consumed by the existing sync, restore
@@ -593,4 +596,21 @@ The [foreground queue workflow](CLAUDERIG-V2-QUEUE-COMMANDS.md) saves producer
 requests before admission and selects the audited supervisor for worker Git
 commands. Git uses existing credentials for private HTTPS GitHub/GitLab remotes;
 privacy checks use `gh`/`glab` or the matching provider token.
-Ordinary sync and hooks remain synchronous; hook routing and coverage are 7c.
+Explicit manual `queue sync` can acknowledge fully covered requests after
+confirmed publication. `queue prepare --hook` saves bounded Stop/SessionEnd input
+for separate admission; it does not install automatic hooks. Ordinary sync and
+installed hooks remain synchronous.
+
+### Queued worker capture policy (v2, 7c.2b.2a)
+
+Workers capture eligible requested parent sessions and their present subagents
+completely. Explicit selected paths also flush their subagent subtrees. Unrelated
+plain transcripts retain normal large-file throttling unless any event in the
+batch requests all-flush; chunked transcripts capture every changed tail. The
+worker still freezes all configured sources and seals a complete seeded snapshot,
+so this changes publication churn, not source I/O or capture-space budgeting.
+Previously backed-up, still-allowed subagents remain retained after source
+deletion; explicit parents and selected paths must exist. Existing sealed
+captures and commits replay unchanged. See the [capture contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md#capture-sequence-and-isolation)
+for freshness, retention and source-validation boundaries. Automatic hook routing,
+producer recovery and stop/drain/rollback remain the next rollout milestone.

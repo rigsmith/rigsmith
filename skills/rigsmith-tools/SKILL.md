@@ -9,8 +9,9 @@ description: >
   cutting or publishing a release, creating worktrees/branches, or syncing Claude
   Code setup, preparing queued requests from hook payloads, managing its saved sync
   queue, or using manual queue sync with
-  confirmed acknowledgement, dry-run previews or transcript flushing — even if
-  the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
+  confirmed acknowledgement, dry-run previews or transcript flushing. Queued workers
+  capture eligible requested sessions/subagents completely while unrelated plain
+  transcripts keep normal throttling. Invoke even if the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
 ---
 
@@ -286,6 +287,7 @@ flush intent for its transcript; malformed/empty input never requests all-flush.
 Queued workers fully capture requested sessions and subagents. Selected paths
 also flush their subagents; unrelated plain transcripts keep normal throttling
 unless any batched request asks for all-flush. Chunked tails always flush.
+Previously backed-up subagents remain retained if removed from the source.
 The worker still freezes the configured source tree; saved artifacts replay
 unchanged. Saved flush intent also governs manual-sync coverage.
 It conflicts with `--session`/`--flush`, observes identity once, and sends success

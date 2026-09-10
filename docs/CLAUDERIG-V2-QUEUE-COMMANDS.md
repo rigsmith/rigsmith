@@ -294,7 +294,10 @@ large-file throttling; any all-flush request in a batch flushes every changed
 tail. Chunked transcripts continue to capture all changed tails. The worker still
 freezes the configured source tree and seals a complete seeded snapshot, so this
 policy reduces unnecessary publication rather than source reads or capture-space
-requirements. Previously sealed captures and commits replay unchanged.
+requirements. Previously backed-up subagents remain retained if removed at the
+source; complete capture refreshes the eligible files still present and does not
+mirror deletions. An explicitly named parent or selected path must still exist.
+Previously sealed captures and commits replay unchanged.
 
 Unknown vendor fields are ignored; message text, caller-supplied
 identity and event IDs are never copied to the request. Account attribution is

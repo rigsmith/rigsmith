@@ -527,7 +527,8 @@ session transcript under the configured CLI projects directory. Stop records
 normal intent; SessionEnd records selected-transcript flush intent. Queue workers
 fully capture requested sessions and their subagents. Unrelated plain transcripts
 keep normal large-file throttling unless a batch includes an all-flush request;
-chunked transcripts always capture changed tails. Saved intent also governs
+chunked transcripts always capture changed tails. Previously backed-up subagents
+remain retained if removed from the source. Saved intent also governs
 manual-sync coverage. Empty or bad
 input fails without falling back to flushing everything. `--hook` conflicts with
 `--session` and `--flush`. Success goes to stderr; stdout stays empty. No message
