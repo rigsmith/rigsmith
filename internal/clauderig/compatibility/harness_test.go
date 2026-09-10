@@ -33,7 +33,7 @@ func binaries(t *testing.T) (string, string) {
 		t.Skip("set CLAUDERIG_COMPAT=1; requires git history containing the pinned baseline")
 	}
 	repo := strings.TrimSpace(command(t, "", nil, "git", "rev-parse", "--show-toplevel"))
-	src := exportSource(t, repo, baselineRef)
+	src := exportSource(t, repo, baselineRef, nil)
 	binDir := t.TempDir()
 	ext := ""
 	if runtime.GOOS == "windows" {
@@ -46,12 +46,12 @@ func binaries(t *testing.T) (string, string) {
 	return base, next
 }
 
-func exportSource(t *testing.T, repo, ref string, paths ...string) string {
+func exportSource(t *testing.T, repo, ref string, env []string, paths ...string) string {
 	t.Helper()
 	src := t.TempDir()
 	// Export the pinned revision without changing this checkout or creating a worktree.
 	args := append([]string{"archive", ref}, paths...)
-	archive := command(t, repo, nil, "git", args...)
+	archive := command(t, repo, env, "git", args...)
 	r := tar.NewReader(strings.NewReader(archive))
 	for {
 		h, err := r.Next()

@@ -17,12 +17,58 @@ import (
 // 1 and 2. This is separate from the unchanged v1 command-compatibility baseline.
 const preCompactionRef = "4ccf5e5e59f9b92576e40ffa1d50a2984d6e417f"
 
+// queueProbeEnvironment allows runtime lookup and existing Go cache locations,
+// but no caller credentials, Git redirects, Go flags or persistent Go settings.
+// The legacy source/probe uses only public dependencies and local queue fixtures.
+func queueProbeEnvironment(t *testing.T) []string {
+	t.Helper()
+	home := t.TempDir()
+	userHome, err := os.UserHomeDir()
+	must(t, err)
+	cacheHome, err := os.UserCacheDir()
+	must(t, err)
+	goPath := os.Getenv("GOPATH")
+	if goPath == "" {
+		goPath = filepath.Join(userHome, "go")
+	}
+	modCache := os.Getenv("GOMODCACHE")
+	if modCache == "" {
+		modCache = filepath.Join(filepath.SplitList(goPath)[0], "pkg", "mod")
+	}
+	buildCache := os.Getenv("GOCACHE")
+	if buildCache == "" {
+		buildCache = filepath.Join(cacheHome, "go-build")
+	}
+	env := []string{}
+	for _, key := range []string{"PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"} {
+		if value := os.Getenv(key); value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return append(env, "HOME="+home, "USERPROFILE="+home,
+		"LANG=C", "LC_ALL=C", "TZ=UTC",
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+filepath.Join(home, "no-git-config"),
+		"GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=file",
+		"GOROOT="+runtime.GOROOT(), "GOPATH="+goPath, "GOMODCACHE="+modCache, "GOCACHE="+buildCache,
+		"GOENV=off", "GOWORK=off", "GOTOOLCHAIN=local", "CGO_ENABLED=0",
+		"GOPROXY=https://proxy.golang.org", "GOSUMDB=sum.golang.org")
+}
+
 func TestLegacyQueueReaderRejectsCompaction(t *testing.T) {
 	if os.Getenv("CLAUDERIG_COMPAT") != "1" {
 		t.Skip("set CLAUDERIG_COMPAT=1; requires the pinned pre-compaction v2 revision")
 	}
-	repo := strings.TrimSpace(command(t, "", nil, "git", "rev-parse", "--show-toplevel"))
-	src := exportSource(t, repo, preCompactionRef, "go.mod", "go.sum",
+	// The probe must ignore credentials and Git/Go redirects inherited from callers.
+	t.Setenv("RIG_QUEUE_PARENT_SECRET", "synthetic-only")
+	t.Setenv("GH_TOKEN", "synthetic-only")
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "wrong-git-dir"))
+	t.Setenv("GIT_CONFIG_COUNT", "not-a-count")
+	t.Setenv("GOFLAGS", "-not-a-real-go-flag")
+	t.Setenv("GOENV", filepath.Join(t.TempDir(), "wrong-go-env"))
+	t.Setenv("GOWORK", filepath.Join(t.TempDir(), "wrong-go-work"))
+	env := queueProbeEnvironment(t)
+	repo := strings.TrimSpace(command(t, "", env, "git", "rev-parse", "--show-toplevel"))
+	src := exportSource(t, repo, preCompactionRef, env, "go.mod", "go.sum",
 		"internal/agentrig/queue/queue.go", "internal/agentrig/queue/storage.go",
 		"internal/agentrig/storelock", "internal/agentrig/durable")
 	probeDir := filepath.Join(src, "cmd", "legacyqueueprobe")
@@ -32,7 +78,11 @@ func TestLegacyQueueReaderRejectsCompaction(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	command(t, src, nil, "go", "build", "-o", bin, "./cmd/legacyqueueprobe")
+	goTool := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if runtime.GOOS == "windows" {
+		goTool += ".exe"
+	}
+	command(t, src, env, goTool, "build", "-o", bin, "./cmd/legacyqueueprobe")
 	for _, compact := range []bool{false, true} {
 		t.Run(map[bool]string{false: "schema-2-readable", true: "schema-3-refused"}[compact], func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "queue")
@@ -65,7 +115,7 @@ func TestLegacyQueueReaderRejectsCompaction(t *testing.T) {
 			must(t, err)
 			identity, err := json.Marshal(binding)
 			must(t, err)
-			command(t, repo, nil, bin, dir, string(identity), want)
+			command(t, repo, env, bin, dir, string(identity), want)
 			after, err := os.ReadFile(filepath.Join(dir, "queue.json"))
 			must(t, err)
 			if !bytes.Equal(before, after) {
@@ -90,6 +140,9 @@ import (
  "github.com/rigsmith/rigsmith/internal/agentrig/queue"
 )
 func main() {
+ for _, key := range []string{"RIG_QUEUE_PARENT_SECRET", "GH_TOKEN", "GIT_DIR", "GIT_CONFIG_COUNT", "GOFLAGS"} {
+  if os.Getenv(key) != "" { panic("unexpected inherited environment key: "+key) }
+ }
  var binding queue.Binding
  if err := json.Unmarshal([]byte(os.Args[2]), &binding); err != nil { panic(err) }
  for _, open := range []func(context.Context,string,queue.Binding)(*queue.Queue,error){queue.Open,queue.Create} {
