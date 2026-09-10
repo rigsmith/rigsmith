@@ -54,7 +54,7 @@ are retained even without an account UUID. New prepared requests trim and
 lowercase both UUID fields before hashing and saving; invalid UUIDs refuse
 preparation. Previously saved requests and retained provenance hashes are not
 rewritten or migrated. Admission requires saved nonempty UUID fields to already
-be canonical; noncanonical documents refuse unchanged. A completely empty identity requires the explicit
+be canonical; admission rejects noncanonical documents without modifying them. A completely empty identity requires the explicit
 `--unknown-identity` flag. This flag bypasses live identity lookup and records
 unknown attribution. No worker reads its current account to attribute saved work.
 
