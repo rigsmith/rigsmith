@@ -125,7 +125,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	}})
 	var session, output string
 	var flush, prepareHook bool
-	var unknown bool
+	var unknownIdentity bool
 	prepare := &cobra.Command{Use: "prepare", Short: "Save a manual or hook request and its current account attribution", Long: "Save one new request to an exclusive private file before enqueueing.\nThe file pins this runtime, a new event ID, the timestamp and account identity.\nRetry enqueue with this same file; never rerun prepare for an uncertain enqueue.\nNo transcript bytes are read. --flush requests all changed transcript tails.\n--hook reads a bounded Stop/SessionEnd JSON payload from stdin instead of --session.\nStop records normal intent; SessionEnd records selected-transcript flush intent.\nWorkers fully capture requested sessions and subagents; unrelated plain transcripts\nkeep normal throttling unless all-flush is requested. Chunked tails always flush.\nInput must finish within 2 seconds and 128 KiB. It never falls back to all-flush.\nPreparation saves intent only: enqueue the saved file separately.\nAn unavailable account requires an explicit --unknown-identity choice.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 		if output == "" {
 			return fmt.Errorf("--output is required")
@@ -165,7 +165,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 				return err
 			}
 		}
-		submission, err := newQueueSubmission(r, canonicalSession, intent, unknown, deps.identity)
+		submission, err := newQueueSubmission(r, canonicalSession, intent, unknownIdentity, deps.identity)
 		if err != nil {
 			return err
 		}
@@ -189,7 +189,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	prepare.Flags().BoolVar(&prepareHook, "hook", false, "read a bounded Stop/SessionEnd payload from stdin; save intent only")
 	prepare.MarkFlagsMutuallyExclusive("hook", "session")
 	prepare.MarkFlagsMutuallyExclusive("hook", "flush")
-	prepare.Flags().BoolVar(&unknown, "unknown-identity", false, "explicitly record unknown account attribution")
+	prepare.Flags().BoolVar(&unknownIdentity, "unknown-identity", false, "explicitly record unknown account attribution")
 	_ = prepare.MarkFlagFilename("output")
 	_ = prepare.RegisterFlagCompletionFunc("session", completeSessionRef)
 	cmd.AddCommand(prepare)
@@ -433,12 +433,12 @@ func writeQueueRequest(ctx context.Context, path string, data []byte) error {
 	return (&savedQueueRequest{data: data, info: info}).confirm(ctx, path)
 }
 
-func newQueueSubmission(r *service.QueueRuntime, session string, intent queue.Flush, unknown bool, readIdentity func() (service.Identity, error)) (queueSubmission, error) {
+func newQueueSubmission(r *service.QueueRuntime, session string, intent queue.Flush, unknownIdentity bool, readIdentity func() (service.Identity, error)) (queueSubmission, error) {
 	if err := validateQueueSessionID(session); err != nil {
 		return queueSubmission{}, err
 	}
 	identity := service.Identity{}
-	if !unknown {
+	if !unknownIdentity {
 		var err error
 		identity, err = readIdentity()
 		if err != nil {

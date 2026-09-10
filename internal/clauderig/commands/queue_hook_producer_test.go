@@ -16,6 +16,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
+	"github.com/spf13/cobra"
 )
 
 func executeHookAdmission(f *queueCommandFixture, ctx context.Context, inbox, payload string, args ...string) (string, string, error) {
@@ -410,5 +411,95 @@ func TestQueueHookProducerSupervisedDrain(t *testing.T) {
 	pending, err := f.open(t).Snapshot(t.Context())
 	if err != nil || len(pending) != 0 {
 		t.Fatal(pending, err)
+	}
+}
+
+func TestQueueHookInboxPreservesExpiredAndLaterIntent(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	r := f.open(t)
+	in := hookInbox{dir: filepath.Join(t.TempDir(), "inbox"), save: durable.Write}
+	if err := os.Mkdir(in.dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	state := hookInboxState{Version: 1, Scope: r.ScopeID(), Requests: []queueSubmission{}}
+	cutoff := time.Now().UTC()
+	for _, at := range []time.Time{cutoff.Add(-time.Minute), cutoff.Add(time.Minute)} {
+		request, err := newQueueSubmission(r, "s", queue.Flush{Mode: queue.Normal}, false, f.deps.identity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.At = at
+		request.Checksum = queueRequestChecksum(request)
+		state.Requests = append(state.Requests, request)
+	}
+	if err := in.persist(t.Context(), state); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(in.dir, "requests.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := queue.Create(t.Context(), filepath.Join(t.TempDir(), "queue"), queue.Binding{Vendor: "claude", StoreID: "fixture", RootID: "fixture", RemoteID: "fixture", ConfigID: "fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.CompactReceipts(t.Context(), cutoff); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	count, err := in.admit(t.Context(), r.ScopeID(), nil, func(ctx context.Context, _ service.Identity, request queue.Request, at time.Time) (queue.Event, error) {
+		calls++
+		return q.Enqueue(ctx, request, at)
+	})
+	if !errors.Is(err, queue.ErrExpired) || !strings.Contains(err.Error(), "explicit reconciliation") || count != 0 || calls != 1 {
+		t.Fatal(count, calls, err)
+	}
+	after, err := os.ReadFile(filepath.Join(in.dir, "requests.json"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("expiry discarded saved intent", err)
+	}
+	pending, err := q.Snapshot(t.Context())
+	if err != nil || len(pending) != 0 {
+		t.Fatal(pending, err)
+	}
+}
+
+func TestQueueHookProducerAndRecoveryDeadlines(t *testing.T) {
+	for _, recoverOnly := range []bool{false, true} {
+		t.Run(fmt.Sprint(recoverOnly), func(t *testing.T) {
+			parent := &cobra.Command{Use: "queue", SilenceUsage: true, SilenceErrors: true}
+			stop := errors.New("stop after observing operation context")
+			caller, cancel := context.WithTimeout(t.Context(), time.Minute)
+			defer cancel()
+			callerDeadline, _ := caller.Deadline()
+			addQueueHookProducerCommands(parent, queueCommandDeps{}, func(ctx context.Context, _ bool) (*service.QueueRuntime, error) {
+				deadline, ok := ctx.Deadline()
+				if !ok {
+					t.Fatal("lost caller deadline")
+				}
+				if recoverOnly {
+					if !deadline.Equal(callerDeadline) {
+						t.Fatal("manual recovery unexpectedly capped", deadline)
+					}
+				} else if remaining := time.Until(deadline); remaining <= 0 || remaining > 10*time.Second {
+					t.Fatal("fresh hook lacks bounded operation context", remaining)
+				}
+				return nil, stop
+			})
+			name := "hook"
+			if recoverOnly {
+				name = "recover-hooks"
+			}
+			parent.SetArgs([]string{name})
+			input := queueHookJSON(t, "Stop", "s", "/fixture/projects/p/s.jsonl")
+			if recoverOnly {
+				input = "invalid input that recovery must not consume"
+			}
+			parent.SetIn(strings.NewReader(input))
+			if err := parent.ExecuteContext(caller); !errors.Is(err, stop) {
+				t.Fatal(err)
+			}
+		})
 	}
 }

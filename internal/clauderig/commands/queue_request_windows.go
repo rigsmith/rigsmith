@@ -19,5 +19,6 @@ func validateQueueRequestSingleLink(f *os.File) error {
 	return nil
 }
 
-// Windows privacy requires a caller-provided private directory ACL.
+// Like the queue runtime and manual producer files, Windows inbox privacy is
+// a caller-provided ACL prerequisite. This checks no ACL and promises no repair.
 func queueInboxPrivate(info os.FileInfo) bool { return true }

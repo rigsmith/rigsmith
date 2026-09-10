@@ -40,12 +40,12 @@ type hookInbox struct {
 func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, open func(context.Context, bool) (*service.QueueRuntime, error)) {
 	for _, recoverOnly := range []bool{false, true} {
 		var inbox string
-		var unknown bool
+		var unknownIdentity bool
 		name, short := "hook", "Save and enqueue a Stop/SessionEnd request without publishing"
 		if recoverOnly {
 			name, short = "recover-hooks", "Retry saved hook requests using their original account attribution"
 		}
-		cmd := &cobra.Command{Use: name, Short: short, Long: short + ".\n\nUses a private, bounded inbox tied to one initialized queue runtime.\nEach hook invocation is a new event; after any failure, run recover-hooks\nwith the same --dir, --profile and --inbox instead of replaying stdin.\nHook input must finish within 2 seconds and 128 KiB; admission has a 10-second deadline.\nRequests are saved before admission and removed only after confirmed enqueue.\nRecovery never reads stdin or the current account. No worker or hook is installed.\nStop producers, recover this inbox, then drain the queue before rollback.\nWindows callers must provide a private directory ACL.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		cmd := &cobra.Command{Use: name, Short: short, Long: short + ".\n\nUses a private, bounded inbox tied to one initialized queue runtime.\nEach hook invocation is a new event; after any failure, run recover-hooks\nwith the same --dir, --profile and --inbox instead of replaying stdin.\nFresh hook input must finish within 2 seconds and 128 KiB; queue hook has a 10-second deadline.\nManual recover-hooks uses the caller context and 15-second waits per lock.\nRequests are saved before admission and removed only after confirmed enqueue.\nRecovery never reads stdin or the current account. No worker or hook is installed.\nStop producers, recover this inbox, then drain the queue before rollback.\nWindows callers must provide a private directory ACL.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 			ctx := c.Context()
 			var payload queueHookPayload
 			if !recoverOnly {
@@ -86,7 +86,7 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 				if payload.Event == "SessionEnd" {
 					flush = queue.Flush{Mode: queue.Selected, Paths: []string{payload.TranscriptPath}}
 				}
-				s, err := newQueueSubmission(r, payload.SessionID, flush, unknown, deps.identity)
+				s, err := newQueueSubmission(r, payload.SessionID, flush, unknownIdentity, deps.identity)
 				if err != nil {
 					return err
 				}
@@ -102,15 +102,18 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 			}
 			count, err := (hookInbox{dir: root, save: durable.Write}).admit(ctx, r.ScopeID(), request, admit)
 			if err != nil {
+				if errors.Is(err, queue.ErrExpired) {
+					return fmt.Errorf("hook admission blocked; preserve the inbox for explicit reconciliation: %w", err)
+				}
 				return fmt.Errorf("hook admission incomplete; retain the inbox and run queue recover-hooks with the same runtime and inbox: %w", err)
 			}
-			_, err = fmt.Fprintf(c.ErrOrStderr(), "Hook inbox recovered; %d requests confirmed in queue. Publication requires a worker.\n", count)
+			_, err = fmt.Fprintf(c.ErrOrStderr(), "Hook inbox admission complete; %d requests confirmed in queue. Publication requires a worker.\n", count)
 			return err
 		}}
 		cmd.Flags().StringVar(&inbox, "inbox", "", "private hook inbox directory (default ~/.clauderig/hook-inbox)")
 		_ = cmd.MarkFlagDirname("inbox")
 		if !recoverOnly {
-			cmd.Flags().BoolVar(&unknown, "unknown-identity", false, "explicitly record unknown account attribution")
+			cmd.Flags().BoolVar(&unknownIdentity, "unknown-identity", false, "explicitly record unknown account attribution")
 		}
 		parent.AddCommand(cmd)
 	}
@@ -162,6 +165,9 @@ func (in hookInbox) admit(ctx context.Context, scope string, fresh *queueSubmiss
 	for len(s.Requests) != 0 {
 		next := s.Requests[0]
 		if _, err := enqueue(ctx, next.Identity, next.Request, next.At); err != nil {
+			if errors.Is(err, queue.ErrExpired) {
+				return count, fmt.Errorf("hook inbox blocked by an expired producer request; preserve the journal for explicit reconciliation; automatic retry cannot repair the queue replay cutoff: %w", err)
+			}
 			return count, err
 		}
 		// A failed removal leaves either the accepted request or the smaller journal.

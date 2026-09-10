@@ -314,8 +314,12 @@ Stop/SessionEnd event. It uses the same bounded input, source validation and
 account attribution as `prepare --hook`, but manages the retry record itself.
 It does not read transcripts, perform remote privacy/network checks, publish,
 start a worker or install hooks. Success is reported on stderr; stdout stays empty.
-A ten-second operation context includes the two-second input deadline and local
-lock waits; a blocked filesystem call can take longer to return.
+For fresh `queue hook`, a ten-second operation context includes the two-second
+input deadline and local lock waits. Manual `recover-hooks` uses the caller's
+context without an extra ten-second cap, allowing a full saved backlog to finish;
+each lock wait remains limited to 15 seconds. Caller cancellation stops either
+operation and preserves unfinished journal entries. A blocked filesystem call
+can take longer to return.
 
 The default inbox is `~/.clauderig/hook-inbox`. Override with `--inbox <directory>`;
 use the same `--dir`, explicit `--profile` selection and inbox for every recovery.
@@ -323,7 +327,9 @@ Its existing parent must be present. First use creates a new private directory;
 an existing inbox must already contain a valid journal bound to this runtime.
 Source/staging/runtime trees and discovered Desktop profile trees are excluded.
 Linux/macOS require private ownership and modes; Windows requires a private ACL
-supplied by the caller. Roots must remain stable and private during operations.
+supplied by the caller, matching the runtime and manual-request contract. The
+Windows commands do not inspect or repair ACLs; a public directory does not meet
+their operating requirements. Roots must remain stable and private during operations.
 
 Each invocation represents a new event. After an interruption or admission error,
 run `clauderig queue recover-hooks` with the same options instead of replaying the
@@ -352,11 +358,77 @@ before removing it and starting again. Input validation or a failure before dura
 intent can leave the new event unsaved. Recovery can retry only records that reached
 the journal; it cannot reconstruct a payload lost before persistence.
 
+A producer request older than an explicitly advanced queue replay cutoff raises
+`queue.ErrExpired` and blocks the inbox for explicit reconciliation. This is not a
+transient retry: repeating recovery cannot lower the cutoff. The request may be
+unaccepted or a previously completed receipt that was compacted, so the command
+cannot safely discard it, assign a new event ID, or claim admission. It preserves
+that record and all later records. This preview exposes no receipt-compaction
+command; any future integration must stop producers and reconcile every inbox
+before advancing the cutoff. If an external caller violates that ordering, keep
+the journal and resolve the expired intent explicitly before resuming producers.
+
 To finish queued work before rollback: stop hook producers, run `queue recover-hooks`
 for each inbox, then `queue drain`. A successful inbox recovery confirms admission,
 not remote publication. Keep the runtime and inbox intact while anything remains
 unresolved. Automatic hook installation and coordination with ordinary sync follow
 in 7c.2b.2b.2; installed hooks remain synchronous today.
+
+### Inbox journal format
+
+`requests.json` is versioned producer state, not an editable configuration file.
+It uses the following exported field names in declaration order. All fields must
+be present in the exact compact encoding emitted by Go `encoding/json`, followed
+by one newline. Reordered/unknown/duplicate/case-aliased fields, whitespace edits,
+invalid Unicode and checksum changes are refused. There are no omitted defaults.
+
+| Field | JSON type and meaning |
+| --- | --- |
+| `Version` | Number, exactly `1`. |
+| `Scope` | Nonempty string, equal to the initialized runtime's `ScopeID`. |
+| `Requests` | Array of saved submissions in admission order; `[]` when empty, never `null`. At most 128 entries. |
+| `Checksum` | Lowercase hexadecimal SHA-256 of this entire envelope's compact JSON with this field set to `""`, excluding the final newline. It includes every nested submission and its checksum. |
+
+Each `Requests` element retains the existing saved-submission fields:
+
+| Field | JSON type and meaning |
+| --- | --- |
+| `Checksum` | Lowercase hexadecimal SHA-256 of this submission's compact JSON with its own `Checksum` set to `""`; no trailing newline. |
+| `Version` | Number, exactly `1`. |
+| `Scope` | String matching the envelope and runtime. |
+| `At` | Nonzero timestamp string emitted by Go `time.Time`; new events use UTC. Preserved on every retry. |
+| `Identity` | Object with string fields `AccountUUID`, `OrganizationUUID`, `Email`, in that order. UUIDs are canonical when nonempty; `""` means unavailable. All three empty strings record explicit unknown attribution. Nulls are refused. |
+| `Request` | Object with string fields `EventID`, `SessionID`, `ProvenanceID`, followed by the `Flush` object. IDs are preserved on retry; session IDs are bounded, trimmed and lowercase; provenance must match the identity. |
+| `Request.Flush` | Object with string `Mode` followed by `Paths`. Hook modes are `"normal"` or `"selected"`; all-flush is not accepted in this inbox. |
+| `Request.Flush.Paths` | Normal mode accepts `null` or `[]` (new events emit `null`). Selected mode requires an array containing exactly one native parent-transcript path; admission validates that path against the runtime/session. |
+
+Illustration only: placeholders and indentation below are not a writable journal.
+
+```json
+{
+  "Version": 1,
+  "Scope": "<runtime-scope>",
+  "Requests": [{
+    "Checksum": "<submission-sha256>",
+    "Version": 1,
+    "Scope": "<runtime-scope>",
+    "At": "2026-09-10T12:00:00Z",
+    "Identity": {"AccountUUID": "", "OrganizationUUID": "", "Email": ""},
+    "Request": {
+      "EventID": "<generated-event-id>",
+      "SessionID": "s",
+      "ProvenanceID": "<unknown-identity-provenance>",
+      "Flush": {"Mode": "selected", "Paths": ["/home/you/.claude/projects/acme/s.jsonl"]}
+    }
+  }],
+  "Checksum": "<envelope-sha256>"
+}
+```
+
+Every save/reflush/removal replaces the complete canonical envelope through the
+shared durable writer under the inbox lease. Removal recomputes the envelope
+checksum after queue confirmation; it does not edit nested submission identity or
+checksums. A successfully empty journal remains present and bound to the runtime.
 
 ## Next
 

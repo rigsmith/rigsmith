@@ -612,9 +612,9 @@ so this changes publication churn, not source I/O or capture-space budgeting.
 Previously backed-up, still-allowed subagents remain retained after source
 deletion; explicit parents and selected paths must exist. Existing sealed
 captures and commits replay unchanged. See the [capture contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md#capture-sequence-and-isolation)
-for freshness, retention and source-validation boundaries. Automatic hook routing,
-producer recovery and stop/drain/rollback remain the next rollout milestone.
-
+for freshness, retention and source-validation boundaries. Automatic hook routing
+and end-to-end stop/drain/rollback remain the next rollout milestone.
+Explicit producer recovery is described below.
 
 ### Durable hook producer (v2, 7c.2b.2b.1)
 
