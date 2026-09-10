@@ -527,45 +527,13 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 			err = fmt.Errorf("cannot verify queue isolation from Desktop profiles; repair profile paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
 		}
 	}()
-	// Ordinary sync discovers profiles independently of the queue selection.
-	// Exclude the whole local profile container (including future profiles) and
-	// each existing profile and data directory target, including unselected aliases.
-	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
-	if _, err := queueIsolationPath(profileStore.Root); err != nil {
+	profileStore, directories, err := discoverQueueDesktopProfiles(req)
+	if err != nil {
 		return err
-	}
-	info, err := os.Stat(profileStore.Root)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	var entries []os.DirEntry
-	if err == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("Desktop profile store must be a directory")
-		}
-		entries, err = os.ReadDir(profileStore.Root)
-		if err != nil {
-			return err
-		}
 	}
 	paths := []string{profileStore.Root}
-	for _, entry := range entries {
-		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
-			continue
-		}
-		profile := filepath.Join(profileStore.Root, entry.Name())
-		// Unlike display-oriented profile discovery, safety checks cannot skip
-		// broken links: creating their missing target would activate the profile.
-		if _, err := queueIsolationPath(profile); err != nil {
-			return err
-		}
-		info, err := os.Stat(profile)
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			paths = append(paths, profile, filepath.Join(profile, "data"))
-		}
+	for _, profile := range directories {
+		paths = append(paths, profile, filepath.Join(profile, "data"))
 	}
 	for _, path := range paths {
 		root, err := queueIsolationPath(path)
@@ -578,6 +546,51 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 	}
 
 	return nil
+}
+
+// discoverQueueDesktopProfiles shares strict native directory/link discovery
+// between path isolation and complete-coverage validation. Metadata validation
+// and overlap policy remain with their callers. Ordinary display discovery is
+// deliberately unaffected.
+func discoverQueueDesktopProfiles(req SyncRequest) (*desktop.Store, []string, error) {
+	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+	if _, err := queueIsolationPath(profileStore.Root); err != nil {
+		return nil, nil, err
+	}
+	info, err := os.Stat(profileStore.Root)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, nil, err
+	}
+	var entries []os.DirEntry
+	if err == nil {
+		if !info.IsDir() {
+			return nil, nil, fmt.Errorf("Desktop profile store must be a directory")
+		}
+		entries, err = os.ReadDir(profileStore.Root)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	var directories []string
+	for _, entry := range entries {
+		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
+			continue
+		}
+		profile := filepath.Join(profileStore.Root, entry.Name())
+		// Unlike display-oriented profile discovery, safety checks cannot skip
+		// broken links: creating their missing target would activate the profile.
+		if _, err := queueIsolationPath(profile); err != nil {
+			return nil, nil, err
+		}
+		info, err := os.Stat(profile)
+		if err != nil {
+			return nil, nil, err
+		}
+		if info.IsDir() {
+			directories = append(directories, profile)
+		}
+	}
+	return profileStore, directories, nil
 }
 
 // queueIsolationPath permits missing directories but refuses any unresolved
@@ -661,40 +674,13 @@ func validateQueueCoverageProfiles(req SyncRequest, profiles []string) (err erro
 			err = fmt.Errorf("cannot verify complete Desktop profile coverage; repair profile metadata, paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
 		}
 	}()
-	store := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
-	if _, err := queueIsolationPath(store.Root); err != nil {
-		return err
-	}
-	info, err := os.Stat(store.Root)
-	if os.IsNotExist(err) {
-		if len(profiles) != 0 {
-			return queue.ErrBinding
-		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() {
-		return fmt.Errorf("Desktop profile store must be a directory")
-	}
-	entries, err := os.ReadDir(store.Root)
+	store, directories, err := discoverQueueDesktopProfiles(req)
 	if err != nil {
 		return err
 	}
 	var discovered []string
-	for _, entry := range entries {
-		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
-			continue
-		}
-		info, err := os.Stat(filepath.Join(store.Root, entry.Name()))
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			continue
-		}
-		profile, err := store.Get(entry.Name())
+	for _, directory := range directories {
+		profile, err := store.Get(filepath.Base(directory))
 		if err != nil {
 			return err
 		}

@@ -151,6 +151,11 @@ func (s Service) syncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 	for _, event := range c.proven {
 		generations = append(generations, event.Generation)
 	}
+	if c.runtime != nil {
+		if _, err := c.runtime.validateCoverageBinding(ctx, req, engine.LocalProfileNames()); err != nil {
+			return result, err
+		}
+	}
 	result.Acknowledged, err = c.ticket.Acknowledge(ctx, generations)
 	return result, err
 }
@@ -323,6 +328,13 @@ func (c *manualCoverage) sessionPaths(event queue.Event, paths []string) []strin
 }
 
 func (c *manualCoverage) captured(req SyncRequest, report *engine.Report) error {
+	// Discovery may have changed during the walk. Refuse publication even if
+	// identity/evidence cannot produce a coverage ticket for this capture.
+	if c.runtime != nil {
+		if _, err := c.runtime.validateCoverageBinding(c.operation, req, engine.LocalProfileNames()); err != nil {
+			return err
+		}
+	}
 	if c.ticket == nil || c.cliRoot == "" || report == nil || report.LedgerError != "" {
 		return nil
 	}

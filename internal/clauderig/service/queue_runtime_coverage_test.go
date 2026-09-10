@@ -348,3 +348,54 @@ func TestQueueRuntimeManualCoverageRevalidationSurvivesIdentityFailureAndDryRun(
 		}
 	}
 }
+
+func TestQueueRuntimeManualCoverageRevalidatesAfterCaptureAndPublication(t *testing.T) {
+	for _, phase := range []string{"capture", "publication"} {
+		for _, change := range []string{"profile", "runtime"} {
+			t.Run(phase+"/"+change, func(t *testing.T) {
+				req, _, event, svc := coverageFixture(t)
+				dir := filepath.Join(t.TempDir(), "runtime")
+				r, err := service.CreateQueueRuntime(t.Context(), dir, req, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				changed := false
+				svc.Observe = func(e service.Event) {
+					_, captured := e.(service.Captured)
+					_, published := e.(service.Published)
+					if (phase == "capture" && !captured) || (phase == "publication" && !published) {
+						return
+					}
+					changed = true
+					if change == "runtime" {
+						if err := os.WriteFile(filepath.Join(dir, "runtime.json"), []byte("changed"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						store := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+						if _, err := store.Create("arrived", "", ""); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				result, err := r.SyncWithCoverage(t.Context(), svc, req)
+				if !changed || !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 {
+					t.Fatalf("stale capture acknowledged: %+v %v changed=%v", result, err, changed)
+				}
+				if phase == "capture" && result.Sync.Publication.Pushed {
+					t.Fatal("published after changed capture policy")
+				}
+				if phase == "publication" && !result.Sync.Publication.Pushed {
+					t.Fatal("test did not exercise published snapshot")
+				}
+				pending, err := r.Snapshot(t.Context())
+				if err != nil || len(pending) != 1 || pending[0].Phase != queue.Queued || pending[0].Attempts != 0 {
+					t.Fatalf("work mutated: %+v %v", pending, err)
+				}
+			})
+		}
+	}
+}

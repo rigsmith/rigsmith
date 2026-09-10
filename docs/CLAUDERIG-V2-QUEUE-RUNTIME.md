@@ -176,7 +176,10 @@ and persisted lifecycle metadata before capture, then checks the actual capture
 policy again before engine capture, even on dry runs or failed/invalid identity
 observations. Those cases never prepare or acknowledge coverage. Only an exact
 policy match is translated
-to the lifecycle binding; the underlying queue remains private.
+to the lifecycle binding; the underlying queue remains private. Revalidation
+also runs after the source walk before publication, and after remote confirmation
+before acknowledgement. Profile/lifecycle changes leave pending work intact; a
+snapshot already published before a later validation failure is not rolled back.
 
 Manual capture discovers all local Desktop profiles, as ordinary sync does. Its
 profile selection must match the initialized runtime. Missing, malformed or
