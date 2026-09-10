@@ -13,8 +13,9 @@ connects these services to RunOne, including confirmed retained publication.
 init, prepare/enqueue, status, retry, supervised run and drain (7b).
 The v2 queue has end-user changesets for its planned release behavior, including
 completion of staged merges before retrying committed batches. Shipped
-synchronous commands remain unchanged. Queued hook routing and manual-sync
-coverage/rollback wiring remain 7c.2b work; no background service is installed.
+synchronous commands remain unchanged. Explicit `queue sync` provides manual
+coverage in 7c.2a. Hook/ordinary-sync routing and rollback remain 7c.2b work;
+no background service is installed.
 
 ## Identity and generations
 

@@ -7,7 +7,9 @@ description: >
   config across machines, v2 queued sync + worktree/PR guard). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, or syncing Claude
-  Code setup or managing its saved sync queue — even if the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
+  Code setup, managing its saved sync queue, or using manual queue sync with
+  confirmed acknowledgement, dry-run previews or transcript flushing — even if
+  the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
 ---
 

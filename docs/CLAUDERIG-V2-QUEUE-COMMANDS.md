@@ -5,8 +5,9 @@ not install a worker or route hooks. Ordinary `sync`, `pull` and hooks keep thei
 existing synchronous behavior. Use v2 clients for operations sharing staging.
 Actual OS reboot/hibernation validation remains a general-release gate.
 
-Bare `queue` on a terminal offers init, status, sync, run and drain. Prepare/enqueue/retry
-require explicit command arguments; off a terminal, bare `queue` prints help.
+When run outside a terminal, bare `queue` prints help; when run in a terminal,
+it offers init, status, sync, run and drain. Prepare/enqueue/retry require explicit
+command arguments.
 
 ## Start and accept work
 
@@ -233,6 +234,11 @@ Missing, malformed or unreadable profile metadata refuses the command. Keep
 profile membership, source directories, link targets and the runtime association
 stable throughout the operation. Validation checks are observations at defined
 points, not fencing of external edits; see the [runtime contract](CLAUDERIG-V2-QUEUE-RUNTIME.md#manual-sync-coverage-bridge-7c1).
+
+On Windows, provision the runtime and its files under a private user directory
+before using this command. Inherited ACLs are a caller prerequisite: runtime
+validation does not inspect or repair them and does not make shared or
+other-user-writable state safe to use. See [runtime permissions](CLAUDERIG-V2-QUEUE-RUNTIME.md).
 
 The command checks configured remote privacy and initialized shared staging/remote
 history before capture, including for dry runs. It reads live identity once at

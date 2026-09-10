@@ -273,6 +273,8 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 			"Use the same --dir and --profile selection as init; that selection must include\n" +
 			"every local Desktop profile discovered by ordinary sync. Repair unreadable\n" +
 			"profiles before retrying. Keep profile locations and runtime paths stable.\n\n" +
+			"On Windows, provision a private runtime directory; inherited ACLs are not\n" +
+			"validated or repaired. Do not use shared or other-user-writable runtime state.\n\n" +
 			"Requires initialized shared staging/remote history and the existing private\n" +
 			"remote checks, including for --dry-run. --flush includes all changed transcript\n" +
 			"tails; this manual command does not read hook payloads from stdin or debounce.\n" +

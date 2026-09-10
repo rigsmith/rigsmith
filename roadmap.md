@@ -64,7 +64,7 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Persisted Claude queue runtime (7a) | Merged: [#379](https://github.com/rigsmith/rigsmith/pull/379). Fixed private stores, unique lifecycle binding and durable producer attribution; resume saved work after restart or staging-marker loss. [Contract](docs/CLAUDERIG-V2-QUEUE-RUNTIME.md). |
 | Explicit queued Claude commands (7b) | Merged: [#380](https://github.com/rigsmith/rigsmith/pull/380): init, saved producer requests, enqueue, supervised foreground worker, status/retry and drain with existing Git credentials and GitHub/GitLab privacy checks. [Contract](docs/CLAUDERIG-V2-QUEUE-COMMANDS.md). |
 | Runtime manual-sync coverage (7c.1) | Merged: [#381](https://github.com/rigsmith/rigsmith/pull/381). Validate the saved lifecycle before acknowledging fully covered requests; retain later arrivals and other identities. |
-| Manual queue sync command (7c.2a) | In review: [#382](https://github.com/rigsmith/rigsmith/pull/382). explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
+| Manual queue sync command (7c.2a) | In review: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
 | Opt-in queued Claude hooks and rollback (7c.2b) | Planned: route opted-in hooks and ordinary sync, then validate stop/drain and rollback. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
