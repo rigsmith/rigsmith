@@ -277,7 +277,9 @@ func (s Service) captureArtifact(operation, staging context.Context, req Artifac
 		for _, event := range req.Work.Events {
 			var found string
 			for _, rel := range cliFiles {
-				if strings.HasPrefix(rel, "projects/") && filepath.Base(rel) == event.Request.SessionID+".jsonl" {
+				// A nested subagent with the same basename is not the parent session.
+				// Use the same direct-parent shape required by manual coverage.
+				if strings.HasPrefix(rel, "projects/") && strings.Count(rel, "/") == 2 && filepath.Base(rel) == event.Request.SessionID+".jsonl" {
 					if found != "" {
 						return fmt.Errorf("ambiguous requested session")
 					}

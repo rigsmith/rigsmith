@@ -218,3 +218,13 @@ does not change profile directory identity. Such valid metadata updates and
 runtime identity-map additions by cooperating producers need not invalidate
 coverage. Corrupt metadata observed at a validation point still refuses the
 operation. Stronger fencing of arbitrary external profile edits is outside 7c.1.
+
+## Hook producer path validation (7c.2b.1)
+
+`ValidateHookTranscript` validates the supplied native path against the configured,
+enabled CLI source spelling and the already-validated canonical session ID. It
+requires a direct `projects/<project>/<session>.jsonl` path and the queue's bounded
+path representation. It reads no transcript bytes and does not require the file
+to exist. This is producer intent validation; source availability, alias handling
+and ambiguity checks still happen during capture. It does not authenticate an
+external caller or fence later filesystem changes. See [hook preparation](CLAUDERIG-V2-QUEUE-COMMANDS.md#prepare-a-request-from-hook-input-7c2b1).

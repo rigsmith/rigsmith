@@ -86,7 +86,7 @@ func NewQueueCmd() *cobra.Command {
 func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var dir string
 	var profiles []string
-	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request, enqueue it, then run a foreground worker or drain.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nStop producers before draining. No background service is installed.", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request (--session or --hook), enqueue it, then run a worker.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nStop producers before draining. No background service is installed.", Args: cobra.NoArgs}
 	cmd.PersistentFlags().StringVar(&dir, "dir", "", "private runtime directory (default ~/.clauderig/queue-runtime)")
 	_ = cmd.MarkPersistentFlagDirname("dir")
 	cmd.PersistentFlags().StringArrayVar(&profiles, "profile", nil, "explicit Desktop profile to include (repeatable; default none)")
@@ -124,9 +124,28 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		return err
 	}})
 	var session, output string
-	var flush bool
+	var flush, prepareHook bool
 	var unknown bool
-	prepare := &cobra.Command{Use: "prepare", Short: "Save a new request and its current account attribution", Long: "Save one new request to an exclusive private file before enqueueing.\nThe file pins this runtime, a new event ID, the timestamp and account identity.\nRetry enqueue with this same file; never rerun prepare for an uncertain enqueue.\nNo transcript bytes are read. --flush requests all changed transcript tails.\nAn unavailable account requires an explicit --unknown-identity choice.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+	prepare := &cobra.Command{Use: "prepare", Short: "Save a manual or hook request and its current account attribution", Long: "Save one new request to an exclusive private file before enqueueing.\nThe file pins this runtime, a new event ID, the timestamp and account identity.\nRetry enqueue with this same file; never rerun prepare for an uncertain enqueue.\nNo transcript bytes are read. --flush requests all changed transcript tails.\n--hook reads a bounded Stop/SessionEnd JSON payload from stdin instead of --session.\nStop records normal intent; SessionEnd records selected-transcript flush intent.\nQueue workers currently take full snapshots regardless of this intent.\nInput must finish within 2 seconds and 128 KiB. It never falls back to all-flush.\nPreparation saves intent only: enqueue the saved file separately.\nAn unavailable account requires an explicit --unknown-identity choice.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		if output == "" {
+			return fmt.Errorf("--output is required")
+		}
+		intent := queue.Flush{Mode: queue.Normal}
+		if flush {
+			intent.Mode = queue.All
+		}
+		var hookPayload queueHookPayload
+		if prepareHook {
+			var err error
+			hookPayload, err = readQueueHook(c.Context(), c.InOrStdin(), 2*time.Second)
+			if err != nil {
+				return err
+			}
+			session = hookPayload.SessionID
+			if hookPayload.Event == "SessionEnd" {
+				intent = queue.Flush{Mode: queue.Selected, Paths: []string{hookPayload.TranscriptPath}}
+			}
+		}
 		canonicalSession := claudesession.CanonicalID(strings.TrimSpace(session))
 		if !utf8.ValidString(session) || strings.ContainsAny(session, "\x00\r\n") {
 			return fmt.Errorf("a bounded --session identifier is required")
@@ -134,15 +153,17 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		if err := validateQueueSessionID(canonicalSession); err != nil {
 			return err
 		}
-		if output == "" {
-			return fmt.Errorf("--output is required")
-		}
 		r, err := open(c.Context(), false)
 		if err != nil {
 			return err
 		}
 		if err = r.CheckRequestPath(output); err != nil {
 			return err
+		}
+		if prepareHook {
+			if err := r.ValidateHookTranscript(hookPayload.TranscriptPath, canonicalSession); err != nil {
+				return err
+			}
 		}
 		identity := service.Identity{}
 		if !unknown {
@@ -170,11 +191,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		mode := queue.Normal
-		if flush {
-			mode = queue.All
-		}
-		submission := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: canonicalSession, ProvenanceID: provenance, Flush: queue.Flush{Mode: mode}}}
+		submission := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: canonicalSession, ProvenanceID: provenance, Flush: intent}}
 		submission.Checksum = queueRequestChecksum(submission)
 		data, err := json.MarshalIndent(submission, "", "  ")
 		if err != nil {
@@ -183,12 +200,19 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		if err = writeQueueRequest(c.Context(), output, append(data, '\n')); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(c.OutOrStdout(), "Request saved. Enqueue this same file on every retry.")
+		out := c.OutOrStdout()
+		if prepareHook {
+			out = c.ErrOrStderr()
+		}
+		_, err = fmt.Fprintln(out, "Request saved. Enqueue this same file on every retry.")
 		return err
 	}}
 	prepare.Flags().StringVar(&session, "session", "", "session identifier for this request")
 	prepare.Flags().StringVarP(&output, "output", "o", "", "new private request file; never overwritten")
 	prepare.Flags().BoolVar(&flush, "flush", false, "capture every changed transcript tail")
+	prepare.Flags().BoolVar(&prepareHook, "hook", false, "read a bounded Stop/SessionEnd payload from stdin; save intent only")
+	prepare.MarkFlagsMutuallyExclusive("hook", "session")
+	prepare.MarkFlagsMutuallyExclusive("hook", "flush")
 	prepare.Flags().BoolVar(&unknown, "unknown-identity", false, "explicitly record unknown account attribution")
 	_ = prepare.MarkFlagFilename("output")
 	_ = prepare.RegisterFlagCompletionFunc("session", completeSessionRef)

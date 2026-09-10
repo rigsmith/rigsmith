@@ -7,7 +7,8 @@ description: >
   config across machines, v2 queued sync + worktree/PR guard). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, or syncing Claude
-  Code setup, managing its saved sync queue, or using manual queue sync with
+  Code setup, preparing queued requests from hook payloads, managing its saved sync
+  queue, or using manual queue sync with
   confirmed acknowledgement, dry-run previews or transcript flushing — even if
   the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
@@ -275,3 +276,14 @@ enforces:
 - "record this change", "bump the version", "update the changelog" → **changerig**
 - "publish", "cut a release", "tag" → **shiprig**
 - "sync my Claude setup", "enqueue/retry/drain Claude sync", "make a worktree", "set up the guard" → **clauderig** / `rig worktree`
+
+For v2 hook-input testing, `clauderig queue prepare --hook --output request.json`
+reads one complete Stop/SessionEnd JSON document from stdin (EOF within 2 seconds,
+128 KiB maximum). Preparation alone saves intent; enqueue the same file afterward
+and on every retry. Use a new private file only for a new event. Do not install
+this preparation-only command as an automatic hook. SessionEnd saves selected
+flush intent for its transcript; malformed/empty input never requests all-flush.
+Queued workers still capture full unthrottled snapshots; saved flush intent
+governs manual-sync coverage, not a promise to throttle other worker input.
+It conflicts with `--session`/`--flush`, observes identity once, and sends success
+to stderr. Installed hooks remain synchronous until the opt-in installer lands.
