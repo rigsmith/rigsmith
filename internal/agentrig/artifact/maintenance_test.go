@@ -62,7 +62,8 @@ func TestStoreCapacityAdmissionAndRetainedReuse(t *testing.T) {
 		t.Fatal(usage, err)
 	}
 	s.MaxStoredBytes = usage.StoredBytes * 3
-	if _, err := s.Build(t.Context(), Key([]byte("accepted")), maintenanceBuild); err != nil {
+	// Repair capacity and retry the same failed identity, without rebinding work.
+	if _, err := s.Build(t.Context(), Key([]byte("overflow")), maintenanceBuild); err != nil {
 		t.Fatal(err)
 	}
 	usage, err = s.Capacity(t.Context())
@@ -137,18 +138,19 @@ func TestInterruptedWriteCleanupPreservesAllOtherState(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"unknown", ".durable-", "damaged.capture"} {
+	for _, name := range []string{"unknown", ".durable-", "damaged.capture", ".durable-retained.capture"} {
 		if err := os.WriteFile(filepath.Join(s.Dir, name), []byte("keep"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{".durable-one", ".durable-two"} {
+	// Reserved names are disposable regardless of their suffix or contents.
+	for _, name := range []string{".durable-one", ".durable-user-data"} {
 		if err := os.WriteFile(filepath.Join(s.Dir, name), []byte("discard"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	u, err := s.Capacity(t.Context())
-	if err != nil || u.Archives != 2 || u.InterruptedWrites != 2 || u.InterruptedWriteBytes != 14 || u.BuildWorkspaces != 1 || u.OtherEntries != 5 {
+	if err != nil || u.Archives != 3 || u.InterruptedWrites != 2 || u.InterruptedWriteBytes != 14 || u.BuildWorkspaces != 1 || u.OtherEntries != 5 {
 		t.Fatal(u, err)
 	}
 	result, err := s.CleanupInterruptedWrites(t.Context())
@@ -158,7 +160,7 @@ func TestInterruptedWriteCleanupPreservesAllOtherState(t *testing.T) {
 	if err := s.Verify(t.Context(), ref); err != nil {
 		t.Fatal("lost sealed archive", err)
 	}
-	for _, name := range []string{"unknown", ".durable-", "damaged.capture", ".capture-work-live/.durable-nested", "seeds/.durable-nested", "merges/.durable-nested", ".publication-live/.durable-nested"} {
+	for _, name := range []string{"unknown", ".durable-", "damaged.capture", ".durable-retained.capture", ".capture-work-live/.durable-nested", "seeds/.durable-nested", "merges/.durable-nested", ".publication-live/.durable-nested"} {
 		b, err := os.ReadFile(filepath.Join(s.Dir, filepath.FromSlash(name)))
 		if err != nil || string(b) != "keep" {
 			t.Fatal("changed protected state", name, err)

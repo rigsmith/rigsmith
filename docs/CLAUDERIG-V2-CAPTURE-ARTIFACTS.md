@@ -167,6 +167,13 @@ admission; the separate 32 GiB default per-archive limit still applies. A negati
 aggregate limit is invalid. Every cooperating writer of a store must use the same
 configured limit. This remains an internal policy field, with no user config key.
 
+The quota is runtime admission policy and is deliberately excluded from the
+queued binding and artifact key. A resolver may supply a new quota on the next
+attempt: raising it repairs capacity exhaustion for the same queued identity;
+lowering it can block a new archive but cannot change captured bytes or force
+recapture of retained output. Content-selection and destination policies remain
+bound as before. Writers must coordinate policy changes between operations.
+
 New builds inventory existing archive sizes while holding the artifact-store
 lease, then bound the archive stream to the smaller of the per-archive limit and
 remaining sealed capacity, including archive framing and checksum. No header
@@ -192,8 +199,13 @@ partial inventory authorizes a build or deletion. The private canonical store
 directory and its ancestors must remain stable, as required by Build.
 
 `Store.CleanupInterruptedWrites` acquires artifact ownership without waiting and
-removes only direct regular `.durable-*` files left by interrupted archive writes
-or reflushes. It validates the whole inventory before deleting anything and checks
+removes only direct regular files in the reserved `.durable-*` archive-write
+namespace. The prefix must have a nonempty suffix; `.capture` takes precedence
+and is retained. This namespace is exclusively disposable scratch: callers must
+never place unrelated data there. Cleanup uses names, not creator provenance, so
+even a file named `.durable-user-data` is eligible for deletion. This contract
+applies only inside the private artifact store; nested namespaces are not scanned.
+It validates the whole inventory before deleting anything and checks
 file identity again before each removal. Live owners and persistent store fences
 block cleanup. Missing stores remain missing. Failure or cancellation during
 removal returns partial counts; retry safely handles what remains. This is space
@@ -201,7 +213,7 @@ reclamation, not a durable acknowledgement: deleted scratch can reappear after
 power loss and require another cleanup.
 
 Sealed archives, `.capture-work-*` directories, seed/recovery substores,
-publication scratch and unknown entries are never deleted. Build workspaces may
+publication scratch and entries outside the reserved namespace are never deleted. Build workspaces may
 still have external Git writers protected by staging ownership after the parent
 exits; an artifact lease alone does not prove those writers stopped. Reference-
 aware sealed-artifact cleanup and acquisition of all relevant writer leases stay

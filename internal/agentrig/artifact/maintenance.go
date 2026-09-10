@@ -126,7 +126,10 @@ type CleanupResult struct {
 }
 
 // CleanupInterruptedWrites removes only top-level .durable-* regular files,
-// which are incomplete archive writes/reflushes protected by this store's lock.
+// in the store's reserved disposable archive-write namespace. Names alone confer
+// eligibility; cleanup cannot prove which process created a file. Callers must
+// never store unrelated data there, including names such as .durable-user-data.
+// A .capture suffix takes precedence and is always retained as an archive.
 // It never removes sealed archives, build workspaces, substores, publication
 // scratch or recovery intents. Build workspaces may still have external writers
 // protected by staging ownership after their parent process dies.

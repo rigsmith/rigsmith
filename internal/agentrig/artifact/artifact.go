@@ -34,12 +34,16 @@ var ErrStoreFull = errors.New("artifact store limit reached; retained artifacts 
 // Store lives outside every backup and source root. Its directory and ancestors
 // must stay stable during operations. MaxBytes bounds one archive (zero uses
 // 32 GiB); capacity cleanup/replay horizons are caller responsibilities.
+// Direct .durable-* names are reserved for disposable archive-write scratch;
+// callers must never place unrelated data in that namespace (see cleanup).
 type Store struct {
 	Dir      string
 	MaxBytes int64
 	// MaxStoredBytes bounds new sealed archives in this directory, excluding
 	// temporary files and substores. Zero disables the aggregate admission limit.
 	// All writers sharing the store must use the same configured limit.
+	// This is runtime admission policy, not capture identity: callers may change
+	// it between attempts to repair capacity exhaustion without replacing work.
 	MaxStoredBytes int64
 	reflush        func(context.Context, string) error // nil uses durable.Rewrite; per-store fault injection
 }
