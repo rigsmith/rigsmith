@@ -128,9 +128,11 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var unknown bool
 	prepare := &cobra.Command{Use: "prepare", Short: "Save a new request and its current account attribution", Long: "Save one new request to an exclusive private file before enqueueing.\nThe file pins this runtime, a new event ID, the timestamp and account identity.\nRetry enqueue with this same file; never rerun prepare for an uncertain enqueue.\nNo transcript bytes are read. --flush requests all changed transcript tails.\nAn unavailable account requires an explicit --unknown-identity choice.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 		canonicalSession := claudesession.CanonicalID(strings.TrimSpace(session))
-		encodedSession, _ := json.Marshal(canonicalSession)
-		if !utf8.ValidString(session) || canonicalSession == "" || len(encodedSession) > 4098 || strings.ContainsAny(session, "\x00\r\n") {
+		if !utf8.ValidString(session) || strings.ContainsAny(session, "\x00\r\n") {
 			return fmt.Errorf("a bounded --session identifier is required")
+		}
+		if err := validateQueueSessionID(canonicalSession); err != nil {
+			return err
 		}
 		if output == "" {
 			return fmt.Errorf("--output is required")
@@ -465,6 +467,9 @@ func loadQueueRequest(path string) (*savedQueueRequest, error) {
 	if s.Version != 1 || s.Scope == "" || s.At.IsZero() || s.Request.EventID == "" || s.Request.SessionID == "" {
 		return nil, fmt.Errorf("invalid saved request")
 	}
+	if err := validateQueueSessionID(s.Request.SessionID); err != nil {
+		return nil, err
+	}
 	provenance, err := service.CaptureProvenance(s.Identity)
 	if err != nil {
 		return nil, err
@@ -574,4 +579,17 @@ func queueCapacityOutput(c queue.Capacity) queueCapacityJSON {
 		ReplayBefore:       c.ReplayBefore,
 		Remedies:           c.Remedies,
 	}
+}
+
+// validateQueueSessionID requires one literal native transcript name, using the
+// same separator/dot/pattern restrictions as the native session mover.
+func validateQueueSessionID(id string) error {
+	encoded, _ := json.Marshal(id)
+	if !utf8.ValidString(id) || strings.TrimSpace(id) == "" || len(encoded) > 4098 || strings.ContainsAny(id, "\x00\r\n") {
+		return fmt.Errorf("a bounded --session identifier is required")
+	}
+	if strings.ContainsAny(id, `/\*?[]`) || id == "." || id == ".." {
+		return fmt.Errorf("session must name one transcript, without separators or patterns")
+	}
+	return nil
 }

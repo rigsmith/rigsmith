@@ -533,9 +533,19 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 	if _, err := queueDesktopProfilePath(profileStore.Root); err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(profileStore.Root)
+	info, err := os.Stat(profileStore.Root)
 	if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	var entries []os.DirEntry
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("Desktop profile store must be a directory")
+		}
+		entries, err = os.ReadDir(profileStore.Root)
+		if err != nil {
+			return err
+		}
 	}
 	paths := []string{profileStore.Root}
 	for _, entry := range entries {

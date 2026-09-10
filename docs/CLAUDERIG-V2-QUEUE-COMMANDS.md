@@ -44,7 +44,9 @@ reopening checks effective ownership and private directory/descriptor modes.
 
 `prepare` reads account identity once, generates one event ID and timestamp, and
 pins the runtime binding. Session IDs are trimmed and lowercased to match native
-transcript lookup, then checked against the identifier size bound. It saves intent and validated attribution, not transcript
+transcript lookup, then checked against the identifier size bound. Prepare and
+enqueue require one literal session name: separators, `.`/`..` and glob patterns
+are refused using the native session mover restrictions. It saves intent and validated attribution, not transcript
 bytes. `--session` is required; `--flush` captures every changed transcript tail.
 Without it, normal capture policy applies. Valid email/organization observations
 are retained even without an account UUID. New prepared requests trim and

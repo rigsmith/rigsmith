@@ -948,3 +948,40 @@ func TestQueueCommandInvalidProfileStoreRetainsRuntime(t *testing.T) {
 	}
 	f.must(t, "status")
 }
+
+func TestQueueCommandRejectsSessionPathsAndPatterns(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	valid := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", valid)
+	original, err := readQueueRequest(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"parent/child", `parent\child`, ".", "..", "prefix*", "s?", "[s]"} {
+		path := filepath.Join(t.TempDir(), "request")
+		if _, err := f.execute(t.Context(), "prepare", "--session", id, "--output", path); err == nil {
+			t.Fatal("prepared invalid session", id)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("saved invalid session", id, err)
+		}
+		saved := original
+		saved.Request.SessionID = id
+		saved.Checksum = queueRequestChecksum(saved)
+		data, err := json.Marshal(saved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.execute(t.Context(), "enqueue", path); err == nil {
+			t.Fatal("admitted saved invalid session", id)
+		}
+	}
+	jobs, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(jobs) != 0 {
+		t.Fatal("admitted invalid work", jobs, err)
+	}
+}
