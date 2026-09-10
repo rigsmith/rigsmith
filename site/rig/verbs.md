@@ -127,6 +127,45 @@ worse than no check:
   a dev server's child processes — rather than reporting "it starts" and leaving
   one behind holding the port.
 
+## Across the whole workspace (`--all`) {#all}
+
+`rig build --all` (and `test`, `format`, `lint`, `typecheck`, `clean`) runs the
+verb in every workspace package in dependency order; `--filter <glob>` narrows
+the set. On a terminal you get the live dashboard — one row per package — and
+off one (CI, piped, `--quiet`) it streams each package in turn.
+
+**A package that doesn't define the verb is skipped, not failed.** A Node
+package with no `typecheck` script has nothing to type-check, so it is reported
+as skipped and the run carries on:
+
+```
+· @acme/auth (node)
+– @acme/docs (node) — skipped: no "typecheck" script
+✓ 34 ok   – 1 skipped
+```
+
+That is decided from the package's own manifest before anything runs, so it
+never hides a real result: a script that runs and exits non-zero still fails the
+run, still names the package, and still exits non-zero. When no package defines
+the verb at all, the run says so rather than reporting success.
+
+**A failure fails the run without ending it.** Every package still runs, and the
+closing line counts what happened — so one CI log names every broken package
+instead of only the first:
+
+```
+· @acme/auth (node)
+✗ @acme/core (node): exit status 1
+· @acme/web (node)
+✓ 33 ok   ✗ 1 failed   – 1 skipped
+```
+
+The error names them too (`build failed in 2 packages: @acme/core, @acme/api`),
+since a log long enough to need this is long enough that scrolling back for the
+`✗` lines is the tedious part. The dashboard has always worked this way; the
+plain path now matches it, so a run reports the same thing whether or not stdout
+is a terminal.
+
 ## Passing flags to the underlying tool
 
 rig owns a small set of flags per verb (`--all`, `--filter`, `--watch`, `-i`, plus

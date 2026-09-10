@@ -6,6 +6,7 @@
 package detect
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -216,6 +217,31 @@ func CommandFor(eco, verb, root string) (argv []string, ok bool) {
 	}
 	cmd, has := e.Info().DevCommands[verb]
 	return cmd, has
+}
+
+// VerbSkipReason reports why the package in dir cannot run verb, or "" when it
+// can. CommandFor answers whether an ECOSYSTEM maps a verb; this answers
+// whether the package in front of us actually provides it.
+//
+// They differ only where a verb is defined by the project rather than by the
+// toolchain. A Node verb is a package.json script, so a workspace package that
+// doesn't declare it has nothing to run — pnpm/npm would fail with a
+// missing-script error, which is not a failing typecheck but the absence of
+// one. .NET/Go/Rust verbs are canonical toolchain commands every project of
+// that ecosystem answers to, so nothing is skipped there.
+//
+// Decided from the manifest rather than from the package manager's stderr: the
+// wording of that error differs per manager and per version, and a run that is
+// genuinely broken must never be read as "nothing to do".
+func VerbSkipReason(eco, verb, dir string) string {
+	if eco != Node {
+		return ""
+	}
+	script, isScript := nodeScript[verb]
+	if !isScript || NodeHasScript(dir, script) {
+		return ""
+	}
+	return fmt.Sprintf("no %q script", script)
 }
 
 // Verbs lists the everyday dev-loop verbs rig exposes (in display order).

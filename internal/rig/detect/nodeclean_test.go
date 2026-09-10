@@ -39,3 +39,31 @@ func TestNodeHasScript(t *testing.T) {
 		t.Error("absent script should not be detected")
 	}
 }
+
+func TestVerbSkipReason(t *testing.T) {
+	// A Node package provides a verb only if its package.json declares the
+	// script — that is the difference between "nothing to typecheck here" and
+	// "the typecheck failed".
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"),
+		[]byte(`{"scripts":{"build":"tsc"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := VerbSkipReason(Node, plugin.VerbBuild, dir); got != "" {
+		t.Errorf("declared script should not skip, got %q", got)
+	}
+	if got := VerbSkipReason(Node, plugin.VerbTypecheck, dir); got != `no "typecheck" script` {
+		t.Errorf("missing script reason = %q", got)
+	}
+	// Verbs the package manager answers itself (install, add, …) are not
+	// project scripts and are never skipped.
+	if got := VerbSkipReason(Node, plugin.VerbInstall, dir); got != "" {
+		t.Errorf("install is not a script verb, got %q", got)
+	}
+	// Every project of a toolchain-verb ecosystem answers to its verbs.
+	for _, eco := range []string{DotNet, Go, Cargo} {
+		if got := VerbSkipReason(eco, plugin.VerbTypecheck, dir); got != "" {
+			t.Errorf("%s should never skip, got %q", eco, got)
+		}
+	}
+}

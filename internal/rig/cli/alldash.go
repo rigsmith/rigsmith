@@ -69,6 +69,11 @@ type allTask struct {
 	dir  string // absolute
 	rel  string // dir relative to the repo root, for display
 	argv []string
+	// skip, when set, is why this package doesn't define the verb (e.g. a Node
+	// package with no such script). Such a package is listed and reported as
+	// skipped, never run — argv stays resolved so picking it directly still
+	// runs the ecosystem's command and reports whatever it says.
+	skip string
 }
 
 type allState int
@@ -111,6 +116,7 @@ type allModel struct {
 	cancelled bool
 	okCount   int
 	failCount int
+	skipCount int
 }
 
 func newAllModel(verb string, tasks []allTask, cancel context.CancelFunc) allModel {
@@ -154,6 +160,7 @@ func (m allModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case allSkippedMsg:
 		m.rows[msg.idx].state = allSkipped
+		m.skipCount++
 		return m, nil
 	case allDoneMsg:
 		m.done = true
@@ -201,6 +208,9 @@ func (m allModel) View() string {
 		if m.failCount > 0 {
 			summary += "   " + allFailStyle.Render(fmt.Sprintf("✗ %d failed", m.failCount))
 		}
+		if m.skipCount > 0 {
+			summary += "   " + allDimStyle.Render(fmt.Sprintf("– %d skipped", m.skipCount))
+		}
 		if m.cancelled {
 			summary += "   " + allDimStyle.Render("(cancelled)")
 		}
@@ -229,6 +239,11 @@ func (m allModel) rowLine(i int, r allRow) string {
 	meta := r.task.eco
 	if r.task.rel != "" && r.task.rel != "." {
 		meta = r.task.rel + " · " + r.task.eco
+	}
+	// A package that doesn't define the verb says so on its own row, so a dim
+	// dash never reads as "silently dropped".
+	if r.state == allSkipped && r.task.skip != "" {
+		meta += " · " + r.task.skip
 	}
 	return "  " + glyph + " " + name + "  " + allDimStyle.Render(meta)
 }
@@ -291,7 +306,9 @@ func runAcrossDashboard(cmd *cobra.Command, tasks []allTask, verb string) error 
 
 	go func() {
 		for i, t := range tasks {
-			if ctx.Err() != nil {
+			// A package that doesn't define the verb, or a run the user
+			// cancelled: both are work that never started, not work that failed.
+			if t.skip != "" || ctx.Err() != nil {
 				prog.Send(allSkippedMsg{i})
 				continue
 			}

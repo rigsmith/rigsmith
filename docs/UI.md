@@ -296,15 +296,25 @@ major = red `9`, minor = yellow `11`, patch = green `10`.
   status display — see what's building, what passed, what failed, at a glance.
 - **What you see:** `── <verb> --all ──` then one row per runnable package (topo
   order) with a live status glyph — `○` pending, a spinner while running, `✓` ok
-  (green), `✗` failed (red), `–` skipped. Under the running package its output
+  (green), `✗` failed (red), `–` skipped (dim, with the reason after the path and
+  ecosystem, e.g. `no "typecheck" script`). Under the running package its output
   streams in (last ~8 lines, dim). Footer while running: `ctrl+c cancel`; on
-  finish: `✓ N ok   ✗ M failed   (cancelled)`.
+  finish: `✓ N ok   ✗ M failed   – K skipped   (cancelled)`.
 - **What it does:** runs each package's command sequentially in dependency order
   (a goroutine feeds the program), **continuing through failures** so you see the
-  full picture (the sequential path still aborts on the first failure). Exits
-  non-zero if any package failed. `ctrl+c`/`q` cancels the remaining packages and
+  full picture. Exits non-zero if any package failed. The plain sequential path
+  behaves identically, so what a run reports no longer depends on whether stdout
+  happened to be a terminal. `ctrl+c`/`q` cancels the remaining packages and
   kills the running command (context cancellation); a clean cancel exits 0.
   Renders inline (no alt-screen), so the final state stays in scrollback.
+- **Skipped packages:** a package that doesn't define the verb is listed as
+  skipped and never run — a Node package.json without that script, say. That is
+  the absence of work, not work that failed: it doesn't affect the exit code,
+  while a script that runs and exits non-zero still fails the run. The plain
+  sequential path reports the same thing as
+  `– <pkg> (<eco>) — skipped: <reason>`, and closes with the same
+  `✓ N ok   ✗ M failed   – K skipped` counts. When no package defines the verb at
+  all, the run errors instead of quietly succeeding.
 - **Note:** output is captured (combined stdout+stderr) to stream it into the
   rows, so child-process TTY coloring is lost — the tradeoff for the live view.
 
