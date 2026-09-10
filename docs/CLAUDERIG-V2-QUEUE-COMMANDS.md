@@ -1,4 +1,4 @@
-# Explicit queued Claude commands (7b, 7c.2a)
+# Explicit queued Claude commands (7b, 7c.2a, 7c.2b.1)
 
 V2 exposes a foreground queue workflow for deliberate testing and use. It does
 not install a worker or route hooks. Ordinary `sync`, `pull` and hooks keep their
@@ -256,9 +256,46 @@ A successful manual sync reports the number of acknowledged requests, without
 claiming that the queue is empty. Ordinary `clauderig sync` and installed hooks
 retain their existing synchronous behavior and do not acknowledge queue work.
 
+## Prepare a request from hook input (7c.2b.1)
+
+`clauderig queue prepare --hook --output request.json < hook.json` translates a
+[Claude Code hook payload](https://code.claude.com/docs/en/hooks) into the same
+private, immutable producer file used by manual preparation. It saves intent;
+it does not enqueue, publish, install hooks or start a worker. Use a fresh output
+file for each new hook event, then `clauderig queue enqueue request.json`. Retry
+admission with that same file, never by preparing the payload again. Existing
+hook installation remains synchronous; automatic routing and producer-file
+recovery/cleanup remain 7c.2b.2 work.
+
+The input must be a complete JSON object, including EOF, within two seconds and
+128 KiB. Empty/blank, malformed, duplicate or case-aliased routing fields,
+trailing documents, invalid UTF-8, and unsupported events fail before identity
+capture or request creation. Unlike the legacy `sync --flush` reader, an open
+pipe after the object still times out. A missing or failed input never means
+flush everything. `--hook` cannot be combined with `--session` or `--flush`.
+
+Only `Stop` and `SessionEnd` are accepted. Require `session_id`, `transcript_path`
+and `hook_event_name`; reject nonempty subagent `agent_id`. The transcript must
+be an absolute native path spelled under the configured, enabled CLI root as
+`projects/<project>/<canonical-session-id>.jsonl`. Alternate source roots work;
+relative paths, another source and mismatched/nested session paths fail. This is
+an intent/path check, not proof that the transcript exists or remains unchanged.
+The worker later checks source availability, reads the session and subagents,
+and refuses missing or ambiguous captures. Keep source and runtime paths stable.
+
+`Stop` records normal flush intent. `SessionEnd` records selected flush for its
+single transcript, preserving the session group without broadening to all
+transcripts. Unknown vendor fields are ignored; message text, caller-supplied
+identity and event IDs are never copied to the request. Account attribution is
+read once when preparing; unavailable identity requires `--unknown-identity`.
+Saved requests retain that attribution, generated event ID and timestamp on
+replay. Hook preparation sends its success message to stderr and leaves stdout
+empty. It uses the existing exclusive-file, isolation and durability checks;
+Windows private-directory ACLs remain a caller prerequisite.
+
 ## Next
 
-The internal runtime bridge (7c.1) and explicit manual command (7c.2a) provide
-manual coverage. Opt-in hook routing, automatic coordination for ordinary sync,
-and stop/drain/rollback remain 7c.2b. Request-file preparation remains the manual
-producer contract, not the future hook input protocol.
+The internal runtime bridge (7c.1), explicit manual command (7c.2a) and bounded
+hook-request preparation (7c.2b.1) are available. Opt-in hook installation,
+automatic admission with producer-file recovery/cleanup, ordinary-sync routing,
+and stop/drain/rollback remain 7c.2b.2.

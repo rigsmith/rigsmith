@@ -11,6 +11,7 @@ installable by `curl | sh` / Homebrew / Scoop on any machine.
 ```sh
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
 clauderig queue                # v2: explicit saved requests, foreground worker, manual sync, status/retry/drain
+clauderig queue prepare --hook --output hook-request.json < hook.json  # save intent; then enqueue that file
 clauderig queue sync --flush   # v2: manual sync, confirm covered queue requests
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)

@@ -514,3 +514,17 @@ The command requires private remote checks and shared history, even for previews
 It does not debounce or launch merge tools. The first interrupt lets this sync
 finish; a second cancels and waits for cleanup. Ordinary sync/hooks keep their
 existing behavior. Keep profile and runtime locations stable during the operation.
+
+### Prepare from a hook payload
+
+`clauderig queue prepare --hook --output request.json < hook.json` saves a Stop or
+SessionEnd request for later `queue enqueue request.json`. It requires a fresh,
+private output file. Retry enqueue with that same file to preserve its event and
+original account. Preparation alone does not enqueue or install a hook.
+
+Input must finish within two seconds and 128 KiB. It must name the matching
+session transcript under the configured CLI projects directory. Stop records
+normal capture; SessionEnd selects only that transcript for flush. Empty or bad
+input fails without falling back to flushing everything. `--hook` conflicts with
+`--session` and `--flush`. Success goes to stderr; stdout stays empty. No message
+text from the payload is saved. Installed hooks remain synchronous.

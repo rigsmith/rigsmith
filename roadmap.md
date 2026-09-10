@@ -21,7 +21,8 @@ Opt-in rollout has started with persisted queue/store lifecycle and producer
 attribution ([#379](https://github.com/rigsmith/rigsmith/pull/379)); explicit queue commands (7b) merged in [#380](https://github.com/rigsmith/rigsmith/pull/380).
 
 The runtime manual-sync bridge merged in [#381](https://github.com/rigsmith/rigsmith/pull/381);
-the explicit manual command is in review in [#382](https://github.com/rigsmith/rigsmith/pull/382).
+the explicit manual command merged in [#382](https://github.com/rigsmith/rigsmith/pull/382).
+Bounded hook-request preparation is now in progress.
 
 The release path is now: finish opt-in queued Claude commands and hook routing,
 validate rollback and OS lifecycle behavior, then connect the separate `codexrig` adapter.
@@ -64,8 +65,9 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Persisted Claude queue runtime (7a) | Merged: [#379](https://github.com/rigsmith/rigsmith/pull/379). Fixed private stores, unique lifecycle binding and durable producer attribution; resume saved work after restart or staging-marker loss. [Contract](docs/CLAUDERIG-V2-QUEUE-RUNTIME.md). |
 | Explicit queued Claude commands (7b) | Merged: [#380](https://github.com/rigsmith/rigsmith/pull/380): init, saved producer requests, enqueue, supervised foreground worker, status/retry and drain with existing Git credentials and GitHub/GitLab privacy checks. [Contract](docs/CLAUDERIG-V2-QUEUE-COMMANDS.md). |
 | Runtime manual-sync coverage (7c.1) | Merged: [#381](https://github.com/rigsmith/rigsmith/pull/381). Validate the saved lifecycle before acknowledging fully covered requests; retain later arrivals and other identities. |
-| Manual queue sync command (7c.2a) | In review: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
-| Opt-in queued Claude hooks and rollback (7c.2b) | Planned: route opted-in hooks and ordinary sync, then validate stop/drain and rollback. |
+| Manual queue sync command (7c.2a) | Merged: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
+| Hook-request preparation (7c.2b.1) | In progress: decode bounded Stop/SessionEnd payloads into saved, retryable producer requests. |
+| Opt-in hook installation and rollback (7c.2b.2) | Planned: install opt-in routing, coordinate ordinary sync, and validate producer recovery, stop/drain and rollback. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
 The v1/v2 foundation was aligned after v1.15.1; that alignment did not publish a
