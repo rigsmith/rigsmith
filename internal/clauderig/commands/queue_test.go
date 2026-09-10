@@ -27,6 +27,7 @@ type queueCommandFixture struct {
 	dir                  string
 	deps                 queueCommandDeps
 	identity             service.Identity
+	profiles             []string
 	reads, privateChecks int
 	privateRemotes       []string
 }
@@ -52,7 +53,11 @@ func (f *queueCommandFixture) execute(ctx context.Context, args ...string) (stri
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs(append([]string{"--dir", f.dir}, args...))
+	base := []string{"--dir", f.dir}
+	for _, profile := range f.profiles {
+		base = append(base, "--profile", profile)
+	}
+	cmd.SetArgs(append(base, args...))
 	err := cmd.ExecuteContext(ctx)
 	return out.String(), err
 }
@@ -66,7 +71,7 @@ func (f *queueCommandFixture) must(t *testing.T, args ...string) string {
 }
 func (f *queueCommandFixture) open(t *testing.T) *service.QueueRuntime {
 	t.Helper()
-	r, err := service.OpenQueueRuntime(t.Context(), f.dir, f.req, nil)
+	r, err := service.OpenQueueRuntime(t.Context(), f.dir, f.req, f.profiles)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +217,8 @@ func TestQueueCommandStartupRefusalPreservesWork(t *testing.T) {
 	}
 }
 
-func TestQueueCommandSupervisedDrain(t *testing.T) {
+func newQueueSupervisedFixture(t *testing.T, configure ...func(*queueCommandFixture)) (*queueCommandFixture, func(...string) string) {
+	t.Helper()
 	if os.Getenv("CLAUDERIG_E2E") != "1" {
 		t.Skip("set CLAUDERIG_E2E=1 for synthetic Git integration")
 	}
@@ -226,6 +232,9 @@ func TestQueueCommandSupervisedDrain(t *testing.T) {
 		t.Fatalf("build: %v %s", err, out)
 	}
 	f := newQueueFixture(t)
+	for _, customize := range configure {
+		customize(f)
+	}
 	root := filepath.Dir(f.dir)
 	t.Setenv("HOME", f.req.Machine.Home)
 	t.Setenv("USERPROFILE", f.req.Machine.Home)
@@ -259,6 +268,13 @@ func TestQueueCommandSupervisedDrain(t *testing.T) {
 	f.deps.supervise = func(ctx context.Context) (context.Context, error) {
 		return process.WithSupervisor(ctx, binary, "__queue-supervisor"), nil
 	}
+	return f, runGit
+}
+
+func TestQueueCommandSupervisedDrain(t *testing.T) {
+	f, runGit := newQueueSupervisedFixture(t)
+	root := filepath.Dir(f.dir)
+	remote := f.req.Config.Remote
 	f.must(t, "init")
 	session := filepath.Join(f.req.Machine.Home, ".claude", "projects", "-workspace-acme", "s.jsonl")
 	if err := os.MkdirAll(filepath.Dir(session), 0700); err != nil {

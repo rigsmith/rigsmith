@@ -1,12 +1,13 @@
-# Explicit queued Claude commands (7b)
+# Explicit queued Claude commands (7b, 7c.2a)
 
 V2 exposes a foreground queue workflow for deliberate testing and use. It does
 not install a worker or route hooks. Ordinary `sync`, `pull` and hooks keep their
 existing synchronous behavior. Use v2 clients for operations sharing staging.
 Actual OS reboot/hibernation validation remains a general-release gate.
 
-Bare `queue` on a terminal offers init, status, run and drain. Prepare/enqueue/retry
-require explicit command arguments; off a terminal, bare `queue` prints help.
+When run outside a terminal, bare `queue` prints help; when run in a terminal,
+it offers init, status, sync, run and drain. Prepare/enqueue/retry require explicit
+command arguments.
 
 ## Start and accept work
 
@@ -17,7 +18,7 @@ your provider/URL), or noninteractive `clauderig init --yes --remote <url>`. The
 paths invoke the provider-aware private-repo verifier. The existing interactive
 init wizard still skips remote setup without `gh`, and doctor may report privacy
 unverified without `gh`; this queue preview does not change those older gates.
-Queue init/run/drain perform their own provider-aware checks.
+Queue init/sync/run/drain perform their own provider-aware checks.
 The queue uses the configured private HTTPS GitHub/GitLab remote and existing
 Git credential helpers (`gh auth setup-git` where appropriate). Privacy checks use
 `gh` for GitHub and `glab` for GitLab, falling back to `GITHUB_TOKEN`/`GH_TOKEN`
@@ -211,10 +212,53 @@ admission limits, not total/peak disk reservations; scratch and recovery substor
 are excluded. Raising a limit can allow retained work to proceed after an explicit
 retry. This slice exposes no archive deletion or receipt compaction command.
 
+## Manual sync with queue coverage (7c.2a)
+
+`clauderig queue sync` runs one supervised manual sync with the current account
+and acknowledges complete pending requests whose captured CLI session groups
+are proven in the confirmed remote snapshot. It does not create a producer
+request or drain the queue. Other accounts, later arrivals, incomplete evidence
+and work already attempted by the worker remain queued. Inspect `queue status`
+afterward; use retry/run/drain for blocked or retained work.
+
+```sh
+clauderig queue sync --dry-run  # stage/scan a preview; acknowledge nothing
+clauderig queue sync --flush    # publish all changed transcript tails and confirm coverage
+```
+
+Use the same `--dir` and repeated `--profile` flags as initialization. Manual sync
+uses ordinary sync's complete local Desktop profile selection, so every such
+profile must belong to the runtime. A runtime initialized for a subset can still
+use its worker/run/drain workflow; adding flags does not migrate its binding.
+Missing, malformed or unreadable profile metadata refuses the command. Keep
+profile membership, source directories, link targets and the runtime association
+stable throughout the operation. Validation checks are observations at defined
+points, not fencing of external edits; see the [runtime contract](CLAUDERIG-V2-QUEUE-RUNTIME.md#manual-sync-coverage-bridge-7c1).
+
+On Windows, provision the runtime and its files under a private user directory
+before using this command. Inherited ACLs are a caller prerequisite: runtime
+validation does not inspect or repair them and does not make shared or
+other-user-writable state safe to use. See [runtime permissions](CLAUDERIG-V2-QUEUE-RUNTIME.md).
+
+The command checks configured remote privacy and initialized shared staging/remote
+history before capture, including for dry runs. It reads live identity once at
+capture; failed or invalid identity suppresses acknowledgement. It never replaces
+saved producer attribution with that current identity. `--flush` includes all
+changed transcript tails; it does not read hook payloads from stdin. There is no
+hook debounce, local-only mode, external merge tool or archive-limit flag here.
+Dry runs stage and scan without publishing or preparing/acknowledging coverage.
+
+Worker ownership spans capture, publication confirmation and acknowledgement.
+An active batch can report busy; retry after it finishes. The first interrupt
+lets the single sync finish; a second cancels and waits for supervised cleanup.
+Failure can occur after a snapshot was published; inspect status before retrying.
+A successful manual sync reports the number of acknowledged requests, without
+claiming that the queue is empty. Ordinary `clauderig sync` and installed hooks
+retain their existing synchronous behavior and do not acknowledge queue work.
+
 ## Next
 
-Milestone 7c.1 adds the internal runtime manual-sync coverage bridge.
-Milestone 7c.2 connects commands, opt-in hooks and stop/drain/rollback.
-Until then, explicit queue work and synchronous sync can serialize on staging,
-but a synchronous sync does not acknowledge pending queue events. Request-file
-preparation is the manual producer contract, not the future hook input protocol.
+The internal runtime bridge (7c.1) and explicit manual command (7c.2a) provide
+manual coverage. Opt-in hook routing, automatic coordination for ordinary sync,
+and stop/drain/rollback remain 7c.2b. Request-file preparation remains the manual
+producer contract, not the future hook input protocol.

@@ -10,8 +10,9 @@ snapshot and retains its complete ancestry in a self-contained bundle. Claude's
 binding validation. Claude now also has a retained-publication adapter and queue
 execution, with end-user changesets for planned v2 behavior. The [7b foreground
 commands](CLAUDERIG-V2-QUEUE-COMMANDS.md) expose supervised run/drain, saved producer
-requests, status and retry. The internal runtime coverage bridge is 7c.1. Manual-sync command
-acknowledgement, queued hooks and rollback remain 7c.2 work. Ordinary synchronous commands are unchanged.
+requests, status and retry. The internal runtime bridge (7c.1) powers explicit
+`queue sync` acknowledgement (7c.2a). Automatic hook/ordinary-sync routing and
+rollback remain 7c.2b work. Ordinary synchronous commands are unchanged.
 
 ## Identity and durability
 
@@ -137,7 +138,7 @@ Queue operations continue to use the original cancellation context.
   tools remain unsupported in queued execution.
 - Explicit queue/status/retry/drain commands and internal coverage/capacity/
   reclamation APIs are implemented. Hook routing, synchronous coverage wiring
-  and rollback remain 7c.2. Cleanup command exposure and local-only queued
+  and rollback remain 7c.2b. Cleanup command exposure and local-only queued
   completion remain outside the foreground workflow.
 
 Seeds are deduplicated by exact commit SHA, but seed and final commit bundles

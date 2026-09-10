@@ -7,7 +7,9 @@ description: >
   config across machines, v2 queued sync + worktree/PR guard). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, or syncing Claude
-  Code setup or managing its saved sync queue — even if the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
+  Code setup, managing its saved sync queue, or using manual queue sync with
+  confirmed acknowledgement, dry-run previews or transcript flushing — even if
+  the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
 ---
 
@@ -223,6 +225,7 @@ clauderig queue init
 clauderig queue prepare --session <session-id> --output <private-request-file> --flush
 clauderig queue enqueue <private-request-file>
 clauderig queue status              # JSON progress and capacity
+clauderig queue sync --flush        # manual sync; acknowledge fully covered current-account requests
 clauderig queue run                 # supervised foreground worker
 clauderig queue retry <batch-id>     # only after repairing a blocked batch
 clauderig queue drain               # stop producers first; process ready work until idle
@@ -236,13 +239,17 @@ after an uncertain result; never rerun prepare, edit its checksum/identity or
 change its timestamp to retry. Keep the file through completion. Enqueue and
 workers use saved attribution, never the worker's current login.
 
-The first interrupt stops after the current batch; a second cancels and waits for
-supervised cleanup. Blocked, delayed or interrupted drain returns nonzero without
+A worker’s first interrupt stops after its current batch; for `queue sync`, it
+lets the single sync finish. A second cancels and waits for supervised cleanup. Blocked, delayed or interrupted drain returns nonzero without
 dropping accepted work. Inspect status and repair the cause before retrying;
 never reset/copy runtime children or bypass process fences/profile isolation.
 Keep paths/links stable and Windows files under a private inherited ACL. Ordinary
-sync does not acknowledge pending queue events yet; hook routing, that coverage
-bridge and rollout rollback are the next milestone. Actual OS reboot/hibernation
+sync does not acknowledge pending queue events. Use `queue sync` for explicit
+manual acknowledgement: its profile selection must match every profile ordinary
+sync discovers. `--dry-run` stages/scans without acknowledgement; `--flush`
+includes all changed tails and does not read hook stdin. Privacy/shared-history
+checks apply to previews too. Other identities and incomplete/attempted work stay
+queued; inspect status. Opt-in hook routing and rollout rollback remain pending. Actual OS reboot/hibernation
 validation remains a general-release gate.
 
 ### Worktree & PR discipline (the `clauderig guard` hook)

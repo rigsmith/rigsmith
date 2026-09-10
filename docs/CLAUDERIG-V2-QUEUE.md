@@ -13,8 +13,9 @@ connects these services to RunOne, including confirmed retained publication.
 init, prepare/enqueue, status, retry, supervised run and drain (7b).
 The v2 queue has end-user changesets for its planned release behavior, including
 completion of staged merges before retrying committed batches. Shipped
-synchronous commands remain unchanged. Queued hook routing and manual-sync
-coverage/rollback wiring remain 7c.2 work; no background service is installed.
+synchronous commands remain unchanged. Explicit `queue sync` provides manual
+coverage in 7c.2a. Hook/ordinary-sync routing and rollback remain 7c.2b work;
+no background service is installed.
 
 ## Identity and generations
 
@@ -260,13 +261,14 @@ remains the gate for synchronous behavior.
 
 - The [persisted runtime](CLAUDERIG-V2-QUEUE-RUNTIME.md) saves producer identity
   and resolves fresh inputs without reading a worker login. Explicit foreground
-  producers/workers are wired; opt-in hook producers remain 7c.2 work.
+  producers/workers are wired; opt-in hook producers remain 7c.2b work.
 - Durable capture/seed/commit dependencies, native conflict recovery and internal
   capacity/reclamation APIs are implemented. Cleanup commands remain deferred.
 - Hook routing must preserve requested sources until capture and handle missing
   sources/attribution without acknowledging missing data.
 - Shared coverage checkpoints and Claude evidence/confirmation services are
-  implemented. Connecting ordinary sync to `SyncWithCoverage` remains 7c.2 work;
+  implemented. Explicit `queue sync` uses the runtime bridge in 7c.2a;
+  connecting ordinary sync automatically remains 7c.2b work;
   a queue high-water mark alone cannot establish coverage.
 - Keep worker-before-staging lock order and short queue transactions. Pass the
   independent cancellation context, not a borrowed staging-store capability.
@@ -274,7 +276,7 @@ remains the gate for synchronous behavior.
   startup check. Actual OS restart/hibernation validation remains a release gate;
   external merge tools remain unsupported by queued execution.
 - Foreground status/retry/drain are exposed. Hook stop/drain coordination and
-  rollback remain 7c.2; local-only queued completion remains unsupported.
+  rollback remain 7c.2b; local-only queued completion remains unsupported.
 
 Validation covers duplicate IDs and conflicting retries, coalescing, provenance
 separation, sealed generations, progress guards, blocked work, retry deadlines,
@@ -339,7 +341,8 @@ and phase persistence, absent saved artifacts, changed bindings/provenance,
 conflict blocking, detached inputs, and staging ownership across phase gaps and
 manual-sync attempts. Existing artifact, queue and fixed-baseline compatibility
 tests remain required. Foreground startup, supervised execution and status are
-now wired in 7b; hook rollout, manual-sync coverage wiring and rollback remain 7c.2.
+now wired in 7b, with explicit `queue sync` coverage in 7c.2a;
+hook/ordinary-sync routing and rollback remain 7c.2b.
 Artifact/receipt cleanup command exposure and actual OS restart validation remain separate gates.
 
 ## Bounded failure policy
@@ -518,9 +521,11 @@ fixture paths are reused without adding credentials or transport mechanisms.
 
 The 7c.1 [runtime bridge](CLAUDERIG-V2-QUEUE-RUNTIME.md#manual-sync-coverage-bridge-7c1)
 validates the persisted lifecycle before using this manual-sync coverage service.
-It is not yet wired into commands or hooks.
+The explicit `queue sync` command uses it in 7c.2a; automatic hook routing remains
+pending.
 Ordinary `Sync` keeps its existing behavior. Explicit foreground queue commands
-are wired in 7b; coverage/hook routing and rollback remain 7c.2. Cleanup command
+are wired in 7b, with explicit manual coverage in 7c.2a; ordinary-sync/hook
+routing and rollback remain 7c.2b. Cleanup command
 exposure and actual OS restart validation remain separate gates;
 Desktop request routing and the separate Codex adapter remain future work.
 
@@ -603,7 +608,7 @@ A crashed process releasing its OS leases alone cannot prove orphaned helpers
 have stopped. The later 6b.6b.2 process-supervision and fencing work supplies that
 ownership boundary, selected by the 7b foreground commands. Actual OS restart/
 hibernation validation remains a release gate. Hook producer stop/drain
-coordination and rollback remain 7c.2; synchronous commands and hooks keep their
+coordination and rollback remain 7c.2b; synchronous commands and hooks keep their
 existing behavior.
 
 

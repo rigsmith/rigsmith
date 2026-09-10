@@ -11,7 +11,8 @@ Windows.
 
 ```sh
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
-clauderig queue                # v2: explicit saved requests, foreground worker, status/retry/drain
+clauderig queue                # v2: explicit saved requests, foreground worker, manual sync, status/retry/drain
+clauderig queue sync --flush   # v2: manual sync, confirm covered queue requests
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)

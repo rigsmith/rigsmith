@@ -16,9 +16,9 @@ func NewRootCmd(version string) *cobra.Command {
 		Long: "claudeRig syncs your Claude Code config, skills, and session history to your\n" +
 			"own git remote and restores it on any machine — rewriting paths across OSes\n" +
 			"and never leaking secrets. Pick up where you left off on a different computer.\n\n" +
-			"Use queue to save requests, enqueue, inspect/retry work, and run or drain a\n" +
-			"supervised foreground worker (v2 preview). Ordinary sync and hooks remain\n" +
-			"synchronous; no background service is installed.",
+			"Use queue to save requests, inspect/retry work, sync with queued-request\n" +
+			"acknowledgement, or run/drain a foreground worker (v2 preview).\n" +
+			"Ordinary sync and hooks remain synchronous; no background service is installed.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}

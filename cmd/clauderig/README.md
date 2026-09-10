@@ -10,7 +10,8 @@ installable by `curl | sh` / Homebrew / Scoop on any machine.
 
 ```sh
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
-clauderig queue                # v2: explicit saved requests, foreground worker, status/retry/drain
+clauderig queue                # v2: explicit saved requests, foreground worker, manual sync, status/retry/drain
+clauderig queue sync --flush   # v2: manual sync, confirm covered queue requests
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
 clauderig restore --dir /tmp/x # restore the CLI payload into a folder (inspect, don't touch ~/.claude)
@@ -96,7 +97,7 @@ local backup; older clients do not participate in this coordination.
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
-| `queue` | V2 preview: `init`, `prepare`, `enqueue`, `status`, `retry`, `run`, `drain`. [Explicit workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md); hooks remain synchronous |
+| `queue` | V2 preview: `init`, `prepare`, `enqueue`, `status`, `retry`, `sync`, `run`, `drain`. [Explicit workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md); hooks remain synchronous |
 | `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; all syncs take the staging lock; `--hook` also debounces the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
