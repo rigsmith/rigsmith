@@ -1021,3 +1021,42 @@ func TestQueueCommandRejectsNoncanonicalSavedSession(t *testing.T) {
 	}
 	f.must(t, "enqueue", path)
 }
+
+func TestQueueCommandUnresolvedSourceAndStagingLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges")
+	}
+	for _, source := range []bool{true, false} {
+		f := newQueueFixture(t)
+		f.must(t, "init")
+		originalRuntime := f.dir
+		alias := f.req.StagingDir
+		if source {
+			alias = filepath.Join(f.req.Machine.Home, ".claude")
+		}
+		if err := os.MkdirAll(filepath.Dir(alias), 0700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "missing")
+		if err := os.Symlink(target, alias); err != nil {
+			t.Fatal(err)
+		}
+		for _, dir := range []string{target, filepath.Join(target, "skills", "queue")} {
+			f.dir = dir
+			if _, err := f.execute(t.Context(), "init"); !errors.Is(err, queue.ErrBinding) {
+				t.Fatal("activated unresolved root", source, err)
+			}
+			if _, err := os.Lstat(target); !os.IsNotExist(err) {
+				t.Fatal("created root target", source, err)
+			}
+		}
+		f.dir = originalRuntime
+		if _, err := f.execute(t.Context(), "status"); !errors.Is(err, queue.ErrBinding) {
+			t.Fatal("reopened with unresolved root", source, err)
+		}
+		if err := os.Remove(alias); err != nil {
+			t.Fatal(err)
+		}
+		f.must(t, "status")
+	}
+}

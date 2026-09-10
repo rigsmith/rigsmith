@@ -138,15 +138,15 @@ func prepareQueueRuntime(dir string, req SyncRequest, profiles []string) (*Queue
 	if req.Config.Remote == "" {
 		return nil, queue.ErrBinding
 	}
-	root, err := canonicalCapturePath(dir)
+	root, err := queueIsolationPath(dir)
 	if err != nil {
 		return nil, err
 	}
-	stage, err := canonicalCapturePath(req.StagingDir)
+	stage, err := queueIsolationPath(req.StagingDir)
 	if err != nil {
 		return nil, err
 	}
-	roots, err := captureRoots(req, profiles)
+	roots, err := captureRootsWithPathResolver(req, profiles, queueIsolationPath)
 	if err != nil {
 		return nil, err
 	}
@@ -494,11 +494,11 @@ func (r *QueueRuntime) RetryBlocked(ctx context.Context, id uint64) error {
 // a synchronized path appear private. Filesystem roots must remain stable while
 // the caller creates or reads the file, as with the runtime's other path checks.
 func (r *QueueRuntime) CheckRequestPath(path string) error {
-	candidate, err := canonicalCapturePath(path)
+	candidate, err := queueIsolationPath(path)
 	if err != nil {
 		return err
 	}
-	roots, err := captureRoots(r.request, r.profiles)
+	roots, err := captureRootsWithPathResolver(r.request, r.profiles, queueIsolationPath)
 	if err != nil {
 		return err
 	}
@@ -506,7 +506,7 @@ func (r *QueueRuntime) CheckRequestPath(path string) error {
 		return err
 	}
 
-	stage, err := canonicalCapturePath(r.request.StagingDir)
+	stage, err := queueIsolationPath(r.request.StagingDir)
 	if err != nil {
 		return err
 	}
@@ -530,7 +530,7 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 	// Exclude the whole local profile container (including future profiles) and
 	// each existing profile and data directory target, including unselected aliases.
 	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
-	if _, err := queueDesktopProfilePath(profileStore.Root); err != nil {
+	if _, err := queueIsolationPath(profileStore.Root); err != nil {
 		return err
 	}
 	info, err := os.Stat(profileStore.Root)
@@ -555,7 +555,7 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 		profile := filepath.Join(profileStore.Root, entry.Name())
 		// Unlike display-oriented profile discovery, safety checks cannot skip
 		// broken links: creating their missing target would activate the profile.
-		if _, err := queueDesktopProfilePath(profile); err != nil {
+		if _, err := queueIsolationPath(profile); err != nil {
 			return err
 		}
 		info, err := os.Stat(profile)
@@ -567,7 +567,7 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 		}
 	}
 	for _, path := range paths {
-		root, err := queueDesktopProfilePath(path)
+		root, err := queueIsolationPath(path)
 		if err != nil {
 			return err
 		}
@@ -579,9 +579,14 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 	return nil
 }
 
-// queueDesktopProfilePath permits missing directories but refuses any unresolved
+// queueIsolationPath permits missing directories but refuses any unresolved
 // existing symlink ancestor before canonicalCapturePath reconstructs a path.
-func queueDesktopProfilePath(path string) (string, error) {
+func queueIsolationPath(path string) (resolved string, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("cannot verify queue path isolation; repair unresolved links or path permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
+		}
+	}()
 	for existing := filepath.Clean(path); ; existing = filepath.Dir(existing) {
 		_, err := os.Lstat(existing)
 		if err == nil {

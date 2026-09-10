@@ -78,7 +78,8 @@ Runtime creation and reopening enforce the same exclusion of all Desktop
 profile and data-directory targets, even when no profiles are selected. A runtime
 that becomes exposed through a new profile link refuses reopening without changing
 its saved state. Keep filesystem roots and profile links stable during operations.
-Unresolved links at the Desktop store, profile or data-directory level refuse
+Unresolved links in enabled source roots, staging, runtime paths, or at the
+Desktop store, profile or data-directory level refuse
 queue operations before creating a runtime or its target directory. An unreadable
 or invalid profile store also refuses reopening with a queue-isolation diagnostic.
 Repair the local path/permissions and retry using the same runtime; do not reset
