@@ -423,6 +423,12 @@ operator assertion. It changes only the existing lock record; staging repair,
 secret scanning and confirmed publication remain required before acknowledgement.
 There is no automatic recovery at worker startup and no reset command.
 
+Queue startup validates any explicit supervisor lease before acquisition and
+binds Git inspection to the acquired staging lease. An expired or unrelated
+capability is rejected before history inspection or fetch, and a nested lease
+for another store is rejected by acquisition's existing inode check. This keeps
+startup commands from fencing an unrelated store on every supported platform.
+
 Native tests kill owners at prepared, running-with-descendants, and durably
 stopped boundaries, verify retained data, and ensure a drained but unconfirmed
 job remains fenced in the same boot. Tests cover native scope stability,
