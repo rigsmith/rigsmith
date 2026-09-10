@@ -61,14 +61,17 @@ func systemCreationFromSnapshot(data []byte) (int64, error) {
 			return 0, ErrRecoveryScope
 		}
 		info := (*windows.SYSTEM_PROCESS_INFORMATION)(unsafe.Pointer(&data[offset]))
+		next := uint64(info.NextEntryOffset)
+		if next != 0 && (next < uint64(header) || next > uint64(len(data)-offset-header) || next%uint64(unsafe.Alignof(windows.SYSTEM_PROCESS_INFORMATION{})) != 0) {
+			return 0, ErrRecoveryScope
+		}
 		if info.UniqueProcessID == 4 {
 			if info.InheritedFromUniqueProcessID != 0 || info.SessionID != 0 || info.CreateTime <= 0 {
 				return 0, ErrRecoveryScope
 			}
 			return info.CreateTime, nil
 		}
-		next := uint64(info.NextEntryOffset)
-		if next < uint64(header) || next > uint64(len(data)-offset) || next%uint64(unsafe.Alignof(windows.SYSTEM_PROCESS_INFORMATION{})) != 0 {
+		if next == 0 {
 			return 0, ErrRecoveryScope
 		}
 		offset += int(next)

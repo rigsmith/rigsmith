@@ -72,7 +72,7 @@ func TestWindowsRecoveryScopeAndPhases(t *testing.T) {
 
 func TestWindowsSystemCreationSnapshotValidation(t *testing.T) {
 	const header = int(unsafe.Sizeof(windows.SYSTEM_PROCESS_INFORMATION{}))
-	for _, mode := range []string{"valid", "truncated", "offset", "unaligned", "missing", "parent", "session", "time"} {
+	for _, mode := range []string{"valid", "truncated", "offset", "unaligned", "missing", "parent", "session", "time", "system-offset", "system-unaligned", "system-truncated-next"} {
 		t.Run(mode, func(t *testing.T) {
 			data := make([]byte, header*2)
 			first := (*windows.SYSTEM_PROCESS_INFORMATION)(unsafe.Pointer(&data[0]))
@@ -94,6 +94,14 @@ func TestWindowsSystemCreationSnapshotValidation(t *testing.T) {
 				second.SessionID = 1
 			case "time":
 				second.CreateTime = 0
+			case "system-offset":
+				second.NextEntryOffset = ^uint32(0)
+			case "system-unaligned":
+				data = append(data, make([]byte, header*2)...)
+				second = (*windows.SYSTEM_PROCESS_INFORMATION)(unsafe.Pointer(&data[header]))
+				second.NextEntryOffset = uint32(header + 1)
+			case "system-truncated-next":
+				second.NextEntryOffset = uint32(header)
 			}
 			got, err := systemCreationFromSnapshot(data)
 			if mode == "valid" {
@@ -102,6 +110,83 @@ func TestWindowsSystemCreationSnapshotValidation(t *testing.T) {
 				}
 			} else if err == nil {
 				t.Fatal("accepted invalid kernel identity", got)
+			}
+		})
+	}
+}
+
+type failingWindowsFence struct {
+	*storelock.Fence
+	phase string
+	err   error
+}
+
+func (f failingWindowsFence) SetRecoveryEvidence(data []byte) error {
+	e, err := parseEvidence(data)
+	if err != nil {
+		return err
+	}
+	if e.State == f.phase {
+		return f.err
+	}
+	return f.Fence.SetRecoveryEvidence(data)
+}
+
+func TestWindowsRecoveryCheckpointFailure(t *testing.T) {
+	for _, phase := range []string{"owned", "stopped"} {
+		t.Run(phase, func(t *testing.T) {
+			root := t.TempDir()
+			store := filepath.Join(root, "store")
+			ctx, release, err := storelock.Acquire(t.Context(), store, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			e, err := newEvidence()
+			if err != nil {
+				t.Fatal(err)
+			}
+			fence, err := storelock.BeginRecoverableFence(ctx, e.bytes())
+			if err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(root, "child")
+			cmd := helperCommand("return", marker)
+			fault := errors.New("injected checkpoint persistence failure")
+			err = runWindowsFenced(ctx, cmd, failingWindowsFence{fence, phase, fault}, e)
+			if !errors.Is(err, fault) {
+				t.Fatal("checkpoint failure lost", err)
+			}
+			if phase == "owned" {
+				if cmd.Process != nil {
+					t.Fatal("command launched without sealed ownership")
+				}
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatal("unsealed command produced a marker", err)
+				}
+			} else if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+				t.Fatal("fixture did not reach completed native cleanup")
+			}
+			data, err := fence.RecoveryEvidence()
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := parseEvidence(data)
+			want := "prepared"
+			if phase == "stopped" {
+				want = "owned"
+			}
+			if err != nil || got.State != want {
+				t.Fatalf("failure changed phase: %+v %v", got, err)
+			}
+			release()
+			changed, err := RecoverStore(t.Context(), store)
+			if phase == "owned" {
+				if !changed || err != nil {
+					t.Fatal("lost valid prelaunch evidence", changed, err)
+				}
+			} else if changed || !errors.Is(err, ErrWritersActive) {
+				t.Fatal("failed cleanup checkpoint was treated as proof", changed, err)
 			}
 		})
 	}

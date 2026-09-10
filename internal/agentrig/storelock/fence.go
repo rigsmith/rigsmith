@@ -191,6 +191,19 @@ func (f *Fence) RecoveryEvidence() ([]byte, error) {
 // prevent launch. Fixed-size checksummed records reject torn transitions; stale
 // completions cannot clear a later phase. The caller keeps the lease throughout.
 func (f *Fence) SetRecoveryEvidence(evidence []byte) error {
+	return f.setRecoveryEvidence(evidence, func(next []byte) error {
+		if n, err := f.file.WriteAt(next, 0); err != nil {
+			return err
+		} else if n != len(next) {
+			return io.ErrShortWrite
+		}
+		return f.file.Sync()
+	})
+}
+
+// The persistence boundary permits fault tests without changing live file or
+// lock ownership. A failure never advances the in-memory completion token.
+func (f *Fence) setRecoveryEvidence(evidence []byte, persist func([]byte) error) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(evidence) == 0 || len(evidence) > recoveryLimit {
@@ -207,12 +220,7 @@ func (f *Fence) SetRecoveryEvidence(evidence []byte) error {
 		return fmt.Errorf("%w: command identity changed", ErrFenced)
 	}
 	next := recoveryRecord(f.token[len(recoveryPrefix):len(recoveryPrefix)+32], evidence)
-	if n, err := f.file.WriteAt(next, 0); err != nil {
-		return err
-	} else if n != len(next) {
-		return io.ErrShortWrite
-	}
-	if err := f.file.Sync(); err != nil {
+	if err := persist(next); err != nil {
 		return err
 	}
 	f.token = next

@@ -397,6 +397,14 @@ Unix group fields in Windows evidence, changed hosts, and legacy v1 fences are
 refused. The protocol adds one durable transition before Git and one after
 verified cleanup. Ordinary synchronous execution does not select this protocol.
 
+If a flush fails, the caller reports failure and retains its old completion
+token. Recovery may later read the previous phase, a complete new phase, or a
+damaged frame. A previous `owned` phase stays blocked and damaged frames are
+rejected. A complete `stopped` frame is safe because it was generated only after
+native cleanup finished, even if its flush originally reported an error. Tests
+inject failed writes, partial frames and failed flushes at both transitions,
+and verify that ownership-seal failure prevents Git startup.
+
 Windows scope uses the validated, hashed machine GUID from the native registry
 view and the creation identity of the kernel's System process (PID 4, parent 0,
 session 0). `NtQuerySystemInformation(SystemProcessInformation)` supplies the

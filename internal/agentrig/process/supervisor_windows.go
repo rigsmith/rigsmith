@@ -23,6 +23,15 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 	if err != nil {
 		return err
 	}
+	return runWindowsFenced(ctx, cmd, fence, evidence)
+}
+
+type windowsFence interface {
+	SetRecoveryEvidence([]byte) error
+	Clear() error
+}
+
+func runWindowsFenced(ctx context.Context, cmd *exec.Cmd, fence windowsFence, evidence commandEvidence) error {
 	owner, err := prepare(cmd)
 	if err != nil {
 		return errors.Join(err, fence.Clear())
@@ -47,7 +56,7 @@ func runSupervised(ctx context.Context, cmd *exec.Cmd, supervisor supervisorComm
 
 // Called only after native ownership reports every writer stopped. Persisting
 // that proof makes a crash before Clear recoverable without another OS restart.
-func sealWindowsCleanup(fence *storelock.Fence, evidence commandEvidence) error {
+func sealWindowsCleanup(fence windowsFence, evidence commandEvidence) error {
 	evidence.State = "stopped"
 	return fence.SetRecoveryEvidence(evidence.bytes())
 }
