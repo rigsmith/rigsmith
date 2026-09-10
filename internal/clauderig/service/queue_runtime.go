@@ -614,3 +614,37 @@ func queueIsolationPath(path string) (resolved string, err error) {
 		suffix = append(suffix, filepath.Base(existing))
 	}
 }
+
+// SyncWithCoverage coordinates a manual sync with this runtime without exposing
+// its queue or allowing callers to substitute a lifecycle binding. Like ordinary
+// Sync, it discovers all local Desktop profiles and observes live identity once;
+// that actual capture policy must match this runtime's saved policy. Callers must
+// verify remote privacy and supply canonical command supervision. It installs no
+// hook and does not change ordinary Sync. Dry runs never acknowledge queued work.
+func (r *QueueRuntime) SyncWithCoverage(ctx context.Context, s Service, req SyncRequest) (CoverageSyncResult, error) {
+	if r == nil {
+		return CoverageSyncResult{}, queue.ErrBinding
+	}
+	return s.syncWithCoverage(ctx, req, r.q, r)
+}
+
+// coverageBinding validates fresh capture inputs and persisted association before
+// translating the policy binding. Never hold runtime ownership while acquiring
+// worker/staging ownership: producers remain able to enqueue during manual sync.
+func (r *QueueRuntime) coverageBinding(ctx context.Context, req SyncRequest, profiles []string) (queue.Binding, error) {
+	bindingReq := req
+	bindingReq.ResolveFlush = nil
+	bindingReq.AllowMergeTool = false
+	bindingReq.DryRun = false
+	binding, err := CaptureBinding(bindingReq, profiles)
+	if err != nil {
+		return queue.Binding{}, err
+	}
+	if binding != r.capture {
+		return queue.Binding{}, queue.ErrBinding
+	}
+	if _, err := r.inputs(ctx, QueueRuntimeInputs{Sync: bindingReq, Profiles: profiles}, ""); err != nil {
+		return queue.Binding{}, err
+	}
+	return r.binding, nil
+}

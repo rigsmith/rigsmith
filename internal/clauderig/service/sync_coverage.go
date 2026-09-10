@@ -43,7 +43,11 @@ type CoverageSyncResult struct {
 // Dry runs and local-only syncs never prepare or acknowledge work.
 // No worker/producer is installed. External merge tools remain unsupported here
 // until their process lifetime can be fenced by the worker lifecycle integration.
-func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue) (result CoverageSyncResult, err error) {
+func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue) (CoverageSyncResult, error) {
+	return s.syncWithCoverage(ctx, req, q, nil)
+}
+
+func (s Service) syncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue, runtime *QueueRuntime) (result CoverageSyncResult, err error) {
 	if err := requireCanonicalRunner(ctx, req.AllowMergeTool); err != nil {
 		return result, err
 	}
@@ -71,6 +75,11 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 		return result, err
 	}
 	req.Flush.Paths = slices.Clone(req.Flush.Paths)
+	if runtime != nil {
+		if _, err := runtime.coverageBinding(ctx, req, engine.LocalProfileNames()); err != nil {
+			return result, err
+		}
+	}
 	var remote *commitartifact.GitTransport
 	if !req.DryRun && req.Config.Remote != "" {
 		plan := adapter.PublicationPlan(req.Machine.Name, req.Config.Retention)
@@ -92,7 +101,7 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 	staging = canonicalContext(staging)
 	defer func() { err = canonicalResult(staging, err) }()
 	ctx = process.WithSupervisorLease(ctx, staging)
-	c := &manualCoverage{operation: ctx, worker: worker, queueDir: q.Directory()}
+	c := &manualCoverage{operation: ctx, worker: worker, queueDir: q.Directory(), runtime: runtime}
 	// Validate exclusion even for local-only/dry runs: their capture still walks.
 	if err := c.checkLayout(req, engine.LocalProfileNames()); err != nil {
 		return result, err
@@ -147,6 +156,7 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 }
 
 type manualCoverage struct {
+	runtime           *QueueRuntime
 	operation         context.Context
 	worker            *queue.Worker
 	queueDir, cliRoot string
@@ -200,7 +210,12 @@ func (c *manualCoverage) prepare(req SyncRequest, identity Identity, identityErr
 	bindingReq.ResolveFlush = nil
 	bindingReq.AllowMergeTool = false
 	bindingReq.DryRun = false
-	binding, err := CaptureBinding(bindingReq, profiles)
+	var binding queue.Binding
+	if c.runtime != nil {
+		binding, err = c.runtime.coverageBinding(c.operation, bindingReq, profiles)
+	} else {
+		binding, err = CaptureBinding(bindingReq, profiles)
+	}
 	if err != nil {
 		return err
 	}

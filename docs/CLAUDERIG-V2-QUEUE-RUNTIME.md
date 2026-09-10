@@ -167,3 +167,23 @@ concurrent producers, bounded metadata, unknown attribution, missing/reset/forei
 queues, source overlap, moved roots, linked stores, changed config and an offline
 committed-phase restart that publishes the original producer's bytes/attribution.
 The pinned v1 compatibility baseline remains unchanged.
+
+## Manual-sync coverage bridge (7c.1)
+
+`QueueRuntime.SyncWithCoverage` uses the existing manual coverage workflow with
+this runtime's private queue. It validates fresh configuration, path isolation,
+and persisted lifecycle metadata before capture, then checks the actual capture
+policy again before preparing coverage. Only an exact policy match is translated
+to the lifecycle binding; the underlying queue remains private.
+
+Manual capture discovers all local Desktop profiles, as ordinary sync does. Its
+profile selection must match the initialized runtime. Changed configuration or
+runtime metadata refuses coverage; repair the original inputs rather than
+resetting queue state. Worker ownership spans capture, remote confirmation and
+acknowledgement, while producers may continue accepting later generations.
+
+The live identity is observed once at the ordinary capture point. Only complete
+batches matching that identity and proven in the confirmed remote snapshot are
+acknowledged. Later arrivals, other identities, missing evidence, dry runs and
+failed publication retain their pending work. No command or hook is activated by
+this internal bridge; command routing and opt-in hooks follow in 7c.2.
