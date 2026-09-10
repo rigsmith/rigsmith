@@ -257,9 +257,8 @@ func TestQueueHookSupervisedDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Retained workers intentionally capture a full snapshot, even when the
-	// saved event has selected flush intent. Do not imply ordinary-sync throttle
-	// behavior merely because preparation now preserves the hook's intent.
+	// A selected hook request captures its session group completely while an
+	// unrelated large plain transcript keeps the normal small-tail throttle.
 	other := filepath.Join(dir, "other.jsonl")
 	base := strings.Repeat("{\"type\":\"user\",\"sessionId\":\"other\",\"uuid\":\"other-message\",\"message\":{\"role\":\"user\",\"content\":\"baseline\"}}\n", 30)
 	if err := os.WriteFile(other, []byte(base), 0600); err != nil {
@@ -291,7 +290,7 @@ func TestQueueHookSupervisedDrain(t *testing.T) {
 		}
 	}
 	data := runGit("--git-dir", f.req.Config.Remote, "show", "main:cli/projects/-workspace-acme/other.jsonl")
-	if !strings.Contains(data, "unrelated small tail") {
-		t.Fatal("worker no longer follows full-snapshot capture policy")
+	if strings.Contains(data, "unrelated small tail") {
+		t.Fatal("worker flushed an unrelated throttled transcript")
 	}
 }

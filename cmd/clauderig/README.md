@@ -93,6 +93,12 @@ finishes or exits, even if it takes longer than the wait limit. No background
 worker or queued hook is enabled automatically. Use the same v2 client for operations sharing a
 local backup; older clients do not participate in this coordination.
 
+V2 queue workers fully capture requested sessions and subagents. Other plain
+transcripts keep the normal throttle unless the batch includes an all-flush
+request; chunked transcripts always capture changed tails. Previously backed-up
+subagents remain retained after source deletion. Saved captures replay
+unchanged. See the [queue workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md).
+
 ## Commands
 
 | Command | What |

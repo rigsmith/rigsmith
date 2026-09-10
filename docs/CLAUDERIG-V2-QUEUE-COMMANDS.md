@@ -265,7 +265,7 @@ it does not enqueue, publish, install hooks or start a worker. Use a fresh outpu
 file for each new hook event, then `clauderig queue enqueue request.json`. Retry
 admission with that same file, never by preparing the payload again. Existing
 hook installation remains synchronous; automatic routing and producer-file
-recovery/cleanup remain 7c.2b.2 work.
+recovery/cleanup remain 7c.2b.2b work.
 
 The input must be a complete JSON object, including EOF, within two seconds and
 128 KiB. Empty/blank, malformed, duplicate or case-aliased routing fields,
@@ -287,10 +287,19 @@ and refuses missing or ambiguous captures. Keep source and runtime paths stable.
 
 `Stop` records normal flush intent. `SessionEnd` records selected flush for its
 single transcript. These saved intents determine the evidence required for
-manual-sync coverage; they do not change the queued worker capture policy.
-Workers currently build full, unthrottled snapshots and can publish unrelated
-changed transcript tails too. This PR does not add per-event worker throttling;
-that policy must be settled before automatic hook rollout. Unknown vendor fields are ignored; message text, caller-supplied
+manual-sync coverage. Workers always capture each requested session and its
+subagents completely, including for normal requests. Selected flush also captures
+the named paths and their subagents. Unrelated plain transcripts retain normal
+large-file throttling; any all-flush request in a batch flushes every changed
+tail. Chunked transcripts continue to capture all changed tails. The worker still
+freezes the configured source tree and seals a complete seeded snapshot, so this
+policy reduces unnecessary publication rather than source reads or capture-space
+requirements. Previously backed-up subagents remain retained if removed at the
+source; complete capture refreshes the eligible files still present and does not
+mirror deletions. An explicitly named parent or selected path must still exist.
+Previously sealed captures and commits replay unchanged.
+
+Unknown vendor fields are ignored; message text, caller-supplied
 identity and event IDs are never copied to the request. Account attribution is
 read once when preparing; unavailable identity requires `--unknown-identity`.
 Saved requests retain that attribution, generated event ID and timestamp on
@@ -303,4 +312,4 @@ Windows private-directory ACLs remain a caller prerequisite.
 The internal runtime bridge (7c.1), explicit manual command (7c.2a) and bounded
 hook-request preparation (7c.2b.1) are available. Opt-in hook installation,
 automatic admission with producer-file recovery/cleanup, ordinary-sync routing,
-and stop/drain/rollback remain 7c.2b.2.
+and stop/drain/rollback remain 7c.2b.2b.
