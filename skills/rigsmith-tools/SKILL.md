@@ -281,7 +281,9 @@ For v2 hook-input testing, `clauderig queue prepare --hook --output request.json
 reads one complete Stop/SessionEnd JSON document from stdin (EOF within 2 seconds,
 128 KiB maximum). Preparation alone saves intent; enqueue the same file afterward
 and on every retry. Use a new private file only for a new event. Do not install
-this preparation-only command as an automatic hook. SessionEnd selects its own
-transcript for flush; malformed/empty input never requests all-transcript flush.
+this preparation-only command as an automatic hook. SessionEnd saves selected
+flush intent for its transcript; malformed/empty input never requests all-flush.
+Queued workers still capture full unthrottled snapshots; saved flush intent
+governs manual-sync coverage, not a promise to throttle other worker input.
 It conflicts with `--session`/`--flush`, observes identity once, and sends success
 to stderr. Installed hooks remain synchronous until the opt-in installer lands.

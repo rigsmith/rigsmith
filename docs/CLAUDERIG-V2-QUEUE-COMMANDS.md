@@ -271,7 +271,9 @@ The input must be a complete JSON object, including EOF, within two seconds and
 128 KiB. Empty/blank, malformed, duplicate or case-aliased routing fields,
 trailing documents, invalid UTF-8, and unsupported events fail before identity
 capture or request creation. Unlike the legacy `sync --flush` reader, an open
-pipe after the object still times out. A missing or failed input never means
+pipe after the object still times out. The command accepts native stdin/files
+and interruptible pipes; embedded callers can also provide standard in-memory
+readers. Unsupported reader wrappers are refused before reading. A missing or failed input never means
 flush everything. `--hook` cannot be combined with `--session` or `--flush`.
 
 Only `Stop` and `SessionEnd` are accepted. Require `session_id`, `transcript_path`
@@ -284,8 +286,11 @@ The worker later checks source availability, reads the session and subagents,
 and refuses missing or ambiguous captures. Keep source and runtime paths stable.
 
 `Stop` records normal flush intent. `SessionEnd` records selected flush for its
-single transcript, preserving the session group without broadening to all
-transcripts. Unknown vendor fields are ignored; message text, caller-supplied
+single transcript. These saved intents determine the evidence required for
+manual-sync coverage; they do not change the queued worker capture policy.
+Workers currently build full, unthrottled snapshots and can publish unrelated
+changed transcript tails too. This PR does not add per-event worker throttling;
+that policy must be settled before automatic hook rollout. Unknown vendor fields are ignored; message text, caller-supplied
 identity and event IDs are never copied to the request. Account attribution is
 read once when preparing; unavailable identity requires `--unknown-identity`.
 Saved requests retain that attribution, generated event ID and timestamp on

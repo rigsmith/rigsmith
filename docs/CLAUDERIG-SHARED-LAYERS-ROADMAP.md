@@ -93,7 +93,7 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 7c.1. Runtime manual-sync coverage | Merged: [#381](https://github.com/rigsmith/rigsmith/pull/381) | Bridge validated lifecycle and capture-policy bindings; preserve worker ownership, identity matching, later arrivals and confirmed publication. Internal service only. |
 | 7c.2a. Manual queue sync command | Merged: [#382](https://github.com/rigsmith/rigsmith/pull/382) | Explicit supervised `queue sync` with dry-run/all-flush, current-account coverage and remote confirmation. |
 | 7c.2b.1. Hook-request preparation | In review: [#384](https://github.com/rigsmith/rigsmith/pull/384) | Bounded Stop/SessionEnd payloads, source/session checks and saved producer identity; no hook installation. |
-| 7c.2b.2. Opt-in hook installation and rollback | Planned | Hook/ordinary-sync routing, producer recovery, stop/drain and rollback validation; ordinary synchronous behavior remains the default. |
+| 7c.2b.2. Opt-in hook installation and rollback | Planned | Hook/ordinary-sync routing, worker capture policy, producer recovery, stop/drain and rollback validation; ordinary synchronous behavior remains the default. |
 | Codex adapter and separate `codexrig` executable | Planned | Consume the proven shared layers without moving Claude account/Desktop internals into them. |
 
 Milestone 6b.2 is split above into the steps already delivered and the completed

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -27,37 +28,56 @@ func readQueueHook(ctx context.Context, in io.Reader, wait time.Duration) (queue
 		data []byte
 		err  error
 	}
-	ready := make(chan result, 1)
-	go func() {
+	// Memory readers finish synchronously. Only native files and io.PipeReader
+	// support the asynchronous path: their Close interrupts a pending read.
+	// Reject arbitrary readers before starting work rather than leaking a blocked
+	// goroutine (an io.Closer interface alone does not promise interruption).
+	var closeInput func() error
+	switch reader := in.(type) {
+	case *bytes.Reader, *bytes.Buffer, *strings.Reader:
+	case *os.File:
+		closeInput = reader.Close
+	case *io.PipeReader:
+		closeInput = reader.Close
+	default:
+		return queueHookPayload{}, fmt.Errorf("hook input requires a memory reader, native file or interruptible pipe")
+	}
+	read := func() result {
 		data, err := io.ReadAll(io.LimitReader(in, queueRequestLimit+1))
-		ready <- result{data, err}
-	}()
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	closeInput := func() {
-		if closer, ok := in.(io.Closer); ok {
-			_ = closer.Close()
+		return result{data, err}
+	}
+	var got result
+	if closeInput == nil {
+		got = read()
+	} else {
+		ready := make(chan result, 1)
+		go func() { ready <- read() }()
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		stopRead := func() {
+			_ = closeInput()
+			<-ready // account for termination of the read before returning
+		}
+		select {
+		case <-ctx.Done():
+			stopRead()
+			return queueHookPayload{}, ctx.Err()
+		case <-timer.C:
+			stopRead()
+			return queueHookPayload{}, fmt.Errorf("hook input did not finish within its read deadline")
+		case got = <-ready:
 		}
 	}
-	select {
-	case <-ctx.Done():
-		closeInput()
-		return queueHookPayload{}, ctx.Err()
-	case <-timer.C:
-		closeInput()
-		return queueHookPayload{}, fmt.Errorf("hook input did not finish within its read deadline")
-	case got := <-ready:
-		if err := ctx.Err(); err != nil {
-			return queueHookPayload{}, err
-		}
-		if got.err != nil {
-			return queueHookPayload{}, fmt.Errorf("could not read hook input")
-		}
-		if len(got.data) > queueRequestLimit {
-			return queueHookPayload{}, fmt.Errorf("hook input exceeds 128 KiB")
-		}
-		return decodeQueueHook(got.data)
+	if err := ctx.Err(); err != nil {
+		return queueHookPayload{}, err
 	}
+	if got.err != nil {
+		return queueHookPayload{}, fmt.Errorf("could not read hook input")
+	}
+	if len(got.data) > queueRequestLimit {
+		return queueHookPayload{}, fmt.Errorf("hook input exceeds 128 KiB")
+	}
+	return decodeQueueHook(got.data)
 }
 
 func decodeQueueHook(data []byte) (queueHookPayload, error) {
@@ -79,19 +99,19 @@ func decodeQueueHook(data []byte) (queueHookPayload, error) {
 		token, err := d.Token()
 		key, ok := token.(string)
 		folded := strings.ToLower(key)
-		if err != nil || !ok || seen[folded] {
+		if err != nil || !ok {
 			return fail()
 		}
-		seen[folded] = true
 		var value json.RawMessage
 		if err := d.Decode(&value); err != nil {
 			return fail()
 		}
 		switch folded {
 		case "hook_event_name", "session_id", "transcript_path", "agent_id":
-			if key != folded {
+			if key != folded || seen[folded] {
 				return fail()
 			}
+			seen[folded] = true
 			fields[key] = value
 		}
 	}

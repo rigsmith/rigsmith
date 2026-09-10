@@ -9,11 +9,11 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 )
 
-// CheckHookTranscript checks the hook's native CLI path against the runtime's
+// ValidateHookTranscript checks the hook's native CLI path against the runtime's
 // configured source spelling. It reads no transcript bytes and does not require
 // the file to exist; capture still proves availability and rejects ambiguity.
 // Filesystem links and source roots must remain stable, as for other producers.
-func (r *QueueRuntime) CheckHookTranscript(path, sessionID string) error {
+func (r *QueueRuntime) ValidateHookTranscript(path, sessionID string) error {
 	fail := fmt.Errorf("hook transcript must name the matching session under the configured CLI projects directory: %w", queue.ErrBinding)
 	encoded, _ := json.Marshal(path)
 	if !filepath.IsAbs(path) || len(encoded) > 4098 {

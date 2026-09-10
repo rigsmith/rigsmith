@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -195,8 +196,58 @@ func TestQueueHookConfiguredSource(t *testing.T) {
 	}
 }
 
+type blockingHookReader struct {
+	started atomic.Bool
+	release chan struct{}
+}
+
+func (r *blockingHookReader) Read([]byte) (int, error) {
+	r.started.Store(true)
+	<-r.release
+	return 0, io.EOF
+}
+
+func TestQueueHookRejectsNonInterruptibleReader(t *testing.T) {
+	r := &blockingHookReader{release: make(chan struct{})}
+	defer close(r.release)
+	_, err := readQueueHook(t.Context(), r, 20*time.Millisecond)
+	if err == nil || r.started.Load() {
+		t.Fatal("unsupported reader was started", err)
+	}
+}
+
+func TestQueueHookIgnoresUnconsumedVendorFields(t *testing.T) {
+	payload := queueHookJSON(t, "Stop", "s", "/fixture/s.jsonl")
+	payload = strings.Replace(payload, "{", `{"vendor_flag":1,"VENDOR_FLAG":2,"vendor_flag":3,`, 1)
+	for _, in := range []io.Reader{strings.NewReader(payload), bytes.NewReader([]byte(payload)), bytes.NewBufferString(payload)} {
+		got, err := readQueueHook(t.Context(), in, time.Second)
+		if err != nil || got.SessionID != "s" || got.Event != "Stop" {
+			t.Fatal(got, err)
+		}
+	}
+}
+
+func TestQueueHookNativePipeDeadline(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	if _, err := readQueueHook(t.Context(), r, 20*time.Millisecond); err == nil {
+		t.Fatal("open pipe accepted")
+	}
+	if _, err := r.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+		t.Fatal("native input was not closed", err)
+	}
+}
+
 func TestQueueHookSupervisedDrain(t *testing.T) {
-	f, runGit := newQueueSupervisedFixture(t)
+	f, runGit := newQueueSupervisedFixture(t, func(f *queueCommandFixture) {
+		chunked := false
+		f.req.Config.ChunkTranscripts = &chunked
+		f.req.Config.Retention.LargeFileBytes = 1024
+	})
 	dir := filepath.Join(f.req.Machine.Home, ".claude", "projects", "-workspace-acme")
 	if err := os.MkdirAll(filepath.Join(dir, "s", "subagents"), 0700); err != nil {
 		t.Fatal(err)
@@ -205,6 +256,20 @@ func TestQueueHookSupervisedDrain(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte("{\"type\":\"user\",\"sessionId\":\"s\",\"uuid\":\"message-a\",\"cwd\":\"/workspace/acme\",\"message\":{\"role\":\"user\",\"content\":\"queued hook fixture\"}}\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Retained workers intentionally capture a full snapshot, even when the
+	// saved event has selected flush intent. Do not imply ordinary-sync throttle
+	// behavior merely because preparation now preserves the hook's intent.
+	other := filepath.Join(dir, "other.jsonl")
+	base := strings.Repeat("{\"type\":\"user\",\"sessionId\":\"other\",\"uuid\":\"other-message\",\"message\":{\"role\":\"user\",\"content\":\"baseline\"}}\n", 30)
+	if err := os.WriteFile(other, []byte(base), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (service.Service{ReadIdentity: func() (service.Identity, error) { return f.identity, nil }}).Sync(t.Context(), f.req); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte(base+"{\"type\":\"user\",\"sessionId\":\"other\",\"uuid\":\"other-tail\",\"message\":{\"role\":\"user\",\"content\":\"unrelated small tail\"}}\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	f.must(t, "init")
 	path := filepath.Join(t.TempDir(), "request.json")
@@ -224,5 +289,9 @@ func TestQueueHookSupervisedDrain(t *testing.T) {
 		if !strings.Contains(data, "queued hook fixture") {
 			t.Fatal("missing captured hook session group", rel)
 		}
+	}
+	data := runGit("--git-dir", f.req.Config.Remote, "show", "main:cli/projects/-workspace-acme/other.jsonl")
+	if !strings.Contains(data, "unrelated small tail") {
+		t.Fatal("worker no longer follows full-snapshot capture policy")
 	}
 }

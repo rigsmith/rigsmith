@@ -524,7 +524,9 @@ original account. Preparation alone does not enqueue or install a hook.
 
 Input must finish within two seconds and 128 KiB. It must name the matching
 session transcript under the configured CLI projects directory. Stop records
-normal capture; SessionEnd selects only that transcript for flush. Empty or bad
+normal intent; SessionEnd records selected-transcript flush intent. Queue workers
+currently take full snapshots and may also publish other changed transcript
+tails; saved intent governs manual-sync coverage. Empty or bad
 input fails without falling back to flushing everything. `--hook` conflicts with
 `--session` and `--flush`. Success goes to stderr; stdout stays empty. No message
 text from the payload is saved. Installed hooks remain synchronous.

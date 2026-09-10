@@ -67,7 +67,7 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Runtime manual-sync coverage (7c.1) | Merged: [#381](https://github.com/rigsmith/rigsmith/pull/381). Validate the saved lifecycle before acknowledging fully covered requests; retain later arrivals and other identities. |
 | Manual queue sync command (7c.2a) | Merged: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
 | Hook-request preparation (7c.2b.1) | In review: [#384](https://github.com/rigsmith/rigsmith/pull/384). Decode bounded Stop/SessionEnd payloads into saved, retryable producer requests. |
-| Opt-in hook installation and rollback (7c.2b.2) | Planned: install opt-in routing, coordinate ordinary sync, and validate producer recovery, stop/drain and rollback. |
+| Opt-in hook installation and rollback (7c.2b.2) | Planned: install opt-in routing, coordinate ordinary sync, settle worker capture policy, and validate producer recovery, stop/drain and rollback. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
 The v1/v2 foundation was aligned after v1.15.1; that alignment did not publish a

@@ -221,7 +221,7 @@ operation. Stronger fencing of arbitrary external profile edits is outside 7c.1.
 
 ## Hook producer path validation (7c.2b.1)
 
-`CheckHookTranscript` validates the supplied native path against the configured,
+`ValidateHookTranscript` validates the supplied native path against the configured,
 enabled CLI source spelling and the already-validated canonical session ID. It
 requires a direct `projects/<project>/<session>.jsonl` path and the queue's bounded
 path representation. It reads no transcript bytes and does not require the file
