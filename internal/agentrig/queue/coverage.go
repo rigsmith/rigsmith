@@ -53,7 +53,7 @@ func (w *Worker) PrepareCoverage(ctx context.Context, binding Binding, provenanc
 		}
 		// The additive schema upgrade runs only while both ownership locks
 		// exclude an older executor. Older binaries then fail closed on Open.
-		s.version = formatVersion
+		s.version = max(s.version, formatVersion)
 		// Reflush even if a preceding uncertain preparation already sealed them.
 		return true, nil
 	})

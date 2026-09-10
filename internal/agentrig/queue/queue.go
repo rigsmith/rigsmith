@@ -27,6 +27,7 @@ var (
 	ErrOwner      = errors.New("worker no longer owns this queue")
 	ErrTransition = errors.New("invalid queue progress transition")
 	ErrFull       = errors.New("queue state limit reached; existing work was retained")
+	ErrExpired    = errors.New("event predates the queue producer replay cutoff; work was not accepted")
 	ErrUncertain  = durable.ErrUncertain
 )
 
@@ -107,15 +108,16 @@ type batch struct {
 	CoverageSealed bool `json:",omitempty"`
 }
 type state struct {
-	// version preserves an older schema until coverage upgrades it under both
+	// version preserves an older schema until coverage or maintenance upgrades it under both
 	// worker ownership and the queue transaction lock. It is not payload data.
-	version int
-	Binding Binding
-	Next    uint64
-	Owner   string
-	Events  map[string]Event
-	Batches []batch
-	Done    map[uint64]bool
+	version    int
+	Binding    Binding
+	Next       uint64
+	Owner      string
+	Events     map[string]Event
+	Batches    []batch
+	Done       map[uint64]bool
+	Compaction *receiptCompaction `json:",omitempty"`
 }
 
 // Queue is safe for independent goroutines/processes. Transactions use a short
@@ -148,6 +150,9 @@ func newQueue(dir string, binding Binding) (*Queue, error) {
 	return &Queue{dir: dir, binding: binding, save: saveFile, limit: 16 << 20}, nil
 }
 
+// Enqueue requires the original producer timestamp on every retry when receipt
+// compaction is enabled. Never give an old EventID a fresh timestamp to bypass
+// ErrExpired. Known receipts (including pending work) still deduplicate first.
 func (q *Queue) Enqueue(ctx context.Context, req Request, at time.Time) (Event, error) {
 	req, err := normalize(req)
 	if err != nil {
@@ -164,6 +169,9 @@ func (q *Queue) Enqueue(ctx context.Context, req Request, at time.Time) (Event, 
 			}
 			event = old
 			return true, nil // reflush after an earlier uncertain publication
+		}
+		if s.Compaction != nil && at.Before(s.Compaction.Before) {
+			return false, ErrExpired
 		}
 		if s.Next == ^uint64(0) {
 			return false, ErrFull
