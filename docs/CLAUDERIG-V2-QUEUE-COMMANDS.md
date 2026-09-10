@@ -213,7 +213,8 @@ retry. This slice exposes no archive deletion or receipt compaction command.
 
 ## Next
 
-Milestone 7c connects opt-in hooks, manual-sync coverage and stop/drain/rollback.
+Milestone 7c.1 adds the internal runtime manual-sync coverage bridge.
+Milestone 7c.2 connects commands, opt-in hooks and stop/drain/rollback.
 Until then, explicit queue work and synchronous sync can serialize on staging,
 but a synchronous sync does not acknowledge pending queue events. Request-file
 preparation is the manual producer contract, not the future hook input protocol.

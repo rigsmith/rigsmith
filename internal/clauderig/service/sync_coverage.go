@@ -43,7 +43,11 @@ type CoverageSyncResult struct {
 // Dry runs and local-only syncs never prepare or acknowledge work.
 // No worker/producer is installed. External merge tools remain unsupported here
 // until their process lifetime can be fenced by the worker lifecycle integration.
-func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue) (result CoverageSyncResult, err error) {
+func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue) (CoverageSyncResult, error) {
+	return s.syncWithCoverage(ctx, req, q, nil)
+}
+
+func (s Service) syncWithCoverage(ctx context.Context, req SyncRequest, q *queue.Queue, runtime *QueueRuntime) (result CoverageSyncResult, err error) {
 	if err := requireCanonicalRunner(ctx, req.AllowMergeTool); err != nil {
 		return result, err
 	}
@@ -71,6 +75,11 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 		return result, err
 	}
 	req.Flush.Paths = slices.Clone(req.Flush.Paths)
+	if runtime != nil {
+		if _, err := runtime.validateCoverageBinding(ctx, req, engine.LocalProfileNames()); err != nil {
+			return result, err
+		}
+	}
 	var remote *commitartifact.GitTransport
 	if !req.DryRun && req.Config.Remote != "" {
 		plan := adapter.PublicationPlan(req.Machine.Name, req.Config.Retention)
@@ -92,15 +101,20 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 	staging = canonicalContext(staging)
 	defer func() { err = canonicalResult(staging, err) }()
 	ctx = process.WithSupervisorLease(ctx, staging)
-	c := &manualCoverage{operation: ctx, worker: worker, queueDir: q.Directory()}
+	c := &manualCoverage{operation: ctx, worker: worker, queueDir: q.Directory(), runtime: runtime}
 	// Validate exclusion even for local-only/dry runs: their capture still walks.
 	if err := c.checkLayout(req, engine.LocalProfileNames()); err != nil {
 		return result, err
 	}
-	if !req.DryRun && req.Config.Remote != "" {
+	if runtime != nil || (!req.DryRun && req.Config.Remote != "") {
 		req.coverage = c
 	}
 	result.Sync, err = s.Sync(staging, req)
+	// Sync returns before its captured hook on dry runs. Validate the completed
+	// preview here without preparing a coverage ticket or acknowledging work.
+	if err == nil && runtime != nil && req.DryRun {
+		_, err = runtime.validateCoverageBinding(ctx, req, engine.LocalProfileNames())
+	}
 	if err != nil || req.coverage == nil || c.ticket == nil || len(c.proven) == 0 {
 		return result, err
 	}
@@ -142,11 +156,17 @@ func (s Service) SyncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 	for _, event := range c.proven {
 		generations = append(generations, event.Generation)
 	}
+	if c.runtime != nil {
+		if _, err := c.runtime.validateCoverageBinding(ctx, req, engine.LocalProfileNames()); err != nil {
+			return result, err
+		}
+	}
 	result.Acknowledged, err = c.ticket.Acknowledge(ctx, generations)
 	return result, err
 }
 
 type manualCoverage struct {
+	runtime           *QueueRuntime
 	operation         context.Context
 	worker            *queue.Worker
 	queueDir, cliRoot string
@@ -188,7 +208,17 @@ func (c *manualCoverage) prepare(req SyncRequest, identity Identity, identityErr
 	if err := c.checkLayout(req, profiles); err != nil {
 		return err
 	}
-	if identityErr != nil {
+	var binding queue.Binding
+	var err error
+	if c.runtime != nil {
+		binding, err = c.runtime.validateCoverageBinding(c.operation, req, profiles)
+		if err != nil {
+			return err
+		}
+	}
+	// Invalid identity suppresses acknowledgement, never runtime validation.
+	// Dry runs also revalidate but must not prepare a coverage transaction.
+	if identityErr != nil || req.DryRun {
 		return nil
 	}
 	provenance, err := CaptureProvenance(identity)
@@ -200,9 +230,11 @@ func (c *manualCoverage) prepare(req SyncRequest, identity Identity, identityErr
 	bindingReq.ResolveFlush = nil
 	bindingReq.AllowMergeTool = false
 	bindingReq.DryRun = false
-	binding, err := CaptureBinding(bindingReq, profiles)
-	if err != nil {
-		return err
+	if c.runtime == nil {
+		binding, err = CaptureBinding(bindingReq, profiles)
+		if err != nil {
+			return err
+		}
 	}
 	c.ticket, err = c.worker.PrepareCoverage(c.operation, binding, provenance)
 	if errors.Is(err, queue.ErrEmpty) {
@@ -301,6 +333,13 @@ func (c *manualCoverage) sessionPaths(event queue.Event, paths []string) []strin
 }
 
 func (c *manualCoverage) captured(req SyncRequest, report *engine.Report) error {
+	// Discovery may have changed during the walk. Refuse publication even if
+	// identity/evidence cannot produce a coverage ticket for this capture.
+	if c.runtime != nil {
+		if _, err := c.runtime.validateCoverageBinding(c.operation, req, engine.LocalProfileNames()); err != nil {
+			return err
+		}
+	}
 	if c.ticket == nil || c.cliRoot == "" || report == nil || report.LedgerError != "" {
 		return nil
 	}

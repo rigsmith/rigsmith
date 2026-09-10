@@ -527,45 +527,13 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 			err = fmt.Errorf("cannot verify queue isolation from Desktop profiles; repair profile paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
 		}
 	}()
-	// Ordinary sync discovers profiles independently of the queue selection.
-	// Exclude the whole local profile container (including future profiles) and
-	// each existing profile and data directory target, including unselected aliases.
-	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
-	if _, err := queueIsolationPath(profileStore.Root); err != nil {
+	profileStore, directories, err := discoverQueueDesktopProfiles(req)
+	if err != nil {
 		return err
-	}
-	info, err := os.Stat(profileStore.Root)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	var entries []os.DirEntry
-	if err == nil {
-		if !info.IsDir() {
-			return fmt.Errorf("Desktop profile store must be a directory")
-		}
-		entries, err = os.ReadDir(profileStore.Root)
-		if err != nil {
-			return err
-		}
 	}
 	paths := []string{profileStore.Root}
-	for _, entry := range entries {
-		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
-			continue
-		}
-		profile := filepath.Join(profileStore.Root, entry.Name())
-		// Unlike display-oriented profile discovery, safety checks cannot skip
-		// broken links: creating their missing target would activate the profile.
-		if _, err := queueIsolationPath(profile); err != nil {
-			return err
-		}
-		info, err := os.Stat(profile)
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			paths = append(paths, profile, filepath.Join(profile, "data"))
-		}
+	for _, profile := range directories {
+		paths = append(paths, profile, filepath.Join(profile, "data"))
 	}
 	for _, path := range paths {
 		root, err := queueIsolationPath(path)
@@ -578,6 +546,53 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 	}
 
 	return nil
+}
+
+// discoverQueueDesktopProfiles shares strict native directory/link discovery
+// between path isolation and complete-coverage validation. Metadata validation
+// and overlap policy remain with their callers. Ordinary display discovery is
+// deliberately unaffected.
+func discoverQueueDesktopProfiles(req SyncRequest) (*desktop.Store, []string, error) {
+	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+	if _, err := queueIsolationPath(profileStore.Root); err != nil {
+		return nil, nil, err
+	}
+	info, err := os.Stat(profileStore.Root)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, nil, err
+	}
+	var entries []os.DirEntry
+	if err == nil {
+		if !info.IsDir() {
+			return nil, nil, fmt.Errorf("Desktop profile store must be a directory")
+		}
+		entries, err = os.ReadDir(profileStore.Root)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	var directories []string
+	for _, entry := range entries {
+		// Native os.ReadDir resolves unknown Unix types with lstat before
+		// returning entries. Include ModeIrregular for Windows junctions.
+		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
+			continue
+		}
+		profile := filepath.Join(profileStore.Root, entry.Name())
+		// Unlike display-oriented profile discovery, safety checks cannot skip
+		// broken links: creating their missing target would activate the profile.
+		if _, err := queueIsolationPath(profile); err != nil {
+			return nil, nil, err
+		}
+		info, err := os.Stat(profile)
+		if err != nil {
+			return nil, nil, err
+		}
+		if info.IsDir() {
+			directories = append(directories, profile)
+		}
+	}
+	return profileStore, directories, nil
 }
 
 // queueIsolationPath permits missing directories but refuses any unresolved
@@ -613,4 +628,73 @@ func queueIsolationPath(path string) (resolved string, err error) {
 		}
 		suffix = append(suffix, filepath.Base(existing))
 	}
+}
+
+// SyncWithCoverage coordinates a manual sync with this runtime without exposing
+// its queue or allowing callers to substitute a lifecycle binding. Like ordinary
+// Sync, it discovers all local Desktop profiles and observes live identity once;
+// that actual capture policy must match this runtime's saved policy. Callers must
+// verify remote privacy and supply canonical command supervision. It installs no
+// hook and does not change ordinary Sync. Dry runs never acknowledge queued work.
+// Profile membership, source/link identities and runtime association must remain
+// stable throughout the call; validation points do not fence external edits.
+func (r *QueueRuntime) SyncWithCoverage(ctx context.Context, s Service, req SyncRequest) (CoverageSyncResult, error) {
+	if r == nil {
+		return CoverageSyncResult{}, queue.ErrBinding
+	}
+	return s.syncWithCoverage(ctx, req, r.q, r)
+}
+
+// validateCoverageBinding validates fresh capture inputs and persisted association before
+// translating the policy binding. Never hold runtime ownership while acquiring
+// worker/staging ownership: producers remain able to enqueue during manual sync.
+func (r *QueueRuntime) validateCoverageBinding(ctx context.Context, req SyncRequest, profiles []string) (queue.Binding, error) {
+	if err := validateQueueCoverageProfiles(req, profiles); err != nil {
+		return queue.Binding{}, err
+	}
+	bindingReq := req
+	bindingReq.ResolveFlush = nil
+	bindingReq.AllowMergeTool = false
+	bindingReq.DryRun = false
+	binding, err := CaptureBinding(bindingReq, profiles)
+	if err != nil {
+		return queue.Binding{}, err
+	}
+	if binding != r.capture {
+		return queue.Binding{}, queue.ErrBinding
+	}
+	if _, err := r.inputs(ctx, QueueRuntimeInputs{Sync: bindingReq, Profiles: profiles}, ""); err != nil {
+		return queue.Binding{}, err
+	}
+	return r.binding, nil
+}
+
+// validateQueueCoverageProfiles rejects the omissions tolerated by display-oriented
+// discovery. Inspect native directory entries, including Windows junctions, and
+// require every profile to load and appear in the actual manual capture selection.
+func validateQueueCoverageProfiles(req SyncRequest, profiles []string) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("cannot verify complete Desktop profile coverage; repair profile metadata, paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
+		}
+	}()
+	store, directories, err := discoverQueueDesktopProfiles(req)
+	if err != nil {
+		return err
+	}
+	var discovered []string
+	for _, directory := range directories {
+		profile, err := store.Get(filepath.Base(directory))
+		if err != nil {
+			return err
+		}
+		discovered = append(discovered, profile.Name)
+	}
+	slices.Sort(discovered)
+	selected := slices.Clone(profiles)
+	slices.Sort(selected)
+	if !slices.Equal(discovered, selected) {
+		return fmt.Errorf("manual capture omitted or changed Desktop profiles")
+	}
+	return nil
 }

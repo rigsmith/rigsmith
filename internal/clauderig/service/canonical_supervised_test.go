@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 )
 
@@ -170,5 +171,26 @@ func TestCanonicalSupervisionRejectsInteractiveBeforeEffects(t *testing.T) {
 				t.Fatalf("rejected operation created store parent: %v", err)
 			}
 		})
+	}
+}
+
+func TestCanonicalSupervisedRuntimeCoverage(t *testing.T) {
+	req, _, event, svc := coverageFixture(t)
+	runtime, err := service.CreateQueueRuntime(t.Context(), filepath.Join(t.TempDir(), "runtime"), req, engine.LocalProfileNames())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	result, err := runtime.SyncWithCoverage(canonicalSupervisor(ctx), svc, req)
+	if err != nil || !result.Sync.Publication.Pushed || len(result.Acknowledged) != 1 {
+		t.Fatalf("supervised runtime coverage: %+v %v", result, err)
+	}
+	pending, err := runtime.Snapshot(t.Context())
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending: %+v %v", pending, err)
 	}
 }
