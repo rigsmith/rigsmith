@@ -194,7 +194,12 @@ This is an internal shared API. It does not compact artifact stores, remove scra
 folders, install hooks or alter ordinary synchronous Claude behavior. Synthetic
 native tests cover a receipt-full drained queue accepting work again, all saved
 phases, mixed-age receipt batches, schema 1/2 upgrades and subsequent coverage,
-malformed state, failed/uncertain saves, process exit and concurrent producers.
+malformed state, failed/uncertain saves, process exit, canonical directory aliases,
+and both transaction orderings for old producer input. The compatibility group
+also builds the actual schema-1/2 reader from pinned pre-compaction v2 commit
+`4ccf5e5e59f9b92576e40ffa1d50a2984d6e417f`: it accepts an uncompacted schema-2
+queue and rejects a real compacted schema-3 queue through both Open and Create
+without changing queue bytes. The separate v1 command baseline remains unchanged.
 
 ## Execution driver and Claude service boundary (milestone 6b.2, first slice)
 

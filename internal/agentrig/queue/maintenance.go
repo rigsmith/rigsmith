@@ -104,7 +104,7 @@ func (q *Queue) CompactReceipts(ctx context.Context, before time.Time) (Compacti
 	if before.IsZero() {
 		return CompactionResult{}, fmt.Errorf("producer replay cutoff is required")
 	}
-	info, err := os.Lstat(q.dir)
+	info, err := os.Stat(q.dir) // root aliases share the canonical queue/worker locks
 	if err != nil {
 		return CompactionResult{}, err
 	}
