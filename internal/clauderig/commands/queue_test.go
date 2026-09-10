@@ -28,6 +28,7 @@ type queueCommandFixture struct {
 	deps                 queueCommandDeps
 	identity             service.Identity
 	reads, privateChecks int
+	privateRemotes       []string
 }
 
 func newQueueFixture(t *testing.T) *queueCommandFixture {
@@ -37,7 +38,11 @@ func newQueueFixture(t *testing.T) *queueCommandFixture {
 	cfg.Roots = cfg.Roots[:1]
 	cfg.Remote = "https://github.com/acme/private-backup.git"
 	f := &queueCommandFixture{req: service.SyncRequest{Config: cfg, Machine: config.Machine{Name: "fixture", OS: config.OSToken(), Home: filepath.Join(root, "home")}, StagingDir: filepath.Join(root, "stage")}, dir: filepath.Join(root, "runtime"), identity: service.Identity{AccountUUID: "11111111-1111-4111-8111-111111111111", Email: "producer@example.com"}}
-	f.deps = queueCommandDeps{resolve: func() (service.SyncRequest, error) { return f.req, nil }, identity: func() (service.Identity, error) { f.reads++; return f.identity, nil }, private: func(context.Context, string) error { f.privateChecks++; return nil }, supervise: func(ctx context.Context) (context.Context, error) { return ctx, nil }}
+	f.deps = queueCommandDeps{resolve: func() (service.SyncRequest, error) { return f.req, nil }, identity: func() (service.Identity, error) { f.reads++; return f.identity, nil }, private: func(_ context.Context, remote string) error {
+		f.privateChecks++
+		f.privateRemotes = append(f.privateRemotes, remote)
+		return nil
+	}, supervise: func(ctx context.Context) (context.Context, error) { return ctx, nil }}
 	return f
 }
 func (f *queueCommandFixture) execute(ctx context.Context, args ...string) (string, error) {
@@ -102,6 +107,9 @@ func TestQueueCommandSavedRequestRetry(t *testing.T) {
 	out := f.must(t, "status")
 	if !strings.Contains(out, "enqueueHeadroom") || strings.Contains(out, "producer@example.com") || strings.Contains(out, "ProvenanceID") {
 		t.Fatal(out)
+	}
+	if !slices.Equal(f.privateRemotes, []string{f.req.Config.Remote}) {
+		t.Fatal("wrong init privacy remote", f.privateRemotes)
 	}
 	if f.privateChecks != 1 {
 		t.Fatal("offline producer/status performed network checks", f.privateChecks)
@@ -308,6 +316,11 @@ func TestQueueCommandSupervisedDrain(t *testing.T) {
 		t.Fatal(jobs)
 	}
 	f.must(t, "drain")
+	for _, checked := range f.privateRemotes {
+		if checked != remote {
+			t.Fatal("wrong init/startup/batch privacy remote", checked, remote)
+		}
+	}
 	if f.privateChecks < 4 {
 		t.Fatal("missing startup/per-batch privacy checks", f.privateChecks)
 	}
@@ -862,4 +875,76 @@ func TestQueueCommandCanonicalProducerUUIDs(t *testing.T) {
 			t.Fatal("invalid organization became unknown")
 		}
 	}
+}
+
+func TestQueueCommandUnresolvedDesktopLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges")
+	}
+	for _, link := range []string{"store", "profile", "data"} {
+		t.Run(link, func(t *testing.T) {
+			f := newQueueFixture(t)
+			f.must(t, "init")
+			existingRuntime := f.dir
+			before, err := os.ReadFile(filepath.Join(existingRuntime, "runtime.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop")
+			alias := store
+			if link == "profile" {
+				alias = filepath.Join(store, "broken")
+			}
+			if link == "data" {
+				alias = filepath.Join(store, "broken", "data")
+			}
+			if err := os.MkdirAll(filepath.Dir(alias), 0700); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(t.TempDir(), "missing")
+			if err := os.Symlink(target, alias); err != nil {
+				t.Fatal(err)
+			}
+			for _, dir := range []string{target, filepath.Join(target, "nested")} {
+				f.dir = dir
+				if _, err := f.execute(t.Context(), "init"); !errors.Is(err, queue.ErrBinding) {
+					t.Fatal("activated broken link", err)
+				}
+				if _, err := os.Lstat(target); !os.IsNotExist(err) {
+					t.Fatal("created link target", err)
+				}
+			}
+			f.dir = existingRuntime
+			if _, err := f.execute(t.Context(), "status"); !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "repair profile paths or permissions") {
+				t.Fatal("missing isolation diagnostic", err)
+			}
+			after, err := os.ReadFile(filepath.Join(existingRuntime, "runtime.json"))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("changed refused runtime", err)
+			}
+			if err := os.Remove(alias); err != nil {
+				t.Fatal(err)
+			}
+			f.must(t, "status") // Repair the local link, without resetting saved state.
+		})
+	}
+}
+
+func TestQueueCommandInvalidProfileStoreRetainsRuntime(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	store := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop")
+	if err := os.MkdirAll(filepath.Dir(store), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store, []byte("invalid profile store"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.execute(t.Context(), "status"); !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "repair profile paths or permissions") {
+		t.Fatal("missing isolation diagnostic", err)
+	}
+	if err := os.Remove(store); err != nil {
+		t.Fatal(err)
+	}
+	f.must(t, "status")
 }

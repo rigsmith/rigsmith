@@ -520,21 +520,44 @@ func (r *QueueRuntime) CheckRequestPath(path string) error {
 
 // checkQueueDesktopProfilePaths applies the same exclusion to runtime roots and saved
 // producer files, independently of which Desktop profiles the queue selects.
-func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) error {
+func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("cannot verify queue isolation from Desktop profiles; repair profile paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
+		}
+	}()
 	// Ordinary sync discovers profiles independently of the queue selection.
 	// Exclude the whole local profile container (including future profiles) and
 	// each existing profile and data directory target, including unselected aliases.
 	profileStore := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
-	profileDirs, err := profileStore.CandidateDataDirs()
-	if err != nil {
+	if _, err := queueDesktopProfilePath(profileStore.Root); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(profileStore.Root)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	paths := []string{profileStore.Root}
-	for _, dataDir := range profileDirs {
-		paths = append(paths, filepath.Dir(dataDir), dataDir)
+	for _, entry := range entries {
+		if !entry.IsDir() && entry.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		profile := filepath.Join(profileStore.Root, entry.Name())
+		// Unlike display-oriented profile discovery, safety checks cannot skip
+		// broken links: creating their missing target would activate the profile.
+		if _, err := queueDesktopProfilePath(profile); err != nil {
+			return err
+		}
+		info, err := os.Stat(profile)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			paths = append(paths, profile, filepath.Join(profile, "data"))
+		}
 	}
 	for _, path := range paths {
-		root, err := canonicalCapturePath(path)
+		root, err := queueDesktopProfilePath(path)
 		if err != nil {
 			return err
 		}
@@ -544,4 +567,21 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) error {
 	}
 
 	return nil
+}
+
+// queueDesktopProfilePath permits missing directories but refuses any unresolved
+// existing symlink ancestor before canonicalCapturePath reconstructs a path.
+func queueDesktopProfilePath(path string) (string, error) {
+	for existing := filepath.Clean(path); ; existing = filepath.Dir(existing) {
+		_, err := os.Lstat(existing)
+		if err == nil {
+			if _, err := filepath.EvalSymlinks(existing); err != nil {
+				return "", err
+			}
+			return canonicalCapturePath(path)
+		}
+		if !os.IsNotExist(err) || filepath.Dir(existing) == existing {
+			return "", err
+		}
+	}
 }
