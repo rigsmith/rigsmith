@@ -6,7 +6,7 @@
 | `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`, `--hook` debounces) |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
-| `queue` | Explicit v2 saved requests, enqueue, supervised run/drain, status and retry; [workflow](#explicit-queue-workflow-v2-preview) |
+| `queue` | Explicit v2 saved requests, enqueue, supervised manual sync/run/drain, status and retry; [workflow](#explicit-queue-workflow-v2-preview) |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
@@ -498,3 +498,19 @@ Keep runtime/request files in private user directories (including inherited
 Windows ACLs). Never copy/reset runtime children. Hooks remain synchronous;
 no background service is installed. General release still requires actual OS
 restart/hibernation validation.
+
+### Manual queue sync
+
+Run `clauderig queue sync` for a manual sync that confirms and completes fully
+covered pending requests. `--flush` includes all changed transcript tails;
+`--dry-run` stages and scans without publication or acknowledgement. Neither
+flag reads a hook payload from stdin. The current account must match a request's
+saved attribution for that request to be acknowledged; other or incomplete work
+stays queued. Use `queue status` to see what remains.
+
+Use the same runtime/profile flags as init, including every Desktop profile that
+ordinary sync discovers. A subset runtime can continue using run/drain instead.
+The command requires private remote checks and shared history, even for previews.
+It does not debounce or launch merge tools. The first interrupt lets this sync
+finish; a second cancels and waits for cleanup. Ordinary sync/hooks keep their
+existing behavior. Keep profile and runtime locations stable during the operation.

@@ -197,8 +197,9 @@ acknowledgement, while producers may continue accepting later generations.
 The live identity is observed once at the ordinary capture point. Only complete
 batches matching that identity and proven in the confirmed remote snapshot are
 acknowledged. Later arrivals, other identities, missing evidence, dry runs and
-failed publication retain their pending work. No command or hook is activated by
-this internal bridge; command routing and opt-in hooks follow in 7c.2.
+failed publication retain their pending work. The explicit `queue sync` command
+uses this bridge in 7c.2a. Ordinary sync and hooks are unchanged; opt-in routing
+and rollback follow in 7c.2b.
 
 The validation checks are observations at specific points, not an atomic
 filesystem snapshot or a transaction joining Desktop metadata to queue

@@ -86,7 +86,7 @@ func NewQueueCmd() *cobra.Command {
 func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var dir string
 	var profiles []string
-	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request, enqueue it, then run a foreground worker or drain.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nStop producers before draining. No background service is installed.", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request, enqueue it, then run a foreground worker or drain.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nStop producers before draining. No background service is installed.", Args: cobra.NoArgs}
 	cmd.PersistentFlags().StringVar(&dir, "dir", "", "private runtime directory (default ~/.clauderig/queue-runtime)")
 	_ = cmd.MarkPersistentFlagDirname("dir")
 	cmd.PersistentFlags().StringArrayVar(&profiles, "profile", nil, "explicit Desktop profile to include (repeatable; default none)")
@@ -263,6 +263,66 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		_, err = fmt.Fprintln(c.OutOrStdout(), "Batch unblocked; run a worker or drain to retry.")
 		return err
 	}})
+	var syncDryRun, syncFlush bool
+	syncCmd := &cobra.Command{
+		Use: "sync", Short: "Run a manual sync and acknowledge fully covered queued requests", Args: cobra.NoArgs,
+		Long: "Run one supervised manual sync with the current account, then confirm the\n" +
+			"published snapshot before acknowledging fully covered queued requests.\n" +
+			"Other accounts, later requests and work without complete evidence stay queued.\n" +
+			"Already-attempted or blocked work remains for the queue worker.\n" +
+			"Use the same --dir and --profile selection as init; that selection must include\n" +
+			"every local Desktop profile discovered by ordinary sync. Repair unreadable\n" +
+			"profiles before retrying. Keep profile locations and runtime paths stable.\n\n" +
+			"Requires initialized shared staging/remote history and the existing private\n" +
+			"remote checks, including for --dry-run. --flush includes all changed transcript\n" +
+			"tails; this manual command does not read hook payloads from stdin or debounce.\n" +
+			"An active queue batch can report busy; retry after it finishes. External merge\n" +
+			"tools are disabled. The first interrupt lets this sync finish; a second cancels\n" +
+			"and waits for supervised cleanup. This command does not drain the queue.",
+		RunE: func(c *cobra.Command, _ []string) error {
+			r, err := open(c.Context(), false)
+			if err != nil {
+				return err
+			}
+			req, err := deps.resolve()
+			if err != nil {
+				return err
+			}
+			remote, err := deps.remote(c.Context(), req)
+			if err != nil {
+				return err
+			}
+			ctx, err := deps.supervise(c.Context())
+			if err != nil {
+				return err
+			}
+			ctx, _, finish := queueSignalContext(ctx)
+			defer finish()
+			svc := applicationService(c.OutOrStdout())
+			svc.ReadIdentity = deps.identity
+			if err := r.CheckStartup(ctx, svc, service.QueueRuntimeInputs{Sync: req, Profiles: profiles, Remote: remote}); err != nil {
+				return fmt.Errorf("manual queue sync startup: %w", err)
+			}
+			req.DryRun, req.AllowMergeTool, req.ResolveFlush = syncDryRun, false, nil
+			req.Flush = service.FlushIntent{Mode: service.FlushNormal}
+			if syncFlush {
+				req.Flush.Mode = service.FlushAll
+			}
+			result, err := r.SyncWithCoverage(ctx, svc, req)
+			if err != nil {
+				return fmt.Errorf("manual sync did not confirm queue completion; inspect queue status before retrying: %w", err)
+			}
+			if syncDryRun {
+				_, err = fmt.Fprintln(c.OutOrStdout(), "Dry run finished; queued requests were not acknowledged.")
+			} else {
+				_, err = fmt.Fprintf(c.OutOrStdout(), "Manual sync finished; %d queued requests acknowledged. Use queue status to inspect remaining work.\n", len(result.Acknowledged))
+			}
+			return err
+		},
+	}
+	syncCmd.Flags().BoolVarP(&syncDryRun, "dry-run", "n", false, "stage and scan without publishing or acknowledging queued requests")
+	syncCmd.Flags().BoolVar(&syncFlush, "flush", false, "include all changed transcript tails, regardless of the large-file throttle")
+	cmd.AddCommand(syncCmd)
 	for _, drain := range []bool{false, true} {
 		name, short := "run", "Run one supervised foreground worker (Ctrl-C stops after the current batch)"
 		if drain {
@@ -331,7 +391,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		var entries []climenu.Entry
 		for _, child := range c.Commands() {
 			switch child.Name() {
-			case "init", "status", "run", "drain":
+			case "init", "status", "sync", "run", "drain":
 				entries = append(entries, climenu.Entry{Label: child.Name(), Desc: child.Short, Cmd: child})
 			}
 		}
