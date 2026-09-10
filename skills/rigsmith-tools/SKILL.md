@@ -4,10 +4,10 @@ description: >
   Use the rigsmith CLI family — rig (convention-first dev launcher: build/test/run/
   format/lint/typecheck/coverage/kill/worktree across .NET, Node, Go, Rust),
   changerig (changesets), shiprig (releases/publish), and clauderig (sync Claude Code
-  config across machines + worktree/PR guard). Invoke whenever the work involves
+  config across machines, v2 queued sync + worktree/PR guard). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, or syncing Claude
-  Code setup — even if the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
+  Code setup or managing its saved sync queue — even if the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
 ---
 
@@ -22,7 +22,7 @@ runs the right native command, sharing one project-detection engine.
 | `rig` | dev launcher | building, testing, running, formatting, worktrees, branches |
 | `changerig` (alias `changeset`) | changesets | recording a user-facing change, bumping versions, writing CHANGELOG |
 | `shiprig` | releases | publishing to registries, tagging, the release pipeline |
-| `clauderig` | Claude Code config sync + guard | syncing `~/.claude` across machines, worktree/PR discipline |
+| `clauderig` | Claude Code config sync + guard | syncing `~/.claude` across machines, v2 queue/retry/drain, worktree/PR discipline |
 
 **First, confirm they're installed:** `command -v rig`. If missing, install from a
 rigsmith checkout with `rig source-install` (stable binaries) or `rig dev-install`
@@ -194,12 +194,56 @@ clauderig desktop list | open <name> | prune [<name>] [--vm|--all] [--dry-run] [
 
 **Why not copy `~/.claude` by hand:** clauderig re-derives project-directory slugs
 and path values for the target OS, strips secret-bearing fields before commit (with
-a tripwire that fails loudly if one slips), and refuses any remote `gh` can't confirm
-is private. A manual copy leaks secrets and breaks paths across machines.
+a tripwire that fails loudly if one slips), and refuses any GitHub/GitLab remote
+the provider-aware verifier cannot confirm is private. Git uses configured credentials;
+privacy checks use `gh`/`glab` or `GITHUB_TOKEN`/`GH_TOKEN` and `GITLAB_TOKEN`/`GL_TOKEN`
+when the matching CLI is absent. For GitLab/token-only setup use `config set remote
+<url>` or `init --yes --remote <url>`; the existing interactive wizard and doctor
+still have older `gh`-availability gates. A manual copy leaks secrets and breaks paths across machines.
 
 **Relationship to this skill:** `clauderig guide` maintains a *brief, always-on*
 "rigsmith tools" block in `CLAUDE.md`. This skill is the *deeper, on-demand*
 reference — they complement each other; keep them consistent if you edit one.
+
+### Explicit queued sync (v2 preview)
+
+For requested queue work, confirm the chosen binary supports `clauderig queue
+--help`. Ordinary sync and hooks remain synchronous; these commands do not install
+or start a background service. Initialize ordinary sync history before queue init.
+The queue requires a verified private HTTPS GitHub/GitLab remote and uses existing
+Git credentials plus the provider-aware privacy check independently of doctor.
+
+Choose an existing private directory for request files, outside source, staging,
+runtime and all Desktop profile/data trees. Use the same `--dir` and repeated
+`--profile <name>` selection on every command; default runtime is
+`~/.clauderig/queue-runtime`, default profile selection is empty.
+
+```sh
+clauderig queue init
+clauderig queue prepare --session <session-id> --output <private-request-file> --flush
+clauderig queue enqueue <private-request-file>
+clauderig queue status              # JSON progress and capacity
+clauderig queue run                 # supervised foreground worker
+clauderig queue retry <batch-id>     # only after repairing a blocked batch
+clauderig queue drain               # stop producers first; process ready work until idle
+```
+
+`prepare` reads producer identity once and saves one event ID/time, identity and
+runtime scope, without transcript bytes. `--flush` includes every changed tail;
+omit it for normal capture. Use `--unknown-identity` only when explicit unknown
+attribution is intended. **Retry enqueue with the same saved file**, especially
+after an uncertain result; never rerun prepare, edit its checksum/identity or
+change its timestamp to retry. Keep the file through completion. Enqueue and
+workers use saved attribution, never the worker's current login.
+
+The first interrupt stops after the current batch; a second cancels and waits for
+supervised cleanup. Blocked, delayed or interrupted drain returns nonzero without
+dropping accepted work. Inspect status and repair the cause before retrying;
+never reset/copy runtime children or bypass process fences/profile isolation.
+Keep paths/links stable and Windows files under a private inherited ACL. Ordinary
+sync does not acknowledge pending queue events yet; hook routing, that coverage
+bridge and rollout rollback are the next milestone. Actual OS reboot/hibernation
+validation remains a general-release gate.
 
 ### Worktree & PR discipline (the `clauderig guard` hook)
 
@@ -223,4 +267,4 @@ enforces:
 - "build / test / run / format it", "what is this repo" → **rig**
 - "record this change", "bump the version", "update the changelog" → **changerig**
 - "publish", "cut a release", "tag" → **shiprig**
-- "sync my Claude setup", "make a worktree", "set up the guard" → **clauderig** / `rig worktree`
+- "sync my Claude setup", "enqueue/retry/drain Claude sync", "make a worktree", "set up the guard" → **clauderig** / `rig worktree`

@@ -46,7 +46,8 @@ reopening checks effective ownership and private directory/descriptor modes.
 pins the runtime binding. Session IDs are trimmed and lowercased to match native
 transcript lookup, then checked against the identifier size bound. Prepare and
 enqueue require one literal session name: separators, `.`/`..` and glob patterns
-are refused using the native session mover restrictions. It saves intent and validated attribution, not transcript
+are refused using the native session mover restrictions. Saved session IDs must
+already be trimmed and lowercase; admission refuses rather than rewriting them. It saves intent and validated attribution, not transcript
 bytes. `--session` is required; `--flush` captures every changed transcript tail.
 Without it, normal capture policy applies. Valid email/organization observations
 are retained even without an account UUID. New prepared requests trim and

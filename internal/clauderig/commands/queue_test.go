@@ -985,3 +985,39 @@ func TestQueueCommandRejectsSessionPathsAndPatterns(t *testing.T) {
 		t.Fatal("admitted invalid work", jobs, err)
 	}
 }
+
+func TestQueueCommandRejectsNoncanonicalSavedSession(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", path)
+	original, err := readQueueRequest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{" S ", "s ", "ABCDEFAB-1234-4123-8123-ABCDEFABCDEF", "Ⱥ"} {
+		saved := original
+		saved.Request.SessionID = id
+		saved.Checksum = queueRequestChecksum(saved)
+		data, err := json.Marshal(saved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "request")
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.execute(t.Context(), "enqueue", path); err == nil {
+			t.Fatal("admitted noncanonical session", id)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(data, after) {
+			t.Fatal("rewrote refused request", err)
+		}
+	}
+	jobs, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(jobs) != 0 {
+		t.Fatal("admitted invalid work", jobs, err)
+	}
+	f.must(t, "enqueue", path)
+}

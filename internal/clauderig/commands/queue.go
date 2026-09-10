@@ -588,6 +588,9 @@ func validateQueueSessionID(id string) error {
 	if !utf8.ValidString(id) || strings.TrimSpace(id) == "" || len(encoded) > 4098 || strings.ContainsAny(id, "\x00\r\n") {
 		return fmt.Errorf("a bounded --session identifier is required")
 	}
+	if id != claudesession.CanonicalID(strings.TrimSpace(id)) {
+		return fmt.Errorf("session identifier must be trimmed and lowercase")
+	}
 	if strings.ContainsAny(id, `/\*?[]`) || id == "." || id == ".." {
 		return fmt.Errorf("session must name one transcript, without separators or patterns")
 	}
