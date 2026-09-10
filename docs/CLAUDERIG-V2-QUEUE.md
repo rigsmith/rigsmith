@@ -662,3 +662,16 @@ that cleanup has finished before another worker acquires a crash-released lease:
 Windows job termination is asynchronous. Unix parent-death supervision and
 cross-platform restart fencing remain milestones 6b.6b.2b and 6b.6b.2c. Worker
 commands and queued hooks remain disabled.
+
+
+## Explicit maintenance ownership
+
+`Queue.Maintain` is the internal ownership boundary for queue-aware artifact
+reclamation. It holds worker and transaction leases and durably reflushes validated
+state before invoking a sequential callback. It changes no logical queue state and
+a failed/uncertain reflush cannot authorize deletion. The callback-scoped proof
+reports unfinished work and accepted-generation history; it expires on return.
+Producers, workers and manual coverage stay excluded until cleanup finishes.
+Callbacks must not reenter queue operations. See [queue-aware artifact
+reclamation](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md#queue-aware-archive-reclamation-6b7b2b)
+for the idle-only sealed-archive policy and queue-parent confirmation cleanup.

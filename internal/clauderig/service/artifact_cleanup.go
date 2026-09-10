@@ -57,3 +57,42 @@ func workspaceCleanupRequest(binding queue.Binding, inputs QueueInputs) (commita
 		},
 	}, nil
 }
+
+// ReclaimQueueArtifacts explicitly reclaims queue-exclusive private stores. The
+// trusted resolver must associate these stores exclusively with q and staging;
+// callers must not share them with another queue or independent artifact reader.
+// Queue worker/state ownership and a durable reflush precede staging/artifact
+// ownership. Any unfinished work protects all sealed output. Recovery/unknown
+// private state also preserves archives. No hooks or commands call this API.
+func (s Service) ReclaimQueueArtifacts(ctx context.Context, binding queue.Binding, inputs QueueInputs, q *queue.Queue) (commitartifact.QueueReclamationResult, error) {
+	result := commitartifact.QueueReclamationResult{}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if q == nil {
+		return result, queue.ErrBinding
+	}
+	req, err := workspaceCleanupRequest(binding, inputs)
+	if err != nil {
+		return result, err
+	}
+	directory, err := canonicalCapturePath(q.Directory())
+	if err != nil {
+		return result, err
+	}
+	roots, err := captureRoots(inputs.Sync, inputs.Profiles)
+	if err != nil {
+		return result, err
+	}
+	for _, path := range append(mapValues(roots), req.StagingDir, req.Captures.Dir, req.Commits.Dir) {
+		if overlapsCapture(directory, path) {
+			return result, queue.ErrBinding
+		}
+	}
+	err = q.Maintain(ctx, binding, func(proof *queue.Maintenance) error {
+		var err error
+		result, err = commitartifact.ReclaimQueueArtifacts(ctx, req, proof)
+		return err
+	})
+	return result, err
+}
