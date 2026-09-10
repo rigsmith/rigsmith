@@ -519,3 +519,31 @@ func TestQueueCommandConcurrentAdmissionOfSavedFile(t *testing.T) {
 		t.Fatal(jobs, err)
 	}
 }
+
+func TestQueueCommandPreservesPartialIdentity(t *testing.T) {
+	for _, identity := range []service.Identity{
+		{Email: "producer@example.com"},
+		{OrganizationUUID: "33333333-3333-4333-8333-333333333333"},
+		{Email: "producer@example.com", OrganizationUUID: "33333333-3333-4333-8333-333333333333"},
+	} {
+		f := newQueueFixture(t)
+		f.identity = identity
+		f.must(t, "init")
+		path := filepath.Join(t.TempDir(), "request")
+		f.must(t, "prepare", "--session", "s", "--output", path)
+		saved, err := readQueueRequest(path)
+		if err != nil || saved.Identity != identity {
+			t.Fatal("lost partial identity", saved.Identity, err)
+		}
+		f.deps.identity = func() (service.Identity, error) { t.Fatal("admission reread identity"); return service.Identity{}, nil }
+		f.must(t, "enqueue", path)
+		jobs, err := f.open(t).Snapshot(t.Context())
+		if err != nil || len(jobs) != 1 {
+			t.Fatal(jobs, err)
+		}
+		provenance, err := service.CaptureProvenance(identity)
+		if err != nil || jobs[0].Events[0].Request.ProvenanceID != provenance {
+			t.Fatal(jobs, err)
+		}
+	}
+}

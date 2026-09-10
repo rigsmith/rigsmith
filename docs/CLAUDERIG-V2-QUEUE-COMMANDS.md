@@ -35,7 +35,8 @@ reopening checks effective ownership and private directory/descriptor modes.
 `prepare` reads account identity once, generates one event ID and timestamp, and
 pins the runtime binding. It saves intent and validated attribution, not transcript
 bytes. `--session` is required; `--flush` captures every changed transcript tail.
-Without it, normal capture policy applies. Missing identity requires the explicit
+Without it, normal capture policy applies. Valid email/organization observations
+are retained even without an account UUID. A completely empty identity requires the explicit
 `--unknown-identity` flag. This flag bypasses live identity lookup and records
 unknown attribution. No worker reads its current account to attribute saved work.
 

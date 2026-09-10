@@ -146,7 +146,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read producer identity: %w", err)
 			}
-			if identity.AccountUUID == "" {
+			if identity == (service.Identity{}) {
 				return fmt.Errorf("no account identity; use --unknown-identity to record explicit unknown attribution")
 			}
 		}
