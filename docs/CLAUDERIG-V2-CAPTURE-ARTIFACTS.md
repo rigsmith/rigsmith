@@ -283,7 +283,11 @@ entry, excessive inventory, busy owner or fence refuses without deleting earlier
 candidates. The opened filesystem root must match the directory observed before lock
 acquisition, rejecting a leaf or ancestor replacement across that gap. Stable
 roots remain a caller precondition; this is not a sandbox against hostile local
-path mutation. Removal uses that pinned root and rechecks candidate identity;
+path mutation. Identity snapshots come from open directory handles before they
+are closed: on Windows, path-based file information can defer identity lookup
+until comparison and accidentally identify a later replacement. Root and candidate
+comparisons use the eager handle snapshots. Removal uses that pinned root and
+rechecks candidate identity;
 nested links are removed without following their targets.
 
 Results count fully removed top-level workspaces in this attempt. A failure can

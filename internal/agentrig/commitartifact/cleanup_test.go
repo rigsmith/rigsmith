@@ -313,7 +313,7 @@ func TestCleanupWorkspaceRootRejectsReplacement(t *testing.T) {
 			parent := filepath.Join(t.TempDir(), "parent")
 			dir := filepath.Join(parent, "captures")
 			cleanupPut(t, dir, ".capture-work-old/file")
-			original, err := os.Stat(dir)
+			original, err := directoryIdentity(os.Open(dir))
 			if err != nil {
 				t.Fatal(err)
 			}

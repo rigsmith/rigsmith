@@ -121,6 +121,10 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 		if !st.IsDir() {
 			return result, ErrInvalid
 		} // includes linked seed substores
+		st, err = directoryIdentity(os.Open(r.path))
+		if err != nil {
+			return result, err
+		}
 		_, release, err := storelock.Acquire(ctx, r.path, 0)
 		if err != nil {
 			return result, err
@@ -156,7 +160,14 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 		if err != nil {
 			return result, err
 		}
-		if !st.IsDir() || !os.SameFile(st, c.info) {
+		if !st.IsDir() {
+			return result, ErrInvalid
+		}
+		st, err = directoryIdentity(c.root.Open(c.name))
+		if err != nil {
+			return result, err
+		}
+		if !os.SameFile(st, c.info) {
 			return result, ErrInvalid
 		}
 		if err := remove(c.root, c.name); err != nil {
@@ -198,7 +209,7 @@ func openWorkspaceRoot(path string, expected os.FileInfo) (*os.Root, error) {
 	if err != nil {
 		return nil, err
 	}
-	actual, err := root.Stat(".")
+	actual, err := directoryIdentity(root.Open("."))
 	if err != nil || !os.SameFile(expected, actual) {
 		root.Close()
 		if err != nil {
@@ -207,6 +218,25 @@ func openWorkspaceRoot(path string, expected os.FileInfo) (*os.Root, error) {
 		return nil, ErrInvalid
 	}
 	return root, nil
+}
+
+// Stat through an open handle eagerly captures filesystem identity on Windows.
+// Path-based Stat/Lstat and directory-entry information can defer identity lookup
+// until SameFile, which would observe a later replacement at the original path.
+// Close before returning so identity snapshots do not prevent Windows renames.
+func directoryIdentity(directory *os.File, err error) (os.FileInfo, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	info, err := directory.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, ErrInvalid
+	}
+	return info, nil
 }
 
 func workspaceInventory(ctx context.Context, r workspaceRoot) ([]workspaceCandidate, error) {
@@ -240,6 +270,10 @@ func workspaceInventory(ctx context.Context, r workspaceRoot) ([]workspaceCandid
 				}
 				if !info.IsDir() {
 					return nil, ErrInvalid
+				}
+				info, err = directoryIdentity(r.root.Open(entry.Name()))
+				if err != nil {
+					return nil, err
 				}
 				result = append(result, workspaceCandidate{r.root, entry.Name(), info})
 				break
