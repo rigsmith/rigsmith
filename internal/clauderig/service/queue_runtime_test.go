@@ -51,7 +51,7 @@ func queueRuntimeRestart(t *testing.T, ctx context.Context) {
 	// transcript. The transport fails before sending, rather than confirming work.
 	offline := errors.Join(commitartifact.ErrTransport, errors.New("offline"))
 	remote.beforeFetch = func() error { return offline }
-	result, err := r.Queue().RunOne(ctx, time.Now(), r.Adapter(svc, resolve))
+	result, err := r.RunOne(ctx, time.Now(), r.Adapter(svc, resolve))
 	if err == nil || result.Phase != queue.Committed || result.Acknowledged {
 		t.Fatal(result, err)
 	}
@@ -67,11 +67,11 @@ func queueRuntimeRestart(t *testing.T, ctx context.Context) {
 		t.Fatal(retried, err)
 	}
 	remote.beforeFetch = nil
-	jobs, err := reopened.Queue().Snapshot(t.Context())
+	jobs, err := reopened.Snapshot(t.Context())
 	if err != nil || len(jobs) != 1 {
 		t.Fatal(jobs, err)
 	}
-	result, err = reopened.Queue().RunOne(ctx, jobs[0].NotBefore.Add(time.Second), reopened.Adapter(svc, resolve))
+	result, err = reopened.RunOne(ctx, jobs[0].NotBefore.Add(time.Second), reopened.Adapter(svc, resolve))
 	if err != nil || !result.Acknowledged {
 		t.Fatal(result, err)
 	}
@@ -96,7 +96,7 @@ func queueRuntimeRestart(t *testing.T, ctx context.Context) {
 	if _, err := second.Enqueue(t.Context(), producer, event, at); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Queue().RunOne(ctx, time.Now(), reopened.Adapter(svc, resolve)); !errors.Is(err, queue.ErrBinding) {
+	if _, err := second.RunOne(ctx, time.Now(), reopened.Adapter(svc, resolve)); !errors.Is(err, queue.ErrBinding) {
 		t.Fatal("cross-lifecycle adapter", err)
 	}
 }

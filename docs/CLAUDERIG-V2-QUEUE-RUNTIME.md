@@ -82,7 +82,10 @@ Archive limits remain runtime admission policy and can change without rewriting
 capture identity, using the existing artifact-store semantics.
 
 `CheckStartup` preserves the shared Git history check with the runtime's stores.
-The caller still supplies it to `Queue.Run`, owns platform command supervision,
+The runtime exposes `Snapshot`, `RunOne` and `Run` forwarding methods without
+returning the underlying queue or its producer mutators. Producers must use the
+runtime's identity-saving `Enqueue`. The caller supplies `CheckStartup` to `Run`,
+owns platform command supervision,
 and handles stop/drain and foreground coordination. A saved committed phase can
 resume publication after restart without the original transcript. A runtime's
 adapter refuses batches claimed from another lifecycle.

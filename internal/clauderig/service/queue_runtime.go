@@ -270,9 +270,23 @@ func (r *QueueRuntime) refresh(ctx context.Context) error {
 	return r.attach(ctx, s)
 }
 
-// Queue exposes the existing execution/inspection APIs with the runtime binding.
-// Use Adapter to execute; do not call runtime methods inside Queue.Maintain.
-func (r *QueueRuntime) Queue() *queue.Queue { return r.q }
+// Snapshot returns detached unfinished work without exposing producer mutators.
+func (r *QueueRuntime) Snapshot(ctx context.Context) ([]queue.Work, error) {
+	return r.q.Snapshot(ctx)
+}
+
+// RunOne executes one claimed batch using Adapter's lifecycle validation.
+// The underlying queue is private: all producers must use runtime.Enqueue so
+// attribution is durable before acceptance.
+func (r *QueueRuntime) RunOne(ctx context.Context, at time.Time, adapter queue.Adapter) (queue.ExecutionResult, error) {
+	return r.q.RunOne(ctx, at, adapter)
+}
+
+// Run forwards the worker loop's stop/drain contract. Callers provide Adapter,
+// CheckStartup and OS supervision; this method never accepts producer events.
+func (r *QueueRuntime) Run(ctx context.Context, adapter queue.Adapter, opts queue.RunOptions) (queue.RunResult, error) {
+	return r.q.Run(ctx, adapter, opts)
+}
 
 // Enqueue durably saves validated producer attribution before accepting work.
 // The caller must retain identity, EventID and timestamp across uncertain retries;
