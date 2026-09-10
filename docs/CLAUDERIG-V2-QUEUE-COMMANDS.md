@@ -10,7 +10,14 @@ require explicit command arguments; off a terminal, bare `queue` prints help.
 
 ## Start and accept work
 
-Run an ordinary `clauderig sync` first to initialize local and remote history.
+Configure the private remote, then run an ordinary `clauderig sync` to initialize
+local and remote history. For an existing GitLab repo or token-only setup, use
+`clauderig config set remote https://gitlab.com/acme/private-backup.git` (substitute
+your provider/URL), or noninteractive `clauderig init --yes --remote <url>`. These
+paths invoke the provider-aware private-repo verifier. The existing interactive
+init wizard still skips remote setup without `gh`, and doctor may report privacy
+unverified without `gh`; this queue preview does not change those older gates.
+Queue init/run/drain perform their own provider-aware checks.
 The queue uses the configured private HTTPS GitHub/GitLab remote and existing
 Git credential helpers (`gh auth setup-git` where appropriate). Privacy checks use
 `gh` for GitHub and `glab` for GitLab, falling back to `GITHUB_TOKEN`/`GH_TOKEN`
@@ -37,10 +44,13 @@ reopening checks effective ownership and private directory/descriptor modes.
 
 `prepare` reads account identity once, generates one event ID and timestamp, and
 pins the runtime binding. Session IDs are trimmed and lowercased to match native
-transcript lookup. It saves intent and validated attribution, not transcript
+transcript lookup, then checked against the identifier size bound. It saves intent and validated attribution, not transcript
 bytes. `--session` is required; `--flush` captures every changed transcript tail.
 Without it, normal capture policy applies. Valid email/organization observations
-are retained even without an account UUID. A completely empty identity requires the explicit
+are retained even without an account UUID. New prepared requests trim and
+lowercase both UUID fields before hashing and saving; invalid UUIDs refuse
+preparation. Previously saved requests and retained provenance hashes are not
+rewritten or migrated. A completely empty identity requires the explicit
 `--unknown-identity` flag. This flag bypasses live identity lookup and records
 unknown attribution. No worker reads its current account to attribute saved work.
 
@@ -93,8 +103,8 @@ No missing identity or timestamp is filled from the current account or clock.
 | `Scope` | string, required | Prepare: runtime ScopeID digest, checked against the opened lifecycle before admission. |
 | `At` | timestamp string, required | Prepare: original UTC time in Go's RFC3339Nano representation; must be nonzero and retained across retries. |
 | `Identity` | object, required | Prepare: the single producer observation; null or omission is invalid. |
-| `Identity.AccountUUID` | string, required | Observed account UUID or empty. |
-| `Identity.OrganizationUUID` | string, required | Observed organization UUID or empty. |
+| `Identity.AccountUUID` | string, required | Canonical observed account UUID or empty. |
+| `Identity.OrganizationUUID` | string, required | Canonical observed organization UUID or empty. |
 | `Identity.Email` | string, required | Observed validated email or empty. |
 | `Request` | object, required | Prepare: immutable intent; null or omission is invalid. |
 | `Request.EventID` | string, required | Prepare: new random event identifier; retained across retries. |

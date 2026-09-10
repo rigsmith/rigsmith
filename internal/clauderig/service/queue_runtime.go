@@ -155,7 +155,7 @@ func prepareQueueRuntime(dir string, req SyncRequest, profiles []string) (*Queue
 			return nil, queue.ErrBinding
 		}
 	}
-	if err := checkQueueProfilePath(req, root); err != nil {
+	if err := checkQueueDesktopProfilePaths(req, root); err != nil {
 		return nil, err
 	}
 	return &QueueRuntime{dir: root, capture: binding, save: durable.Write, request: req, profiles: slices.Clone(profiles)}, nil
@@ -502,7 +502,7 @@ func (r *QueueRuntime) CheckRequestPath(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := checkQueueProfilePath(r.request, candidate); err != nil {
+	if err := checkQueueDesktopProfilePaths(r.request, candidate); err != nil {
 		return err
 	}
 
@@ -518,9 +518,9 @@ func (r *QueueRuntime) CheckRequestPath(path string) error {
 	return nil
 }
 
-// checkQueueProfilePath applies the same exclusion to runtime roots and saved
+// checkQueueDesktopProfilePaths applies the same exclusion to runtime roots and saved
 // producer files, independently of which Desktop profiles the queue selects.
-func checkQueueProfilePath(req SyncRequest, candidate string) error {
+func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) error {
 	// Ordinary sync discovers profiles independently of the queue selection.
 	// Exclude the whole local profile container (including future profiles) and
 	// each existing profile and data directory target, including unselected aliases.

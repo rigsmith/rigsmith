@@ -127,8 +127,9 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var flush bool
 	var unknown bool
 	prepare := &cobra.Command{Use: "prepare", Short: "Save a new request and its current account attribution", Long: "Save one new request to an exclusive private file before enqueueing.\nThe file pins this runtime, a new event ID, the timestamp and account identity.\nRetry enqueue with this same file; never rerun prepare for an uncertain enqueue.\nNo transcript bytes are read. --flush requests all changed transcript tails.\nAn unavailable account requires an explicit --unknown-identity choice.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
-		encodedSession, _ := json.Marshal(session)
-		if !utf8.ValidString(session) || strings.TrimSpace(session) == "" || len(encodedSession) > 4098 || strings.ContainsAny(session, "\x00\r\n") {
+		canonicalSession := claudesession.CanonicalID(strings.TrimSpace(session))
+		encodedSession, _ := json.Marshal(canonicalSession)
+		if !utf8.ValidString(session) || canonicalSession == "" || len(encodedSession) > 4098 || strings.ContainsAny(session, "\x00\r\n") {
 			return fmt.Errorf("a bounded --session identifier is required")
 		}
 		if output == "" {
@@ -151,6 +152,18 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 				return fmt.Errorf("no account identity; use --unknown-identity to record explicit unknown attribution")
 			}
 		}
+		// Normalize new producer UUID observations before hashing and persisting.
+		// Refuse invalid values instead of normalizing them into unknown identity.
+		for _, id := range []*string{&identity.AccountUUID, &identity.OrganizationUUID} {
+			if *id == "" {
+				continue
+			}
+			canonical := account.CanonicalUUID(*id)
+			if canonical == "" {
+				return fmt.Errorf("invalid producer UUID")
+			}
+			*id = canonical
+		}
 		provenance, err := service.CaptureProvenance(identity)
 		if err != nil {
 			return err
@@ -159,7 +172,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		if flush {
 			mode = queue.All
 		}
-		submission := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: claudesession.CanonicalID(strings.TrimSpace(session)), ProvenanceID: provenance, Flush: queue.Flush{Mode: mode}}}
+		submission := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: canonicalSession, ProvenanceID: provenance, Flush: queue.Flush{Mode: mode}}}
 		submission.Checksum = queueRequestChecksum(submission)
 		data, err := json.MarshalIndent(submission, "", "  ")
 		if err != nil {

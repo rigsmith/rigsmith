@@ -815,3 +815,51 @@ func TestQueueCommandRuntimeExcludesAllDesktopProfiles(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueCommandCanonicalSessionBounds(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	// U+023A is two bytes but its lowercase U+2C65 is three bytes.
+	oversized := strings.Repeat("Ⱥ", 2048)
+	if _, err := f.execute(t.Context(), "prepare", "--session", oversized, "--output", path); err == nil {
+		t.Fatal("accepted expanded canonical identifier")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("saved oversized request", err)
+	}
+	valid := strings.Repeat("Ⱥ", 1365) + "a" // Exactly 4096 bytes after lowercasing.
+	f.must(t, "prepare", "--session", valid, "--output", path)
+	f.must(t, "enqueue", path)
+}
+
+func TestQueueCommandCanonicalProducerUUIDs(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	const id = "abcdefab-1234-4123-8123-abcdefabcdef"
+	var provenance string
+	for _, spelling := range []string{id, strings.ToUpper(id), "  " + strings.ToUpper(id) + "  "} {
+		f.identity.AccountUUID = spelling
+		f.identity.OrganizationUUID = spelling
+		path := filepath.Join(t.TempDir(), "request")
+		f.must(t, "prepare", "--session", "s", "--output", path)
+		saved, err := readQueueRequest(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if saved.Identity.AccountUUID != id || saved.Identity.OrganizationUUID != id {
+			t.Fatal("noncanonical saved identity", saved.Identity)
+		}
+		if provenance != "" && saved.Request.ProvenanceID != provenance {
+			t.Fatal("different provenance for equivalent UUIDs")
+		}
+		provenance = saved.Request.ProvenanceID
+		f.must(t, "enqueue", path)
+	}
+	for _, invalid := range []string{"not-a-uuid", "   "} {
+		f.identity.OrganizationUUID = invalid
+		if _, err := f.execute(t.Context(), "prepare", "--session", "s", "--output", filepath.Join(t.TempDir(), "request")); err == nil {
+			t.Fatal("invalid organization became unknown")
+		}
+	}
+}

@@ -489,7 +489,10 @@ The default private runtime is `~/.clauderig/queue-runtime`; select another with
 `--dir`. Repeat the same explicit `--profile` selection on every command. Workers
 require initialized shared Git history and a verified private HTTPS GitHub/GitLab
 remote, using existing Git credentials. Privacy checks use `gh`/`glab`, or
-`GITHUB_TOKEN`/`GH_TOKEN` and `GITLAB_TOKEN`/`GL_TOKEN` when the matching CLI is absent. `--max-archive-bytes` and
+`GITHUB_TOKEN`/`GH_TOKEN` and `GITLAB_TOKEN`/`GL_TOKEN` when the matching CLI is absent.
+Configure GitLab/token-only remotes with `config set remote <url>` or
+`init --yes --remote <url>`: the existing interactive wizard and doctor still
+have `gh`-availability gates, while queue commands verify privacy independently. `--max-archive-bytes` and
 `--max-stored-bytes` on `run`/`drain` control archive admission, not total disk use.
 Keep runtime/request files in private user directories (including inherited
 Windows ACLs). Never copy/reset runtime children. Hooks remain synchronous;

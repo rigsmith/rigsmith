@@ -89,5 +89,8 @@ go build -o clauderig ./cmd/clauderig
 Requires `git` with credentials for the remote. Privacy verification uses
 `gh` for GitHub or `glab` for GitLab. Without the matching CLI, set
 `GITHUB_TOKEN`/`GH_TOKEN` or `GITLAB_TOKEN`/`GL_TOKEN`, respectively.
+For GitLab/token-only setup, use `clauderig config set remote <url>` or
+`clauderig init --yes --remote <url>`; the interactive wizard and doctor still
+have older `gh`-availability gates. Queue commands verify privacy independently.
 
 - [All commands →](./commands)
