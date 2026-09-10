@@ -61,6 +61,8 @@ func workspaceCleanupRequest(binding queue.Binding, inputs QueueInputs) (commita
 // ReclaimQueueArtifacts explicitly reclaims queue-exclusive private stores. The
 // trusted resolver must associate these stores exclusively with q and staging;
 // callers must not share them with another queue or independent artifact reader.
+// This association is a caller precondition, not checked by CaptureBinding or
+// Maintenance. A reset/replacement queue must not reuse the previous stores.
 // Queue worker/state ownership and a durable reflush precede staging/artifact
 // ownership. Any unfinished work protects all sealed output. Recovery/unknown
 // private state also preserves archives. No hooks or commands call this API.

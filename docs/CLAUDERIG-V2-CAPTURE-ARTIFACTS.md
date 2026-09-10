@@ -320,6 +320,16 @@ reclamation. The adapter validates binding and source/staging/store/queue path
 separation before entering maintenance, then revalidates staging-backed binding
 under the writer leases. There is no command, hook or automatic call site.
 
+Queue/store association is a caller precondition, not a persisted identity check.
+`CaptureBinding` identifies capture policy, and `Maintenance` proves ownership of
+the supplied queue; neither proves that arbitrary supplied stores belong to that
+queue. A same-binding replacement queue with completed history would pass these
+checks, so the empty-history guard does not make queue replacement safe. Before
+exposing reclamation through rollout wiring, the production resolver must enforce
+one retained queue lifecycle per private store set and refuse ambiguous or reset
+associations. Persisted lifecycle identity is an option if that cannot be guaranteed
+by construction; this internal API does not provide it.
+
 `Queue.Maintain` acquires worker ownership and the queue transaction lock without
 waiting, loads and validates the existing binding/schema/state, and durably
 reflushes that state before issuing a callback-scoped `Maintenance` proof. A failed

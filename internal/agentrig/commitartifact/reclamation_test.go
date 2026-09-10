@@ -238,7 +238,7 @@ func TestReclaimQueueArtifactsOwnershipAndPartialRetry(t *testing.T) {
 			}
 			return root.Remove(name)
 		}}
-		_, err := cleanupOwnedWorkspaces(t.Context(), req, func(root *os.Root, name string) error { return root.RemoveAll(name) }, plan)
+		_, err := cleanupOwnedArtifacts(t.Context(), req, func(root *os.Root, name string) error { return root.RemoveAll(name) }, plan)
 		partial = plan.result
 		return err
 	})

@@ -34,7 +34,7 @@ type QueueReclamationResult struct {
 // This is explicit internal maintenance, not automatic retention or queue repair.
 func ReclaimQueueArtifacts(ctx context.Context, req WorkspaceCleanup, proof *queue.Maintenance) (QueueReclamationResult, error) {
 	plan := &queueReclamation{proof: proof, unlink: func(root *os.Root, name string) error { return root.Remove(name) }}
-	workspace, err := cleanupOwnedWorkspaces(ctx, req, func(root *os.Root, name string) error { return root.RemoveAll(name) }, plan)
+	workspace, err := cleanupOwnedArtifacts(ctx, req, func(root *os.Root, name string) error { return root.RemoveAll(name) }, plan)
 	plan.result.WorkspaceCleanupResult = workspace
 	return plan.result, err
 }

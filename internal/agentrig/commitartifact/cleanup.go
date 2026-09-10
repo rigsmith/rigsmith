@@ -62,10 +62,10 @@ type workspaceCandidate struct {
 }
 
 func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*os.Root, string) error) (WorkspaceCleanupResult, error) {
-	return cleanupOwnedWorkspaces(ctx, req, remove, nil)
+	return cleanupOwnedArtifacts(ctx, req, remove, nil)
 }
 
-func cleanupOwnedWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*os.Root, string) error, reclamation *queueReclamation) (WorkspaceCleanupResult, error) {
+func cleanupOwnedArtifacts(ctx context.Context, req WorkspaceCleanup, remove func(*os.Root, string) error, reclamation *queueReclamation) (WorkspaceCleanupResult, error) {
 	result := WorkspaceCleanupResult{}
 	if err := ctx.Err(); err != nil {
 		return result, err
