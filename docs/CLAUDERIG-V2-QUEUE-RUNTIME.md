@@ -10,7 +10,12 @@ synchronous path; this slice installs no worker and exposes no cleanup command.
 profiles and a private runtime root. The root must be outside every enabled
 source and canonical staging tree. A runtime requires a configured remote. The
 caller retains existing remote privacy/authentication checks and stable local
-filesystem ownership, as for the artifact APIs.
+filesystem ownership, as for the artifact APIs. Creation requests mode 0700 for
+directories and 0600 for durable descriptor files. On Linux/macOS, reopening
+requires the root, existing managed directories and descriptor to belong to the
+effective user with no group/other permission bits; it refuses rather than repairs
+unsafe permissions. On Windows, POSIX bits do not describe inherited ACLs: the
+caller must provision a private parent. This API does not inspect or rewrite ACLs.
 
 A new runtime owns this layout:
 
@@ -39,7 +44,12 @@ or resets either. A missing/corrupt descriptor or queue, mismatched capture poli
 foreign lifecycle, moved root, or linked managed child refuses the operation.
 Capture and commit directories may be absent until first use. The descriptor is
 bounded to 1 MiB and 1,024 identities; hashes, identity shape, version and decoded
-fields are validated before use.
+fields are validated before use. The outer JSON envelope has `Payload` (the
+serialized `runtimeState`) and `SHA256` (the lowercase SHA-256 of those exact
+payload bytes). `Version` is inside the payload, alongside `ID`, `Location`,
+`Capture` and `Identities`; only version 1 is accepted. Unknown fields, unsupported
+versions, truncated JSON and checksum mismatches refuse opening without migration
+or fallback. Integrity checks detect corruption; they are not authentication.
 
 Creation publishes the queue before its descriptor. An interruption before the
 descriptor is published can leave an incomplete directory; a retry refuses it
@@ -66,8 +76,11 @@ Concurrent producers serialize descriptor updates and do not lose identities.
 
 The producer must retain the original identity, event ID and timestamp across
 retries. A later login is not a substitute. Explicit unknown identity is stored
-as such; a missing identity record during execution is an error. A failed enqueue
-can leave an unused identity record. Identities are retained and bounded; reaching
+as such; a missing identity record during execution is an error. A definite duplicate, capacity or replay-cutoff rejection removes an identity
+newly added by that attempt under the same runtime lease. Existing identity
+records are never removed. Uncertain writes, other failures, or a failed cleanup
+write can still leave an unused record; removing possibly accepted attribution
+would be unsafe. Identities are retained and bounded; reaching
 the identity limit refuses new identities while allowing known producers to
 continue. This slice does not compact identity history.
 
@@ -76,6 +89,13 @@ continue. This slice does not compact identity history.
 `Adapter` accepts a callback for freshly resolved configuration, selected profiles,
 transport and archive limits. The callback supplies neither archive paths nor
 producer identity: those come from the runtime layout and durable descriptor.
+Reopening and saved-phase resolution validate current config/paths against the
+persisted binding using both possible resolved auto chunk modes, as the retained
+artifact adapter already does. They do not depend on a missing or corrupt live
+staging marker. Runtime startup uses the same retained-policy check. New captures
+still validate the current marker in the capture phase; marker loss does not
+authorize new captures under a silently changed mode.
+
 Each batch rechecks the capture binding, lifecycle metadata and queue state before
 using the saved producer identity. It never reads the worker's live login.
 Archive limits remain runtime admission policy and can change without rewriting
@@ -86,7 +106,19 @@ The runtime exposes `Snapshot`, `RunOne` and `Run` forwarding methods without
 returning the underlying queue or its producer mutators. Producers must use the
 runtime's identity-saving `Enqueue`. The caller supplies `CheckStartup` to `Run`,
 owns platform command supervision,
-and handles stop/drain and foreground coordination. A saved committed phase can
+and handles stop/drain and foreground coordination.
+
+[Process lifecycle requirements](CLAUDERIG-V2-PROCESS-LIFECYCLE.md) apply on all
+platforms: a stable private staging lease, an explicit supervised command context,
+and verified child cleanup before releasing ownership. Linux/macOS use an
+explicit executable entry point calling `process.ServeSupervisor`, inherited
+staging ownership and a process-group anchor. Windows uses native job ownership
+with suspended creation/assignment; no supervisor executable is launched there.
+Both retain persistent fences after unconfirmed cleanup. Unix recovery needs
+verified process-group/boot evidence; an unconfirmed Windows job can require a
+verified kernel restart. Same-boot disappearance is insufficient. The runtime
+does not install either mode or clear fences. Ordinary synchronous callers retain
+their existing path; the rollout worker must explicitly select supervision. A saved committed phase can
 resume publication after restart without the original transcript. A runtime's
 adapter refuses batches claimed from another lifecycle.
 
@@ -105,7 +137,8 @@ maintenance ownership when revalidating an existing lifecycle.
 3. Reclamation exposure only through the retained runtime association, plus actual
    OS restart/hibernation validation before general release.
 
-Synthetic tests cover failed/uncertain identity writes, retry deduplication,
+Synthetic tests cover truncated descriptors and failed/uncertain creation and
+identity writes followed by Open/Create, retry deduplication,
 concurrent producers, bounded metadata, unknown attribution, missing/reset/foreign
 queues, source overlap, moved roots, linked stores, changed config and an offline
 committed-phase restart that publishes the original producer's bytes/attribution.

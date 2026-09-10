@@ -28,6 +28,8 @@ func queueRuntimeRestart(t *testing.T, ctx context.Context) {
 	if _, err := (service.Service{ReadIdentity: func() (service.Identity, error) { return producer, nil }}).Sync(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
+	// Auto mode is pinned by the runtime and saved artifacts, even if its live marker is lost.
+	req.Config.ChunkTranscripts = nil
 	transport, err := commitartifact.NewConfiguredGitTransport(commitartifact.GitTransportOptions{Remote: remoteDir, Branch: "main"})
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +60,9 @@ func queueRuntimeRestart(t *testing.T, ctx context.Context) {
 	if err := os.RemoveAll(filepath.Join(req.Machine.Home, ".claude")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Remove(filepath.Join(req.StagingDir, "clauderig-storage.json")); err != nil {
+		t.Fatal(err)
+	}
 	reopened, err := service.OpenQueueRuntime(t.Context(), dir, req, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +91,14 @@ func queueRuntimeRestart(t *testing.T, ctx context.Context) {
 	}
 	if err := reopened.CheckStartup(ctx, svc, inputs); err != nil {
 		t.Fatal("runtime startup", err)
+	}
+	fresh := event
+	fresh.EventID = "after-marker-loss"
+	if _, err := reopened.Enqueue(t.Context(), producer, fresh, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopened.RunOne(ctx, time.Now(), reopened.Adapter(svc, resolve)); !errors.Is(err, queue.ErrBinding) {
+		t.Fatal("fresh capture ignored changed marker", err)
 	}
 	// The lifecycle bridge must not authorize work from another runtime, even if
 	// its capture policy and event IDs are identical.

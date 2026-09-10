@@ -6,11 +6,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
@@ -32,6 +34,8 @@ type QueueRuntime struct {
 	dir              string
 	capture, binding queue.Binding
 	id               string
+	request          SyncRequest
+	profiles         []string
 	q                *queue.Queue
 	save             func(context.Context, string, func(*os.File) error) error
 }
@@ -56,6 +60,14 @@ func CreateQueueRuntime(ctx context.Context, dir string, req SyncRequest, profil
 	if err != nil {
 		return nil, err
 	}
+	r.capture, err = CaptureBinding(req, profiles)
+	if err != nil {
+		return nil, err
+	}
+	return createQueueRuntime(ctx, r)
+}
+
+func createQueueRuntime(ctx context.Context, r *QueueRuntime) (*QueueRuntime, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -117,7 +129,8 @@ func OpenQueueRuntime(ctx context.Context, dir string, req SyncRequest, profiles
 }
 
 func prepareQueueRuntime(dir string, req SyncRequest, profiles []string) (*QueueRuntime, error) {
-	binding, err := CaptureBinding(req, profiles)
+	mode := false
+	binding, err := captureBinding(req, profiles, &mode)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +154,7 @@ func prepareQueueRuntime(dir string, req SyncRequest, profiles []string) (*Queue
 			return nil, queue.ErrBinding
 		}
 	}
-	return &QueueRuntime{dir: root, capture: binding, save: durable.Write}, nil
+	return &QueueRuntime{dir: root, capture: binding, save: durable.Write, request: req, profiles: slices.Clone(profiles)}, nil
 }
 
 func (r *QueueRuntime) queueBinding(id string) queue.Binding {
@@ -162,7 +175,7 @@ func (r *QueueRuntime) load() (runtimeState, error) {
 		if err != nil {
 			return s, err
 		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !runtimePrivate(info) {
 			return s, queue.ErrBinding
 		}
 	}
@@ -171,7 +184,7 @@ func (r *QueueRuntime) load() (runtimeState, error) {
 	if err != nil {
 		return s, err
 	}
-	if !info.Mode().IsRegular() || info.Size() > runtimeLimit {
+	if !info.Mode().IsRegular() || info.Size() > runtimeLimit || !runtimePrivate(info) {
 		return s, queue.ErrBinding
 	}
 	f, err := os.Open(path)
@@ -197,10 +210,14 @@ func (r *QueueRuntime) load() (runtimeState, error) {
 		return s, err
 	}
 	id, err := hex.DecodeString(s.ID)
-	if err != nil || len(id) != 32 || hex.EncodeToString(id) != s.ID || s.Version != 1 || s.Location != artifact.Key([]byte(r.dir)) || s.Capture != r.capture || s.Identities == nil || len(s.Identities) > runtimeIdentityLimit {
+	if err != nil || len(id) != 32 || hex.EncodeToString(id) != s.ID || s.Version != 1 || s.Location != artifact.Key([]byte(r.dir)) || s.Identities == nil || len(s.Identities) > runtimeIdentityLimit {
 		return s, queue.ErrBinding
 	}
-	if r.id != "" && r.id != s.ID {
+	_, bindingErr := artifactPhaseBinding(ArtifactCaptureRequest{Binding: s.Capture, Sync: r.request, Profiles: r.profiles}, queue.Committed)
+	if bindingErr != nil {
+		return s, bindingErr
+	}
+	if r.id != "" && (r.id != s.ID || r.capture != s.Capture) {
 		return s, queue.ErrBinding
 	}
 	for key, identity := range s.Identities {
@@ -239,6 +256,7 @@ func (r *QueueRuntime) persist(ctx context.Context, s runtimeState) error {
 	return r.save(ctx, filepath.Join(r.dir, "runtime.json"), func(f *os.File) error { _, err := f.Write(data); return err })
 }
 func (r *QueueRuntime) attach(ctx context.Context, s runtimeState) error {
+	r.capture = s.Capture
 	b := r.queueBinding(s.ID)
 	q, err := queue.Open(ctx, filepath.Join(r.dir, "queue"), b)
 	if err != nil {
@@ -305,24 +323,12 @@ func (r *QueueRuntime) Enqueue(ctx context.Context, identity Identity, request q
 		identity.AccountUUID = account.CanonicalUUID(identity.AccountUUID)
 	}
 	request.ProvenanceID = provenance
-	if err := ctx.Err(); err != nil {
-		return fail, err
-	}
-	if storelock.SameActiveLease(ctx, ctx) {
-		return fail, queue.ErrOwner
-	}
-	_, release, err := storelock.Acquire(ctx, r.dir, StoreWait)
+	s, release, err := r.lockState(ctx)
 	if err != nil {
 		return fail, err
 	}
 	defer release()
-	s, err := r.load()
-	if err != nil {
-		return fail, err
-	}
-	if _, err = queue.Open(ctx, r.q.Directory(), r.binding); err != nil {
-		return fail, err
-	}
+	_, existed := s.Identities[provenance]
 	if old, ok := s.Identities[provenance]; ok {
 		if !reflect.DeepEqual(old, identity) {
 			return fail, queue.ErrBinding
@@ -337,7 +343,40 @@ func (r *QueueRuntime) Enqueue(ctx context.Context, identity Identity, request q
 	if err := r.persist(ctx, s); err != nil {
 		return fail, err
 	}
-	return r.q.Enqueue(ctx, request, at)
+	event, err := r.q.Enqueue(ctx, request, at)
+	if !existed && !errors.Is(err, queue.ErrUncertain) && (errors.Is(err, queue.ErrDuplicate) || errors.Is(err, queue.ErrFull) || errors.Is(err, queue.ErrExpired)) {
+		delete(s.Identities, provenance)
+		err = errors.Join(err, r.persist(ctx, s))
+	}
+	return event, err
+}
+
+// lockState centralizes the producer/resolver critical section. It returns a
+// release only on success; failures leave no runtime lease held.
+func (r *QueueRuntime) lockState(ctx context.Context) (runtimeState, func(), error) {
+	fail := runtimeState{}
+	if err := ctx.Err(); err != nil {
+		return fail, nil, err
+	}
+	if storelock.SameActiveLease(ctx, ctx) {
+		return fail, nil, queue.ErrOwner
+	}
+	if _, err := os.Stat(r.dir); err != nil {
+		return fail, nil, err
+	}
+	_, release, err := storelock.Acquire(ctx, r.dir, StoreWait)
+	if err != nil {
+		return fail, nil, err
+	}
+	s, err := r.load()
+	if err == nil {
+		_, err = queue.Open(ctx, r.q.Directory(), r.binding)
+	}
+	if err != nil {
+		release()
+		return fail, nil, err
+	}
+	return s, release, nil
 }
 
 // QueueRuntimeInputs comes from fresh local resolution and existing Git/gh
@@ -356,24 +395,17 @@ func (r *QueueRuntime) inputs(ctx context.Context, in QueueRuntimeInputs, proven
 	if err != nil {
 		return fail, err
 	}
-	if current.capture != r.capture || in.MaxBytes < 0 || in.MaxStoredBytes < 0 {
+	if _, err := artifactPhaseBinding(ArtifactCaptureRequest{Binding: r.capture, Sync: current.request, Profiles: current.profiles}, queue.Committed); err != nil {
+		return fail, err
+	}
+	if in.MaxBytes < 0 || in.MaxStoredBytes < 0 {
 		return fail, queue.ErrBinding
 	}
-	if storelock.SameActiveLease(ctx, ctx) {
-		return fail, queue.ErrOwner
-	}
-	_, release, err := storelock.Acquire(ctx, r.dir, StoreWait)
+	s, release, err := r.lockState(ctx)
 	if err != nil {
 		return fail, err
 	}
 	defer release()
-	s, err := r.load()
-	if err != nil {
-		return fail, err
-	}
-	if _, err = queue.Open(ctx, r.q.Directory(), r.binding); err != nil {
-		return fail, err
-	}
 	identity := Identity{}
 	if provenance != "" {
 		var ok bool
@@ -421,5 +453,5 @@ func (r *QueueRuntime) CheckStartup(ctx context.Context, s Service, in QueueRunt
 	if err != nil {
 		return err
 	}
-	return s.CheckQueueStartup(ctx, r.capture, inputs)
+	return s.checkQueueStartup(ctx, r.capture, inputs, true)
 }

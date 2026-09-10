@@ -248,3 +248,121 @@ func TestQueueRuntimeInitializationAndIdentityCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestQueueRuntimeCreationPersistenceFailures(t *testing.T) {
+	for _, mode := range []string{"before-write", "uncertain-complete", "truncated"} {
+		t.Run(mode, func(t *testing.T) {
+			original, req := runtimeFixture(t)
+			dir := filepath.Join(filepath.Dir(original.dir), "new-runtime")
+			r, err := prepareQueueRuntime(dir, req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.capture, err = CaptureBinding(req, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r.save = func(ctx context.Context, path string, write func(*os.File) error) error {
+				switch mode {
+				case "before-write":
+					return os.ErrPermission
+				case "truncated":
+					if err := os.WriteFile(path, []byte(`{"Payload":`), 0600); err != nil {
+						return err
+					}
+					return durable.ErrUncertain
+				default:
+					if err := durable.Write(ctx, path, write); err != nil {
+						return err
+					}
+					return durable.ErrUncertain
+				}
+			}
+			if _, err := createQueueRuntime(t.Context(), r); err == nil {
+				t.Fatal("expected persistence failure")
+			}
+			queuePath := filepath.Join(dir, "queue", "queue.json")
+			before, err := os.ReadFile(queuePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opened, oerr := OpenQueueRuntime(t.Context(), dir, req, nil)
+			retried, cerr := CreateQueueRuntime(t.Context(), dir, req, nil)
+			if mode == "uncertain-complete" {
+				if oerr != nil || cerr != nil || opened.id != r.id || retried.id != r.id {
+					t.Fatal(oerr, cerr)
+				}
+			} else if oerr == nil || cerr == nil {
+				t.Fatal("repaired incomplete descriptor", oerr, cerr)
+			}
+			after, err := os.ReadFile(queuePath)
+			if err != nil || string(before) != string(after) {
+				t.Fatal("changed queue during reopen", err)
+			}
+		})
+	}
+}
+
+func TestQueueRuntimeDescriptorUpdateReopen(t *testing.T) {
+	for _, truncate := range []bool{false, true} {
+		t.Run(fmt.Sprint(truncate), func(t *testing.T) {
+			r, req := runtimeFixture(t)
+			r.save = func(ctx context.Context, path string, write func(*os.File) error) error {
+				if truncate {
+					if err := os.WriteFile(path, []byte(`{"Payload":`), 0600); err != nil {
+						return err
+					}
+				} else if err := durable.Write(ctx, path, write); err != nil {
+					return err
+				}
+				return durable.ErrUncertain
+			}
+			request := runtimeRequest("failed-update")
+			at := time.Now()
+			if _, err := r.Enqueue(t.Context(), Identity{}, request, at); !errors.Is(err, durable.ErrUncertain) {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(filepath.Join(r.dir, "queue", "queue.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			opened, oerr := OpenQueueRuntime(t.Context(), r.dir, req, nil)
+			_, cerr := CreateQueueRuntime(t.Context(), r.dir, req, nil)
+			if truncate {
+				if oerr == nil || cerr == nil {
+					t.Fatal("opened truncation")
+				}
+			} else {
+				if oerr != nil || cerr != nil {
+					t.Fatal(oerr, cerr)
+				}
+				jobs, err := opened.Snapshot(t.Context())
+				if err != nil || len(jobs) != 0 {
+					t.Fatal(jobs, err)
+				}
+			}
+			after, err := os.ReadFile(filepath.Join(r.dir, "queue", "queue.json"))
+			if err != nil || string(before) != string(after) {
+				t.Fatal("accepted work or reset queue", err)
+			}
+		})
+	}
+}
+
+func TestQueueRuntimeDuplicateDoesNotConsumeIdentityCapacity(t *testing.T) {
+	r, _ := runtimeFixture(t)
+	request := runtimeRequest("accepted")
+	at := time.Now()
+	if _, err := r.Enqueue(t.Context(), Identity{}, request, at); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 10 {
+		if _, err := r.Enqueue(t.Context(), Identity{Email: fmt.Sprintf("rejected%d@example.com", i)}, request, at); !errors.Is(err, queue.ErrDuplicate) {
+			t.Fatal(err)
+		}
+	}
+	s, err := r.load()
+	if err != nil || len(s.Identities) != 1 {
+		t.Fatal(len(s.Identities), err)
+	}
+}
