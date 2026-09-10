@@ -107,6 +107,42 @@ func TestCaptureArtifactPinsBytesAndOnlyRequestedAttribution(t *testing.T) {
 	}
 }
 
+func TestCaptureArtifactRequiresDirectParentTranscript(t *testing.T) {
+	for _, nested := range []string{"subagents/s.jsonl", "other/subagents/s.jsonl"} {
+		for _, parentPresent := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/parent-%t", nested, parentPresent), func(t *testing.T) {
+				req := artifactCaptureFixture(t, "direct parent")
+				root := filepath.Join(req.Sync.Machine.Home, ".claude", "projects", "-workspace-acme")
+				parent := filepath.Join(root, "s.jsonl")
+				data, err := os.ReadFile(parent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				put(t, root, nested, string(data))
+				if !parentPresent {
+					if err := os.Remove(parent); err != nil {
+						t.Fatal(err)
+					}
+				}
+				ref, err := (service.Service{}).CaptureArtifact(t.Context(), req)
+				if !parentPresent {
+					if !errors.Is(err, service.ErrCaptureSourceUnavailable) || ref != "" {
+						t.Fatal("missing parent returned the wrong capture result", ref, err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal("nested basename made direct parent ambiguous", err)
+				}
+				captured, _ := artifactBytes(t, req, ref)
+				if !strings.Contains(captured, "direct parent") {
+					t.Fatal("lost direct parent")
+				}
+			})
+		}
+	}
+}
+
 func TestCaptureArtifactPreservesEmptyDirectoryAliases(t *testing.T) {
 	for _, excludedOnly := range []bool{false, true} {
 		name := "empty"

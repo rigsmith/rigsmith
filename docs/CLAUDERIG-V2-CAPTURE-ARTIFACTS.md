@@ -67,8 +67,10 @@ and machine maps are copied before the build. Path aliases that resolve differen
 can conservatively reject a binding; inputs and directory ancestors must stay
 stable during an operation.
 
-Every event currently must name a CLI transcript found in the configured CLI
-source. Missing or ambiguous sessions, unavailable selected flush sources, invalid
+Every event currently must name a direct CLI parent transcript at
+`projects/<project>/<session>.jsonl` in the configured CLI source. Nested
+subagent files cannot substitute for a missing parent or make an existing parent
+appear ambiguous. Missing or ambiguous sessions, unavailable selected flush sources, invalid
 provenance and changed bindings fail. Desktop roots and explicitly named profiles
 can be included in the full capture, but Desktop-only event routing is not yet
 implemented. No live profile discovery occurs in this path.
