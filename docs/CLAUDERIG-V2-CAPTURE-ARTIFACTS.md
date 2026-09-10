@@ -215,9 +215,8 @@ power loss and require another cleanup.
 Sealed archives, `.capture-work-*` directories, seed/recovery substores,
 publication scratch and entries outside the reserved namespace are never deleted. Build workspaces may
 still have external Git writers protected by staging ownership after the parent
-exits; an artifact lease alone does not prove those writers stopped. Reference-
-aware sealed-artifact cleanup and acquisition of all relevant writer leases stay
-in 6b.7b.2 before automatic worker/hook integration.
+exits; an artifact lease alone does not prove those writers stopped. Writer-owned workspace cleanup is described below. Reference-aware sealed-artifact
+cleanup remains in 6b.7b.2b before automatic worker/hook integration.
 
 Synthetic native tests cover admission, concurrent builders, retained reuse over
 a lowered quota, corruption accounting, cancellation/partial removal, store
@@ -225,3 +224,63 @@ fences and process death during a real durable rewrite. The process test verifie
 that a live writer blocks cleanup and that its death leaves the sealed archive
 and build workspace intact. Symlink-refusal cases skip on platforms where creating
 symlinks is unavailable.
+
+## Writer-owned workspace cleanup (6b.7b.2a)
+
+`commitartifact.CleanupWorkspaces` is an explicit internal maintenance operation.
+It takes a staging directory and its exclusive private capture/commit stores.
+The Claude `Service.CleanupArtifactWorkspaces` adapter validates the current
+binding and keeps those stores outside native source and staging roots before
+calling the shared operation. No command, hook or startup path invokes cleanup.
+
+Cleanup acquires staging, capture, seed and commit leases without waiting and
+holds all of them through removal. This excludes both archive builders and
+external Git writers that retain staging ownership after their parent exits.
+Every participating external writer must hold the same staging lease until
+verified child cleanup, using supervision and persistent restart fencing for
+owner death. An unresolved fence refuses maintenance; cleanup never clears one.
+Older or uncoordinated writers and stores shared by multiple staging directories
+are outside this contract. Callers pass an independent context, not a borrowed
+lease, and retain stable private roots and ancestors throughout the operation.
+
+Only these direct directory namespaces are disposable:
+
+| Store | Reserved workspace prefixes |
+| --- | --- |
+| Capture store | `.capture-work-` |
+| Capture `seeds` substore | `.capture-work-` |
+| Commit store | `.capture-work-`, `.publication-`, `.startup-history-`, `.confirmation-` |
+
+Each prefix requires a nonempty suffix. These names are reserved for disposable
+scratch, not unrelated user data; eligibility comes from the namespace and
+writer-ownership contract, not creator provenance. All other entries, sealed
+archives, `.durable-*` files and recovery substores remain untouched. In
+particular, cleanup does not traverse merge intents or scan the OS temporary
+directory for relocated merge workspaces: the private stores' leases do not
+identify ownership of those external paths. Those paths remain retained.
+
+Existing root aliases are canonicalized, overlaps are rejected, and the `seeds`
+substore cannot be a link. Missing artifact stores are skipped without creation;
+missing staging refuses cleanup. Inventory reads at most 100,000 direct entries
+per store in batches of 128. Every candidate in every store must be a real
+directory before any deletion starts. A candidate link, regular file, inaccessible
+entry, excessive inventory, busy owner or fence refuses without deleting earlier
+candidates. Removal uses an open filesystem root and rechecks candidate identity;
+nested links are removed without following their targets.
+
+Results count fully removed top-level workspaces in this attempt. A failure can
+partially empty its current workspace without increasing the count. Cancellation
+is checked between directories; an in-progress recursive removal may finish
+first. Retry handles remaining scratch. This is space reclamation, not a durable
+acknowledgement; power loss can resurrect deleted entries. It neither changes
+queue state nor authorizes deletion or rebuilding of sealed output. Reclaiming
+sealed captures, seeds and commits still needs reference checks in 6b.7b.2b.
+
+Synthetic tests cover every reserved namespace, retained/recovery bytes, all
+writer locks and fences, invalid late candidates, linked roots/candidates/nested
+entries, read-only object files, partial failure/cancellation and retry. A real
+subprocess holding only staging ownership blocks cleanup until it dies; its
+abandoned workspace is then removed while the sealed archive survives. This
+models an independently owned writer, not an actual OS reboot. Claude integration
+tests require `CLAUDERIG_E2E=1`; symlink cases skip if the host cannot create links.
+Native CI runs these checks alongside the unchanged pinned v1 compatibility suite.

@@ -14,8 +14,9 @@ at creation (#368), Unix worker-death supervision (#369), and persistent restart
 fencing (#370) and canonical Git command-runner plumbing (#371) are merged.
 Canonical workflow supervision (#372) and Linux/macOS fenced-store recovery
 (#373) and Windows recovery (#374) are merged. Queue capacity reporting and receipt
-compaction (#375) are merged. Artifact-store limits and interrupted archive-write
-cleanup are in review; reference-aware artifact and build-workspace cleanup follow.
+compaction (#375), artifact-store limits and interrupted archive-write cleanup
+(#376) are merged. Writer-owned workspace cleanup is in review; reference-aware
+sealed-artifact cleanup follows.
 
 The release path is now: finish capacity/cleanup controls,
 enable opt-in queued Claude sync, then connect the separate `codexrig` adapter.
@@ -52,8 +53,9 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Linux/macOS fenced-store recovery (6b.6b.2d.3a) | Merged: [#373](https://github.com/rigsmith/rigsmith/pull/373). Seal process-group ownership before Git starts; recover only after OS proof under the existing store lock. Preserve capture and queue state; no command/hook wiring. |
 | Windows fenced-store recovery (6b.6b.2d.3b) | Merged: [#374](https://github.com/rigsmith/rigsmith/pull/374). Recover durable prelaunch/cleanup phases; unconfirmed jobs require a verified kernel restart. Same-boot job disappearance and legacy records never authorize clearing. |
 | Queue capacity and receipt compaction (6b.7a) | Merged: [#375](https://github.com/rigsmith/rigsmith/pull/375). Report queue headroom and remedies; explicitly compact completed receipts under a durable producer replay cutoff. |
-| Artifact-store capacity and interrupted archive writes (6b.7b.1) | In review (current PR). Optional per-store sealed-byte limits, capacity reporting and exclusive cleanup of interrupted archive-write files. |
-| Referenced artifacts and build workspaces (6b.7b.2) | Next. Prove which captures/seeds/commits are disposable and acquire all relevant writer leases before deleting build/publication scratch. Recovery intents remain protected. |
+| Artifact-store capacity and interrupted archive writes (6b.7b.1) | Merged: [#376](https://github.com/rigsmith/rigsmith/pull/376). Optional per-store sealed-byte limits, capacity reporting and exclusive cleanup of interrupted archive-write files. |
+| Writer-owned build/publication workspace cleanup (6b.7b.2a) | In review (current PR). Hold staging, capture, seed and commit leases; reclaim only reserved disposable workspaces. Preserve sealed artifacts, recovery stores and relocated OS-temp scratch. |
+| Referenced sealed artifacts (6b.7b.2b) | Next. Prove which captures/seeds/commits are disposable against pending queue work and recovery dependencies before deleting them. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
