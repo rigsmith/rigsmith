@@ -76,7 +76,7 @@ func (s Service) syncWithCoverage(ctx context.Context, req SyncRequest, q *queue
 	}
 	req.Flush.Paths = slices.Clone(req.Flush.Paths)
 	if runtime != nil {
-		if _, err := runtime.coverageBinding(ctx, req, engine.LocalProfileNames()); err != nil {
+		if _, err := runtime.validateCoverageBinding(ctx, req, engine.LocalProfileNames()); err != nil {
 			return result, err
 		}
 	}
@@ -212,7 +212,7 @@ func (c *manualCoverage) prepare(req SyncRequest, identity Identity, identityErr
 	bindingReq.DryRun = false
 	var binding queue.Binding
 	if c.runtime != nil {
-		binding, err = c.runtime.coverageBinding(c.operation, bindingReq, profiles)
+		binding, err = c.runtime.validateCoverageBinding(c.operation, bindingReq, profiles)
 	} else {
 		binding, err = CaptureBinding(bindingReq, profiles)
 	}

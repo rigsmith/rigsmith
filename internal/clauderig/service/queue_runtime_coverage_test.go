@@ -3,13 +3,17 @@ package service_test
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 )
@@ -167,6 +171,123 @@ func TestQueueRuntimeManualCoverageRevalidatesBeforePreparing(t *testing.T) {
 	result, err := r.SyncWithCoverage(t.Context(), svc, req)
 	if err == nil || len(result.Acknowledged) != 0 {
 		t.Fatalf("changed metadata accepted: %+v %v", result, err)
+	}
+	pending, err := r.Snapshot(t.Context())
+	if err != nil || len(pending) != 1 || pending[0].Attempts != 0 {
+		t.Fatalf("work mutated: %+v %v", pending, err)
+	}
+}
+
+func TestQueueRuntimeManualCoverageRequiresCompleteProfileDiscovery(t *testing.T) {
+	for _, mode := range []string{"missing", "malformed", "unreadable", "appears-during-capture"} {
+		t.Run(mode, func(t *testing.T) {
+			req, _, event, svc := coverageFixture(t)
+			store := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+			if _, err := store.Create("readable", "", ""); err != nil {
+				t.Fatal(err)
+			}
+			profiles := engine.LocalProfileNames()
+			if len(profiles) != 1 {
+				t.Fatalf("readable profile missing: %v", profiles)
+			}
+			r, err := service.CreateQueueRuntime(t.Context(), filepath.Join(t.TempDir(), "runtime"), req, profiles)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			broken := filepath.Join(store.Root, "omitted")
+			createBroken := func() {
+				if err := os.MkdirAll(broken, 0700); err != nil {
+					t.Fatal(err)
+				}
+				switch mode {
+				case "malformed":
+					if err := os.WriteFile(filepath.Join(broken, "profile.json"), []byte("not-json"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				case "unreadable":
+					if err := os.Mkdir(filepath.Join(broken, "profile.json"), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			reads := 0
+			if mode != "appears-during-capture" {
+				createBroken()
+			}
+			svc.ReadIdentity = func() (service.Identity, error) {
+				reads++
+				if mode == "appears-during-capture" {
+					createBroken()
+				}
+				return coverageIdentity, nil
+			}
+			result, err := r.SyncWithCoverage(t.Context(), svc, req)
+			if !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "complete Desktop profile coverage") || len(result.Acknowledged) != 0 {
+				t.Fatalf("omitted profile accepted: %+v %v", result, err)
+			}
+			if mode != "appears-during-capture" && reads != 0 {
+				t.Fatal("incomplete discovery reached capture")
+			}
+			pending, err := r.Snapshot(t.Context())
+			if err != nil || len(pending) != 1 || pending[0].Attempts != 0 {
+				t.Fatalf("work mutated: %+v %v", pending, err)
+			}
+			// Restoring the original local profile set permits a retry in the same runtime.
+			if err := os.RemoveAll(broken); err != nil {
+				t.Fatal(err)
+			}
+			svc.ReadIdentity = func() (service.Identity, error) { return coverageIdentity, nil }
+			result, err = r.SyncWithCoverage(t.Context(), svc, req)
+			if err != nil || len(result.Acknowledged) != 1 {
+				t.Fatalf("repaired profile retry: %+v %v", result, err)
+			}
+		})
+	}
+}
+
+func TestQueueRuntimeManualCoverageChecksLinkedProfileMetadata(t *testing.T) {
+	req, _, event, svc := coverageFixture(t)
+	r, err := service.CreateQueueRuntime(t.Context(), filepath.Join(t.TempDir(), "runtime"), req, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	store := filepath.Join(req.Machine.Home, ".clauderig", "desktop")
+	if err := os.MkdirAll(store, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(store, "linked")
+	if runtime.GOOS == "windows" {
+		if out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput(); err != nil {
+			t.Fatalf("junction: %s %v", out, err)
+		}
+	} else if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	svc.ReadIdentity = func() (service.Identity, error) {
+		t.Fatal("incomplete linked profile reached capture")
+		return service.Identity{}, nil
+	}
+	_, err = r.SyncWithCoverage(t.Context(), svc, req)
+	if !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "complete Desktop profile coverage") {
+		t.Fatalf("linked profile metadata ignored: %v", err)
+	}
+	// Windows display discovery skips ModeIrregular junctions, even with valid
+	// metadata. The bridge must reject that omitted profile before acknowledging.
+	if runtime.GOOS == "windows" {
+		if err := os.WriteFile(filepath.Join(target, "profile.json"), []byte("{}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, err = r.SyncWithCoverage(t.Context(), svc, req)
+		if !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "manual capture omitted or changed") {
+			t.Fatalf("junction omitted: %v", err)
+		}
 	}
 	pending, err := r.Snapshot(t.Context())
 	if err != nil || len(pending) != 1 || pending[0].Attempts != 0 {

@@ -628,10 +628,13 @@ func (r *QueueRuntime) SyncWithCoverage(ctx context.Context, s Service, req Sync
 	return s.syncWithCoverage(ctx, req, r.q, r)
 }
 
-// coverageBinding validates fresh capture inputs and persisted association before
+// validateCoverageBinding validates fresh capture inputs and persisted association before
 // translating the policy binding. Never hold runtime ownership while acquiring
 // worker/staging ownership: producers remain able to enqueue during manual sync.
-func (r *QueueRuntime) coverageBinding(ctx context.Context, req SyncRequest, profiles []string) (queue.Binding, error) {
+func (r *QueueRuntime) validateCoverageBinding(ctx context.Context, req SyncRequest, profiles []string) (queue.Binding, error) {
+	if err := validateQueueCoverageProfiles(req, profiles); err != nil {
+		return queue.Binding{}, err
+	}
 	bindingReq := req
 	bindingReq.ResolveFlush = nil
 	bindingReq.AllowMergeTool = false
@@ -647,4 +650,61 @@ func (r *QueueRuntime) coverageBinding(ctx context.Context, req SyncRequest, pro
 		return queue.Binding{}, err
 	}
 	return r.binding, nil
+}
+
+// validateQueueCoverageProfiles rejects the omissions tolerated by display-oriented
+// discovery. Inspect native directory entries, including Windows junctions, and
+// require every profile to load and appear in the actual manual capture selection.
+func validateQueueCoverageProfiles(req SyncRequest, profiles []string) (err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("cannot verify complete Desktop profile coverage; repair profile metadata, paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
+		}
+	}()
+	store := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
+	if _, err := queueIsolationPath(store.Root); err != nil {
+		return err
+	}
+	info, err := os.Stat(store.Root)
+	if os.IsNotExist(err) {
+		if len(profiles) != 0 {
+			return queue.ErrBinding
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("Desktop profile store must be a directory")
+	}
+	entries, err := os.ReadDir(store.Root)
+	if err != nil {
+		return err
+	}
+	var discovered []string
+	for _, entry := range entries {
+		if !entry.IsDir() && entry.Type()&(os.ModeSymlink|os.ModeIrregular) == 0 {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(store.Root, entry.Name()))
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		profile, err := store.Get(entry.Name())
+		if err != nil {
+			return err
+		}
+		discovered = append(discovered, profile.Name)
+	}
+	slices.Sort(discovered)
+	selected := slices.Clone(profiles)
+	slices.Sort(selected)
+	if !slices.Equal(discovered, selected) {
+		return fmt.Errorf("manual capture omitted or changed Desktop profiles")
+	}
+	return nil
 }

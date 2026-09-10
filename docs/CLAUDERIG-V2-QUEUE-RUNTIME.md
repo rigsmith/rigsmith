@@ -177,7 +177,10 @@ policy again before preparing coverage. Only an exact policy match is translated
 to the lifecycle binding; the underlying queue remains private.
 
 Manual capture discovers all local Desktop profiles, as ordinary sync does. Its
-profile selection must match the initialized runtime. Changed configuration or
+profile selection must match the initialized runtime. Missing, malformed or
+unreadable profile metadata refuses coverage; discovery cannot silently omit
+profiles. Directory links and Windows junctions must appear in the actual capture
+selection too. Changed configuration or
 runtime metadata refuses coverage; repair the original inputs rather than
 resetting queue state. Worker ownership spans capture, remote confirmation and
 acknowledgement, while producers may continue accepting later generations.
