@@ -368,12 +368,10 @@ func TestQueueCommandRequestTreeExclusion(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if runtime.GOOS != "windows" {
+	{
 		for _, root := range append([]string(nil), roots...) {
 			link := filepath.Join(t.TempDir(), "alias")
-			if err := os.Symlink(root, link); err != nil {
-				t.Fatal(err)
-			}
+			queueTestLinkDir(t, root, link)
 			roots = append(roots, link)
 		}
 	}
@@ -636,9 +634,6 @@ func TestQueueCommandRejectsHardLinkedRequest(t *testing.T) {
 
 func TestQueueCommandExcludesUnselectedDesktopProfiles(t *testing.T) {
 	for _, link := range []string{"none", "profile", "data"} {
-		if link != "none" && runtime.GOOS == "windows" {
-			continue
-		}
 		f := newQueueFixture(t)
 		f.must(t, "init") // No selected profiles.
 		store := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop")
@@ -648,9 +643,7 @@ func TestQueueCommandExcludesUnselectedDesktopProfiles(t *testing.T) {
 			if err := os.MkdirAll(store, 0700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(target, profile); err != nil {
-				t.Fatal(err)
-			}
+			queueTestLinkDir(t, target, profile)
 			profile = target // Request via the symlink target's outside spelling.
 		}
 		if err := os.MkdirAll(filepath.Join(profile, "data", "nested"), 0700); err != nil {
@@ -665,9 +658,7 @@ func TestQueueCommandExcludesUnselectedDesktopProfiles(t *testing.T) {
 			if err := os.RemoveAll(dataRoot); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(target, dataRoot); err != nil {
-				t.Fatal(err)
-			}
+			queueTestLinkDir(t, target, dataRoot)
 			dataRoot = target
 			if err := os.MkdirAll(filepath.Join(dataRoot, "nested"), 0700); err != nil {
 				t.Fatal(err)
@@ -760,9 +751,6 @@ func TestQueueRequestRequiresTypedIdentityAndMembers(t *testing.T) {
 func TestQueueCommandRuntimeExcludesAllDesktopProfiles(t *testing.T) {
 	for _, link := range []string{"none", "profile", "data"} {
 		t.Run(link, func(t *testing.T) {
-			if link != "none" && runtime.GOOS == "windows" {
-				t.Skip("symlink creation requires privileges")
-			}
 			f := newQueueFixture(t)
 			store := filepath.Join(f.req.Machine.Home, ".clauderig", "desktop")
 			profile := filepath.Join(store, "unselected")
@@ -779,9 +767,7 @@ func TestQueueCommandRuntimeExcludesAllDesktopProfiles(t *testing.T) {
 				if err := os.RemoveAll(alias); err != nil {
 					t.Fatal(err)
 				}
-				if err := os.Symlink(target, alias); err != nil {
-					t.Fatal(err)
-				}
+				queueTestLinkDir(t, target, alias)
 				dataRoot = target
 				if link == "profile" {
 					dataRoot = filepath.Join(target, "data")
@@ -803,7 +789,7 @@ func TestQueueCommandRuntimeExcludesAllDesktopProfiles(t *testing.T) {
 		})
 	}
 	// A previously private runtime becomes unsafe if a profile later targets it.
-	if runtime.GOOS != "windows" {
+	{
 		f := newQueueFixture(t)
 		f.must(t, "init")
 		before, err := os.ReadFile(filepath.Join(f.dir, "runtime.json"))
@@ -814,9 +800,7 @@ func TestQueueCommandRuntimeExcludesAllDesktopProfiles(t *testing.T) {
 		if err := os.MkdirAll(profile, 0700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(f.dir, filepath.Join(profile, "data")); err != nil {
-			t.Fatal(err)
-		}
+		queueTestLinkDir(t, f.dir, filepath.Join(profile, "data"))
 		for _, verb := range []string{"init", "status"} {
 			if _, err := f.execute(t.Context(), verb); !errors.Is(err, queue.ErrBinding) {
 				t.Fatal("reopened newly exposed runtime", verb, err)
@@ -878,9 +862,6 @@ func TestQueueCommandCanonicalProducerUUIDs(t *testing.T) {
 }
 
 func TestQueueCommandUnresolvedDesktopLinks(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation requires privileges")
-	}
 	for _, link := range []string{"store", "profile", "data"} {
 		t.Run(link, func(t *testing.T) {
 			f := newQueueFixture(t)
@@ -902,9 +883,7 @@ func TestQueueCommandUnresolvedDesktopLinks(t *testing.T) {
 				t.Fatal(err)
 			}
 			target := filepath.Join(t.TempDir(), "missing")
-			if err := os.Symlink(target, alias); err != nil {
-				t.Fatal(err)
-			}
+			queueTestLinkDir(t, target, alias)
 			for _, dir := range []string{target, filepath.Join(target, "nested")} {
 				f.dir = dir
 				if _, err := f.execute(t.Context(), "init"); !errors.Is(err, queue.ErrBinding) {
@@ -1023,9 +1002,6 @@ func TestQueueCommandRejectsNoncanonicalSavedSession(t *testing.T) {
 }
 
 func TestQueueCommandUnresolvedSourceAndStagingLinks(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("symlink creation requires privileges")
-	}
 	for _, source := range []bool{true, false} {
 		f := newQueueFixture(t)
 		f.must(t, "init")
@@ -1038,9 +1014,7 @@ func TestQueueCommandUnresolvedSourceAndStagingLinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		target := filepath.Join(t.TempDir(), "missing")
-		if err := os.Symlink(target, alias); err != nil {
-			t.Fatal(err)
-		}
+		queueTestLinkDir(t, target, alias)
 		for _, dir := range []string{target, filepath.Join(target, "skills", "queue")} {
 			f.dir = dir
 			if _, err := f.execute(t.Context(), "init"); !errors.Is(err, queue.ErrBinding) {
@@ -1058,5 +1032,40 @@ func TestQueueCommandUnresolvedSourceAndStagingLinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.must(t, "status")
+	}
+}
+
+// queueTestLinkDir uses native non-privileged junctions on Windows so isolation
+// regressions execute there instead of depending on symlink privileges.
+func queueTestLinkDir(t *testing.T, target, link string) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	// Make an initially missing target only to create the junction, then remove
+	// it again before the queue operation: the test still exercises a broken link.
+	missing := false
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		if err := os.MkdirAll(target, 0700); err != nil {
+			t.Fatal(err)
+		}
+		missing = true
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+	if err != nil {
+		t.Fatalf("create test junction: %v: %s", err, out)
+	}
+	if missing {
+		if err := os.Remove(target); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(link); err != nil {
+			t.Fatal("broken junction disappeared", err)
+		}
 	}
 }
