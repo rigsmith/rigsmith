@@ -3,12 +3,14 @@ package commands
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -98,7 +100,7 @@ func TestQueueCommandSavedRequestRetry(t *testing.T) {
 		t.Fatal(event, saved)
 	}
 	out := f.must(t, "status")
-	if !strings.Contains(out, "EnqueueHeadroom") || strings.Contains(out, "producer@example.com") || strings.Contains(out, "ProvenanceID") {
+	if !strings.Contains(out, "enqueueHeadroom") || strings.Contains(out, "producer@example.com") || strings.Contains(out, "ProvenanceID") {
 		t.Fatal(out)
 	}
 	if f.privateChecks != 1 {
@@ -340,5 +342,180 @@ func TestQueueCommandGracefulThenCancelled(t *testing.T) {
 	case <-ctx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("second signal did not cancel")
+	}
+}
+
+func TestQueueCommandRequestTreeExclusion(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	source := filepath.Join(f.req.Machine.Home, ".claude")
+	roots := []string{source, f.req.StagingDir, f.dir}
+	for _, root := range roots {
+		if err := os.MkdirAll(filepath.Join(root, "nested"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		for _, root := range append([]string(nil), roots...) {
+			link := filepath.Join(t.TempDir(), "alias")
+			if err := os.Symlink(root, link); err != nil {
+				t.Fatal(err)
+			}
+			roots = append(roots, link)
+		}
+	}
+	valid := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", valid)
+	data, err := os.ReadFile(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, root := range roots {
+		path := filepath.Join(root, "nested", fmt.Sprintf("request-%d.json", i))
+		if _, err := f.execute(t.Context(), "prepare", "--session", "s", "--output", path); !errors.Is(err, queue.ErrBinding) {
+			t.Fatalf("prepare %s: %v", path, err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("wrote forbidden path: %v", err)
+		}
+		// A previously copied request is also refused without rewriting its bytes.
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.execute(t.Context(), "enqueue", path); !errors.Is(err, queue.ErrBinding) {
+			t.Fatalf("enqueue %s: %v", path, err)
+		}
+		got, _ := os.ReadFile(path)
+		if !bytes.Equal(got, data) {
+			t.Fatal("rewrote excluded request")
+		}
+	}
+	jobs, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(jobs) != 0 {
+		t.Fatal(jobs, err)
+	}
+}
+
+func TestQueueCommandRemoteValidatedBeforePrivacy(t *testing.T) {
+	for _, remote := range []string{"https://user:secret@github.com/acme/repo", "https://github.com/acme/repo?token=secret", "https://github.com/acme/repo#secret", "https://github.com/acme/repo?"} {
+		f := newQueueFixture(t)
+		f.req.Config.Remote = remote
+		out, err := f.execute(t.Context(), "init")
+		if err == nil || f.privateChecks != 0 || strings.Contains(out+err.Error(), "secret") {
+			t.Fatal("malformed remote reached privacy check or diagnostic", remote, out, err, f.privateChecks)
+		}
+		if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
+			t.Fatal("created malformed remote runtime", err)
+		}
+		// Both worker resolver and init use this same validation-before-privacy path.
+		if _, err := f.deps.remote(t.Context(), f.req); err == nil || f.privateChecks != 0 {
+			t.Fatal("resolver accepted malformed remote", err)
+		}
+	}
+}
+
+func TestQueueRequestReflushRejectsChangedFile(t *testing.T) {
+	for _, replace := range []bool{false, true} {
+		t.Run(fmt.Sprint(replace), func(t *testing.T) {
+			f := newQueueFixture(t)
+			f.must(t, "init")
+			path := filepath.Join(t.TempDir(), "request")
+			f.must(t, "prepare", "--session", "s", "--output", path)
+			saved, err := loadQueueRequest(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := saved.submission
+			changed.Request.EventID = "changed-event"
+			changed.Checksum = queueRequestChecksum(changed)
+			data, err := json.Marshal(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replace {
+				// Rename retains an independently opened identity on Windows too.
+				if err := os.Rename(path, path+".old"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := saved.confirm(t.Context(), path); err == nil {
+				t.Fatal("confirmed replaced or modified request")
+			}
+			got, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatal("clobbered replacement", err)
+			}
+			jobs, err := f.open(t).Snapshot(t.Context())
+			if err != nil || len(jobs) != 0 {
+				t.Fatal(jobs, err)
+			}
+		})
+	}
+}
+
+func TestQueueCommandJSONKeys(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", path)
+	receipt := f.must(t, "enqueue", path)
+	if receipt != "{\"generation\":1,\"batch\":1}\n" {
+		t.Fatal(receipt)
+	}
+	var status map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(f.must(t, "status")), &status); err != nil {
+		t.Fatal(err)
+	}
+	assertKeys := func(got map[string]json.RawMessage, want []string) {
+		t.Helper()
+		keys := make([]string, 0, len(got))
+		for k := range got {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		slices.Sort(want)
+		if !slices.Equal(keys, want) {
+			t.Fatal(keys, want)
+		}
+	}
+	assertKeys(status, []string{"batches", "capacity"})
+	var batches []map[string]json.RawMessage
+	if err := json.Unmarshal(status["batches"], &batches); err != nil || len(batches) != 1 {
+		t.Fatal(batches, err)
+	}
+	assertKeys(batches[0], []string{"batch", "phase", "status", "events", "attempts", "notBefore", "failureCode"})
+	var capacity map[string]json.RawMessage
+	if err := json.Unmarshal(status["capacity"], &capacity); err != nil {
+		t.Fatal(err)
+	}
+	assertKeys(capacity, []string{"payloadBytes", "stateLimit", "enqueueLimit", "enqueueHeadroom", "outstandingBatches", "batchLimit", "pendingBatches", "runningBatches", "blockedBatches", "outstandingEvents", "completedReceipts", "completedBatches", "retiredReceipts", "replayBefore", "remedies"})
+}
+
+func TestQueueCommandConcurrentAdmissionOfSavedFile(t *testing.T) {
+	f := newQueueFixture(t)
+	f.must(t, "init")
+	path := filepath.Join(t.TempDir(), "request")
+	f.must(t, "prepare", "--session", "s", "--output", path)
+	results := make(chan error, 8)
+	for range 8 {
+		go func() {
+			out, err := f.execute(t.Context(), "enqueue", path)
+			if err == nil && out != "{\"generation\":1,\"batch\":1}\n" {
+				err = fmt.Errorf("receipt %s", out)
+			}
+			results <- err
+		}()
+	}
+	for range 8 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	jobs, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(jobs) != 1 || len(jobs[0].Events) != 1 {
+		t.Fatal(jobs, err)
 	}
 }

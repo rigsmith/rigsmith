@@ -484,3 +484,28 @@ func (r *QueueRuntime) RetryBlocked(ctx context.Context, id uint64) error {
 	defer worker.Close()
 	return worker.Unblock(ctx, id)
 }
+
+// CheckRequestPath excludes producer metadata from capture/staging and managed
+// runtime trees. Resolve existing ancestors too, so symlink aliases do not make
+// a synchronized path appear private. Filesystem roots must remain stable while
+// the caller creates or reads the file, as with the runtime's other path checks.
+func (r *QueueRuntime) CheckRequestPath(path string) error {
+	candidate, err := canonicalCapturePath(path)
+	if err != nil {
+		return err
+	}
+	roots, err := captureRoots(r.request, r.profiles)
+	if err != nil {
+		return err
+	}
+	stage, err := canonicalCapturePath(r.request.StagingDir)
+	if err != nil {
+		return err
+	}
+	for _, root := range append(mapValues(roots), stage, r.dir) {
+		if overlapsCapture(root, candidate) {
+			return fmt.Errorf("queue request files must be outside source, staging and runtime trees: %w", queue.ErrBinding)
+		}
+	}
+	return nil
+}

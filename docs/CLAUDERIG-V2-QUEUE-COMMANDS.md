@@ -25,7 +25,8 @@ clauderig queue drain
 ```
 
 Choose a private directory for request files, outside synced source/staging and
-the managed runtime tree. `prepare` creates a new file with mode 0600, refuses an
+the managed runtime tree. Both prepare and enqueue reject these trees after
+canonicalizing existing ancestors, including symlink aliases. `prepare` creates a new file with mode 0600, refuses an
 existing file and flushes the saved request before succeeding. Keep Windows
 runtime/request files under a private user directory: inherited ACLs are a caller
 prerequisite, not validated or repaired by these commands. Linux/macOS runtime
@@ -40,8 +41,10 @@ unknown attribution. No worker reads its current account to attribute saved work
 
 **Retry `enqueue` with the same saved file.** Never recreate a request after an
 uncertain result, change its timestamp or substitute a later account. `enqueue`
-reflushes the producer file before accepting the request. A successful response
-reports its generation and batch, including on duplicate receipt retries. The
+serializes access with a sibling request lock, rejects changed file identity or
+contents, and reflushes exactly the validated bytes before accepting the request.
+Keep the sibling lock file in place while producers may be running. A successful response
+reports its `generation` and `batch`, including on duplicate receipt retries. The
 file must remain stable while the command runs. Retain it until acceptance is
 confirmed; keeping it through completion makes a lost CLI response retryable.
 Request inputs are regular files, bounded to 128 KiB, with a strict versioned JSON
@@ -77,7 +80,7 @@ cleanup. A stopped worker does not imply an empty queue. Persistent process
 fences remain when cleanup cannot be confirmed; `retry` does not clear them.
 [Process lifecycle requirements](CLAUDERIG-V2-PROCESS-LIFECYCLE.md) describe recovery.
 
-`queue status` prints JSON batch IDs, phases, status, event counts, attempts,
+`queue status` prints lower-camel-case JSON (`batches` and `capacity`), with batch IDs, phases, status, event counts, attempts,
 retry deadlines, failure codes and queue capacity. It omits account details,
 transcript paths and raw errors. Batch and capacity reads are separate snapshots;
 active producers/workers can change them between reads. Capacity describes queue

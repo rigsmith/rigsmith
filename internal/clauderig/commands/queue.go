@@ -23,8 +23,10 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
+	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 	"github.com/spf13/cobra"
@@ -87,6 +89,9 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&dir, "dir", "", "private runtime directory (default ~/.clauderig/queue-runtime)")
 	_ = cmd.MarkPersistentFlagDirname("dir")
 	cmd.PersistentFlags().StringArrayVar(&profiles, "profile", nil, "explicit Desktop profile to include (repeatable; default none)")
+	_ = cmd.RegisterFlagCompletionFunc("profile", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return engine.LocalProfileNames(), cobra.ShellCompDirectiveNoFileComp
+	})
 	open := func(ctx context.Context, create bool) (*service.QueueRuntime, error) {
 		req, err := deps.resolve()
 		if err != nil {
@@ -101,12 +106,10 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 			root = filepath.Join(d, "queue-runtime")
 		}
 		if create {
-			if err := deps.private(ctx, req.Config.Remote); err != nil {
+			if _, err := deps.remote(ctx, req); err != nil {
 				return nil, err
 			}
-			if _, err := commitartifact.NewConfiguredGitTransport(commitartifact.GitTransportOptions{Remote: req.Config.Remote, Branch: "main"}); err != nil {
-				return nil, fmt.Errorf("queued sync requires a supported HTTPS remote: %w", err)
-			}
+
 			return service.CreateQueueRuntime(ctx, root, req, profiles)
 		}
 		return service.OpenQueueRuntime(ctx, root, req, profiles)
@@ -132,6 +135,9 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		}
 		r, err := open(c.Context(), false)
 		if err != nil {
+			return err
+		}
+		if err = r.CheckRequestPath(output); err != nil {
 			return err
 		}
 		identity := service.Identity{}
@@ -169,29 +175,40 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	prepare.Flags().BoolVar(&flush, "flush", false, "capture every changed transcript tail")
 	prepare.Flags().BoolVar(&unknown, "unknown-identity", false, "explicitly record unknown account attribution")
 	_ = prepare.MarkFlagFilename("output")
+	_ = prepare.RegisterFlagCompletionFunc("session", completeSessionRef)
 	cmd.AddCommand(prepare)
 	cmd.AddCommand(&cobra.Command{Use: "enqueue <request-file>", Short: "Durably accept a saved request (safe to retry the same file)", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
-		submission, err := readQueueRequest(args[0])
-		if err != nil {
-			return err
-		}
 		r, err := open(c.Context(), false)
 		if err != nil {
 			return err
 		}
+		if err = r.CheckRequestPath(args[0]); err != nil {
+			return err
+		}
+		release, err := queueRequestLease(c.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		defer release()
+		saved, err := loadQueueRequest(args[0])
+		if err != nil {
+			return err
+		}
+		submission := saved.submission
+
 		if submission.Scope != r.ScopeID() {
 			return queue.ErrBinding
 		}
 		// Confirm the producer file's durability before any queue admission. A
 		// successfully read file alone is not a durable retry record.
-		if err = durable.Rewrite(c.Context(), args[0]); err != nil {
+		if err = saved.confirm(c.Context(), args[0]); err != nil {
 			return err
 		}
 		event, err := r.Enqueue(c.Context(), submission.Identity, submission.Request, submission.At)
 		if err != nil {
 			return fmt.Errorf("enqueue failed; retain and retry the same request file: %w", err)
 		}
-		return json.NewEncoder(c.OutOrStdout()).Encode(struct{ Generation, Batch uint64 }{event.Generation, event.BatchID})
+		return json.NewEncoder(c.OutOrStdout()).Encode(queueReceiptJSON{event.Generation, event.BatchID})
 	}})
 	cmd.AddCommand(&cobra.Command{Use: "status", Short: "Show unfinished batches and queue capacity as JSON", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 		r, err := open(c.Context(), false)
@@ -208,23 +225,12 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		}
 		// Omit producer identities, paths and raw errors. These observations are
 		// separate snapshots and may change while producers or a worker are active.
-		type row struct {
-			Batch       uint64
-			Phase       queue.Phase
-			Status      queue.Status
-			Events      int
-			Attempts    uint64
-			NotBefore   time.Time
-			FailureCode string
-		}
-		rows := make([]row, 0, len(jobs))
+
+		rows := make([]queueBatchJSON, 0, len(jobs))
 		for _, j := range jobs {
-			rows = append(rows, row{j.ID, j.Phase, j.Status, len(j.Events), j.Attempts, j.NotBefore, j.FailureCode})
+			rows = append(rows, queueBatchJSON{j.ID, j.Phase, j.Status, len(j.Events), j.Attempts, j.NotBefore, j.FailureCode})
 		}
-		return json.NewEncoder(c.OutOrStdout()).Encode(struct {
-			Batches  []row
-			Capacity queue.Capacity
-		}{rows, capacity})
+		return json.NewEncoder(c.OutOrStdout()).Encode(queueStatusJSON{rows, queueCapacityOutput(capacity)})
 	}})
 	cmd.AddCommand(&cobra.Command{Use: "retry <batch-id>", ValidArgsFunction: cobra.NoFileCompletions, Short: "Unblock a repaired batch without discarding its saved progress", Long: "Explicitly unblock a batch after repairing its reported failure. Saved artifacts\nand attempts are retained. Pending timed retries keep their backoff. This never\nclears a staging process fence or redirects work to changed configuration.", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
 		id, err := strconv.ParseUint(args[0], 10, 64)
@@ -266,13 +272,11 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 				if err != nil {
 					return service.QueueRuntimeInputs{}, err
 				}
-				if err = deps.private(ctx, req.Config.Remote); err != nil {
-					return service.QueueRuntimeInputs{}, err
-				}
-				remote, err := commitartifact.NewConfiguredGitTransport(commitartifact.GitTransportOptions{Remote: req.Config.Remote, Branch: "main"})
+				remote, err := deps.remote(ctx, req)
 				if err != nil {
 					return service.QueueRuntimeInputs{}, err
 				}
+
 				return service.QueueRuntimeInputs{Sync: req, Profiles: profiles, Remote: remote, MaxBytes: maxBytes, MaxStoredBytes: maxStored}, nil
 			}
 			svc := applicationService(c.ErrOrStderr())
@@ -321,12 +325,22 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 }
 
 func writeQueueRequest(ctx context.Context, path string, data []byte) error {
+	release, err := queueRequestLease(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
+	}
+	info, statErr := f.Stat()
+	if statErr != nil {
+		return errors.Join(statErr, f.Close())
 	}
 	_, writeErr := f.Write(data)
 	if writeErr == nil {
@@ -337,7 +351,7 @@ func writeQueueRequest(ctx context.Context, path string, data []byte) error {
 		return fmt.Errorf("request write failed; inspect the existing file before retrying: %w", err)
 	}
 	// Reflush the containing directory using the shared platform primitive.
-	return durable.Rewrite(ctx, path)
+	return (&savedQueueRequest{data: data, info: info}).confirm(ctx, path)
 }
 
 func queueRequestChecksum(s queueSubmission) string {
@@ -346,50 +360,99 @@ func queueRequestChecksum(s queueSubmission) string {
 	return artifact.Key(data)
 }
 
+type savedQueueRequest struct {
+	submission queueSubmission
+	data       []byte
+	info       os.FileInfo
+}
+
 func readQueueRequest(path string) (queueSubmission, error) {
+	saved, err := loadQueueRequest(path)
+	if err != nil {
+		return queueSubmission{}, err
+	}
+	return saved.submission, nil
+}
+
+// Request leases serialize cooperating prepare/enqueue processes. Stable roots
+// and no external file editing remain prerequisites, not a hostile-file sandbox.
+func queueRequestLease(ctx context.Context, path string) (func(), error) {
+	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+		return nil, err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	lockDir := filepath.Join(parent, ".queue-request-"+artifact.Key([]byte(strings.ToLower(filepath.Base(path)))))
+	_, release, err := storelock.Acquire(ctx, lockDir, service.StoreWait)
+	return release, err
+}
+
+func (saved *savedQueueRequest) confirm(ctx context.Context, path string) error {
+	current, err := loadQueueRequest(path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(saved.info, current.info) || !bytes.Equal(saved.data, current.data) {
+		return fmt.Errorf("saved request changed before admission; inspect and retry")
+	}
+	// Write exactly the validated bytes, never reopen the path inside Rewrite.
+	return durable.Write(ctx, path, func(out *os.File) error { _, err := out.Write(saved.data); return err })
+}
+
+func loadQueueRequest(path string) (*savedQueueRequest, error) {
 	var s queueSubmission
 	st, err := os.Lstat(path)
 	if err != nil {
-		return s, err
+		return nil, err
 	}
 	if !st.Mode().IsRegular() || st.Size() > queueRequestLimit {
-		return s, fmt.Errorf("request must be a regular file at most 128 KiB")
+		return nil, fmt.Errorf("request must be a regular file at most 128 KiB")
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return s, err
+		return nil, err
 	}
 	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("request must be regular")
+	}
+
 	data, err := io.ReadAll(io.LimitReader(f, queueRequestLimit+1))
 	if err != nil {
-		return s, err
+		return nil, err
 	}
 	if len(data) > queueRequestLimit {
-		return s, fmt.Errorf("request exceeds 128 KiB")
+		return nil, fmt.Errorf("request exceeds 128 KiB")
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err = dec.Decode(&s); err != nil {
-		return s, err
+		return nil, err
 	}
 	var extra any
 	if err = dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return s, fmt.Errorf("request must contain exactly one JSON object")
+		return nil, fmt.Errorf("request must contain exactly one JSON object")
 	}
 	if s.Checksum != queueRequestChecksum(s) {
-		return s, fmt.Errorf("saved request checksum mismatch")
+		return nil, fmt.Errorf("saved request checksum mismatch")
 	}
 	if s.Version != 1 || s.Scope == "" || s.At.IsZero() || s.Request.EventID == "" || s.Request.SessionID == "" {
-		return s, fmt.Errorf("invalid saved request")
+		return nil, fmt.Errorf("invalid saved request")
 	}
 	provenance, err := service.CaptureProvenance(s.Identity)
 	if err != nil {
-		return s, err
+		return nil, err
 	}
 	if s.Request.ProvenanceID != provenance {
-		return s, queue.ErrBinding
+		return nil, queue.ErrBinding
 	}
-	return s, nil
+	return &savedQueueRequest{submission: s, data: data, info: info}, nil
 }
 
 // The first signal is a graceful stop. A second requests cancellation, but the
@@ -422,4 +485,73 @@ func queueStopContext(parent context.Context, signals <-chan os.Signal) (context
 		}
 	}()
 	return ctx, stop, func() { close(done); cancel() }
+}
+
+func (d queueCommandDeps) remote(ctx context.Context, req service.SyncRequest) (*commitartifact.GitTransport, error) {
+	if req.Config == nil {
+		return nil, queue.ErrBinding
+	}
+	remote, err := commitartifact.NewConfiguredGitTransport(commitartifact.GitTransportOptions{Remote: req.Config.Remote, Branch: "main"})
+	if err != nil {
+		return nil, fmt.Errorf("queued sync requires a supported HTTPS remote: %w", err)
+	}
+	if err = d.private(ctx, req.Config.Remote); err != nil {
+		return nil, err
+	}
+	return remote, nil
+}
+
+type queueReceiptJSON struct {
+	Generation uint64 `json:"generation"`
+	Batch      uint64 `json:"batch"`
+}
+type queueBatchJSON struct {
+	Batch       uint64       `json:"batch"`
+	Phase       queue.Phase  `json:"phase"`
+	Status      queue.Status `json:"status"`
+	Events      int          `json:"events"`
+	Attempts    uint64       `json:"attempts"`
+	NotBefore   time.Time    `json:"notBefore"`
+	FailureCode string       `json:"failureCode"`
+}
+type queueStatusJSON struct {
+	Batches  []queueBatchJSON  `json:"batches"`
+	Capacity queueCapacityJSON `json:"capacity"`
+}
+type queueCapacityJSON struct {
+	PayloadBytes       int       `json:"payloadBytes"`
+	StateLimit         int       `json:"stateLimit"`
+	EnqueueLimit       int       `json:"enqueueLimit"`
+	EnqueueHeadroom    int       `json:"enqueueHeadroom"`
+	OutstandingBatches int       `json:"outstandingBatches"`
+	BatchLimit         int       `json:"batchLimit"`
+	PendingBatches     int       `json:"pendingBatches"`
+	RunningBatches     int       `json:"runningBatches"`
+	BlockedBatches     int       `json:"blockedBatches"`
+	OutstandingEvents  int       `json:"outstandingEvents"`
+	CompletedReceipts  int       `json:"completedReceipts"`
+	CompletedBatches   int       `json:"completedBatches"`
+	RetiredReceipts    uint64    `json:"retiredReceipts"`
+	ReplayBefore       time.Time `json:"replayBefore"`
+	Remedies           []string  `json:"remedies"`
+}
+
+func queueCapacityOutput(c queue.Capacity) queueCapacityJSON {
+	return queueCapacityJSON{
+		PayloadBytes:       c.PayloadBytes,
+		StateLimit:         c.StateLimit,
+		EnqueueLimit:       c.EnqueueLimit,
+		EnqueueHeadroom:    c.EnqueueHeadroom,
+		OutstandingBatches: c.OutstandingBatches,
+		BatchLimit:         c.BatchLimit,
+		PendingBatches:     c.PendingBatches,
+		RunningBatches:     c.RunningBatches,
+		BlockedBatches:     c.BlockedBatches,
+		OutstandingEvents:  c.OutstandingEvents,
+		CompletedReceipts:  c.CompletedReceipts,
+		CompletedBatches:   c.CompletedBatches,
+		RetiredReceipts:    c.RetiredReceipts,
+		ReplayBefore:       c.ReplayBefore,
+		Remedies:           c.Remedies,
+	}
 }
