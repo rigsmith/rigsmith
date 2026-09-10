@@ -54,8 +54,8 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Windows fenced-store recovery (6b.6b.2d.3b) | Merged: [#374](https://github.com/rigsmith/rigsmith/pull/374). Recover durable prelaunch/cleanup phases; unconfirmed jobs require a verified kernel restart. Same-boot job disappearance and legacy records never authorize clearing. |
 | Queue capacity and receipt compaction (6b.7a) | Merged: [#375](https://github.com/rigsmith/rigsmith/pull/375). Report queue headroom and remedies; explicitly compact completed receipts under a durable producer replay cutoff. |
 | Artifact-store capacity and interrupted archive writes (6b.7b.1) | Merged: [#376](https://github.com/rigsmith/rigsmith/pull/376). Optional per-store sealed-byte limits, capacity reporting and exclusive cleanup of interrupted archive-write files. |
-| Writer-owned build/publication workspace cleanup (6b.7b.2a) | In review (current PR). Hold staging, capture, seed and commit leases; reclaim only reserved disposable workspaces. Preserve sealed artifacts, recovery stores and relocated OS-temp scratch. |
-| Referenced sealed artifacts (6b.7b.2b) | Next. Prove which captures/seeds/commits are disposable against pending queue work and recovery dependencies before deleting them. |
+| Writer-owned build/publication workspace cleanup (6b.7b.2a) | In review (current PR). Hold staging, capture, seed and commit leases; reclaim only reserved disposable workspaces. Preserve sealed artifacts, recovery stores, queue-parent confirmations and relocated OS-temp scratch. |
+| Referenced sealed artifacts (6b.7b.2b) | Next. Prove which captures/seeds/commits are disposable against pending queue work and recovery dependencies before deleting them; reclaim queue-parent confirmation scratch under queue-worker ownership. |
 | Opt-in queued Claude hooks | Planned after queue/recovery validation. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 

@@ -27,6 +27,10 @@ import (
 type WorkspaceCleanup struct {
 	StagingDir        string
 	Captures, Commits artifact.Store
+	// Validate optionally rechecks adapter policy after every writer lease is
+	// acquired, before inventory or deletion. It must be read-only and must not
+	// retain the supplied staging-lease context beyond the call.
+	Validate func(context.Context) error
 }
 
 // WorkspaceCleanupResult counts fully removed top-level workspaces in this
@@ -93,7 +97,7 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 	if !st.IsDir() {
 		return result, ErrInvalid
 	}
-	_, release, err := storelock.Acquire(ctx, paths[0], 0)
+	staging, release, err := storelock.Acquire(ctx, paths[0], 0)
 	if err != nil {
 		return result, err
 	}
@@ -122,11 +126,16 @@ func cleanupWorkspaces(ctx context.Context, req WorkspaceCleanup, remove func(*o
 			return result, err
 		}
 		defer release()
-		r.root, err = os.OpenRoot(r.path)
+		r.root, err = openWorkspaceRoot(r.path, st)
 		if err != nil {
 			return result, err
 		}
 		defer r.root.Close()
+	}
+	if req.Validate != nil {
+		if err := req.Validate(staging); err != nil {
+			return result, err
+		}
 	}
 	var candidates []workspaceCandidate
 	for _, r := range roots {
@@ -181,19 +190,38 @@ func cleanupPath(path string) (string, error) {
 	return filepath.Join(resolved, filepath.Base(path)), nil
 }
 
-func workspaceInventory(ctx context.Context, r workspaceRoot) ([]workspaceCandidate, error) {
-	f, err := r.root.Open(".")
+// Pin the directory observed before lock acquisition, not a replacement at the
+// same path. This catches leaf/ancestor replacement across acquisition/opening;
+// stable roots and ancestors remain a caller precondition throughout cleanup.
+func openWorkspaceRoot(path string, expected os.FileInfo) (*os.Root, error) {
+	root, err := os.OpenRoot(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	actual, err := root.Stat(".")
+	if err != nil || !os.SameFile(expected, actual) {
+		root.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, ErrInvalid
+	}
+	return root, nil
+}
+
+func workspaceInventory(ctx context.Context, r workspaceRoot) ([]workspaceCandidate, error) {
+	directory, err := r.root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
 	var result []workspaceCandidate
 	count := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		entries, err := f.ReadDir(128)
+		entries, err := directory.ReadDir(128)
 		if err != nil && err != io.EOF {
 			return nil, err
 		}

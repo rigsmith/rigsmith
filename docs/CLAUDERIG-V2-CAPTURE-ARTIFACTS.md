@@ -231,7 +231,18 @@ symlinks is unavailable.
 It takes a staging directory and its exclusive private capture/commit stores.
 The Claude `Service.CleanupArtifactWorkspaces` adapter validates the current
 binding and keeps those stores outside native source and staging roots before
-calling the shared operation. No command, hook or startup path invokes cleanup.
+calling the shared operation. It rechecks the binding after all writer leases
+are acquired, so a staging-backed auto-chunking change in the acquisition gap
+refuses deletion. Shared callers may supply a read-only `Validate` callback,
+which receives the active staging-lease context under all writer locks.
+No command, hook or startup path invokes cleanup.
+
+Private-store paths must come from trusted local resolution or explicit operator
+selection. The capture binding describes content and destination policy; it does
+not certify the ownership of caller-supplied scratch paths. This internal API is
+not a boundary for accepting arbitrary paths from queue payloads or remote data.
+Rollout callers must preserve the existing trusted-resolver boundary and exclusive
+association between private stores and staging.
 
 Cleanup acquires staging, capture, seed and commit leases without waiting and
 holds all of them through removal. This excludes both archive builders and
@@ -258,6 +269,10 @@ archives, `.durable-*` files and recovery substores remain untouched. In
 particular, cleanup does not traverse merge intents or scan the OS temporary
 directory for relocated merge workspaces: the private stores' leases do not
 identify ownership of those external paths. Those paths remain retained.
+`SyncWithCoverage` also places `.confirmation-*` workspaces under the queue
+directory, not the commit store. This API never scans that queue parent; adding
+queue-worker ownership to reclaim those confirmations remains in 6b.7b.2b before
+hook rollout.
 
 Existing root aliases are canonicalized, overlaps are rejected, and the `seeds`
 substore cannot be a link. Missing artifact stores are skipped without creation;
@@ -265,7 +280,10 @@ missing staging refuses cleanup. Inventory reads at most 100,000 direct entries
 per store in batches of 128. Every candidate in every store must be a real
 directory before any deletion starts. A candidate link, regular file, inaccessible
 entry, excessive inventory, busy owner or fence refuses without deleting earlier
-candidates. Removal uses an open filesystem root and rechecks candidate identity;
+candidates. The opened filesystem root must match the directory observed before lock
+acquisition, rejecting a leaf or ancestor replacement across that gap. Stable
+roots remain a caller precondition; this is not a sandbox against hostile local
+path mutation. Removal uses that pinned root and rechecks candidate identity;
 nested links are removed without following their targets.
 
 Results count fully removed top-level workspaces in this attempt. A failure can
@@ -281,6 +299,10 @@ writer locks and fences, invalid late candidates, linked roots/candidates/nested
 entries, read-only object files, partial failure/cancellation and retry. A real
 subprocess holding only staging ownership blocks cleanup until it dies; its
 abandoned workspace is then removed while the sealed archive survives. This
-models an independently owned writer, not an actual OS reboot. Claude integration
+models an independently owned writer, not an actual OS reboot. Claude source-fixture integration
 tests require `CLAUDERIG_E2E=1`; symlink cases skip if the host cannot create links.
+A deterministic adapter test changes the auto-chunking marker under a cooperating
+staging lease between request preparation and cleanup, and verifies refusal with
+all scratch retained. Shared tests prove the validator holds all writer leases and
+reject leaf/ancestor replacement before opening a workspace root.
 Native CI runs these checks alongside the unchanged pinned v1 compatibility suite.

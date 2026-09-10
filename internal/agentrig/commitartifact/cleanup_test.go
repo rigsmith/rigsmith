@@ -270,3 +270,72 @@ func TestCleanupWorkspacesKeepsLeasesAndRejectsReplacement(t *testing.T) {
 		t.Fatal("deleted replacement", err)
 	}
 }
+
+func TestCleanupWorkspacesValidatesUnderAllLeases(t *testing.T) {
+	req := cleanupFixture(t)
+	keep := cleanupPut(t, req.Captures.Dir, ".capture-work-old/file")
+	refused := errors.New("policy changed")
+	called := false
+	req.Validate = func(ctx context.Context) error {
+		called = true
+		nested, release, err := storelock.Acquire(ctx, req.StagingDir, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if !storelock.SameActiveLease(ctx, nested) {
+			t.Fatal("validator lacks staging ownership")
+		}
+		for _, dir := range []string{req.StagingDir, req.Captures.Dir, SeedStore(req.Captures).Dir, req.Commits.Dir} {
+			_, release, err := storelock.Acquire(t.Context(), dir, 0)
+			if err == nil {
+				release()
+				t.Fatal("validator ran without writer ownership", dir)
+			}
+			if !errors.Is(err, storelock.ErrBusy) {
+				t.Fatal(err)
+			}
+		}
+		return refused
+	}
+	result, err := CleanupWorkspaces(t.Context(), req)
+	if !called || !errors.Is(err, refused) || result.RemovedWorkspaces != 0 {
+		t.Fatal(called, result, err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatal("removed before validation", err)
+	}
+}
+
+func TestCleanupWorkspaceRootRejectsReplacement(t *testing.T) {
+	for _, mode := range []string{"leaf", "ancestor"} {
+		t.Run(mode, func(t *testing.T) {
+			parent := filepath.Join(t.TempDir(), "parent")
+			dir := filepath.Join(parent, "captures")
+			cleanupPut(t, dir, ".capture-work-old/file")
+			original, err := os.Stat(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			replacement := dir
+			if mode == "ancestor" {
+				replacement = parent
+			}
+			if err := os.Rename(replacement, replacement+"-moved"); err != nil {
+				t.Fatal(err)
+			}
+			keep := cleanupPut(t, dir, ".capture-work-unrelated/file")
+			root, err := openWorkspaceRoot(dir, original)
+			if root != nil {
+				root.Close()
+				t.Fatal("opened replacement")
+			}
+			if !errors.Is(err, ErrInvalid) {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(keep); err != nil {
+				t.Fatal("changed replacement bytes", err)
+			}
+		})
+	}
+}
