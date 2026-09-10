@@ -18,6 +18,7 @@ import (
 )
 
 const formatVersion = 2
+const compactionVersion = 3
 
 type envelope struct {
 	Version int
@@ -125,7 +126,7 @@ func (q *Queue) load() (*state, error) {
 	if err = decode(data, &env); err != nil {
 		return nil, fmt.Errorf("invalid queue envelope: %w", err)
 	}
-	if env.Version != 1 && env.Version != formatVersion {
+	if env.Version != 1 && env.Version != formatVersion && env.Version != compactionVersion {
 		return nil, fmt.Errorf("unsupported queue schema %d", env.Version)
 	}
 	hash := sha256.Sum256(env.Payload)
@@ -137,6 +138,9 @@ func (q *Queue) load() (*state, error) {
 		return nil, fmt.Errorf("invalid queue state: %w", err)
 	}
 	s.version = env.Version
+	if s.version < compactionVersion && s.Compaction != nil {
+		return nil, fmt.Errorf("receipt compaction requires queue schema 3")
+	}
 	if s.version == 1 {
 		for _, b := range s.Batches {
 			if b.CoverageSealed {
@@ -186,7 +190,17 @@ func (q *Queue) persist(s *state) error {
 	return q.save(q.dir, data)
 }
 func validate(s *state) error {
-	if s.Events == nil || s.Done == nil || uint64(len(s.Events)) != s.Next {
+	if s.version == compactionVersion && s.Compaction == nil {
+		return fmt.Errorf("queue schema 3 requires receipt compaction metadata")
+	}
+	var retired uint64
+	if s.Compaction != nil {
+		if s.Compaction.Before.IsZero() || s.Compaction.Retired > s.Next {
+			return fmt.Errorf("invalid receipt compaction")
+		}
+		retired = s.Compaction.Retired
+	}
+	if s.Events == nil || s.Done == nil || uint64(len(s.Events)) != s.Next-retired {
 		return fmt.Errorf("event generation count mismatch")
 	}
 	generations := map[uint64]bool{}

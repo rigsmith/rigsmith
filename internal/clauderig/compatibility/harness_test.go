@@ -33,9 +33,25 @@ func binaries(t *testing.T) (string, string) {
 		t.Skip("set CLAUDERIG_COMPAT=1; requires git history containing the pinned baseline")
 	}
 	repo := strings.TrimSpace(command(t, "", nil, "git", "rev-parse", "--show-toplevel"))
+	src := exportSource(t, repo, baselineRef, nil)
+	binDir := t.TempDir()
+	ext := ""
+	if runtime.GOOS == "windows" {
+		ext = ".exe"
+	}
+	base, next := filepath.Join(binDir, "baseline"+ext), filepath.Join(binDir, "candidate"+ext)
+	command(t, src, nil, "go", "build", "-o", base, "./cmd/clauderig")
+	command(t, repo, nil, "go", "build", "-o", next, "./cmd/clauderig")
+	t.Logf("baseline %s; candidate working tree", baselineRef)
+	return base, next
+}
+
+func exportSource(t *testing.T, repo, ref string, env []string, paths ...string) string {
+	t.Helper()
 	src := t.TempDir()
-	// Export the baseline without changing this checkout or creating a worktree.
-	archive := command(t, repo, nil, "git", "archive", baselineRef)
+	// Export the pinned revision without changing this checkout or creating a worktree.
+	args := append([]string{"archive", ref}, paths...)
+	archive := command(t, repo, env, "git", args...)
 	r := tar.NewReader(strings.NewReader(archive))
 	for {
 		h, err := r.Next()
@@ -63,16 +79,7 @@ func binaries(t *testing.T) (string, string) {
 			t.Fatalf("unsupported archive member %q (type %d)", h.Name, h.Typeflag)
 		}
 	}
-	binDir := t.TempDir()
-	ext := ""
-	if runtime.GOOS == "windows" {
-		ext = ".exe"
-	}
-	base, next := filepath.Join(binDir, "baseline"+ext), filepath.Join(binDir, "candidate"+ext)
-	command(t, src, nil, "go", "build", "-o", base, "./cmd/clauderig")
-	command(t, repo, nil, "go", "build", "-o", next, "./cmd/clauderig")
-	t.Logf("baseline %s; candidate working tree", baselineRef)
-	return base, next
+	return src
 }
 
 type sandbox struct {

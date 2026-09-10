@@ -26,6 +26,20 @@ func TestQueueProcessHelper(t *testing.T) {
 	}
 	mode := os.Getenv("RIG_QUEUE_TEST_MODE")
 	switch mode {
+	case "compact-before", "compact-after":
+		q.save = func(dir string, data []byte) error {
+			if mode == "compact-after" {
+				if err := saveFile(dir, data); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fmt.Println("compaction-interrupted")
+			os.Exit(0) // no deferred releases and no caller acknowledgement
+			return nil
+		}
+		if _, err := q.CompactReceipts(t.Context(), fixtureTime.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
 	case "runner-owner":
 		f := &executionFixture{push: func(context.Context, Work) error {
 			fmt.Println("runner-owned")

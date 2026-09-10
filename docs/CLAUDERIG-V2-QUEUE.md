@@ -110,7 +110,7 @@ recovery is tested on native CI platforms; this is not a VM power-cut test suite
 
 A failure during/after replacement may mean the state committed. ErrUncertain
 requires retrying the same operation with the same identity and arguments:
-the same directory/binding for Create or Worker, EventID/request for Enqueue,
+the same directory/binding for Create or Worker, EventID/request and original producer timestamp for Enqueue when compaction is enabled,
 or batch ID and transition arguments for worker updates. Never invent a new
 event ID. Idempotent write retries reflush:
 merely finding the ID in the readable file is insufficient after an earlier
@@ -127,19 +127,85 @@ including JSON escaping, retry metadata and
 acknowledgements, allowing accepted work to drain. No event or blocked batch is
 automatically discarded to make room.
 
-This first core retains completed receipts indefinitely. Compaction with an
-explicit producer replay horizon, operational status reporting and a full-queue
-remedy are required before enabling high-volume hooks. Rewriting a complete
-snapshot is deliberately simple and bounded; measure it with the integrated
-worker before choosing a journal or database. Unknown versions fail closed.
-Schema upgrades must preserve pending work and deduplication receipts under
-both ownership locks. New queues use schema 2. Existing schema-1 queues remain
-readable, and ordinary operations preserve schema 1; the first successful
-coverage preparation upgrades to schema 2 atomically under worker ownership and
-the queue transaction lock. The only new persisted field seals batch membership.
-Existing events, completed receipts, phases and retry metadata are preserved.
-Old binaries reject schema 2 rather than dropping seals. There is no downgrade
-operation; continue using a compatible build to drain an upgraded queue.
+Completed receipts remain indefinitely unless the caller explicitly establishes a
+producer replay cutoff and compacts them. The shared capacity report and
+compaction API are described below; hook/status command wiring and artifact
+capacity/cleanup remain rollout work. Rewriting a complete snapshot is deliberately
+simple and bounded; measure it with the integrated worker before choosing a
+journal or database. Unknown versions fail closed.
+
+New queues still use schema 2. Ordinary operations preserve older schema-1 queues;
+coverage preparation upgrades schema 1 to 2 under both ownership locks. Receipt
+compaction explicitly upgrades schema 1 or 2 to 3 under the same locks, adding the
+producer cutoff and retired-generation count. Coverage never downgrades schema 3.
+Unfinished events, phases, seals and retry metadata survive upgrades. Older
+binaries reject schema 3; there is no downgrade operation. Use a compatible build
+to drain an upgraded queue.
+
+## Queue capacity and receipt compaction (milestone 6b.7a)
+
+`Queue.Capacity` reads validated state without changing queue bytes. It reports
+serialized payload usage, the total state limit, enqueue budget/headroom, batch
+limit, pending/running/blocked counts, outstanding events, completed receipts and
+the durable replay cutoff. Headroom is an estimate for planning: a new request
+also needs serialized event/batch overhead and, unless coalesced, a free batch slot. It does
+not report filesystem free space or capture/commit artifact sizes.
+
+The report gives explicit remedies appropriate to the state: drain accepted work,
+repair and unblock failed batches, or agree a producer replay cutoff and compact
+completed receipts. Draining frees batch slots but retains producer receipts;
+compaction is what releases their queue bytes. No operation here deletes blocked
+work, resets retries, increases limits, runs Git or starts a worker.
+
+`Queue.CompactReceipts(ctx, before)` requires an **explicit producer contract**:
+producers preserve the original enqueue timestamp on every retry, and the caller
+has coordinated a cutoff beyond which those producers no longer submit old work.
+There is no default age/TTL and no automatic invocation. The timestamp is supplied
+by the producer, not inferred from maintenance wall time. Do not enable compaction
+for a producer that assigns `time.Now()` on each retry. Reusing a retired EventID
+with a fresh timestamp bypasses that contract and can recreate work; the compacted
+queue no longer has the old ID with which to detect the misuse. Future hook wiring
+must persist the producer timestamp and present an explicit expired-input remedy.
+
+Under exclusive worker ownership and the queue transaction lock, compaction:
+
+- Removes only whole completed batches whose every member's original enqueue
+  time is strictly before the cutoff. One newer member keeps the whole receipt
+  batch; an event exactly at the cutoff is retained.
+- Keeps all unfinished events, coverage seals, artifact references, attempts,
+  retry deadlines, failures and even abandoned running/pushed records unchanged.
+- Persists a monotonic cutoff and retired count alongside the reduced state.
+  Generation IDs never reset or get reused; validation accounts for retired gaps.
+- Rejects an unknown event older than the cutoff with `ErrExpired`, including
+  never-accepted late input. This is a refusal, not an acknowledgement that it was
+  synchronized. Existing receipts still deduplicate first, even for older pending
+  work. An old request must not be given a fresh timestamp to force acceptance.
+
+Maintenance cannot run while a worker or manual-coverage operation owns the queue.
+Concurrent producer transactions serialize before or after the compaction write.
+A missing/corrupt queue is not repaired or initialized. Save failure preserves the
+old snapshot or reports `ErrUncertain`; retry the same cutoff to reflush, including
+when the first attempt is already visible. Reported removal counts cover only the
+successful attempt. Moving the cutoff backward is refused. Process exit around
+replacement leaves either the old full receipt set or the compacted set plus its
+cutoff, never a compacted set without the replay guard.
+
+This is an internal shared API. It does not compact artifact stores, remove scratch
+folders, install hooks or alter ordinary synchronous Claude behavior. Synthetic
+native tests cover a receipt-full drained queue accepting work again, all saved
+phases, mixed-age receipt batches, schema 1/2 upgrades and subsequent coverage,
+malformed state, failed/uncertain saves, process exit, canonical directory aliases,
+and both transaction orderings for old producer input. The directory-alias test
+skips where creating directory symlinks is unavailable. The compatibility group
+runs with `CLAUDERIG_COMPAT=1` on native CI; outside that gate the legacy-reader
+test skips. It requires local Git history containing the pinned revision and a Go
+toolchain. The test builds the actual schema-1/2 reader from pre-compaction v2 commit
+`4ccf5e5e59f9b92576e40ffa1d50a2984d6e417f`: it accepts an uncompacted schema-2
+queue and rejects a real compacted schema-3 queue through both Open and Create
+without changing queue bytes. Its archive/build/probe subprocesses use an explicit
+runtime/cache environment, a private home, and controlled Git/Go settings; a
+synthetic conflicting parent environment verifies isolation. The separate v1
+command baseline remains unchanged.
 
 ## Execution driver and Claude service boundary (milestone 6b.2, first slice)
 
