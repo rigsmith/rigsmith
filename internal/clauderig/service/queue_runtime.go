@@ -636,6 +636,8 @@ func queueIsolationPath(path string) (resolved string, err error) {
 // that actual capture policy must match this runtime's saved policy. Callers must
 // verify remote privacy and supply canonical command supervision. It installs no
 // hook and does not change ordinary Sync. Dry runs never acknowledge queued work.
+// Profile membership, source/link identities and runtime association must remain
+// stable throughout the call; validation points do not fence external edits.
 func (r *QueueRuntime) SyncWithCoverage(ctx context.Context, s Service, req SyncRequest) (CoverageSyncResult, error) {
 	if r == nil {
 		return CoverageSyncResult{}, queue.ErrBinding

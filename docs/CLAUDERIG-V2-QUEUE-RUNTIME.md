@@ -189,8 +189,8 @@ with a different profile set are refused; this bridge does not change ordinary
 capture discovery or provide a cross-machine capture mode. Missing, malformed or
 unreadable profile metadata refuses coverage; discovery cannot silently omit
 profiles. Directory links and Windows junctions must appear in the actual capture
-selection too. Changed configuration or
-runtime metadata refuses coverage; repair the original inputs rather than
+selection too. Changed configuration, invalid runtime metadata or a changed
+lifecycle association refuses coverage; repair the original inputs rather than
 resetting queue state. Worker ownership spans capture, remote confirmation and
 acknowledgement, while producers may continue accepting later generations.
 
@@ -199,3 +199,21 @@ batches matching that identity and proven in the confirmed remote snapshot are
 acknowledged. Later arrivals, other identities, missing evidence, dry runs and
 failed publication retain their pending work. No command or hook is activated by
 this internal bridge; command routing and opt-in hooks follow in 7c.2.
+
+The validation checks are observations at specific points, not an atomic
+filesystem snapshot or a transaction joining Desktop metadata to queue
+acknowledgement. Keep configuration, profile membership, source directories,
+resolved link targets and the runtime/store association stable throughout the
+operation. Profile creation/removal, same-name replacement and link retargeting
+must wait until it finishes. An external change between checks, including the
+interval after final validation and before acknowledgement, is not guaranteed to
+be detected. The runtime lease is deliberately released before acknowledgement;
+worker ownership excludes other queue workers, not external filesystem writers.
+
+Coverage proves the captured CLI session groups in the confirmed remote snapshot;
+it does not prove a continuously current snapshot of every Desktop profile or
+freeze `profile.json` bytes. Ordinary `Store.Touch` only updates `LastOpened` and
+does not change profile directory identity. Such valid metadata updates and
+runtime identity-map additions by cooperating producers need not invalidate
+coverage. Corrupt metadata observed at a validation point still refuses the
+operation. Stronger fencing of arbitrary external profile edits is outside 7c.1.
