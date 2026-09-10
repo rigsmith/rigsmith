@@ -18,3 +18,6 @@ func validateQueueRequestSingleLink(f *os.File) error {
 	}
 	return nil
 }
+
+// Windows privacy requires a caller-provided private directory ACL.
+func queueInboxPrivate(info os.FileInfo) bool { return true }

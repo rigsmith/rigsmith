@@ -13,6 +13,8 @@ Windows.
 clauderig init                 # wizard: create/choose a PRIVATE repo, machine name, hooks
 clauderig queue                # v2: explicit saved requests, foreground worker, manual sync, status/retry/drain
 clauderig queue prepare --hook --output hook-request.json < hook.json  # save intent for later enqueue
+clauderig queue hook < hook.json  # v2: save and admit a new hook event
+clauderig queue recover-hooks   # retry its inbox using the original account
 clauderig queue sync --flush   # v2: manual sync, confirm covered queue requests
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)

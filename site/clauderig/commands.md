@@ -6,7 +6,7 @@
 | `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`, `--hook` debounces) |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
-| `queue` | Explicit v2 saved requests, enqueue, supervised manual sync/run/drain, status and retry; [workflow](#explicit-queue-workflow-v2-preview) |
+| `queue` | Explicit v2 saved requests, hook admission/recovery, enqueue, supervised manual sync/run/drain, status and retry; [workflow](#explicit-queue-workflow-v2-preview) |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
@@ -533,3 +533,24 @@ manual-sync coverage. Empty or bad
 input fails without falling back to flushing everything. `--hook` conflicts with
 `--session` and `--flush`. Success goes to stderr; stdout stays empty. No message
 text from the payload is saved. Installed hooks remain synchronous.
+
+
+### Managed hook admission and recovery
+
+`clauderig queue hook < hook.json` saves and enqueues a Stop/SessionEnd request
+using a private inbox (default `~/.clauderig/hook-inbox`, override `--inbox`). It
+requires an initialized queue. Account identity is captured once; unavailable
+identity requires `--unknown-identity`. The inbox holds at most 128 requests and
+1 MiB of journal data. No worker or hook is installed automatically.
+
+After any admission error or interruption, run `clauderig queue recover-hooks`
+with the same runtime, profile and inbox options. Recovery reuses saved identity
+and event IDs, so retrying accepted requests does not duplicate them. Do not replay
+the hook payload: each invocation creates a new event. Requests lost before their
+initial durable save cannot be reconstructed by recovery. Successfully admitted
+records are removed; corrupt or mismatched journals block instead of being reset.
+
+Stop producers, recover their inboxes, then drain the queue before rollback.
+An empty queue alone does not prove all inbox requests were admitted. Successful
+inbox recovery means admission; `queue drain` completes publication. Installed
+hooks continue to use ordinary synchronous sync until the opt-in installer lands.

@@ -7,7 +7,8 @@ description: >
   config across machines, v2 queued sync + worktree/PR guard). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, or syncing Claude
-  Code setup, preparing queued requests from hook payloads, managing its saved sync
+  Code setup, preparing or admitting queued requests from hook payloads, recovering
+  their saved inbox, managing its saved sync
   queue, or using manual queue sync with
   confirmed acknowledgement, dry-run previews or transcript flushing. Queued workers
   capture eligible requested sessions/subagents completely while unrelated plain
@@ -292,3 +293,15 @@ The worker still freezes the configured source tree; saved artifacts replay
 unchanged. Saved flush intent also governs manual-sync coverage.
 It conflicts with `--session`/`--flush`, observes identity once, and sends success
 to stderr. Installed hooks remain synchronous until the opt-in installer lands.
+
+
+For explicit managed v2 hook admission, use `clauderig queue hook < hook.json`
+after `queue init`. This saves and enqueues a new event in a private inbox
+(default `~/.clauderig/hook-inbox`, override `--inbox`). Each invocation is a new
+event: after failure or interruption, use `queue recover-hooks` with the same
+`--dir`, `--profile` and `--inbox`, without replaying stdin or refreshing identity.
+Recovery only covers records saved before interruption. Never reset a corrupt or
+mismatched inbox. The journal is bounded to 128 pending requests and 1 MiB;
+recover existing intent before sending more if full. Stop producers, recover every
+inbox, then drain before rollback. Admission success is not publication, and queue
+status excludes requests still in the inbox. Automatic installation remains deferred.
