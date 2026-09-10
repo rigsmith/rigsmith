@@ -81,23 +81,25 @@ func rebuildTasks(cmd *cobra.Command, root string) []allTask {
 		if err != nil {
 			rel = t.Dir
 		}
-		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: filepath.ToSlash(rel)})
+		tasks = append(tasks, allTask{
+			name: t.Name, eco: t.Eco, dir: t.Dir, rel: filepath.ToSlash(rel),
+			// rebuild is clean → build; a package that defines no build (a Node
+			// package.json without the script) has nothing to rebuild. Its clean
+			// is already optional, in runRebuild.
+			skip: detect.VerbSkipReason(t.Eco, "build", t.Dir),
+		})
 	}
 	return tasks
 }
 
 // rebuildAll rebuilds every task in turn, aborting on the first failure — the
 // "All packages" choice. rebuild's clean → build doesn't fit the --all dashboard
-// (which streams a single command per package), so it runs sequentially.
+// (which streams a single command per package), so it runs sequentially through
+// the same plain fan-out the dev verbs use, skips and totals included.
 func rebuildAll(cmd *cobra.Command, tasks []allTask) error {
-	out := cmd.OutOrStdout()
-	for _, t := range tasks {
-		fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("· %s (%s)", t.name, t.eco)))
-		if err := runRebuild(cmd, t.eco, t.dir, nil); err != nil {
-			return fmt.Errorf("rebuild in %s: %w", t.name, err)
-		}
-	}
-	return nil
+	return runAcrossPlain(cmd, tasks, "rebuild", func(t allTask) error {
+		return runRebuild(cmd, t.eco, t.dir, nil)
+	})
 }
 
 // runRebuild rebuilds one target by sequencing clean → build (rebuild is not a

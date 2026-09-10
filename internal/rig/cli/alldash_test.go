@@ -109,3 +109,27 @@ func TestAllModelRowShowsPath(t *testing.T) {
 		t.Errorf("row should still show the ecosystem:\n%s", v)
 	}
 }
+
+// A package that doesn't define the verb is shown, dimmed, with the reason —
+// and counted as skipped rather than ok or failed.
+func TestAllModelSkippedShowsReasonAndCounts(t *testing.T) {
+	tasks := []allTask{
+		{name: "@acme/auth", eco: "node", rel: "packages/auth"},
+		{name: "@acme/docs", eco: "node", rel: "apps/docs", skip: `no "typecheck" script`},
+	}
+	m := newAllModel("typecheck", tasks, func() {})
+	m = au(m, allStarted{0})
+	m = au(m, allFinished{idx: 0, ok: true})
+	m = au(m, allSkippedMsg{1})
+	m = au(m, allDoneMsg{})
+	if m.okCount != 1 || m.failCount != 0 || m.skipCount != 1 {
+		t.Fatalf("counts: ok=%d fail=%d skip=%d, want 1/0/1", m.okCount, m.failCount, m.skipCount)
+	}
+	v := m.View()
+	if !strings.Contains(v, `no "typecheck" script`) {
+		t.Errorf("skipped row should say why:\n%s", v)
+	}
+	if !strings.Contains(v, "✓ 1 ok") || !strings.Contains(v, "– 1 skipped") {
+		t.Errorf("summary should report 1 ok and 1 skipped:\n%s", v)
+	}
+}

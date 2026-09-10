@@ -264,25 +264,120 @@ func runAcross(cmd *cobra.Command, root, verb, filter string, args []string) err
 		if err != nil {
 			rel = t.Dir
 		}
-		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: append(argv, args...)})
+		tasks = append(tasks, allTask{
+			name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel,
+			argv: append(argv, args...),
+			skip: detect.VerbSkipReason(t.Eco, verb, t.Dir),
+		})
 	}
 	if len(tasks) == 0 {
 		return fmt.Errorf("no workspace package maps verb %q", verb)
 	}
 
+	return runAllTasks(cmd, tasks, verb)
+}
+
+// runAllTasks fans the verb out across resolved tasks — the one entry point for
+// every `--all` run, so the dashboard and the plain path agree on what is run,
+// what is skipped, and what the exit status means.
+//
+// A task carrying a skip reason is listed but never run: the package doesn't
+// define the verb at all (a Node package.json with no such script), which is
+// the absence of work rather than work that failed. A task that runs and exits
+// non-zero is still a failure and still fails the run.
+func runAllTasks(cmd *cobra.Command, tasks []allTask, verb string) error {
+	if runnableTasks(tasks) == 0 {
+		return fmt.Errorf("no workspace package defines %q (%s)", verb, skipSummary(tasks))
+	}
 	if allDashboardEligible() {
 		return runAcrossDashboard(cmd, tasks, verb)
 	}
+	return runAcrossPlain(cmd, tasks, verb, func(t allTask) error {
+		return runCommand(cmd, t.dir, t.argv)
+	})
+}
 
-	// Plain sequential path (CI, piped, --quiet, --dry-run): abort on first failure.
+// runAcrossPlain streams the tasks sequentially as plain output (CI, piped,
+// --quiet, --dry-run). run is what one task does — a single command for the dev
+// verbs, clean → build for `rebuild` — so both report skips and totals the same
+// way.
+//
+// Every package runs, and a failure fails the RUN rather than ending it. Stopping
+// at the first one is worse exactly where this path is used: in CI the log you are
+// handed names one broken package, you fix it, and the next run names the next —
+// the same "one failure hides the other five" round trip the dashboard has always
+// avoided, since it runs everything and reports `✗ N failed` at the end. The two
+// paths now agree, which also means a build's output no longer depends on whether
+// stdout happened to be a terminal.
+//
+// It does mean a `build` whose failure is a dependency of later packages reports
+// those too. They are consequences of the first failure rather than new
+// information — but they are named, in dependency order, so the first ✗ is the
+// one to fix, and that reads better than the alternative of hiding work that
+// genuinely did not run.
+func runAcrossPlain(cmd *cobra.Command, tasks []allTask, verb string, run func(allTask) error) error {
 	out := cmd.OutOrStdout()
+	ok, skipped := 0, 0
+	var failed []string
 	for _, t := range tasks {
-		fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("· %s (%s)", t.name, t.eco)))
-		if err := runCommand(cmd, t.dir, t.argv); err != nil {
-			return fmt.Errorf("%s in %s: %w", verb, t.name, err)
+		if t.skip != "" {
+			fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("– %s (%s) — skipped: %s", t.name, t.eco, t.skip)))
+			skipped++
+			continue
 		}
+		fmt.Fprintln(out, dimStyle.Render(fmt.Sprintf("· %s (%s)", t.name, t.eco)))
+		if err := run(t); err != nil {
+			// Reported here, while the package's own output is still directly
+			// above it, rather than saved for the summary.
+			fmt.Fprintln(out, failStyle.Render(fmt.Sprintf("✗ %s (%s): %v", t.name, t.eco, err)))
+			failed = append(failed, t.name)
+			continue
+		}
+		ok++
+	}
+
+	summary := okStyle.Render(fmt.Sprintf("✓ %d ok", ok))
+	if len(failed) > 0 {
+		summary += "   " + failStyle.Render(fmt.Sprintf("✗ %d failed", len(failed)))
+	}
+	if skipped > 0 {
+		summary += "   " + dimStyle.Render(fmt.Sprintf("– %d skipped", skipped))
+	}
+	fmt.Fprintln(out, summary)
+
+	if len(failed) > 0 {
+		// Named, not just counted: a CI log long enough to need this is long
+		// enough that scrolling back for the ✗ lines is the annoying part.
+		return fmt.Errorf("%s failed in %s: %s", verb, pluralN(len(failed), "package"), strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+// runnableTasks counts the tasks that will actually run (no skip reason).
+func runnableTasks(tasks []allTask) int {
+	n := 0
+	for _, t := range tasks {
+		if t.skip == "" {
+			n++
+		}
+	}
+	return n
+}
+
+// skipSummary names why every package was skipped, for the error raised when a
+// `--all` run has nothing left to do. Reasons repeat across packages, so it
+// reports the distinct ones ("no \"typecheck\" script").
+func skipSummary(tasks []allTask) string {
+	var reasons []string
+	seen := map[string]bool{}
+	for _, t := range tasks {
+		if t.skip != "" && !seen[t.skip] {
+			seen[t.skip] = true
+			reasons = append(reasons, t.skip)
+		}
+	}
+	sort.Strings(reasons)
+	return strings.Join(reasons, "; ")
 }
 
 // offerWorkspaceChoice handles a bare dev verb at a workspace root: when packages
@@ -399,7 +494,10 @@ func surveyWorkspace(cmd *cobra.Command, root, verb string, forcePick bool) work
 		if rel == "." {
 			rootHasPackage = true
 		}
-		tasks = append(tasks, allTask{name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: argv})
+		tasks = append(tasks, allTask{
+			name: t.Name, eco: t.Eco, dir: t.Dir, rel: rel, argv: argv,
+			skip: detect.VerbSkipReason(t.Eco, verb, t.Dir),
+		})
 	}
 
 	// A directly-runnable root (a Go module with a `package main` at its root, or
@@ -465,7 +563,7 @@ func dispatchVerbPick(cmd *cobra.Command, verb string, tasks []allTask, offerAll
 	case pickCancel:
 		return true, nil
 	case pickAll:
-		return true, runAcrossDashboard(cmd, tasks, verb)
+		return true, runAllTasks(cmd, tasks, verb)
 	default:
 		t := tasks[choice]
 		return true, runCommand(cmd, t.dir, t.argv)
