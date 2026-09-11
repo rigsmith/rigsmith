@@ -79,8 +79,9 @@ may need local configuration. [TOML path policy](CODEXRIG-V2-CONFIG-PATHS.md)
 automatically omits machine-local settings and refuses explicit unclassified local
 references in every selected file; arbitrary strings are not proven portable.
 
-Guarded destination file replacement, usable-config
-validation, structured hooks/customizations, independent CodexRig state/repository
+[Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) merges destination bytes
+and requires full-set validation without writing files. Guarded destination file
+replacement, supported-version validation, structured hooks/customizations, independent CodexRig state/repository
 and sync/restore commands remain in 8b. The internal codec/capture changesets are deferred until a user-facing workflow
 uses them; these prerequisites should not announce unavailable features.
 No existing Claude caller is switched to
