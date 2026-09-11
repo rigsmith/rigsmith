@@ -104,64 +104,74 @@ var ErrNotInstalled = errors.New("Claude Desktop is not installed")
 // app. A profile shown as the main app is the one mistake this whole package
 // exists to prevent.
 func HasDataDir(command string) bool {
-	return flagAt(stripCommandQuotes(command), 0) >= 0
-}
-
-// flagAt finds --user-data-dir= starting at an ARGUMENT boundary, at or after
-// from, and returns the index just past the flag. -1 when there is none.
-//
-// The boundary matters at both ends, and each end was a separate review finding.
-// Without it, `--diagnostic=--user-data-dir=/store/work/data` contains the flag
-// without carrying it, and a window would be matched to a profile by a string
-// that happens to appear inside one of its other arguments.
-func flagAt(command string, from int) int {
-	for at := from; at < len(command); {
-		i := strings.Index(command[at:], userDataFlagName)
-		if i < 0 {
-			return -1
+	for _, arg := range commandArgs(command) {
+		if strings.HasPrefix(arg, userDataFlagName) {
+			return true
 		}
-		k := at + i
-		if k == 0 || command[k-1] == ' ' || command[k-1] == '\t' {
-			return k + len(userDataFlagName)
-		}
-		at = k + 1
 	}
-	return -1
+	return false
 }
 
 // CommandHasDataDir reports whether a command line names exactly this data
 // directory. The comment above dataDirFromCommand has promised this function
 // for a while; it is here now, and the callers that decide identity use it.
-//
-// EXACTLY, which a substring test does not give: "/store/work/data" is a prefix
-// of "/store/work/data-old", so a plain Contains would let `desktop open work`
-// raise a window belonging to another profile — and the popover would show one
-// pid on two rows. The value has to end where the argument ends.
 func CommandHasDataDir(command, dataDir string) bool {
-	cmd := stripCommandQuotes(command)
-	for at := 0; ; {
-		start := flagAt(cmd, at)
-		if start < 0 {
-			return false
+	for _, arg := range commandArgs(command) {
+		if arg == userDataFlag(dataDir) {
+			return true
 		}
-		value := cmd[start:]
-		// The value has to BE this directory, not merely begin with it:
-		// /store/work/data is a prefix of /store/work/data-old. So it ends
-		// where the argument ends — at the next space, or at the end.
-		if strings.HasPrefix(value, dataDir) {
-			after := value[len(dataDir):]
-			if after == "" || after[0] == ' ' || after[0] == '\t' {
-				return true
-			}
-		}
-		at = start
 	}
+	return false
 }
 
-// stripCommandQuotes normalises the quoting Windows puts around paths with
-// spaces, so one needle matches on both platforms.
-func stripCommandQuotes(command string) string {
-	return strings.ReplaceAll(command, `"`, "")
+// commandArgs splits a flattened command line back into arguments, honouring
+// double quotes.
+//
+// Three review rounds arrived at this, each finding the previous shortcut from
+// a different side, and every one of them was the same mistake: asking whether
+// the flag APPEARS in the string rather than whether it IS an argument.
+//
+//	strings.Contains          "/store/work/data" matched "/store/work/data-old"
+//	+ end-of-value boundary   "--diagnostic=--user-data-dir=/store/work/data" still matched
+//	+ start-of-flag boundary  quotes stripped first, so a space inside a quoted
+//	                          value looked like the boundary that check wanted
+//
+// Splitting properly ends the class. An argument either is the flag and the
+// directory or it is not, and neither question needs a rule about what may
+// surround it. Quotes are how Windows writes a path with spaces, and they are
+// removed as they are consumed rather than globally, so text inside them can no
+// longer be read as structure.
+//
+// A path containing spaces and NO quotes — which is what a flattened macOS
+// command line gives — still cannot be recovered, and never could. That is why
+// MainPIDs keeps the parsed directory as a fallback.
+func commandArgs(command string) []string {
+	var (
+		args    []string
+		cur     strings.Builder
+		inQuote bool
+		started bool
+	)
+	for i := 0; i < len(command); i++ {
+		switch c := command[i]; {
+		case c == '"':
+			inQuote = !inQuote
+			started = true
+		case (c == ' ' || c == '\t') && !inQuote:
+			if started {
+				args = append(args, cur.String())
+				cur.Reset()
+				started = false
+			}
+		default:
+			cur.WriteByte(c)
+			started = true
+		}
+	}
+	if started {
+		args = append(args, cur.String())
+	}
+	return args
 }
 
 // MainPIDs returns the MAIN processes of the instance bound to dataDir.

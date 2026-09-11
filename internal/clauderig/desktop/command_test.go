@@ -25,6 +25,11 @@ func TestCommandHasDataDirNeedsAnArgumentBoundary(t *testing.T) {
 		// or a string that merely contains it counts as carrying it.
 		{"the flag embedded in another argument", exe + "--diagnostic=--user-data-dir=/store/work/data", "/store/work/data", false},
 		{"embedded first, real one after", exe + "--diagnostic=--user-data-dir=/x --user-data-dir=/store/work/data", "/store/work/data", true},
+		// Quoted text is a value, not structure. Stripping quotes before looking
+		// made the space inside this one read as the boundary the check wanted.
+		{"the flag inside a quoted value", exe + `--diagnostic="text --user-data-dir=/store/work/data"`, "/store/work/data", false},
+		{"a quoted path with spaces, as Windows writes it", exe + `--user-data-dir="/store/my work/data"`, "/store/my work/data", true},
+		{"a quoted path that is a different directory", exe + `--user-data-dir="/store/my work/data-old"`, "/store/my work/data", false},
 	} {
 		if got := CommandHasDataDir(tc.command, tc.dir); got != tc.want {
 			t.Errorf("%s: CommandHasDataDir(%q, %q) = %v, want %v", tc.name, tc.command, tc.dir, got, tc.want)
@@ -43,5 +48,11 @@ func TestHasDataDir(t *testing.T) {
 	}
 	if HasDataDir("/Applications/Claude.app/Contents/MacOS/Claude --diagnostic=--user-data-dir=/x") {
 		t.Error("a flag embedded in another argument read as carrying a profile")
+	}
+	if HasDataDir(`/Applications/Claude.app/Contents/MacOS/Claude --diagnostic="text --user-data-dir=/x"`) {
+		t.Error("a flag inside a quoted value read as carrying a profile")
+	}
+	if !HasDataDir(`/Applications/Claude.app/Contents/MacOS/Claude --user-data-dir="/store/my work/data"`) {
+		t.Error("a quoted path with spaces was not read as a profile")
 	}
 }
