@@ -2,8 +2,8 @@
 
 `ConfigRestorePlan.Apply` now consumes a prepared plan and installs its changed
 base/profile files. This is an internal API, not a new command. A production
-caller must still provide the supported-version validator required by
-[preparation](CODEXRIG-V2-CONFIG-RESTORE.md), coordinate Codex and other editors,
+caller must use [versioned preparation](CODEXRIG-V2-CONFIG-VALIDATION.md), supply
+its required destination-readiness checks, coordinate Codex and other editors,
 and connect independent CodexRig state and user-facing restore policy.
 
 ## Applying a plan
