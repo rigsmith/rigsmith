@@ -14,6 +14,12 @@ import (
 // covers token prefixes and JSON escapes split between reads. It deliberately
 // uses credential signatures, not entropy guesses over conversation prose.
 // Only the rule and path are returned; secret bytes never enter diagnostics.
+// A note on File, which this scanner sets both ways. The name rules and the PEM
+// rule are verdicts about the FILE — it is key material, or it carries a key,
+// and neither can be redacted out of a non-JSON file. The token rules are about
+// a VALUE that happens to be inside one. The difference decides which sentence
+// a refusal gets, and they send you to different places: exclude the file, or
+// let the redactor scrub the value.
 func ScanReader(rel string, r io.Reader) (*Finding, error) {
 	if ClassifyName(rel) == NameKeyMaterial {
 		return &Finding{Path: rel, Kind: "key-material", File: true}, nil
@@ -51,7 +57,10 @@ func ScanReader(rel string, r io.Reader) (*Finding, error) {
 		}
 		total += int64(n)
 		if jwt.feed(buf[kept:kept+n]) || escapedJWT.feed(buf[kept:kept+n]) {
-			return &Finding{Path: rel, Kind: "jwt", File: true}, nil
+			// A token found INSIDE the stream: a value, not a file that is
+			// credential material. A transcript with a JWT in it is a
+			// transcript, and the remedy is the value.
+			return &Finding{Path: rel, Kind: "jwt"}, nil
 		}
 		if finding := scanText(rel, data); finding != nil {
 			return finding, nil
@@ -93,7 +102,10 @@ func scanText(rel string, data []byte) *Finding {
 	for _, loc := range textSecretRe.FindAllIndex(normalized, -1) {
 		token := string(normalized[loc[0]:loc[1]])
 		if IsCredentialMatch(token) {
-			return &Finding{Path: rel, Kind: kindOf(token), File: true}
+			// Embedded, like the JWT above: a credential sitting in someone's
+			// conversation is a value that the redactor can scrub, not a file
+			// to be excluded from the allowlist.
+			return &Finding{Path: rel, Kind: kindOf(token)}
 		}
 	}
 	return nil

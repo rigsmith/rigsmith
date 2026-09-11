@@ -77,3 +77,25 @@ func TestFromSyncCountsFileFindingsWhereverTheyCameFrom(t *testing.T) {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 }
+
+// The two halves of the tripwire are not the same thing, and the compatibility
+// harness is what proved it: a github token inside a transcript came out as
+// "2 files are credential material" when the baseline had always called it what
+// it is. A file is credential material when its NAME says so, or when it
+// carries a PEM block that cannot be redacted out of a non-JSON file. A token
+// sitting in someone's conversation is a value the redactor can scrub.
+func TestFileFindingsAreFilesAndEmbeddedTokensAreValues(t *testing.T) {
+	rec := FromSync("mbp", &engine.Report{Findings: []redact.Finding{
+		{Path: "cli/projects/x/s.jsonl", Kind: "github-token"},          // in a transcript
+		{Path: "cli/projects/x/s.jsonl", Kind: "jwt"},                   // likewise
+		{Path: "cli/skills/s/id_rsa", Kind: "key-material", File: true}, // the file itself
+	}}, errors.New("secret tripwire"))
+
+	if rec.LeakFiles != 1 {
+		t.Errorf("LeakFiles = %d, want only the key file", rec.LeakFiles)
+	}
+	if got, want := rec.Summary(),
+		"Refused to push — 1 file of credential material and 2 values that look like credentials"; got != want {
+		t.Errorf("Summary() = %q, want %q", got, want)
+	}
+}
