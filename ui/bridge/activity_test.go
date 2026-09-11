@@ -31,3 +31,50 @@ func TestToEvent(t *testing.T) {
 		t.Error("another machine's record flagged as this one")
 	}
 }
+
+// The window's activity feed and `clauderig status` describe one record, and
+// the whole point of rendering through Record.Summary is that they cannot say
+// different things about it. Only a test holds that: toEvent could start
+// composing its own sentence and nothing else would notice.
+func TestActivityForwardsTheRecordsOwnSummary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rec  journal.Record
+		want string
+	}{
+		{
+			"a whole file",
+			journal.Record{
+				Op: journal.OpSync, Outcome: journal.OutcomeRefused,
+				Leaks: []journal.Leak{{Path: "cli/skills/s/id_rsa", Kind: "key-material"}}, LeakFiles: 1,
+			},
+			"Refused to push — 1 file is credential material",
+		},
+		{
+			"a file and a value",
+			journal.Record{
+				Op: journal.OpSync, Outcome: journal.OutcomeRefused,
+				Leaks:     []journal.Leak{{Path: "a", Kind: "key-material"}, {Path: "b", Kind: "github-token"}},
+				LeakFiles: 1,
+			},
+			"Refused to push — 1 file of credential material and 1 value that looks like a credential",
+		},
+		{
+			"one that could not be read",
+			journal.Record{
+				Op: journal.OpSync, Outcome: journal.OutcomeRefused,
+				Leaks:      []journal.Leak{{Path: "a", Kind: "unreadable"}},
+				LeakUnread: 1,
+			},
+			"Refused to push — 1 file could not be read",
+		},
+	} {
+		e := toEvent(tc.rec, "mbp")
+		if e.Summary != tc.want {
+			t.Errorf("%s: Summary = %q, want %q", tc.name, e.Summary, tc.want)
+		}
+		if len(e.Leaks) != len(tc.rec.Leaks) {
+			t.Errorf("%s: %d leak lines, want one per finding", tc.name, len(e.Leaks))
+		}
+	}
+}
