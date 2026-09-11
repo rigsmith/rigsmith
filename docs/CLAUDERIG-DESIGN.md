@@ -612,5 +612,18 @@ so this changes publication churn, not source I/O or capture-space budgeting.
 Previously backed-up, still-allowed subagents remain retained after source
 deletion; explicit parents and selected paths must exist. Existing sealed
 captures and commits replay unchanged. See the [capture contract](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md#capture-sequence-and-isolation)
-for freshness, retention and source-validation boundaries. Automatic hook routing,
-producer recovery and stop/drain/rollback remain the next rollout milestone.
+for freshness, retention and source-validation boundaries. Automatic hook routing
+and end-to-end stop/drain/rollback remain the next rollout milestone.
+Explicit producer recovery is described below.
+
+### Durable hook producer (v2, 7c.2b.2b.1)
+
+`queue hook` saves one bounded hook request in a private inbox before admitting
+it to the initialized queue. `queue recover-hooks` retries the original event,
+timestamp and account without rereading stdin or the live login. One inbox lease
+serializes saving, admission and removal; saved records are removed only after
+confirmed enqueue. The canonical checksummed journal is capped at 128 pending
+requests and 1 MiB. Corruption, wrong runtime bindings and incomplete initialization
+block rather than resetting state. See the [producer contract](CLAUDERIG-V2-QUEUE-COMMANDS.md#save-and-admit-hook-input-7c2b2b1)
+for failure boundaries and stop/recover/drain order. Ordinary hook installation
+remains synchronous until the opt-in installer and rollback integration land.

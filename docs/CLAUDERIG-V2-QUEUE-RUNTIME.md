@@ -228,3 +228,13 @@ path representation. It reads no transcript bytes and does not require the file
 to exist. This is producer intent validation; source availability, alias handling
 and ambiguity checks still happen during capture. It does not authenticate an
 external caller or fence later filesystem changes. See [hook preparation](CLAUDERIG-V2-QUEUE-COMMANDS.md#prepare-a-request-from-hook-input-7c2b1).
+
+
+## Managed hook producer inbox
+
+The command layer now provides `queue hook` and `queue recover-hooks` using a
+separate private inbox outside the runtime and captured trees. Each journal is
+bound to `ScopeID`; admission still passes through `QueueRuntime.Enqueue` so
+producer attribution is durable before queue events. The inbox has its own lease,
+and callers use independent contexts for runtime locks to preserve lock ordering.
+Runtime formats and saved queue phases are unchanged. See the [producer contract](CLAUDERIG-V2-QUEUE-COMMANDS.md#save-and-admit-hook-input-7c2b2b1).

@@ -19,3 +19,8 @@ func validateQueueRequestSingleLink(f *os.File) error {
 	}
 	return nil
 }
+
+func queueInboxPrivate(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Geteuid()) && info.Mode().Perm()&0077 == 0
+}

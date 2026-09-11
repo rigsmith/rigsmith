@@ -1,4 +1,4 @@
-# Explicit queued Claude commands (7b, 7c.2a, 7c.2b.1)
+# Explicit queued Claude commands (v2)
 
 V2 exposes a foreground queue workflow for deliberate testing and use. It does
 not install a worker or route hooks. Ordinary `sync`, `pull` and hooks keep their
@@ -7,7 +7,7 @@ Actual OS reboot/hibernation validation remains a general-release gate.
 
 When run outside a terminal, bare `queue` prints help; when run in a terminal,
 it offers init, status, sync, run and drain. Prepare/enqueue/retry require explicit
-command arguments.
+command arguments; hook/inbox commands are also invoked directly.
 
 ## Start and accept work
 
@@ -264,8 +264,8 @@ private, immutable producer file used by manual preparation. It saves intent;
 it does not enqueue, publish, install hooks or start a worker. Use a fresh output
 file for each new hook event, then `clauderig queue enqueue request.json`. Retry
 admission with that same file, never by preparing the payload again. Existing
-hook installation remains synchronous; automatic routing and producer-file
-recovery/cleanup remain 7c.2b.2b work.
+hook installation remains synchronous; automatic installation remains 7c.2b.2b.2 work. The managed hook producer and
+inbox recovery are described below.
 
 The input must be a complete JSON object, including EOF, within two seconds and
 128 KiB. Empty/blank, malformed, duplicate or case-aliased routing fields,
@@ -307,9 +307,132 @@ replay. Hook preparation sends its success message to stderr and leaves stdout
 empty. It uses the existing exclusive-file, isolation and durability checks;
 Windows private-directory ACLs remain a caller prerequisite.
 
+## Save and admit hook input (7c.2b.2b.1)
+
+After `queue init`, `clauderig queue hook < hook.json` saves and admits one new
+Stop/SessionEnd event. It uses the same bounded input, source validation and
+account attribution as `prepare --hook`, but manages the retry record itself.
+It does not read transcripts, perform remote privacy/network checks, publish,
+start a worker or install hooks. Success is reported on stderr; stdout stays empty.
+For fresh `queue hook`, a ten-second operation context includes the two-second
+input deadline and local lock waits. Manual `recover-hooks` uses the caller's
+context without an extra ten-second cap, allowing a full saved backlog to finish;
+each lock wait remains limited to 15 seconds. Caller cancellation stops either
+operation and preserves unfinished journal entries. A blocked filesystem call
+can take longer to return.
+
+The default inbox is `~/.clauderig/hook-inbox`. Override with `--inbox <directory>`;
+use the same `--dir`, explicit `--profile` selection and inbox for every recovery.
+Its existing parent must be present. First use creates a new private directory;
+an existing inbox must already contain a valid journal bound to this runtime.
+Source/staging/runtime trees and discovered Desktop profile trees are excluded.
+Linux/macOS require private ownership and modes; Windows requires a private ACL
+supplied by the caller, matching the runtime and manual-request contract. The
+Windows commands do not inspect or repair ACLs; a public directory does not meet
+their operating requirements. Roots must remain stable and private during operations.
+
+Each invocation represents a new event. After an interruption or admission error,
+run `clauderig queue recover-hooks` with the same options instead of replaying the
+hook payload. Recovery never reads stdin or the current account. It reuses saved
+event IDs, timestamps, identities and flush intent; a later account switch cannot
+reattribute earlier work. A new hook saves its own request alongside any backlog
+before retrying oldest-first. An unavailable account requires explicit
+`--unknown-identity`; it is never silently replaced with unknown attribution.
+
+The inbox is one canonical, checksummed `requests.json`, with at most 128 pending
+requests and a 1 MiB serialized limit. These are journal limits, not a total disk
+budget. Producer/recovery processes serialize under one OS lease. A request must
+be durably saved before queue admission. Recovery reflushes verified journal bytes
+before admission, then removes each request only after enqueue confirms acceptance.
+If admission or record removal is uncertain, replay deduplicates using the saved
+identity. Successfully admitted records are removed automatically; saved capture
+and publication work remain in the queue. Queue status reports admitted work only,
+so an empty queue is not proof of an empty producer inbox.
+
+Full/corrupt/foreign inboxes never discard older requests. Repair queue capacity
+or binding problems, then recover the inbox. Missing journals in existing inboxes,
+invalid JSON, unsafe files and checksum failures block recovery; restore intact
+producer state rather than recreating it. If first initialization failed before
+any journal was written, no request was accepted; inspect that incomplete directory
+before removing it and starting again. Input validation or a failure before durable
+intent can leave the new event unsaved. Recovery can retry only records that reached
+the journal; it cannot reconstruct a payload lost before persistence.
+
+A producer request older than an explicitly advanced queue replay cutoff raises
+`queue.ErrExpired` and blocks the inbox for explicit reconciliation. This is not a
+transient retry: repeating recovery cannot lower the cutoff. The request may be
+unaccepted or a previously completed receipt that was compacted, so the command
+cannot safely discard it, assign a new event ID, or claim admission. It preserves
+that record and all later records. This preview exposes no receipt-compaction
+command; any future integration must stop producers and reconcile every inbox
+before advancing the cutoff. If an external caller violates that ordering, keep
+the journal and resolve the expired intent explicitly before resuming producers.
+
+To finish queued work before rollback: stop hook producers, run `queue recover-hooks`
+for each inbox, then `queue drain`. A successful inbox recovery confirms admission,
+not remote publication. Keep the runtime and inbox intact while anything remains
+unresolved. Automatic hook installation and coordination with ordinary sync follow
+in 7c.2b.2b.2; installed hooks remain synchronous today.
+
+### Inbox journal format
+
+`requests.json` is versioned producer state, not an editable configuration file.
+It uses the following exported field names in declaration order. All fields must
+be present in the exact compact encoding emitted by Go `encoding/json`, followed
+by one newline. Reordered/unknown/duplicate/case-aliased fields, whitespace edits,
+invalid Unicode and checksum changes are refused. There are no omitted defaults.
+
+| Field | JSON type and meaning |
+| --- | --- |
+| `Version` | Number, exactly `1`. |
+| `Scope` | Nonempty string, equal to the initialized runtime's `ScopeID`. |
+| `Requests` | Array of saved submissions in admission order; `[]` when empty, never `null`. At most 128 entries. |
+| `Checksum` | Lowercase hexadecimal SHA-256 of this entire envelope's compact JSON with this field set to `""`, excluding the final newline. It includes every nested submission and its checksum. |
+
+Each `Requests` element retains the existing saved-submission fields:
+
+| Field | JSON type and meaning |
+| --- | --- |
+| `Checksum` | Lowercase hexadecimal SHA-256 of this submission's compact JSON with its own `Checksum` set to `""`; no trailing newline. |
+| `Version` | Number, exactly `1`. |
+| `Scope` | String matching the envelope and runtime. |
+| `At` | Nonzero timestamp string emitted by Go `time.Time`; new events use UTC. Preserved on every retry. |
+| `Identity` | Object with string fields `AccountUUID`, `OrganizationUUID`, `Email`, in that order. UUIDs are canonical when nonempty; `""` means unavailable. All three empty strings record explicit unknown attribution. Nulls are refused. |
+| `Request` | Object with string fields `EventID`, `SessionID`, `ProvenanceID`, followed by the `Flush` object. IDs are preserved on retry; session IDs are bounded, trimmed and lowercase; provenance must match the identity. |
+| `Request.Flush` | Object with string `Mode` followed by `Paths`. Hook modes are `"normal"` or `"selected"`; all-flush is not accepted in this inbox. |
+| `Request.Flush.Paths` | Normal mode accepts `null` or `[]` (new events emit `null`). Selected mode requires an array containing exactly one native parent-transcript path; admission validates that path against the runtime/session. |
+
+Illustration only: placeholders and indentation below are not a writable journal.
+
+```json
+{
+  "Version": 1,
+  "Scope": "<runtime-scope>",
+  "Requests": [{
+    "Checksum": "<submission-sha256>",
+    "Version": 1,
+    "Scope": "<runtime-scope>",
+    "At": "2026-09-10T12:00:00Z",
+    "Identity": {"AccountUUID": "", "OrganizationUUID": "", "Email": ""},
+    "Request": {
+      "EventID": "<generated-event-id>",
+      "SessionID": "s",
+      "ProvenanceID": "<unknown-identity-provenance>",
+      "Flush": {"Mode": "selected", "Paths": ["/home/you/.claude/projects/acme/s.jsonl"]}
+    }
+  }],
+  "Checksum": "<envelope-sha256>"
+}
+```
+
+Every save/reflush/removal replaces the complete canonical envelope through the
+shared durable writer under the inbox lease. Removal recomputes the envelope
+checksum after queue confirmation; it does not edit nested submission identity or
+checksums. A successfully empty journal remains present and bound to the runtime.
+
 ## Next
 
 The internal runtime bridge (7c.1), explicit manual command (7c.2a) and bounded
 hook-request preparation (7c.2b.1) are available. Opt-in hook installation,
-automatic admission with producer-file recovery/cleanup, ordinary-sync routing,
-and stop/drain/rollback remain 7c.2b.2b.
+ordinary-sync routing and end-to-end stop/drain/rollback remain 7c.2b.2b.2.
+Managed hook admission and inbox recovery are available explicitly.

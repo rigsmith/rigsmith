@@ -86,7 +86,7 @@ func NewQueueCmd() *cobra.Command {
 func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var dir string
 	var profiles []string
-	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request (--session or --hook), enqueue it, then run a worker.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nStop producers before draining. No background service is installed.", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request (--session or --hook), enqueue it, then run a worker.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nUse hook to save and admit hook input; recover-hooks retries its saved inbox.\nStop producers and recover the inbox before draining. No background service is installed.", Args: cobra.NoArgs}
 	cmd.PersistentFlags().StringVar(&dir, "dir", "", "private runtime directory (default ~/.clauderig/queue-runtime)")
 	_ = cmd.MarkPersistentFlagDirname("dir")
 	cmd.PersistentFlags().StringArrayVar(&profiles, "profile", nil, "explicit Desktop profile to include (repeatable; default none)")
@@ -125,7 +125,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	}})
 	var session, output string
 	var flush, prepareHook bool
-	var unknown bool
+	var unknownIdentity bool
 	prepare := &cobra.Command{Use: "prepare", Short: "Save a manual or hook request and its current account attribution", Long: "Save one new request to an exclusive private file before enqueueing.\nThe file pins this runtime, a new event ID, the timestamp and account identity.\nRetry enqueue with this same file; never rerun prepare for an uncertain enqueue.\nNo transcript bytes are read. --flush requests all changed transcript tails.\n--hook reads a bounded Stop/SessionEnd JSON payload from stdin instead of --session.\nStop records normal intent; SessionEnd records selected-transcript flush intent.\nWorkers fully capture requested sessions and subagents; unrelated plain transcripts\nkeep normal throttling unless all-flush is requested. Chunked tails always flush.\nInput must finish within 2 seconds and 128 KiB. It never falls back to all-flush.\nPreparation saves intent only: enqueue the saved file separately.\nAn unavailable account requires an explicit --unknown-identity choice.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 		if output == "" {
 			return fmt.Errorf("--output is required")
@@ -165,34 +165,10 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 				return err
 			}
 		}
-		identity := service.Identity{}
-		if !unknown {
-			identity, err = deps.identity()
-			if err != nil {
-				return fmt.Errorf("read producer identity: %w", err)
-			}
-			if identity == (service.Identity{}) {
-				return fmt.Errorf("no account identity; use --unknown-identity to record explicit unknown attribution")
-			}
-		}
-		// Normalize new producer UUID observations before hashing and persisting.
-		// Refuse invalid values instead of normalizing them into unknown identity.
-		for _, id := range []*string{&identity.AccountUUID, &identity.OrganizationUUID} {
-			if *id == "" {
-				continue
-			}
-			canonical := account.CanonicalUUID(*id)
-			if canonical == "" {
-				return fmt.Errorf("invalid producer UUID")
-			}
-			*id = canonical
-		}
-		provenance, err := service.CaptureProvenance(identity)
+		submission, err := newQueueSubmission(r, canonicalSession, intent, unknownIdentity, deps.identity)
 		if err != nil {
 			return err
 		}
-		submission := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: canonicalSession, ProvenanceID: provenance, Flush: intent}}
-		submission.Checksum = queueRequestChecksum(submission)
 		data, err := json.MarshalIndent(submission, "", "  ")
 		if err != nil {
 			return err
@@ -213,10 +189,11 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	prepare.Flags().BoolVar(&prepareHook, "hook", false, "read a bounded Stop/SessionEnd payload from stdin; save intent only")
 	prepare.MarkFlagsMutuallyExclusive("hook", "session")
 	prepare.MarkFlagsMutuallyExclusive("hook", "flush")
-	prepare.Flags().BoolVar(&unknown, "unknown-identity", false, "explicitly record unknown account attribution")
+	prepare.Flags().BoolVar(&unknownIdentity, "unknown-identity", false, "explicitly record unknown account attribution")
 	_ = prepare.MarkFlagFilename("output")
 	_ = prepare.RegisterFlagCompletionFunc("session", completeSessionRef)
 	cmd.AddCommand(prepare)
+	addQueueHookProducerCommands(cmd, deps, open)
 	cmd.AddCommand(&cobra.Command{Use: "enqueue <request-file>", Short: "Durably accept a saved request (safe to retry the same file)", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
 		r, err := open(c.Context(), false)
 		if err != nil {
@@ -421,7 +398,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 				entries = append(entries, climenu.Entry{Label: child.Name(), Desc: child.Short, Cmd: child})
 			}
 		}
-		return climenu.RunMenu(c, c.CommandPath(), "Prepare/enqueue/retry require arguments; use those commands directly.", entries)
+		return climenu.RunMenu(c, c.CommandPath(), "Prepare/enqueue/retry and hook/inbox commands need input or options; use them directly.", entries)
 	}
 	return cmd
 }
@@ -454,6 +431,40 @@ func writeQueueRequest(ctx context.Context, path string, data []byte) error {
 	}
 	// Reflush the containing directory using the shared platform primitive.
 	return (&savedQueueRequest{data: data, info: info}).confirm(ctx, path)
+}
+
+func newQueueSubmission(r *service.QueueRuntime, session string, intent queue.Flush, unknownIdentity bool, readIdentity func() (service.Identity, error)) (queueSubmission, error) {
+	if err := validateQueueSessionID(session); err != nil {
+		return queueSubmission{}, err
+	}
+	identity := service.Identity{}
+	if !unknownIdentity {
+		var err error
+		identity, err = readIdentity()
+		if err != nil {
+			return queueSubmission{}, fmt.Errorf("read producer identity: %w", err)
+		}
+		if identity == (service.Identity{}) {
+			return queueSubmission{}, fmt.Errorf("no account identity; use --unknown-identity to record explicit unknown attribution")
+		}
+	}
+	for _, id := range []*string{&identity.AccountUUID, &identity.OrganizationUUID} {
+		if *id == "" {
+			continue
+		}
+		canonical := account.CanonicalUUID(*id)
+		if canonical == "" {
+			return queueSubmission{}, fmt.Errorf("invalid producer UUID")
+		}
+		*id = canonical
+	}
+	provenance, err := service.CaptureProvenance(identity)
+	if err != nil {
+		return queueSubmission{}, err
+	}
+	s := queueSubmission{Version: 1, Scope: r.ScopeID(), At: time.Now().UTC(), Identity: identity, Request: queue.Request{EventID: rand.Text(), SessionID: session, ProvenanceID: provenance, Flush: intent}}
+	s.Checksum = queueRequestChecksum(s)
+	return s, nil
 }
 
 func queueRequestChecksum(s queueSubmission) string {
@@ -547,28 +558,35 @@ func loadQueueRequest(path string) (*savedQueueRequest, error) {
 	if err = dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("request must contain exactly one JSON object")
 	}
+	if err := validateQueueSubmission(s); err != nil {
+		return nil, err
+	}
+	return &savedQueueRequest{submission: s, data: data, info: info}, nil
+}
+
+func validateQueueSubmission(s queueSubmission) error {
 	if s.Checksum != queueRequestChecksum(s) {
-		return nil, fmt.Errorf("saved request checksum mismatch")
+		return fmt.Errorf("saved request checksum mismatch")
 	}
 	if s.Version != 1 || s.Scope == "" || s.At.IsZero() || s.Request.EventID == "" || s.Request.SessionID == "" {
-		return nil, fmt.Errorf("invalid saved request")
+		return fmt.Errorf("invalid saved request")
 	}
 	if err := validateQueueSessionID(s.Request.SessionID); err != nil {
-		return nil, err
+		return err
 	}
 	for _, id := range []string{s.Identity.AccountUUID, s.Identity.OrganizationUUID} {
 		if id != "" && id != account.CanonicalUUID(id) {
-			return nil, fmt.Errorf("saved identity UUIDs must already be canonical")
+			return fmt.Errorf("saved identity UUIDs must already be canonical")
 		}
 	}
 	provenance, err := service.CaptureProvenance(s.Identity)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if s.Request.ProvenanceID != provenance {
-		return nil, queue.ErrBinding
+		return queue.ErrBinding
 	}
-	return &savedQueueRequest{submission: s, data: data, info: info}, nil
+	return nil
 }
 
 // The first signal is a graceful stop. A second requests cancellation, but the
