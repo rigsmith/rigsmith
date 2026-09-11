@@ -152,6 +152,10 @@ func validatePermissionSelection(ctx context.Context, doc map[string]any, mode p
 		if strings.HasPrefix(name, ":") {
 			return ErrValidation
 		}
+		// Native deserialization checks definitions even in inactive profiles.
+		if err := validateMITMDefinitions(ctx, permissionMITM(profileMap(catalog[name]))); err != nil {
+			return err
+		}
 	}
 	selected, hasSelection := doc["default_permissions"].(string)
 	if managed.allowed == nil {
@@ -191,6 +195,7 @@ func validatePermissionSelection(ctx context.Context, doc map[string]any, mode p
 	// Only active inheritance is resolved. Native catalogs may retain inactive
 	// profiles that cannot compile, marking them unavailable instead of aborting.
 	seen := make(map[string]bool)
+	var chain []map[string]any // selected child first, then its ancestors
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -203,9 +208,11 @@ func validatePermissionSelection(ctx context.Context, doc map[string]any, mode p
 		if !ok {
 			return ErrValidation
 		}
+		chain = append(chain, profile)
 		parent, exists := profile["extends"].(string)
 		if !exists || parent == ":read-only" || parent == ":workspace" {
-			return ctx.Err()
+			// Both extensible built-ins have no MITM actions or hooks.
+			return validateInheritedMITMActions(ctx, chain)
 		}
 		// :danger-full-access is selectable but not an extensible parent.
 		selected = parent

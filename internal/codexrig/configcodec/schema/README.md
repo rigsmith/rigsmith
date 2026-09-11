@@ -54,3 +54,13 @@ constraints. Existing named field constraints and all upstream bytes are retaine
 Requirements handling follows [`config_requirements.rs`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/config/src/config_requirements.rs).
 These checks do not compile filesystem/network policy or enforce other managed
 requirements; see [the layer contract](../../../../docs/CODEXRIG-V2-LAYERED-VALIDATION.md).
+
+Network action definitions follow `NetworkMitmToml::deserialize` and
+`validate_action_definitions` in the pinned `permissions_toml.rs` above.
+Selected action references use ancestor-to-child hook replacement and merged
+name visibility. The restore policy refuses unresolved selected references,
+including disabled networks: upstream `validate_action_references` describes
+that invariant, while `selected_actions` silently skips missing names. This
+stricter restore policy is documented explicitly rather than presented as a
+universal native startup rejection. MITM matcher/header validation and secret
+source readiness remain separate gates; this code does not read those sources.

@@ -241,3 +241,33 @@ func TestLayeredRestoreRefusesContextChangeDuringValidation(t *testing.T) {
 		t.Fatal("nil source accepted", err)
 	}
 }
+
+func TestLayeredRestoreRejectsNetworkActionReferencesBeforeDestination(t *testing.T) {
+	for _, managed := range []bool{false, true} {
+		t.Run(fmt.Sprint(managed), func(t *testing.T) {
+			root := t.TempDir()
+			original := "model='old'\ndefault_permissions='work'"
+			invalid := "\n[permissions.work.network.mitm.hooks.request]\nhost='example.test'\nmethods=['GET']\npath_prefixes=['/']\naction=['private-missing-action']"
+			layers := configcodec.ValidationLayers{}
+			if managed {
+				layers.Requirements = []byte(invalid)
+			} else {
+				original += invalid
+			}
+			putConfig(t, root, "config.toml", original)
+			called := false
+			p, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": "model='new'"}), configcodec.SupportedConfigVersion, func(context.Context) (configcodec.ValidationLayers, error) { return layers, nil }, func(context.Context, []ConfigFile) error { called = true; return nil })
+			if p != nil {
+				p.Close()
+				t.Fatal("unresolved action produced plan")
+			}
+			if !errors.Is(err, ErrConfigValidation) || called || strings.Contains(err.Error(), "private-missing-action") {
+				t.Fatal("network reference did not gate private validation", err)
+			}
+			data, readErr := os.ReadFile(filepath.Join(root, "config.toml"))
+			if readErr != nil || string(data) != original {
+				t.Fatal("failed validation wrote destination", readErr)
+			}
+		})
+	}
+}
