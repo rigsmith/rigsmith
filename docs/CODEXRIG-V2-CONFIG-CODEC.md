@@ -90,7 +90,8 @@ malformed local input and fuzzed capture/restore idempotence.
 
 ## Remaining 8b gates
 
-Source capture and safe file replacement, complete path policy, structured hook
+[Bounded source-file capture](CODEXRIG-V2-CONFIG-CAPTURE.md) connects this codec to
+base/profile files in 8b.2. Safe file replacement, complete path policy, structured hook
 and customization processing, independent CodexRig config/state and backup repo,
 and user-facing sync/restore integration remain to be delivered. This codec does
 not complete milestone 8b or enable sync in the preview.
