@@ -72,7 +72,8 @@ The resulting bytes are not automatically a runnable Codex config. In particular
 a new machine may still need a command, helper or credentials supplied locally.
 The [restore planner](CODEXRIG-V2-CONFIG-RESTORE.md) merges the full destination
 set and requires a caller-supplied validator. Supported-version usable-config
-validation and coordinated, guarded file replacement remain integration gates. It must never publish the
+validation remains an integration gate; [file application](CODEXRIG-V2-CONFIG-APPLY.md)
+now handles staged replacement and partial-outcome reporting. It must never publish the
 local merged output, which contains destination secrets.
 
 ## Shared mechanics and Claude compatibility
@@ -95,7 +96,8 @@ malformed local input and fuzzed capture/restore idempotence.
 [Bounded source-file capture](CODEXRIG-V2-CONFIG-CAPTURE.md) connects this codec to
 base/profile files in 8b.2. [Content path policy](CODEXRIG-V2-CONFIG-PATHS.md)
 applies in 8b.3. [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) follows in
-8b.4. Safe file replacement, supported-version validation, structured hook
+8b.4, with [file application](CODEXRIG-V2-CONFIG-APPLY.md) in 8b.5.
+Supported-version validation, structured hook
 and customization processing, independent CodexRig config/state and backup repo,
 and user-facing sync/restore integration remain to be delivered. This codec does
 not complete milestone 8b or enable sync in the preview.

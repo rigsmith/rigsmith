@@ -2,8 +2,9 @@
 
 `adapter.PrepareConfigRestore` prepares an in-memory restore plan against an
 existing Codex home. It does not write config files, create a missing home,
-publish destination data, invoke Codex, or expose a new CLI command. File
-replacement and a concrete validator for supported Codex versions still follow.
+publish destination data, invoke Codex, or expose a new CLI command.
+[Application](CODEXRIG-V2-CONFIG-APPLY.md) now consumes these plans for file
+replacement. A concrete validator for supported Codex versions still follows.
 
 ## Preparation contract
 
@@ -69,11 +70,10 @@ those files are not opened. The checks compare content, not retained per-file
 inode/mode identity across the lifetime of the plan.
 
 These checks are not an atomic compare-and-swap with other applications. A file
-can change after its last check. The future replacement phase must coordinate
-writers, recheck the plan immediately before applying, enforce its own file
-identity/permission guards, use safe replacement mechanics, and report partial
-or uncertain outcomes. This PR does not add an apply method or claim guarded
-replacement is complete.
+can change after its last check. The [application phase](CODEXRIG-V2-CONFIG-APPLY.md) coordinates participating
+writers, rechecks the plan before each replacement, guards file identity and
+metadata, and reports partial or uncertain outcomes. Nonparticipating editors
+still require caller coordination; these checks are not a multi-file transaction.
 
 Synthetic tests cover full-set validation, local credential preservation, no-op
 formatting, immutable input boundaries, private representations, malformed or

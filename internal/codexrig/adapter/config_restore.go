@@ -37,7 +37,8 @@ type ConfigRestoreChange struct {
 // Private bytes and fingerprints are deliberately unexported and never appear
 // in its formatted representation. Close every plan. Methods are sequential;
 // Check detects observed changes, not concurrent writers after the last check.
-// This preparation API does not write files or install a usable-config validator.
+// Preparation does not write files; Apply consumes the plan for replacement.
+// The caller supplies the supported-version validator.
 type ConfigRestorePlan struct {
 	source      configSource
 	closeSource func() error
@@ -258,8 +259,8 @@ func (p *ConfigRestorePlan) destinationNames(ctx context.Context) ([]string, err
 
 // Check re-reads the pinned destination and detects edits, profile arrivals or
 // removals since preparation, including same-size edits with restored mtimes.
-// A future writer must check immediately before replacement under its own writer
-// coordination. This is not an atomic filesystem compare-and-swap or apply API.
+// Apply also checks immediately before each replacement under writer ownership.
+// This check is not an atomic filesystem compare-and-swap.
 func (p *ConfigRestorePlan) Check(ctx context.Context) error {
 	if p.closed || p.source == nil {
 		return ErrConfigPlanClosed
