@@ -103,8 +103,13 @@ func permissionRequirements(data []byte, schema *jsonschema.Schema) (managedPerm
 				// This reserved entry is a requirements constraint, never a profile.
 				// Its path semantics are left to full destination enforcement.
 				constraint, ok := profile.(map[string]any)
-				if !ok || hasAnyConfigKey(constraint, "description", "extends", "workspace_roots", "filesystem", "network") {
+				if !ok {
 					return out, ErrValidation
+				}
+				for key := range constraint {
+					if key != "deny_read" {
+						return out, ErrValidation
+					}
 				}
 				if value, exists := constraint["deny_read"]; exists {
 					paths, ok := value.([]any)

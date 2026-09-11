@@ -97,6 +97,9 @@ func TestManagedPermissionCatalog(t *testing.T) {
 		{"filesystem is not profile", "", "[permissions.filesystem]\nextends=':read-only'", false},
 		{"filesystem constraint retained separately", "", "[permissions.filesystem]\ndeny_read=['/private/example']", true},
 		{"filesystem constraint type", "", "[permissions.filesystem]\ndeny_read=[true]", false},
+		{"unknown filesystem constraint", "", "[permissions.filesystem]\nfoo=true", false},
+		{"unknown filesystem table", "", "[permissions.filesystem.unknown]\nvalue=1", false},
+		{"filesystem constraint scalar", "", "[permissions.filesystem]\ndeny_read='example'", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

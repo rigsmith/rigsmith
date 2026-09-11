@@ -2,7 +2,8 @@
 
 `configcodec.ValidateConfigSetWithLayers` validates each base/profile scenario
 in a caller-supplied destination context. `adapter.PrepareLayeredConfigRestore`
-uses this context during preparation and still requires the destination callback.
+requires a `ConfigLayerSource` that rereads this context and still requires the
+destination callback.
 The versioned entry point remains a convenience wrapper with an empty context.
 All of these APIs are internal; the public command remains `codexrig inspect`.
 
@@ -21,7 +22,7 @@ arrays/scalars replace. Permission selection also retains layer order: a later
 selects profile behavior. If both occur in one layer, profile selection wins.
 This avoids inferring selection from a flattened map that retains both keys.
 
-The caller must supply trusted, already-selected destination layers. This API does
+The layer source must return trusted, already-selected destination layers. This API does
 not discover system or project files, decide project trust, remove disallowed
 project keys, or implement session-flag special cases. Such filtering and CLI
 selection must happen before these inputs are used. Context never comes from a
@@ -60,8 +61,9 @@ guarantees.
   `:danger-full-access` is selectable directly. Inactive inheritance is retained,
   matching the native catalog's ability to mark a profile unavailable.
 - Requirements `[permissions.filesystem]` is a constraint entry, not a profile.
-  Its basic field types are checked, but deny-read path semantics and enforcement
-  remain destination responsibilities.
+  Only `deny_read` is accepted and, when present, must be an array of strings.
+  Unknown keys are refused by the restore policy rather than silently ignored.
+  Deny-read path semantics and enforcement remain destination responsibilities.
 
 ## Permission map shapes
 
@@ -81,15 +83,26 @@ filesystem/network policy compilation, MITM action/reference checks, platform
 constraints and other managed requirements still need enforcement. The existing
 provider/MCP checks also apply to each effective scenario.
 
-Production discovery must pin and recheck system/project/requirements sources,
-then check local dependencies and credential readiness without executing helpers.
-`ConfigRestorePlan.Check` currently covers home files only; it does not pin these
-caller-supplied external sources. `PrepareLayeredConfigRestore` must not be wired
-to a user-facing restore command until that freshness and destination work is
-complete. No live configuration, environment values or authentication stores are
+`PrepareLayeredConfigRestore` snapshots the ordered layer bytes, including
+requirements presence, and binds their fingerprint plus the source to the plan.
+It rereads before and after destination validation. Every later `Check` rereads
+again; `Apply` uses those checks before staging, before each replacement, after
+the final replacement and for no-op plans. A source error, oversized result or
+changed fingerprint refuses continuation without exposing private diagnostics.
+Earlier confirmed writes remain reported if a change is discovered mid-batch.
+The reader is released from the plan on close; the caller owns its handles.
+
+Production sources must discover and pin system/project/requirements files,
+detect identity and trust/selection changes, and stay live through plan closure.
+A cached function is not a production source. The content rechecks do not lock
+external policy writers or eliminate the interval between a check and a write.
+Those writers must be coordinated through application. Production source discovery,
+identity/trust checks, full destination enforcement, local dependencies and
+credential readiness remain required before user-facing restore is wired. No live configuration, environment values or authentication stores are
 read by this implementation, and no helper is executed.
 
 The exact-release source references are in [schema provenance](../internal/codexrig/configcodec/schema/README.md).
 Synthetic tests cover field shapes, managed conflicts/fallbacks, active and
 inactive inheritance, precedence in both directions, profile independence, limits,
-privacy and preparation/application without copying external context.
+privacy, source changes during preparation and before apply (including no-ops),
+and preparation/application without copying external context.
