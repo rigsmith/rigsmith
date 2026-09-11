@@ -104,3 +104,46 @@ func TestStreamBearerKindsIgnoreSchemeCase(t *testing.T) {
 		}
 	}
 }
+
+// A verdict about the FILE outranks a value found inside it, wherever each
+// appears in the bytes. Returning on the first hit classified a file by which
+// credential came first, and the two lead to different remedies: exclude the
+// file, or let the redactor scrub the value.
+func TestScanReaderPrefersAWholeFileVerdictOverAnEarlierValue(t *testing.T) {
+	const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----\n"
+
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"value first", "a note\n" + jwt + "\nthen\n" + pem},
+		{"file marker first", pem + "\nand later\n" + jwt + "\n"},
+	} {
+		f, err := ScanReader("cli/projects/x/s.jsonl", strings.NewReader(tc.body))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if f == nil {
+			t.Fatalf("%s: nothing found", tc.name)
+		}
+		if !f.File || f.Kind != "private-key" {
+			t.Errorf("%s: finding = %+v, want the whole-file private-key verdict", tc.name, f)
+		}
+	}
+}
+
+// With no file verdict anywhere, the value still comes back — held, not lost.
+func TestScanReaderStillReportsAValueWhenNoFileVerdictFollows(t *testing.T) {
+	const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+	f, err := ScanReader("cli/projects/x/s.jsonl", strings.NewReader("chat\n"+jwt+"\nmore chat\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f == nil || f.Kind != "jwt" {
+		t.Fatalf("finding = %+v, want the jwt", f)
+	}
+	if f.File {
+		t.Error("a token inside a transcript was called a whole file")
+	}
+}

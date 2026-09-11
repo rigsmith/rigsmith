@@ -100,6 +100,13 @@ type OversizeFile struct {
 type Leak struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
+	// File marks a finding that IS the whole file, rather than a value found
+	// inside one. Kind cannot stand in for it: a PEM block pasted into a
+	// transcript and an id_rsa both report "private-key", and the two lead to
+	// different remedies — scrub the value, or drop the file from the
+	// allowlist. Absent on records written before the distinction existed,
+	// which read as values, as they always have.
+	File bool `json:"file,omitempty"`
 }
 
 // Record is one line of the journal.
@@ -138,6 +145,15 @@ type Record struct {
 	Projects      int            `json:"projects,omitempty"`
 
 	Leaks []Leak `json:"leaks,omitempty"`
+	// LeakFiles is how many of Leaks are whole files of credential material.
+	// Older records have no such field and read as zero, which renders them the
+	// way they always were rendered — as values.
+	LeakFiles int `json:"leakFiles,omitempty"`
+	// LeakUnread is how many could not be read at all. Neither of the other
+	// two: a file nobody could open is not credential material, and it is
+	// certainly not a value inside one. It stops the sync like both, and it
+	// has a different remedy from either.
+	LeakUnread int `json:"leakUnread,omitempty"`
 
 	// RedactedFiles names the files behind Redactions. The count alone said a
 	// secret was caught but not where, which is the only part anyone can act on.

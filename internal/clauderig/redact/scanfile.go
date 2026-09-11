@@ -247,17 +247,17 @@ func LooksBinary(data []byte) bool {
 func ScanFile(rel string, data []byte) []Finding {
 	verdict := ClassifyName(rel)
 	if verdict == NameKeyMaterial {
-		return []Finding{{Path: rel, Kind: "key-material"}}
+		return []Finding{{Path: rel, Kind: "key-material", File: true}}
 	}
 	if len(data) == 0 || len(data) > scanContentLimit || isBinary(data) {
 		return nil
 	}
 	if verdict == NameAuthConfig && hasAuthAssignment(string(data)) {
-		return []Finding{{Path: rel, Kind: "auth-config"}}
+		return []Finding{{Path: rel, Kind: "auth-config", File: true}}
 	}
 	// A PEM private key block is unambiguous wherever it appears.
 	if pemRe.Match(data) {
-		return []Finding{{Path: rel, Kind: "private-key"}}
+		return []Finding{{Path: rel, Kind: "private-key", File: true}}
 	}
 	// The whole file being one opaque token is the other unambiguous shape: a
 	// token dropped into a file on its own. Checked against the trimmed content so
@@ -272,7 +272,7 @@ func ScanFile(rel string, data []byte) []Finding {
 			return nil
 		}
 		if kind, ok := LooksSecret(s); ok {
-			return []Finding{{Path: rel, Kind: kind}}
+			return []Finding{{Path: rel, Kind: kind, File: true}}
 		}
 	}
 	return nil

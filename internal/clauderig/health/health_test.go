@@ -305,3 +305,44 @@ func TestDirtyStagingBetweenSyncsIsNotAWarning(t *testing.T) {
 		t.Errorf("never synced, level = %v, want amber", r.Level)
 	}
 }
+
+// The health report and `clauderig status` describe one record, and they render
+// it through one helper — but only a test says so. These are the shapes a
+// refusal actually comes in, and the file/value/unreadable split is invisible
+// from here unless it is asserted.
+func TestRefusalSummaryNamesWhatWasCaught(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		last journal.Record
+		want string
+	}{
+		{
+			"values only",
+			journal.Record{Outcome: journal.OutcomeRefused, Leaks: []journal.Leak{{}, {}}},
+			"Sync refused — 2 values look like credentials",
+		},
+		{
+			"a whole file",
+			journal.Record{Outcome: journal.OutcomeRefused, Leaks: []journal.Leak{{}}, LeakFiles: 1},
+			"Sync refused — 1 file is credential material",
+		},
+		{
+			"a file and a value",
+			journal.Record{Outcome: journal.OutcomeRefused, Leaks: []journal.Leak{{}, {}}, LeakFiles: 1},
+			"Sync refused — 1 file of credential material and 1 value that looks like a credential",
+		},
+		{
+			"one that could not be read",
+			journal.Record{Outcome: journal.OutcomeRefused, Leaks: []journal.Leak{{}}, LeakUnread: 1},
+			"Sync refused — 1 file could not be read",
+		},
+	} {
+		got := Of(synced(), tc.last)
+		if got.Summary != tc.want {
+			t.Errorf("%s: Summary = %q, want %q", tc.name, got.Summary, tc.want)
+		}
+		if got.Level != Red {
+			t.Errorf("%s: level = %v, want Red — a refusal is not a healthy sync", tc.name, got.Level)
+		}
+	}
+}
