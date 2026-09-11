@@ -59,15 +59,19 @@ type configSource interface {
 	Check(context.Context) error
 }
 
-// configDirectoryNames reserves a bounded allowance for replacement artifacts.
+// configDirectoryNames reserves a bounded allowance for replacement artifacts,
+// including additionalArtifacts that the caller is about to stage under its lock.
 // Recognizing a reserved name never establishes ownership or permits cleanup.
-func configDirectoryNames(ctx context.Context, source configSource) ([]string, error) {
+func configDirectoryNames(ctx context.Context, source configSource, additionalArtifacts int) ([]string, error) {
+	if additionalArtifacts < 0 || additionalArtifacts > maxConfigReplacementEntries {
+		return nil, files.ErrSourceLimit
+	}
 	names, err := source.Names(ctx, maxConfigDirectoryEntries+maxConfigReplacementEntries)
 	if err != nil {
 		return nil, err
 	}
 	var visible []string
-	internal := 0
+	internal := additionalArtifacts
 	for _, name := range names {
 		if files.IsReplacementArtifact(name) {
 			internal++
@@ -106,7 +110,7 @@ func configNames(names []string) ([]string, error) {
 }
 
 func captureConfig(ctx context.Context, source configSource) (ConfigCapture, error) {
-	names, err := configDirectoryNames(ctx, source)
+	names, err := configDirectoryNames(ctx, source, 0)
 	if err != nil {
 		return ConfigCapture{}, err
 	}
@@ -152,7 +156,7 @@ func captureConfig(ctx context.Context, source configSource) (ConfigCapture, err
 			return ConfigCapture{}, ErrConfigSourceChanged
 		}
 	}
-	final, err := configDirectoryNames(ctx, source)
+	final, err := configDirectoryNames(ctx, source, 0)
 	if err != nil {
 		return ConfigCapture{}, err
 	}

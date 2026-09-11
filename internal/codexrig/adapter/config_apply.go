@@ -56,6 +56,17 @@ func (p *ConfigRestorePlan) apply(ctx context.Context, batch configReplacements)
 	if err := p.Check(ctx); err != nil {
 		return result, err
 	}
+	stagingCount := 0
+	for _, change := range p.changes {
+		if change.Action != "unchanged" {
+			stagingCount++
+		}
+	}
+	// The acquired lock is already visible. Reserve this batch's scratch in
+	// addition to existing artifacts before creating any temporary config files.
+	if _, err := configDirectoryNames(ctx, p.source, stagingCount); err != nil {
+		return result, err
+	}
 	proposed := make(map[string][]byte, len(p.proposed))
 	for _, file := range p.proposed {
 		proposed[file.Path] = file.Data

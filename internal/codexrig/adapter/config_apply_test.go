@@ -75,6 +75,70 @@ func TestConfigDirectoryReplacementAllowanceIsBounded(t *testing.T) {
 	}
 }
 
+func TestConfigRestoreApplyReservesScratchBeforeStaging(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		changed, leftovers  int
+		lockExists, refused bool
+	}{
+		{"full batch", 32, 0, false, false},
+		{"full batch with lock", 32, 0, true, false},
+		{"leftover fits", 31, 1, false, false},
+		{"leftover exceeds", 32, 1, false, true},
+		{"leftover exceeds with lock", 32, 1, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			backup := map[string]string{}
+			for i := range tc.changed {
+				name := fmt.Sprintf("profile%d.config.toml", i)
+				putConfig(t, root, name, "model='old'")
+				backup[name] = "model='new'"
+			}
+			for i := range tc.leftovers {
+				putConfig(t, root, fmt.Sprintf(".agentrig-replace-leftover%d", i), "private leftover")
+			}
+			if tc.lockExists {
+				putConfig(t, root, ".agentrig-replace.lock", "")
+			}
+			p, err := PrepareConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(backup), acceptConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			native, err := files.BeginReplace(t.Context(), p.source.(*files.Source))
+			if err != nil {
+				t.Fatal(err)
+			}
+			b := &interruptedReplacements{configReplacements: native}
+			result, err := p.apply(t.Context(), b)
+			if tc.refused {
+				if !errors.Is(err, files.ErrSourceLimit) || b.stages != 0 || b.applies != 0 || len(result.Applied) != 0 {
+					t.Fatal("capacity refusal happened after staging", result, err, b.stages, b.applies)
+				}
+				for name := range backup {
+					data, err := os.ReadFile(filepath.Join(root, name))
+					if err != nil || string(data) != "model='old'" {
+						t.Fatal("capacity refusal changed config", err)
+					}
+				}
+			} else if err != nil || len(result.Applied) != tc.changed {
+				t.Fatal("fitting batch refused", result, err)
+			}
+			for i := range tc.leftovers {
+				data, err := os.ReadFile(filepath.Join(root, fmt.Sprintf(".agentrig-replace-leftover%d", i)))
+				if err != nil || string(data) != "private leftover" {
+					t.Fatal("unowned leftover changed", err)
+				}
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != tc.changed+tc.leftovers+1 {
+				t.Fatal("batch left scratch behind", err)
+			}
+		})
+	}
+}
+
 func TestConfigRestoreApplyRoundTrip(t *testing.T) {
 	root := t.TempDir()
 	putConfig(t, root, "config.toml", "model='old'\n[env]\nKEY='destination-private'")

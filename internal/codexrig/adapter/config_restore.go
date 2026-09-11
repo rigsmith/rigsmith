@@ -233,7 +233,7 @@ func prepareConfigRestore(ctx context.Context, source configSource, incoming []C
 }
 
 func (p *ConfigRestorePlan) destinationNames(ctx context.Context) ([]string, error) {
-	names, err := configDirectoryNames(ctx, p.source)
+	names, err := configDirectoryNames(ctx, p.source, 0)
 	if err != nil {
 		return nil, err
 	}
