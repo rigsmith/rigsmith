@@ -46,16 +46,22 @@ On Linux/macOS, direct `openat` from the pinned directory uses no-follow,
 nonblocking and close-on-exec flags. This matters because Go's `os.Root.OpenFile`
 resolves internal links even when supplied the Unix no-follow flag. Nonblocking
 open also prevents a regular-file-to-FIFO swap from waiting for a writer. On
-Windows, `os.Root` confines resolution and named/handle checks reject links or
-identity changes before reading; direct-child validation excludes device
-namespaces. Unsupported platforms refuse opening a Source.
+Windows, handle-relative `NtCreateFile` opens the direct child with reparse
+processing disabled, non-directory/read-only access, no handle inheritance and
+complete-if-oplocked behavior. Reparse, offline and non-disk handles are refused
+before reading. Direct-child validation excludes device namespaces. Unsupported
+platforms refuse opening a Source and have no weaker open fallback. Both readers
+still depend on OS syscalls that can outlast cancellation. The Windows flags
+follow the [Microsoft NtCreateFile contract](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile).
 
 After processing every file, the Codex adapter re-reads them and compares
 in-memory SHA-256 fingerprints. This catches changes to earlier files, including
 same-size edits with restored modification times. It then re-lists selected
 config names and checks the root again. New/deleted profiles refuse the batch;
 unrelated history/log activity is ignored. Source fingerprints are temporary and
-are never added to the returned batch or diagnostics.
+are never added to the returned batch or diagnostics. Reader and adapter change detection share
+the same error identity (`files.ErrSourceChanged`, also exposed as
+`adapter.ErrConfigSource`) for future retry classification.
 
 These checks detect observed changes. They are not an atomic transaction with
 Codex or a defense against every mutation by an uncooperative/hostile writer. A
@@ -73,7 +79,9 @@ portable, and omitted helper/credential values may need local configuration.
 
 Complete TOML path policy, guarded destination file replacement, usable-config
 validation, structured hooks/customizations, independent CodexRig state/repository
-and sync/restore commands remain in 8b. No existing Claude caller is switched to
+and sync/restore commands remain in 8b. The internal codec/capture changesets are deferred until a user-facing workflow
+uses them; these prerequisites should not announce unavailable features.
+No existing Claude caller is switched to
 the new Source API. Claude's file handling, backup defaults and state are unchanged.
 
 Tests use synthetic directories only. They cover selection and unchanged source

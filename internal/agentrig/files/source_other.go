@@ -1,12 +1,9 @@
-//go:build !darwin && !linux
+//go:build !darwin && !linux && !windows
 
 package files
 
 import "os"
 
-func openSourceFile(root *os.Root, name string) (*os.File, error) {
-	// os.Root confines resolution; Source.Read rechecks regular-file identity and
-	// the named non-link before reading bytes. Direct-child names exclude device
-	// namespaces. This is not a claim of hostile-writer transaction isolation.
-	return root.Open(name)
+func openSourceFile(_ *os.Root, _ string) (*os.File, error) {
+	return nil, ErrSource // No weaker fallback on unsupported platforms.
 }

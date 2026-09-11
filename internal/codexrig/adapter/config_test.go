@@ -247,3 +247,24 @@ func TestCaptureRefusesCredentialShapedProfileName(t *testing.T) {
 		t.Fatal("filename leaked in error")
 	}
 }
+
+func TestCaptureUsesOneSourceChangeSentinel(t *testing.T) {
+	if !errors.Is(ErrConfigSource, files.ErrSourceChanged) || !errors.Is(files.ErrSourceChanged, ErrConfigSource) {
+		t.Fatal("source-change identities differ")
+	}
+	root := t.TempDir()
+	putConfig(t, root, "config.toml", "model = 'first'")
+	source, err := files.OpenSource(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	wrapped := &changingSource{Source: source, afterRead: func(n int) {
+		if n == 1 {
+			putConfig(t, root, "config.toml", "model = 'other'")
+		}
+	}}
+	if result, err := captureConfig(t.Context(), wrapped); !errors.Is(err, files.ErrSourceChanged) || result.Files != nil {
+		t.Fatalf("content change has wrong identity: %v", err)
+	}
+}
