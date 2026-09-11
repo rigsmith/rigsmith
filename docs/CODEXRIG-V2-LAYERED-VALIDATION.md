@@ -113,8 +113,8 @@ value lists are retained, as allowed by native header-constraint validation.
 
 Each referenced injected-header declaration must name exactly one secret source:
 a nonblank `secret_env_var` or a nonblank absolute `secret_file`. Omission of the
-header name defaults to empty and is rejected. A source containing a NUL is
-refused by restore policy. Absolute-path checks use the destination host's Go
+header name defaults to empty and is rejected. Either source containing a NUL is
+refused by restore policy, including an environment-variable name. Absolute-path checks use the destination host's Go
 path syntax; they are lexical and do not expand `~`, resolve links, normalize
 paths, or inspect files. These entry points therefore validate a local restore,
 not the path syntax of an arbitrary other target OS. A missing absolute file and

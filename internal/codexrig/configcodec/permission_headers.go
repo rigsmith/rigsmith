@@ -56,7 +56,8 @@ func validateNetworkActionHeaders(ctx context.Context, action map[string]any) er
 			return ErrValidation
 		}
 		if hasEnv {
-			if strings.TrimSpace(env) == "" {
+			// Restore policy: an environment name containing NUL cannot resolve.
+			if strings.TrimSpace(env) == "" || strings.IndexByte(env, 0) >= 0 {
 				return ErrValidation
 			}
 		} else {

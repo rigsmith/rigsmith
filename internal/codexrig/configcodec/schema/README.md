@@ -75,7 +75,7 @@ length of 65,535 bytes. Audited source packages (checksums match Cargo.lock):
 - `http` 1.4.0: `e3ba2a386d7f85a81f119ad7498ebe444d2e22c2af0b86b069416ace48b3311a`
 
 These are source references, not added runtime dependencies. Secret-file paths
-use local Go absolute-path syntax; NUL refusal and checking selected disabled
+use local Go absolute-path syntax; NUL refusal for both environment names and file paths, and checking selected disabled
 networks are explicit restore policy. Files and environment values are not read.
 Native action operation vectors default to empty during profile inheritance,
 while hook header maps retain ancestor keys; tests distinguish that from raw

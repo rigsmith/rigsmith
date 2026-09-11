@@ -293,3 +293,31 @@ func TestLayeredRestoreRejectsHeaderSourceBeforeDestination(t *testing.T) {
 		t.Fatal("failed validation changed destination", readErr)
 	}
 }
+
+func TestLayeredRestoreRejectsNULHeaderEnvironmentSource(t *testing.T) {
+	root := t.TempDir()
+	original := "model='old'\ndefault_permissions='work'"
+	putConfig(t, root, "config.toml", original)
+	requirements := []byte(`[permissions.work.network.mitm.actions.inject]
+inject_request_headers=[{name="x-example",secret_env_var="PRIVATE\u0000SOURCE"}]
+[permissions.work.network.mitm.hooks.request]
+host="example.test"
+methods=["GET"]
+path_prefixes=["/"]
+action=["inject"]`)
+	called := false
+	plan, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": "model='new'"}), configcodec.SupportedConfigVersion, func(context.Context) (configcodec.ValidationLayers, error) {
+		return configcodec.ValidationLayers{Requirements: requirements}, nil
+	}, func(context.Context, []ConfigFile) error { called = true; return nil })
+	if plan != nil {
+		plan.Close()
+		t.Fatal("NUL environment source produced plan")
+	}
+	if !errors.Is(err, ErrConfigValidation) || called || strings.Contains(err.Error(), "PRIVATE") {
+		t.Fatal("NUL environment source escaped validation", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(root, "config.toml"))
+	if readErr != nil || string(data) != original {
+		t.Fatal("failed validation changed destination", readErr)
+	}
+}

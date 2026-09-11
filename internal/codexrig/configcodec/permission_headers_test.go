@@ -31,6 +31,7 @@ func TestPermissionHeaderDeclarations(t *testing.T) {
 		{"missing source", "inject_request_headers=[{name='x-example'}]", false},
 		{"dual source", "inject_request_headers=[{name='x-example',secret_env_var='EXAMPLE_SOURCE',secret_file='/example'}]", false},
 		{"empty source present alongside file", "inject_request_headers=[{name='x-example',secret_env_var='',secret_file='/example'}]", false},
+		{"NUL env source", `inject_request_headers=[{name="x-example",secret_env_var="EXAMPLE\u0000SOURCE"}]`, false},
 		{"empty env source", "inject_request_headers=[{name='x-example',secret_env_var=''}]", false},
 		{"whitespace env source", "inject_request_headers=[{name='x-example',secret_env_var='  '} ]", false},
 		{"empty file source", "inject_request_headers=[{name='x-example',secret_file=''}]", false},
