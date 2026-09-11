@@ -92,8 +92,8 @@ func TestPrepareJSONHandsBackAReadyConfigDir(t *testing.T) {
 	if !got.Shared {
 		t.Error("shared should be true by default")
 	}
-	if got.Session != account.SessionOK && got.Session != account.SessionUnknown {
-		t.Errorf("session = %q, want ok (or unknown where the Keychain is unreadable)", got.Session)
+	if got.Session != account.SessionOK {
+		t.Errorf("session = %q, want ok — a success never carries any other state", got.Session)
 	}
 	// One object on stdout, nothing else — a launcher must not have to strip prose.
 	if strings.Count(strings.TrimSpace(out), "\n{") != 0 || !strings.HasPrefix(strings.TrimSpace(out), "{") {

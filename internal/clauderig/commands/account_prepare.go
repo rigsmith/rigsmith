@@ -44,8 +44,9 @@ type prepareJSON struct {
 	// ConfigDir is the value to export as CLAUDE_CONFIG_DIR. Absent on refusal.
 	ConfigDir string `json:"configDir,omitempty"`
 	// Session is the profile's state after preparation, in `list --json`'s
-	// vocabulary (ok · no-tokens · unknown). A prepared profile is "ok" unless
-	// the Keychain cannot be read back, which is reported rather than assumed.
+	// vocabulary. On a success it is always "ok" — anything else is refused
+	// with the matching reason, because "prepared" is what the launcher spawns
+	// on. Kept as a field so the object reads like `list`'s.
 	Session string `json:"session,omitempty"`
 	// Shared is the sharing mode the profile was prepared with: true unless
 	// --no-share. It says what was asked for, not an inventory of what was
@@ -102,7 +103,10 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 	refuse := func(a account.Account, reason string, err error) error {
 		// The refusal is the outcome a launcher branches on, so a failure to
 		// deliver it is reported alongside the refusal itself, never instead.
-		if rerr := report(prepareJSON{ID: a.ID, Email: a.Email, Alias: a.Alias, Reason: reason, Message: err.Error()}); rerr != nil {
+		if rerr := report(prepareJSON{
+			ID: a.ID, Email: a.Email, Alias: a.Alias,
+			Shared: share, Reason: reason, Message: err.Error(),
+		}); rerr != nil {
 			return errors.Join(err, rerr)
 		}
 		return err
@@ -125,14 +129,22 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 	if err != nil {
 		return refuse(a, classifyPrepareFailure(err), err)
 	}
-	// Re-read the profile AFTER preparing it. EnsureSession holds no lock, so a
-	// concurrent `remove`/`purge` can take the directory out from under a
-	// success; reporting a directory that no longer exists would hand the
-	// launcher a profile that fails every test in [AssemblyInitialize]-style —
-	// far from the cause. "none" is therefore a refusal here, never a status.
+	// Re-read the profile AFTER preparing it, and let only a profile that can
+	// authenticate through. EnsureSession holds no lock, so a concurrent
+	// `remove`/`purge`/re-login can change the answer between the seed and the
+	// report — and "prepared" is a promise the launcher spawns on. Anything but
+	// "ok" is therefore a refusal with the matching code, never a status.
 	session := st.SessionStatus(a.ID)
-	if session == account.SessionNone {
+	switch session {
+	case account.SessionOK:
+	case account.SessionNoTokens:
+		return refuse(a, prepareNoTokens, fmt.Errorf("the profile at %s has no usable credential after preparation", dir))
+	case account.SessionUnknown:
+		return refuse(a, prepareSessionUnknown, fmt.Errorf("%w back after preparation", account.ErrSessionUnreadable))
+	case account.SessionNone:
 		return refuse(a, prepareFailed, fmt.Errorf("the profile at %s disappeared while it was being prepared", dir))
+	default:
+		return refuse(a, prepareFailed, fmt.Errorf("unexpected session status %q", session))
 	}
 
 	if err := report(prepareJSON{
