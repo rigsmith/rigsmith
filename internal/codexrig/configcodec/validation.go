@@ -68,11 +68,12 @@ var compiledConfigSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 })
 
 // ValidateConfigSet checks one base document and each independent profile overlay
-// against a pinned release schema and explicit legacy-profile/provider checks.
+// against a pinned release schema and explicit profile/provider/MCP rules.
 // A nil base represents no base file. Inputs may contain private local values;
 // errors never include them. Nothing is executed, fetched, written or logged.
-// This is structural validation, not a Codex startup or destination-readiness
-// check. Callers must still validate managed layers, artifacts and credentials.
+// These offline schema/runtime rules do not establish Codex startup or
+// destination readiness. Callers must still check managed layers, artifacts,
+// credentials and runtime constraints not covered by this pinned policy.
 func ValidateConfigSet(ctx context.Context, version string, base []byte, profiles [][]byte) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -200,20 +201,27 @@ func validateEffective(ctx context.Context, schema *jsonschema.Schema, doc map[s
 		if !ok {
 			return ErrValidation
 		}
-		// Codex 0.144.6: built_in_model_providers in model-provider-info/src/lib.rs
-		// at 5d1fbf26c43abc65a203928b2e31561cb039e06d. See schema/README.md.
-		// Do not blanket-reject configured built-in keys: the release ignores
-		// most overrides and expressly allows Bedrock AWS profile/region settings.
-		switch name {
-		case "openai", "amazon-bedrock", "ollama", "lmstudio":
-		default:
+		if !isBuiltinProvider(name) {
 			providers, _ := doc["model_providers"].(map[string]any)
 			if _, exists := providers[name]; !exists {
 				return ErrValidation
 			}
 		}
 	}
-	return ctx.Err()
+	return validateRuntimeConfig(ctx, doc)
+}
+
+// Codex 0.144.6: built_in_model_providers in model-provider-info/src/lib.rs
+// at 5d1fbf26c43abc65a203928b2e31561cb039e06d. See schema/README.md.
+// This catalog also supplies the reserved declaration IDs; Bedrock alone allows
+// the constrained override checked by validateProviderConfig.
+func isBuiltinProvider(name string) bool {
+	switch name {
+	case "openai", "amazon-bedrock", "ollama", "lmstudio":
+		return true
+	default:
+		return false
+	}
 }
 
 func overlayConfig(base, profile map[string]any) map[string]any {

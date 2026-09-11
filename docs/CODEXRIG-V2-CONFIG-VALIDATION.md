@@ -1,4 +1,4 @@
-# Codex versioned config validation (8b.6a)
+# Codex versioned config validation (8b.6)
 
 `adapter.PrepareVersionedConfigRestore` adds an offline, pinned validation stage
 to restore preparation. It requires both a supported version and the existing
@@ -7,11 +7,11 @@ execute configured helpers, read authentication stores or fetch remote schemas.
 
 ## Supported contract
 
-The initial structural policy supports **exactly Codex CLI 0.144.6**. The caller
+The pinned validation policy supports **exactly Codex CLI 0.144.6**. The caller
 must supply that canonical version string from trusted destination/version
 selection. This API does not discover or verify an installed binary itself.
 Older, newer, prerelease and decorated version strings fail closed before the
-source directory is opened. Support for a release means the pinned structural
+source directory is opened. Support for a release means the pinned validation
 policy is available, not that all Codex workflows have been certified.
 
 The embedded schema is the unmodified Draft 7 schema from release commit
@@ -40,9 +40,18 @@ disabled, and validation never refreshes its schema from the network.
    they are not silently converted to strings or JSON objects.
 4. Reject legacy `profile` and `profiles` fields, even though the release schema
    retains them. Check that an explicitly selected provider is built in or is
-   defined in the effective configuration. Built-in provider IDs are pinned to
-   the release; model availability and provider authentication are not probed.
-5. Only after structural checks pass, invoke the required destination callback.
+   defined in the effective configuration. Reject configured `openai`, `ollama`
+   and `lmstudio` declarations before catalog merge. Check every custom provider,
+   including unselected ones, for a nonblank name and conflicting auth settings;
+   AWS configuration is reserved for Bedrock. Bedrock permits AWS profile/region
+   overrides and explicitly default-valued fields, but no other overrides.
+5. Check every MCP server, including disabled servers, for a command or URL and
+   transport-compatible fields. Presence matters: HTTP `args=[]` and stdio
+   `http_headers={}` are invalid too. Validate environment sources and finite,
+   nonnegative timeouts within Rust's duration range. Seconds take precedence
+   over the legacy startup milliseconds field; invalid seconds cannot fall back
+   to milliseconds. Base and each profile's effective configuration must pass.
+6. Only after schema and these runtime rules pass, invoke the destination callback.
    Its failure refuses preparation. As before, private callback/schema error
    details do not escape; cancellation stays identifiable and source checks run
    after validation. Application still consumes the resulting private plan.
@@ -58,15 +67,25 @@ reject them; explicitly open objects remain open.
 
 ## Remaining destination validation (8b.6b)
 
-This is a concrete structural validator, **not a complete Codex startup check**.
+This validates schema and selected runtime rules, **not complete Codex startup**.
+Provider declarations/auth combinations, Bedrock overrides and MCP transport,
+environment-source and timeout rules now have concrete offline checks. These use
+the same exact release as the schema; [source provenance](../internal/codexrig/configcodec/schema/README.md)
+records the native validation order. In particular, reserved provider declarations
+are rejected before the catalog merge; the initial 8b.6a description of ordinary
+collisions being ignored was incomplete and is corrected here.
+
 The required destination callback still needs a production implementation covering
-managed/system/project layers, permissions semantics, runtime-only provider/MCP
-constraints, referenced files and agent definitions, helper availability and
+managed/system/project layers, permissions semantics, remaining runtime constraints,
+referenced files and agent definitions, helper availability and
 credential readiness. It must not execute configured helpers or expose private
 diagnostics. Model-dependent values such as reasoning effort also remain outside
 the schema's guarantees. The general preparation API remains an injection boundary;
 production restore wiring must choose the versioned entry point and complete these
 checks. Accepting test callbacks are not a production readiness implementation.
+An allowed helper or URL only has valid configuration fields: this layer does not
+check its existence, reachability, credentials, environment values or launch
+behavior. No inherited environment or live authentication store is read.
 
 Stage 8b.6 remains in progress until that destination layer is implemented.
 Customization portability, independent state/repository, user-facing commands and
@@ -79,7 +98,10 @@ Synthetic tests cover schema provenance/local references, nested-field and enum
 refusal, numeric type/width boundaries, legacy profiles, provider lookup across
 independent profile layers, private-value preservation, input limits,
 cancellation, concurrent validation, callback ordering, retained invalid profiles,
-and applying an accepted versioned plan. Native repository CI runs on Linux,
+and applying an accepted versioned plan. Runtime regressions explicitly verify
+that their fixtures pass the bundled schema first, then check native cross-field
+refusals, allowed Bedrock defaults, duration boundaries, profile overlays and
+callback ordering without writes. Native repository CI runs on Linux,
 macOS and Windows; these tests do not launch the Codex binary or prove native
 Codex startup behavior.
 

@@ -24,8 +24,22 @@ and model-dependent values such as reasoning effort need destination checks.
 
 The built-in provider IDs come from [`built_in_model_providers` in the same
 release](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/model-provider-info/src/lib.rs#L430).
-The adjacent `merge_configured_model_providers` keeps existing built-ins for
-ordinary colliding keys; it permits Bedrock `aws.profile`/`aws.region` settings
-and rejects other non-default Bedrock fields. Blanket collision refusal would
-reject valid native settings. This structural layer checks provider references;
-the mandatory destination validator must enforce the runtime merge constraints.
+Before catalog construction, [`validate_model_providers` and
+`validate_reserved_model_provider_ids`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/config/src/config_toml.rs#L895-L940)
+reject declarations using `openai`, `ollama` or `lmstudio`, even if unselected.
+They also require nonblank custom names, reserve AWS configuration for Bedrock,
+and invoke provider auth validation. The merge function's `or_insert` behavior
+does **not** make colliding declarations valid: the earlier validation wins.
+This corrects the initial 8b.6a documentation and tests.
+
+[`ModelProviderInfo::validate` and `merge_configured_model_providers`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/model-provider-info/src/lib.rs)
+supply the auth conflicts and Bedrock override rules. Bedrock allows
+`aws.profile`/`aws.region`, but all other fields must equal the native struct's
+defaults. Option fields containing empty strings/maps or zero are still present
+and therefore non-default.
+
+[`RawMcpServerConfig` conversion and `McpServerEnvVar::validate_source`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/config/src/mcp_types.rs)
+supply the transport-field restrictions, environment-source values and duration
+rules. These are deserialization checks and apply to disabled servers as well.
+The Go implementation uses Rust's seconds range, not Go's nanosecond duration
+range. It does not resolve or run a configured command.
