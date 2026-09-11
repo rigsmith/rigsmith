@@ -107,8 +107,11 @@ func TestPanelMatchesAQuotedPathTheParseCouldNotRecover(t *testing.T) {
 // matches it — no command line required.
 func TestPanelFallsBackToTheParsedDirectory(t *testing.T) {
 	dir := "/store/work/data"
+	// The command line names a DIFFERENT directory on purpose. Naming this
+	// profile's own would let the command-line match answer first, and the
+	// fallback under test would never run — the test would pass with it deleted.
 	v, err := panelDesktop(t, []desktop.Instance{
-		{PID: 23, DataDir: dir, Command: "claude --user-data-dir=" + dir},
+		{PID: 23, DataDir: dir, Command: "claude --user-data-dir=/store/other/data"},
 	}, map[string]string{"work": dir}, nil).Panel(context.Background())
 	if err != nil {
 		t.Fatal(err)
