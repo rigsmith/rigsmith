@@ -93,6 +93,29 @@ func TestValidateConfigSet(t *testing.T) {
 	}
 }
 
+func TestValidationPinnedProviderReferences(t *testing.T) {
+	for _, name := range []string{"openai", "amazon-bedrock", "ollama", "lmstudio"} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateConfigSet(t.Context(), SupportedConfigVersion, []byte("model_provider='"+name+"'"), nil); err != nil {
+				t.Fatal("release built-in rejected", err)
+			}
+		})
+	}
+	for _, config := range []string{
+		"[model_providers.openai]\nname='Ignored by native provider merge'",
+		"model_provider='ollama'\n[model_providers.openai]\nname='Ignored by native provider merge'",
+		"[model_providers.amazon-bedrock.aws]\nprofile='example'\nregion='us-east-1'",
+		"model_provider='custom'\n[model_providers.custom]\nname='Custom'",
+	} {
+		if err := ValidateConfigSet(t.Context(), SupportedConfigVersion, []byte(config), nil); err != nil {
+			t.Fatal("valid release provider declaration rejected", err)
+		}
+	}
+	if err := ValidateConfigSet(t.Context(), SupportedConfigVersion, []byte("model_provider='unknown'"), nil); !errors.Is(err, ErrValidation) {
+		t.Fatal("unknown provider reference accepted", err)
+	}
+}
+
 func TestValidationOverlayMatchesPinnedLayerSemantics(t *testing.T) {
 	base, err := validationDocument([]byte("model='base'\n[model_providers.custom]\nname='Custom'\nbase_url='https://example.com/v1'\n[memories]\ndisable_on_external_context=false\n[shell_environment_policy]\ninclude_only=['A','B']"))
 	if err != nil {

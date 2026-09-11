@@ -200,6 +200,10 @@ func validateEffective(ctx context.Context, schema *jsonschema.Schema, doc map[s
 		if !ok {
 			return ErrValidation
 		}
+		// Codex 0.144.6: built_in_model_providers in model-provider-info/src/lib.rs
+		// at 5d1fbf26c43abc65a203928b2e31561cb039e06d. See schema/README.md.
+		// Do not blanket-reject configured built-in keys: the release ignores
+		// most overrides and expressly allows Bedrock AWS profile/region settings.
 		switch name {
 		case "openai", "amazon-bedrock", "ollama", "lmstudio":
 		default:
