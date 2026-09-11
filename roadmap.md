@@ -28,7 +28,7 @@ Durable hook admission and recovery merged in [#387](https://github.com/rigsmith
 
 The release path is now: finish opt-in queued Claude commands and hook routing,
 validate rollback and OS lifecycle behavior, then connect the separate `codexrig` adapter.
-Synchronous sync remains the default. This slice adds explicit local opt-in routing;
+Synchronous sync remains the default. [#388](https://github.com/rigsmith/rigsmith/pull/388) adds explicit local opt-in routing;
 SessionStart pull stays synchronous.
 
 | Milestone | Status |
@@ -72,7 +72,7 @@ SessionStart pull stays synchronous.
 | Hook-request preparation (7c.2b.1) | Merged: [#384](https://github.com/rigsmith/rigsmith/pull/384). Decode bounded Stop/SessionEnd payloads into saved, retryable producer requests; require direct parent transcripts during capture. |
 | Queued worker capture/flush policy (7c.2b.2a) | Merged: [#385](https://github.com/rigsmith/rigsmith/pull/385). Fully capture requested sessions/subagents, honor all-flush and preserve normal throttling for unrelated plain transcripts; replay saved artifacts unchanged. |
 | Durable hook producer and recovery (7c.2b.2b.1) | Merged: [#387](https://github.com/rigsmith/rigsmith/pull/387). Save hook requests before admission, recover original attribution/events, and remove only confirmed producer records. |
-| Opt-in hook installation and rollback (7c.2b.2b.2) | In progress: local enable/status/disable commands, queue-aware manual sync, portable hooks and guarded rollback. |
+| Opt-in hook installation and rollback (7c.2b.2b.2) | In review: [#388](https://github.com/rigsmith/rigsmith/pull/388). local enable/status/disable commands, queue-aware manual sync, portable hooks and guarded rollback. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
 The v1/v2 foundation was aligned after v1.15.1; that alignment did not publish a
