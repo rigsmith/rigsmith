@@ -47,16 +47,22 @@ type queueSubmission struct {
 }
 
 type queueCommandDeps struct {
-	resolve   func() (service.SyncRequest, error)
-	identity  func() (service.Identity, error)
-	private   func(context.Context, string) error
-	supervise func(context.Context) (context.Context, error)
+	resolve     func() (service.SyncRequest, error)
+	identity    func() (service.Identity, error)
+	private     func(context.Context, string) error
+	supervise   func(context.Context) (context.Context, error)
+	routingPath func() (string, error)
+	hooksPath   func() (string, error)
 }
 
-// NewQueueCmd exposes an explicit foreground workflow. It installs no hook or
-// service; ordinary sync remains synchronous.
+// NewQueueCmd exposes a foreground workflow and an explicit local hook opt-in.
+// It installs no worker service; ordinary sync remains the default.
 func NewQueueCmd() *cobra.Command {
-	return newQueueCmd(queueCommandDeps{
+	return newQueueCmd(defaultQueueCommandDeps())
+}
+
+func defaultQueueCommandDeps() queueCommandDeps {
+	return queueCommandDeps{
 		resolve: func() (service.SyncRequest, error) {
 			cfg, err := config.LoadOrDefault()
 			if err != nil {
@@ -72,7 +78,9 @@ func NewQueueCmd() *cobra.Command {
 			a, o, e, err := account.LiveIdentity()
 			return service.Identity{AccountUUID: a, OrganizationUUID: o, Email: e}, err
 		},
-		private: ghrepo.EnsurePrivate,
+		routingPath: queueHookRoutingPath,
+		hooksPath:   settingsPath,
+		private:     ghrepo.EnsurePrivate,
 		supervise: func(ctx context.Context) (context.Context, error) {
 			executable, err := os.Executable()
 			if err != nil {
@@ -80,13 +88,13 @@ func NewQueueCmd() *cobra.Command {
 			}
 			return process.WithSupervisor(ctx, executable, "__queue-supervisor"), nil
 		},
-	})
+	}
 }
 
 func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var dir string
 	var profiles []string
-	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request (--session or --hook), enqueue it, then run a worker.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nHooks and ordinary sync remain synchronous. Use the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nUse hook to save and admit hook input; recover-hooks retries its saved inbox.\nStop producers and recover the inbox before draining. No background service is installed.", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request (--session or --hook), enqueue it, then run a worker.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nUse enable-hooks to opt this machine into queued hooks and queue-aware sync.\nUse hook-status to inspect routing and disable-hooks after recovery/drain.\nUse the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nUse hook to save and admit hook input; recover-hooks retries its saved inbox.\nStop producers and recover the inbox before draining. No background service is installed.", Args: cobra.NoArgs}
 	cmd.PersistentFlags().StringVar(&dir, "dir", "", "private runtime directory (default ~/.clauderig/queue-runtime)")
 	_ = cmd.MarkPersistentFlagDirname("dir")
 	cmd.PersistentFlags().StringArrayVar(&profiles, "profile", nil, "explicit Desktop profile to include (repeatable; default none)")
@@ -120,7 +128,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(c.OutOrStdout(), "Queue initialized. Run queue prepare to save a request; hooks remain synchronous.")
+		_, err = fmt.Fprintln(c.OutOrStdout(), "Queue initialized. Run queue prepare to save a request; enable-hooks opts installed hooks into this queue.")
 		return err
 	}})
 	var session, output string
@@ -194,6 +202,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	_ = prepare.RegisterFlagCompletionFunc("session", completeSessionRef)
 	cmd.AddCommand(prepare)
 	addQueueHookProducerCommands(cmd, deps, open)
+	addQueueHookRoutingCommands(cmd, deps, open, &profiles)
 	cmd.AddCommand(&cobra.Command{Use: "enqueue <request-file>", Short: "Durably accept a saved request (safe to retry the same file)", Args: cobra.ExactArgs(1), RunE: func(c *cobra.Command, args []string) error {
 		r, err := open(c.Context(), false)
 		if err != nil {

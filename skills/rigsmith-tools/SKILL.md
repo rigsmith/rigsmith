@@ -213,7 +213,7 @@ reference — they complement each other; keep them consistent if you edit one.
 ### Explicit queued sync (v2 preview)
 
 For requested queue work, confirm the chosen binary supports `clauderig queue
---help`. Ordinary sync and hooks remain synchronous; these commands do not install
+--help`. Sync and hooks are synchronous by default; these commands do not install
 or start a background service. Initialize ordinary sync history before queue init.
 The queue requires a verified private HTTPS GitHub/GitLab remote and uses existing
 Git credentials plus the provider-aware privacy check independently of doctor.
@@ -292,7 +292,7 @@ Previously backed-up subagents remain retained if removed from the source.
 The worker still freezes the configured source tree; saved artifacts replay
 unchanged. Saved flush intent also governs manual-sync coverage.
 It conflicts with `--session`/`--flush`, observes identity once, and sends success
-to stderr. Installed hooks remain synchronous until the opt-in installer lands.
+to stderr. Installed hooks remain synchronous unless explicitly opted in locally.
 
 
 For explicit managed v2 hook admission, use `clauderig queue hook < hook.json`
@@ -305,3 +305,20 @@ mismatched inbox. The journal is bounded to 128 pending requests and 1 MiB;
 recover existing intent before sending more if full. Stop producers, recover every
 inbox, then drain before rollback. Admission success is not publication, and queue
 status excludes requests still in the inbox. Automatic installation remains deferred.
+
+For explicitly requested v2 hook opt-in, stop Claude sessions, manual syncs and
+other producers first. Install the standard hooks, initialize after ordinary sync,
+then run `queue enable-hooks` with the same runtime and every Desktop profile.
+Use `--inbox` for a custom private inbox and `--unknown-identity` only when the user
+wants unknown attribution for every hook. Start `queue run` separately. Manual
+`sync` now uses queue coverage; `--dry-run` never admits or acknowledges work.
+`queue hook-status` shows the pinned local choices. The portable hook commands
+and SessionStart pull stay unchanged.
+
+To roll back, stop all producers, recover the saved inbox, drain and stop workers,
+then `queue disable-hooks` with the saved runtime/profile flags. Pending inbox or
+queue work and active workers block disabling. Preserve the descriptor and all
+recovery state; never delete it, change the runtime or downgrade binaries to
+bypass recovery. After an uncertain toggle write, inspect status and retry the
+same command. After restarting the machine, recover the inbox and restart the
+foreground worker explicitly. No automatic service registration is provided.

@@ -698,3 +698,39 @@ func validateQueueCoverageProfiles(req SyncRequest, profiles []string) (err erro
 	}
 	return nil
 }
+
+// Directory is the canonical private root to pin in local hook routing.
+func (r *QueueRuntime) Directory() string { return r.dir }
+
+// CheckHookRouting verifies that manual sync can use this runtime's complete
+// profile selection. It performs no capture, network access or identity read.
+func (r *QueueRuntime) CheckHookRouting(ctx context.Context) error {
+	roots, err := captureRoots(r.request, r.profiles)
+	if err != nil {
+		return err
+	}
+	if roots["cli"] == "" {
+		return fmt.Errorf("queued hooks require an enabled CLI root")
+	}
+	_, err = r.validateCoverageBinding(ctx, r.request, r.profiles)
+	return err
+}
+
+// WhileIdle excludes workers and admission while changing local routing. Callers
+// must stop external producers first. The callback must not acquire runtime or
+// queue locks: Enqueue acquires runtime ownership before queue ownership.
+func (r *QueueRuntime) WhileIdle(ctx context.Context, fn func() error) error {
+	if err := r.refresh(ctx); err != nil {
+		return err
+	}
+	return r.q.Maintain(ctx, r.binding, func(m *queue.Maintenance) error {
+		pending, err := m.HasPending()
+		if err != nil {
+			return err
+		}
+		if pending {
+			return fmt.Errorf("queue still has pending work; recover hooks and drain before disabling hook routing")
+		}
+		return fn()
+	})
+}

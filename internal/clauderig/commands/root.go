@@ -18,7 +18,7 @@ func NewRootCmd(version string) *cobra.Command {
 			"and never leaking secrets. Pick up where you left off on a different computer.\n\n" +
 			"Use queue to save requests, inspect/retry work, sync with queued-request\n" +
 			"acknowledgement, or run/drain a foreground worker (v2 preview).\n" +
-			"Ordinary sync and hooks remain synchronous; no background service is installed.",
+			"Sync and hooks are synchronous by default; queue enable-hooks opts in locally.\nNo background service is installed.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}

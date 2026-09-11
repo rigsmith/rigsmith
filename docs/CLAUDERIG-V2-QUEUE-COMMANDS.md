@@ -1,8 +1,8 @@
 # Explicit queued Claude commands (v2)
 
-V2 exposes a foreground queue workflow for deliberate testing and use. It does
-not install a worker or route hooks. Ordinary `sync`, `pull` and hooks keep their
-existing synchronous behavior. Use v2 clients for operations sharing staging.
+V2 exposes a foreground queue workflow and explicit local hook opt-in. It does
+not install a worker service. Sync/hooks remain synchronous by default; `pull`
+stays synchronous in either mode. Use v2 clients for operations sharing staging.
 Actual OS reboot/hibernation validation remains a general-release gate.
 
 When run outside a terminal, bare `queue` prints help; when run in a terminal,
@@ -253,7 +253,7 @@ An active batch can report busy; retry after it finishes. The first interrupt
 lets the single sync finish; a second cancels and waits for supervised cleanup.
 Failure can occur after a snapshot was published; inspect status before retrying.
 A successful manual sync reports the number of acknowledged requests, without
-claiming that the queue is empty. Ordinary `clauderig sync` and installed hooks
+claiming that the queue is empty. Without local opt-in, ordinary `clauderig sync` and installed hooks
 retain their existing synchronous behavior and do not acknowledge queue work.
 
 ## Prepare a request from hook input (7c.2b.1)
@@ -371,8 +371,8 @@ the journal and resolve the expired intent explicitly before resuming producers.
 To finish queued work before rollback: stop hook producers, run `queue recover-hooks`
 for each inbox, then `queue drain`. A successful inbox recovery confirms admission,
 not remote publication. Keep the runtime and inbox intact while anything remains
-unresolved. Automatic hook installation and coordination with ordinary sync follow
-in 7c.2b.2b.2; installed hooks remain synchronous today.
+unresolved. Local opt-in and checked rollback are described below; installed
+hooks remain synchronous unless explicitly enabled on this machine.
 
 ### Inbox journal format
 
@@ -436,3 +436,103 @@ The internal runtime bridge (7c.1), explicit manual command (7c.2a) and bounded
 hook-request preparation (7c.2b.1) are available. Opt-in hook installation,
 ordinary-sync routing and end-to-end stop/drain/rollback remain 7c.2b.2b.2.
 Managed hook admission and inbox recovery are available explicitly.
+
+## Local hook opt-in and rollback (7c.2b.2b.2)
+
+First stop Claude sessions, manual syncs and any other producers or workers.
+Install the standard hooks with `clauderig hooks install`, perform an ordinary
+sync to establish shared history, and initialize the queue. Use the same runtime
+and every local Desktop profile required by `queue sync`. Then:
+
+```sh
+clauderig queue enable-hooks
+clauderig queue hook-status
+clauderig queue run
+```
+
+`enable-hooks` checks the initialized binding and complete Desktop profile
+selection. It requires exactly one standard owned command for SessionStart, Stop
+and SessionEnd in user settings, with no stale command or matcher. It does not
+rewrite settings. It creates or reflushes the private inbox before saving local
+routing. `--inbox` chooses another inbox with an existing parent;
+`--unknown-identity` deliberately records unknown attribution for every hook.
+Repeating the same enable is safe. Changing active options requires a completed
+disable first. Initialization errors may leave an incomplete inbox: inspect and
+restore its journal rather than discarding potentially saved requests.
+
+The existing portable commands remain `clauderig pull`, `clauderig sync --hook`
+and `clauderig sync --flush`. Each machine chooses routing through its own
+`~/.clauderig/queue-hooks.json`; this state stays outside capture roots. Syncing
+settings does not opt another machine in. SessionStart pull remains synchronous.
+
+With routing enabled, Stop and SessionEnd invoke the durable hook producer. The
+complete input must arrive within two seconds and 128 KiB; the ten-second hook
+budget includes input and routing lock contention. `--hook` requires Stop; a
+payload to `--flush` requires SessionEnd. Empty input to `--hook`, blank or
+malformed documents, mismatched events, corrupt routing, missing inbox state or
+changed bindings fail without falling back to synchronous publication. Failure
+before durable intent can still leave that new event unsaved; the existing inbox
+recovery limitations apply. Successful hook diagnostics go to stderr only.
+
+Manual `sync` delegates to the supervised `queue sync` path. A terminal or truly
+empty input to `sync --flush` means all changed tails. `--dry-run` ignores hook
+input and never admits or acknowledges requests. It still performs queue-sync
+startup/privacy checks. Combining `--hook` and `--flush` is refused in queued mode.
+Manual sync keeps its caller context and releases the routing lease before long
+publication, allowing hooks to keep enqueueing; worker/staging ownership protects
+its capture. It does not drain the producer inbox or every queued request.
+
+No worker is launched automatically. After a process or machine restart, use
+`hook-status` to recover the saved options, run `recover-hooks`, then restart
+`queue run` with the same runtime/profiles. Stop producers before deliberate
+reconciliation. A stopped worker or empty queue does not prove the inbox is empty.
+The OS process-fence recovery requirements still apply after an unclean restart.
+
+To restore synchronous operation:
+
+1. Stop Claude sessions, manual syncs and all other producers, including direct
+   callers of `queue hook`, `prepare`/`enqueue` and `queue sync`.
+2. Run `queue recover-hooks` with the saved runtime/profiles/inbox.
+3. Drain the queue and stop every worker. Repair blocked/delayed work first.
+4. Run `queue disable-hooks` with the saved runtime/profile flags.
+
+Disable holds the routing and inbox leases, reflushes an empty inbox, then takes
+queue worker/transaction ownership, reflushes queue state and requires no pending
+batches before saving a disabled descriptor. It refuses an active worker, even
+if that worker currently has no batch. It never drops pending intent, queue work,
+artifacts or receipt history. Direct producers and manual sync startup must be
+stopped by the operator; the toggle cannot stop an external caller from starting
+new work after its checks. Stable private filesystem roots and no concurrent
+settings/config edits are prerequisites.
+
+If enable/disable reports a write error after a rename, the descriptor may already
+show the requested state. Inspect `hook-status`, keep producers stopped, and retry
+the same command to reflush it. Routed sync also reflushes an enabled descriptor
+before using it. Never delete/edit the descriptor or switch to a v1 binary to
+bypass rollback. A malformed descriptor fails closed even when its damaged bytes
+appear to say disabled. A successful disable retains it for inspection.
+
+### Routing descriptor format
+
+`queue-hooks.json` is a private regular, single-link file of at most 128 KiB.
+Linux/macOS check effective ownership and private modes; Windows callers must
+provision private inherited ACLs, which the command does not inspect or repair.
+Symbolic links are refused. It uses exact compact Go JSON encoding plus one LF,
+with these fields in declaration order:
+
+| Field | Value |
+| --- | --- |
+| `Version` | Integer `1`. |
+| `Enabled` | Boolean selecting queued routing. |
+| `Runtime` | Canonical absolute runtime directory. |
+| `Inbox` | Absolute private inbox directory outside the descriptor and all capture/staging/runtime trees. |
+| `Profiles` | Sorted explicit Desktop profile names, or `null` for none. |
+| `Scope` | Runtime lifecycle binding digest. |
+| `UnknownIdentity` | Whether hooks bypass live identity lookup and explicitly record unknown attribution. |
+| `Checksum` | SHA-256 hex digest of the compact typed object with `Checksum` set to the empty string, without the final LF. |
+
+Unknown/duplicate/case-aliased fields, reformatting, invalid Unicode and checksum
+changes are rejected by exact re-encoding. The checksum detects accidental damage,
+not malicious modification by the same user. `hook-status` displays the descriptor
+without claiming inbox, worker or remote health. The routing lease is a stable
+sibling lock; never remove it while operations may be running.
