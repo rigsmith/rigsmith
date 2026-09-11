@@ -91,3 +91,13 @@ SHA-256 `52dfc19153a48bde0cbd630453615c8151bce3a5adfac7a0aebfbf0a1e1f57e3`
 cover the native parser with backslash escaping enabled, including Windows
 recursive-star separator consumption. They do not compile native regexes or
 certify regex-engine limits and path/value matching behavior.
+
+Domain declaration rules use the same release's
+[`merge_permission_profiles` and `overlay_network_domain_permissions`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/config/src/permissions_toml.rs),
+[`upsert_domain_permission`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/network-proxy/src/config.rs#L229),
+and [`normalize_pattern`, domain expansion and allow/deny glob builders](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/network-proxy/src/policy.rs).
+They preserve sorted-map collision order, normalization at each inheritance
+boundary, and raw-pattern retention during final upserts. Domain glob syntax
+uses globset's default escaping (disabled on Windows), unlike MITM's explicit
+escaping. Native regex/glob-set compilation, constraints and actual matching
+remain outside these checks. All logic is offline; no runtime dependency is added.

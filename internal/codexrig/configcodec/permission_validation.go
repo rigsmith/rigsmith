@@ -211,8 +211,11 @@ func validatePermissionSelection(ctx context.Context, doc map[string]any, mode p
 		chain = append(chain, profile)
 		parent, exists := profile["extends"].(string)
 		if !exists || parent == ":read-only" || parent == ":workspace" {
-			// Both extensible built-ins have no MITM actions or hooks.
-			return validateInheritedMITMActions(ctx, chain)
+			// Both extensible built-ins have no explicit network declarations.
+			if err := validateInheritedMITMActions(ctx, chain); err != nil {
+				return err
+			}
+			return validateInheritedNetworkDomains(ctx, chain)
 		}
 		// :danger-full-access is selectable but not an extensible parent.
 		selected = parent

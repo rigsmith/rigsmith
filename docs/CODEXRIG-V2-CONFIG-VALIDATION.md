@@ -34,8 +34,8 @@ parsed copy now fills five known permission-map gaps from the same release; see
    validate the effective result. Tables merge recursively; arrays and scalars
    replace. A profile never inherits another profile's definitions. The release's
    memory-setting alias is canonicalized within each parsed layer before merge;
-   proposed restore bytes are unchanged. Permission-domain normalization remains
-   part of destination/runtime validation.
+   proposed restore bytes are unchanged. Selected permission-domain declaration checks follow native normalization
+   and glob syntax; full policy compilation remains destination/runtime work.
 3. Enforce native TOML numeric kinds and the schema's signed/unsigned widths,
    including uint16 ports and int32 values. A float such as `1.0` cannot satisfy
    an integer field. Nonfinite floats and TOML date/time values are refused;

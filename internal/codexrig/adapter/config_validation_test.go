@@ -343,3 +343,25 @@ func TestLayeredRestoreRejectsMalformedMatcherBeforeDestination(t *testing.T) {
 		t.Fatal("failed validation changed destination", readErr)
 	}
 }
+
+func TestLayeredRestoreRejectsMalformedDomainBeforeDestination(t *testing.T) {
+	root := t.TempDir()
+	original := "model='old'\ndefault_permissions='work'"
+	putConfig(t, root, "config.toml", original)
+	requirements := []byte("[permissions.work.network.domains]\n'private-[z-a].example.test'='deny'")
+	called := false
+	plan, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": "model='new'"}), configcodec.SupportedConfigVersion, func(context.Context) (configcodec.ValidationLayers, error) {
+		return configcodec.ValidationLayers{Requirements: requirements}, nil
+	}, func(context.Context, []ConfigFile) error { called = true; return nil })
+	if plan != nil {
+		plan.Close()
+		t.Fatal("malformed domain produced plan")
+	}
+	if !errors.Is(err, ErrConfigValidation) || called || strings.Contains(err.Error(), "private-") {
+		t.Fatal("malformed domain escaped validation", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(root, "config.toml"))
+	if readErr != nil || string(data) != original {
+		t.Fatal("failed validation changed destination", readErr)
+	}
+}
