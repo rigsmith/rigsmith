@@ -102,8 +102,6 @@ func TestValidationPinnedProviderReferences(t *testing.T) {
 		})
 	}
 	for _, config := range []string{
-		"[model_providers.openai]\nname='Ignored by native provider merge'",
-		"model_provider='ollama'\n[model_providers.openai]\nname='Ignored by native provider merge'",
 		"[model_providers.amazon-bedrock.aws]\nprofile='example'\nregion='us-east-1'",
 		"model_provider='custom'\n[model_providers.custom]\nname='Custom'",
 	} {

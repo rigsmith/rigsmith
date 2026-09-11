@@ -6,8 +6,8 @@ import (
 	"github.com/rigsmith/rigsmith/internal/codexrig/configcodec"
 )
 
-// PrepareVersionedConfigRestore requires both pinned structural validation and
-// the caller's destination-readiness checks. Destination checks must cover local
+// PrepareVersionedConfigRestore requires pinned schema/runtime rules and the
+// caller's destination-readiness checks. Destination checks must cover local
 // references, credentials, managed layers and runtime-only constraints, without
 // executing configured helpers or exposing private diagnostics. No command is
 // exposed and no files are written until the resulting plan is applied.

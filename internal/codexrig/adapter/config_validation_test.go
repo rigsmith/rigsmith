@@ -88,3 +88,39 @@ func TestVersionedRestoreRequiresSupportedVersionAndDestinationChecks(t *testing
 		t.Fatal(err)
 	}
 }
+
+func TestVersionedRestoreRejectsRuntimeRulesBeforeDestinationChecks(t *testing.T) {
+	for _, scenario := range []string{"incoming collision", "retained missing transport", "mixed profile transport"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			original := "model='old'"
+			backup := captureFiles(map[string]string{"config.toml": "model='new'"})
+			switch scenario {
+			case "incoming collision":
+				backup = captureFiles(map[string]string{"config.toml": "[model_providers.openai]\nname='Collision'"})
+			case "retained missing transport":
+				putConfig(t, root, "retained.config.toml", "[mcp_servers.example]\nenabled=false")
+			case "mixed profile transport":
+				original += "\n[mcp_servers.example]\ncommand='private-local-helper'"
+				putConfig(t, root, "retained.config.toml", "[mcp_servers.example]\nurl='https://example.com/mcp'")
+			}
+			putConfig(t, root, "config.toml", original)
+			called := false
+			p, err := PrepareVersionedConfigRestore(t.Context(), Root{CodexHome, root}, backup, configcodec.SupportedConfigVersion, func(context.Context, []ConfigFile) error {
+				called = true
+				return nil
+			})
+			if p != nil {
+				p.Close()
+				t.Fatal("invalid runtime configuration produced a plan")
+			}
+			if !errors.Is(err, ErrConfigValidation) || called {
+				t.Fatal("runtime checks did not gate destination callback", err)
+			}
+			data, readErr := os.ReadFile(filepath.Join(root, "config.toml"))
+			if readErr != nil || string(data) != original {
+				t.Fatal("failed preparation changed destination", readErr)
+			}
+		})
+	}
+}
