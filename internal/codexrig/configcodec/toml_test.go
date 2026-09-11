@@ -249,7 +249,7 @@ func TestInvalidDocumentsAndLimits(t *testing.T) {
 }
 
 func FuzzCaptureRestore(f *testing.F) {
-	for _, seed := range []string{"", "model = 'example'", "[env]\nKEY = 'private'", "items = [{ password = 'private' }]", "when = 2026-09-11"} {
+	for _, seed := range []string{"", "model = 'example'", "[env]\nKEY = 'private'", "items = [{ password = 'private' }]", "when = 2026-09-11", "unknown = '/source/path'", "model_instructions_file = 'relative.md'", "default_permissions = ':workspace'"} {
 		f.Add([]byte(seed))
 	}
 	f.Fuzz(func(t *testing.T, source []byte) {

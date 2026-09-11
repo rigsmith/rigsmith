@@ -23,8 +23,8 @@ var ErrConfigSourceChanged = files.ErrSourceChanged
 var ErrConfigNames = errors.New("Codex configuration filenames are not portable across supported platforms")
 
 // ConfigFile contains sanitized TOML for one native base/profile filename. Data
-// still needs path policy and final publication auditing; this is not a runnable
-// Codex config or a serialized backup format.
+// includes path policy but still needs final publication auditing; this is not
+// a runnable Codex config or a serialized backup format.
 type ConfigFile struct {
 	Path string
 	Data []byte
@@ -32,7 +32,7 @@ type ConfigFile struct {
 
 // ConfigCapture is an all-or-error, in-memory capture of selected config files.
 // Only codec output and relative names are retained. No root path or source
-// fingerprint is added; codec output still needs content/path policy.
+// fingerprint is added; codec output includes the conservative TOML path policy.
 // Missing directories fail capture rather than becoming a deletion instruction.
 type ConfigCapture struct{ Files []ConfigFile }
 

@@ -74,10 +74,12 @@ lifecycle; a failed capture must never be published as a partial result.
 The batch contains relative native names and codec output only. It has no source
 root metadata or raw-file fallback and is not yet a serialized backup format.
 The [TOML codec's limitations](CODEXRIG-V2-CONFIG-CODEC.md) still apply: unknown
-short secrets cannot be inferred reliably, arbitrary path values are not yet
-portable, and omitted helper/credential values may need local configuration.
+short secrets cannot be inferred reliably, and omitted helper/credential values
+may need local configuration. [TOML path policy](CODEXRIG-V2-CONFIG-PATHS.md)
+automatically omits machine-local settings and refuses explicit unclassified local
+references in every selected file; arbitrary strings are not proven portable.
 
-Complete TOML path policy, guarded destination file replacement, usable-config
+Guarded destination file replacement, usable-config
 validation, structured hooks/customizations, independent CodexRig state/repository
 and sync/restore commands remain in 8b. The internal codec/capture changesets are deferred until a user-facing workflow
 uses them; these prerequisites should not announce unavailable features.
