@@ -4,16 +4,18 @@ description: >
   Use the rigsmith CLI family — rig (convention-first dev launcher: build/test/run/
   format/lint/typecheck/coverage/kill/worktree across .NET, Node, Go, Rust),
   changerig (changesets), shiprig (releases/publish), and clauderig (sync Claude Code
-  config across machines, v2 queued sync + worktree/PR guard). Invoke whenever the work involves
+  config across machines, v2 queued sync + worktree/PR guard), plus codexrig
+  (v2 read-only Codex source inventory). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
-  cutting or publishing a release, creating worktrees/branches, or syncing Claude
+  cutting or publishing a release, creating worktrees/branches, inspecting Codex
+  portability candidates, or syncing Claude
   Code setup, preparing or admitting queued requests from hook payloads, recovering
   their saved inbox, managing its saved sync
   queue, or using manual queue sync with
   confirmed acknowledgement, dry-run previews or transcript flushing. Queued workers
   capture eligible requested sessions/subagents completely while unrelated plain
-  transcripts keep normal throttling. Invoke even if the user names a raw tool (go/dotnet/npm/cargo) instead of rig.
-allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
+  transcripts keep normal throttling. Use even for raw go/dotnet/npm/cargo requests.
+allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(codexrig:*), Bash(command -v:*), Bash(which:*)
 ---
 
 # rigsmith tools
@@ -28,6 +30,7 @@ runs the right native command, sharing one project-detection engine.
 | `changerig` (alias `changeset`) | changesets | recording a user-facing change, bumping versions, writing CHANGELOG |
 | `shiprig` | releases | publishing to registries, tagging, the release pipeline |
 | `clauderig` | Claude Code config sync + guard | syncing `~/.claude` across machines, v2 queue/retry/drain, worktree/PR discipline |
+| `codexrig` | Codex v2 source preview | read-only configuration/customization inventory; no sync or restore yet |
 
 **First, confirm they're installed:** `command -v rig`. If missing, install from a
 rigsmith checkout with `rig source-install` (stable binaries) or `rig dev-install`
@@ -331,3 +334,15 @@ or selecting another destination, reconcile the pinned runtime and inbox and
 stop its worker. Missing/corrupt retained state or pending work blocks re-enable.
 Both old and requested runtime bindings must validate; restore prior configuration
 to reconcile if needed. Preserve the old recovery records after a successful switch.
+
+
+## codexrig — source inventory preview
+
+Build `./cmd/codexrig` from the v2 checkout to a task-local output path; release
+installers do not ship it yet. `codexrig inspect [--json]` inventories names and
+metadata under `CODEX_HOME` (default `~/.codex`) and `~/.agents/skills`; absolute
+`--codex-home` and `--skills-dir` overrides select isolated fixtures. A candidate
+still needs its named capture/secret policy. Do not treat this output as a backup,
+secret scan or native-session recovery test. Sync, restore and queue commands are
+not implemented. Keep Codex/Claude state separate and do not install or execute
+candidate hooks. See `docs/CODEXRIG-V2-FOUNDATION.md` in the source checkout.

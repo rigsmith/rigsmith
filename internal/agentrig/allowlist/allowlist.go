@@ -2,6 +2,7 @@
 package allowlist
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path"
@@ -123,9 +124,21 @@ type Link struct {
 // directory as a file and abort the sync. When its target resolves inside root to
 // an included path it is reported as a Link; other directory links are dropped.
 func Walk(root string, l List) ([]string, []Link, error) {
+	return WalkContext(context.Background(), root, l)
+}
+
+// WalkContext applies the same policy as Walk, checking cancellation between
+// entries. Filesystem syscalls themselves cannot be interrupted by the context.
+func WalkContext(ctx context.Context, root string, l List) ([]string, []Link, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	var out []string
 	var links []Link
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if canceled := ctx.Err(); canceled != nil {
+			return canceled
+		}
 		if err != nil {
 			// A live source tree churns under us; an entry that vanished between
 			// listing and visiting must not abort the walk — skip it.
@@ -166,6 +179,9 @@ func Walk(root string, l List) ([]string, []Link, error) {
 		return nil
 	})
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 	sort.Strings(out)
