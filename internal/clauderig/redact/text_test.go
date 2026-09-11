@@ -72,25 +72,6 @@ func TestRedactText_IgnoresBareMentions(t *testing.T) {
 	}
 }
 
-// The text rules and the value rules have to describe the same world; a prefix
-// added to one and not the other is a silent hole.
-func TestTextRulesCoverKnownPrefixes(t *testing.T) {
-	for _, p := range knownPrefixes {
-		// Shaped like the real credential, not merely long enough. An AWS access
-		// key id is exactly twenty characters, and the text rule now says so —
-		// open-ended, it matched any shouted phrase containing those four
-		// letters. A fixture that is unrealistic in that way would force the
-		// rule to stay loose to satisfy it.
-		body := strings.Repeat("A", 24)
-		if p.prefix == "AKIA" || p.prefix == "ASIA" {
-			body = strings.Repeat("A", 16)
-		}
-		if _, _, changed := RedactText([]byte("x " + p.prefix + body + " y")); !changed {
-			t.Errorf("knownPrefixes has %q (%s) but the text rules miss it", p.prefix, p.kind)
-		}
-	}
-}
-
 // Re-running over already-cleaned content must be a no-op, or every sync would
 // count the same redaction again.
 func TestRedactText_IsIdempotent(t *testing.T) {

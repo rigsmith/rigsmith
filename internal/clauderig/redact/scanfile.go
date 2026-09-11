@@ -5,6 +5,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/secrets"
 )
 
 // Non-JSON tripwire.
@@ -256,7 +258,7 @@ func ScanFile(rel string, data []byte) []Finding {
 		return []Finding{{Path: rel, Kind: "auth-config"}}
 	}
 	// A PEM private key block is unambiguous wherever it appears.
-	if pemRe.Match(data) {
+	if secrets.HasPrivateKey(data) {
 		return []Finding{{Path: rel, Kind: "private-key"}}
 	}
 	// The whole file being one opaque token is the other unambiguous shape: a
@@ -268,7 +270,7 @@ func ScanFile(rel string, data []byte) []Finding {
 		// A complete signature match still uses the shared prose decision.
 		// Otherwise the small-file fallback would re-flag a phrase that the
 		// stream scanner and rewriter both intentionally left alone.
-		if textSecretRe.FindString(s) == s && !IsCredentialMatch(s) {
+		if secrets.FullTextMatch(s) && !IsCredentialMatch(s) {
 			return nil
 		}
 		if kind, ok := LooksSecret(s); ok {
