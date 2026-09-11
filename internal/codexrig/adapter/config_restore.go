@@ -37,7 +37,8 @@ type ConfigRestoreChange struct {
 // Private bytes and fingerprints are deliberately unexported and never appear
 // in its formatted representation. Close every plan. Methods are sequential;
 // Check detects observed changes, not concurrent writers after the last check.
-// This preparation API does not write files or install a usable-config validator.
+// Preparation does not write files; Apply consumes the plan for replacement.
+// The caller supplies the supported-version validator.
 type ConfigRestorePlan struct {
 	source      configSource
 	closeSource func() error
@@ -232,7 +233,7 @@ func prepareConfigRestore(ctx context.Context, source configSource, incoming []C
 }
 
 func (p *ConfigRestorePlan) destinationNames(ctx context.Context) ([]string, error) {
-	names, err := p.source.Names(ctx, maxConfigDirectoryEntries)
+	names, err := configDirectoryNames(ctx, p.source, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -246,20 +247,31 @@ func (p *ConfigRestorePlan) destinationNames(ctx context.Context) ([]string, err
 	}
 	// Detect case aliases even when Classify would exclude them, e.g.
 	// CONFIG.TOML beside an incoming config.toml on a case-sensitive machine.
+	proposedCount := len(names)
 	for _, incoming := range p.incoming {
+		present := false
 		for _, name := range names {
 			if name != incoming && strings.EqualFold(name, incoming) {
 				return nil, ErrConfigNames
 			}
+			present = present || name == incoming
 		}
+		if !present {
+			proposedCount++
+		}
+	}
+	// Refuse a restore that would exceed the user-entry bound after creation,
+	// before staging or installing any files.
+	if proposedCount > maxConfigDirectoryEntries {
+		return nil, files.ErrSourceLimit
 	}
 	return configNames(names)
 }
 
 // Check re-reads the pinned destination and detects edits, profile arrivals or
 // removals since preparation, including same-size edits with restored mtimes.
-// A future writer must check immediately before replacement under its own writer
-// coordination. This is not an atomic filesystem compare-and-swap or apply API.
+// Apply also checks immediately before each replacement under writer ownership.
+// This check is not an atomic filesystem compare-and-swap.
 func (p *ConfigRestorePlan) Check(ctx context.Context) error {
 	if p.closed || p.source == nil {
 		return ErrConfigPlanClosed
