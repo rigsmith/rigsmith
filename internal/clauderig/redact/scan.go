@@ -27,6 +27,11 @@ type Finding struct {
 	File bool
 }
 
+// KindUnreadable marks a file that could not be read at all. It stops a sync
+// like a credential does, and it is neither credential material nor a value —
+// so anything rendering a refusal has to be able to tell it apart.
+const KindUnreadable = "unreadable"
+
 // knownPrefixes are near-zero-false-positive credential shapes.
 var knownPrefixes = []struct {
 	kind   string

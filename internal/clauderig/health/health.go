@@ -147,7 +147,7 @@ func Of(info status.Info, last journal.Record) Report {
 		r.Level, r.Reason = Red, ReasonLastRunRefused
 		// Through the journal's own renderer: this line and `clauderig status`
 		// describe one event, and the two sentences had already drifted apart.
-		r.Summary = "Sync refused — " + journal.LeakPhrase(len(last.Leaks), last.LeakFiles)
+		r.Summary = "Sync refused — " + journal.LeakPhrase(len(last.Leaks), last.LeakFiles, last.LeakUnread)
 
 	case last.Outcome == journal.OutcomeFailed:
 		r.Level, r.Reason = Red, ReasonLastRunFailed

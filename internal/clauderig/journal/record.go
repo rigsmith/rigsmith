@@ -2,8 +2,10 @@ package journal
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 // Summary renders the record as one human line. It lives here rather than in
@@ -18,7 +20,7 @@ func (r Record) Summary() string {
 	case OutcomeRefused:
 		// Say what was caught and that nothing was pushed. "Refused" alone
 		// reads as a malfunction rather than as the tripwire doing its job.
-		return "Refused to push — " + LeakPhrase(len(r.Leaks), r.LeakFiles)
+		return "Refused to push — " + LeakPhrase(len(r.Leaks), r.LeakFiles, r.LeakUnread)
 	case OutcomeFailed:
 		if r.Error != "" {
 			return r.Op.verb() + " failed: " + r.Error
@@ -93,20 +95,44 @@ func (o Op) verb() string {
 // The distinction is not pedantry. A value means the redactor missed a key
 // inside a file worth syncing; a file means something is in the allowlist that
 // should not be. They send you to different places.
-func LeakPhrase(total, files int) string {
-	values := total - files
-	switch {
-	case files > 0 && values > 0:
-		return fmt.Sprintf("%s of credential material and %s that %s like %s",
-			plural(files, "file", "files"), plural(values, "value", "values"),
-			verb(values), article(values, "a credential", "credentials"))
-	case files > 0:
-		return fmt.Sprintf("%s %s credential material",
-			plural(files, "file", "files"), beVerb(files))
-	default:
-		return fmt.Sprintf("%s %s like %s",
+func LeakPhrase(total, files, unread int) string {
+	values := total - files - unread
+	var parts []string
+	if files > 0 {
+		parts = append(parts, fmt.Sprintf("%s of credential material",
+			plural(files, "file", "files")))
+	}
+	if values > 0 {
+		parts = append(parts, fmt.Sprintf("%s that %s like %s",
 			plural(values, "value", "values"), verb(values),
-			article(values, "a credential", "credentials"))
+			article(values, "a credential", "credentials")))
+	}
+	if unread > 0 {
+		// Its own clause, because it has its own remedy. Folded into "credential
+		// material" it told people a key had been found in a file that had in
+		// fact only failed to open.
+		parts = append(parts, fmt.Sprintf("%s that could not be read",
+			plural(unread, "file", "files")))
+	}
+	switch len(parts) {
+	case 0:
+		return "nothing"
+	case 1:
+		// One clause reads better as a sentence than as a list item: "1 file is
+		// credential material", not "1 file of credential material".
+		switch {
+		case files > 0:
+			return fmt.Sprintf("%s %s credential material", plural(files, "file", "files"), beVerb(files))
+		case values > 0:
+			return fmt.Sprintf("%s %s like %s", plural(values, "value", "values"),
+				verb(values), article(values, "a credential", "credentials"))
+		default:
+			return fmt.Sprintf("%s could not be read", plural(unread, "file", "files"))
+		}
+	case 2:
+		return parts[0] + " and " + parts[1]
+	default:
+		return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 	}
 }
 
@@ -182,7 +208,10 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 		}
 		for _, f := range rep.Findings {
 			rec.Leaks = append(rec.Leaks, Leak{Path: f.Path, Kind: f.Kind})
-			if f.File {
+			switch {
+			case f.Kind == redact.KindUnreadable:
+				rec.LeakUnread++
+			case f.File:
 				rec.LeakFiles++
 			}
 		}

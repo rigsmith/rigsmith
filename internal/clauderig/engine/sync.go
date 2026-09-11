@@ -907,12 +907,12 @@ func applyKeepFilter(rootID, rel string, v any) any {
 func scanNonJSON(srcPath, rel string) *redact.Finding {
 	f, err := transcript.Open(srcPath)
 	if err != nil {
-		return &redact.Finding{Path: rel, Kind: "unreadable", File: true}
+		return &redact.Finding{Path: rel, Kind: redact.KindUnreadable, File: true}
 	}
 	defer f.Close()
 	found, err := redact.ScanReader(rel, f)
 	if err != nil {
-		return &redact.Finding{Path: rel, Kind: "unreadable", File: true}
+		return &redact.Finding{Path: rel, Kind: redact.KindUnreadable, File: true}
 	}
 	return found
 }

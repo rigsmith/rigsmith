@@ -33,6 +33,11 @@ func ScanReader(rel string, r io.Reader) (*Finding, error) {
 	var total int64
 	var jwt jwtStream
 	var escapedJWT escapedJWTStream
+	// The first VALUE found, held rather than returned: a whole-file verdict
+	// later in the stream outranks it. Scanning therefore continues past a
+	// value hit — which only happens on a file that is about to stop the sync
+	// anyway, so the extra reading is paid on the rarest path.
+	var pending *Finding
 	for {
 		n, err := io.ReadFull(r, buf[kept:kept+block])
 		data := buf[:kept+n]
@@ -56,14 +61,24 @@ func ScanReader(rel string, r io.Reader) (*Finding, error) {
 			small = nil
 		}
 		total += int64(n)
-		if jwt.feed(buf[kept:kept+n]) || escapedJWT.feed(buf[kept:kept+n]) {
+		if pending == nil && (jwt.feed(buf[kept:kept+n]) || escapedJWT.feed(buf[kept:kept+n])) {
 			// A token found INSIDE the stream: a value, not a file that is
 			// credential material. A transcript with a JWT in it is a
 			// transcript, and the remedy is the value.
-			return &Finding{Path: rel, Kind: "jwt"}, nil
+			pending = &Finding{Path: rel, Kind: "jwt"}
 		}
 		if finding := scanText(rel, data); finding != nil {
-			return finding, nil
+			// A verdict about the FILE outranks anything found inside it, and
+			// has to, because the two lead to different remedies: exclude the
+			// file, or let the redactor scrub a value. Returning on the first
+			// hit meant a file with a JWT above its PEM block was classified by
+			// whichever came first in the bytes.
+			if finding.File {
+				return finding, nil
+			}
+			if pending == nil {
+				pending = finding
+			}
 		}
 		if err != nil {
 			if err != io.EOF && err != io.ErrUnexpectedEOF {
@@ -76,7 +91,9 @@ func ScanReader(rel string, r io.Reader) (*Finding, error) {
 					return &fs[0], nil
 				}
 			}
-			return nil, nil
+			// Nothing said the file itself is credential material, so a value
+			// held from earlier is the answer after all.
+			return pending, nil
 		}
 		kept = min(overlap, len(data))
 		copy(buf, data[len(data)-kept:])

@@ -142,6 +142,11 @@ type Record struct {
 	// Older records have no such field and read as zero, which renders them the
 	// way they always were rendered — as values.
 	LeakFiles int `json:"leakFiles,omitempty"`
+	// LeakUnread is how many could not be read at all. Neither of the other
+	// two: a file nobody could open is not credential material, and it is
+	// certainly not a value inside one. It stops the sync like both, and it
+	// has a different remedy from either.
+	LeakUnread int `json:"leakUnread,omitempty"`
 
 	// RedactedFiles names the files behind Redactions. The count alone said a
 	// secret was caught but not where, which is the only part anyone can act on.

@@ -15,19 +15,25 @@ import (
 //	1 file(s) are credential material  ← what the journal recorded, same event
 func TestLeakPhraseAgreesWithItsOwnCount(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		total, file int
-		want        string
+		name                string
+		total, file, unread int
+		want                string
 	}{
-		{"one value", 1, 0, "1 value looks like a credential"},
-		{"several values", 4, 0, "4 values look like credentials"},
-		{"one file", 1, 1, "1 file is credential material"},
-		{"several files", 3, 3, "3 files are credential material"},
-		{"one of each", 2, 1, "1 file of credential material and 1 value that looks like a credential"},
-		{"some of each", 5, 2, "2 files of credential material and 3 values that look like credentials"},
+		{"one value", 1, 0, 0, "1 value looks like a credential"},
+		{"several values", 4, 0, 0, "4 values look like credentials"},
+		{"one file", 1, 1, 0, "1 file is credential material"},
+		{"several files", 3, 3, 0, "3 files are credential material"},
+		{"one of each", 2, 1, 0, "1 file of credential material and 1 value that looks like a credential"},
+		{"some of each", 5, 2, 0, "2 files of credential material and 3 values that look like credentials"},
+		// Unreadable is neither of the other two, and saying so is the whole
+		// point: a file nobody could open has not been shown to hold anything.
+		{"one unreadable", 1, 0, 1, "1 file could not be read"},
+		{"unreadable among files", 3, 2, 1, "2 files of credential material and 1 file that could not be read"},
+		{"all three", 4, 1, 1, "1 file of credential material, 2 values that look like credentials and 1 file that could not be read"},
 	} {
-		if got := LeakPhrase(tc.total, tc.file); got != tc.want {
-			t.Errorf("%s: LeakPhrase(%d, %d) = %q, want %q", tc.name, tc.total, tc.file, got, tc.want)
+		if got := LeakPhrase(tc.total, tc.file, tc.unread); got != tc.want {
+			t.Errorf("%s: LeakPhrase(%d, %d, %d) = %q, want %q",
+				tc.name, tc.total, tc.file, tc.unread, got, tc.want)
 		}
 	}
 }

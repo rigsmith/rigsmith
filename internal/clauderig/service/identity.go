@@ -61,6 +61,12 @@ func scanIdentity(a *devices.Account) *redact.Finding {
 		if found := redact.ScanFile(f.name, []byte(f.value)); len(found) > 0 {
 			hit := found[0]
 			hit.Path = f.name
+			// ScanFile answers a question about a FILE, and it is borrowed here
+			// to judge one scalar. Its File verdict does not survive the change
+			// of subject: an identity value that looks like a token is a value,
+			// and carrying the flag would have a refusal say a file is
+			// credential material when no file was examined.
+			hit.File = false
 			return &hit
 		}
 	}
