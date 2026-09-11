@@ -1,6 +1,12 @@
 package journal
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
+)
 
 // The bug this pins: a plural noun helper with the verb written out beside it,
 // which read correctly for every number except the commonest one.
@@ -45,6 +51,29 @@ func TestSummaryNamesAFileAsAFile(t *testing.T) {
 		LeakFiles: 1,
 	}
 	if got, want := r.Summary(), "Refused to push — 1 file is credential material"; got != want {
+		t.Errorf("Summary() = %q, want %q", got, want)
+	}
+}
+
+// The count is DERIVED from the findings, so the two ways a whole-file finding
+// can appear — during the walk, and from the post-copy audit — both land in it.
+// The version this replaces counted during the walk only: an audit-only finding
+// was recorded as a value, and a report that returned before the audit carried
+// a count of zero beside a list of findings.
+func TestFromSyncCountsFileFindingsWhereverTheyCameFrom(t *testing.T) {
+	rec := FromSync("mbp", &engine.Report{Findings: []redact.Finding{
+		{Path: "cli/a/id_rsa", Kind: "private-key", File: true},
+		{Path: "cli/b.json:token", Kind: "anthropic-key"},
+		{Path: "cli/c/.audit-key", Kind: "key-material", File: true},
+	}}, errors.New("secret tripwire: refusing to sync"))
+	if rec.LeakFiles != 2 {
+		t.Errorf("LeakFiles = %d, want both whole-file findings", rec.LeakFiles)
+	}
+	if len(rec.Leaks) != 3 {
+		t.Errorf("Leaks = %d, want every finding", len(rec.Leaks))
+	}
+	if got, want := rec.Summary(),
+		"Refused to push — 2 files of credential material and 1 value that looks like a credential"; got != want {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 }

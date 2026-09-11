@@ -85,13 +85,22 @@ type Report struct {
 	SidecarsPruned   int              // staged Desktop sidecars removed as orphaned
 	LedgerError      string           // why the ledger could not be updated ("" = fine); never fatal
 	Findings         []redact.Finding // non-empty ⇒ Sync returned an error (tripwire)
-	// CredentialFiles is how many of Findings are whole FILES of credential
-	// material rather than values inside one. The two need different remedies —
-	// a value means the redactor's key rules missed something, a file means it
-	// should never have been in the allowlist — and until this was carried out
-	// of the engine, everything downstream called both "values", which sent
-	// somebody looking for a JSON field that did not exist.
-	CredentialFiles int
+}
+
+// CredentialFiles counts the findings that are whole files of credential
+// material rather than values inside one.
+//
+// Derived, never accumulated. A counter has to be right at every append and
+// every early return; this cannot be wrong, because it reads the same list the
+// caller is about to be handed.
+func (r Report) CredentialFiles() int {
+	n := 0
+	for _, f := range r.Findings {
+		if f.File {
+			n++
+		}
+	}
+	return n
 }
 
 // Options configure a sync.
@@ -261,7 +270,6 @@ func Sync(opts Options) (*Report, error) {
 	rep := &Report{}
 	// Findings from whole files, tracked apart from JSON-value findings because the
 	// two need different remedies in the error message.
-	credentialFiles := 0
 	policy := redact.DefaultPolicy()
 
 	var cutoff time.Time
@@ -372,9 +380,8 @@ func Sync(opts Options) (*Report, error) {
 			if !isJSON {
 				noteFinding := func(f *redact.Finding) {
 					rep.Findings = append(rep.Findings, redact.Finding{
-						Path: r.ID + "/" + f.Path, Kind: f.Kind,
+						Path: r.ID + "/" + f.Path, Kind: f.Kind, File: f.File,
 					})
-					credentialFiles++
 				}
 				// Redaction can shrink a chunk-eligible source into a native
 				// snapshot. Apply the physical-file cap to those resulting bytes.
@@ -401,7 +408,7 @@ func Sync(opts Options) (*Report, error) {
 				// an earlier sync (or before this check existed) must keep failing until
 				// it is dealt with, rather than being hidden forever by that skip.
 				if redact.ClassifyName(rel) == redact.NameKeyMaterial {
-					noteFinding(&redact.Finding{Path: rel, Kind: "key-material"})
+					noteFinding(&redact.Finding{Path: rel, Kind: "key-material", File: true})
 					continue
 				}
 
@@ -469,7 +476,7 @@ func Sync(opts Options) (*Report, error) {
 					hits, rerr := redactTranscript(dstPath, srcPath, info.ModTime())
 					switch {
 					case errors.Is(rerr, errPrivateKeyInTranscript):
-						noteFinding(&redact.Finding{Path: rel, Kind: "private-key"})
+						noteFinding(&redact.Finding{Path: rel, Kind: "private-key", File: true})
 						continue
 					case errors.Is(rerr, errBinaryContent):
 						// Binary after a text-looking head. Fall through to the
@@ -775,12 +782,11 @@ func Sync(opts Options) (*Report, error) {
 	// staged from. Recorded even when the tripwire refuses below: the files
 	// were still copied, and the reason to distrust their mtimes is gone.
 	writeStageClock(opts.StagingDir, startedAt)
-	rep.CredentialFiles = credentialFiles
 	if len(rep.Findings) > 0 {
 		// The two halves of the wire need different remedies, so say which one
 		// fired: a JSON value means the redactor's key rules missed something, a
 		// whole file means it should never have been in the allowlist.
-		files := credentialFiles
+		files := rep.CredentialFiles()
 		switch {
 		case files == len(rep.Findings):
 			return rep, fmt.Errorf("secret tripwire: %d file(s) are credential material and cannot be redacted; refusing to sync — exclude them from the allowlist or remove them", files)
@@ -891,15 +897,22 @@ func applyKeepFilter(rootID, rel string, v any) any {
 }
 
 // scanNonJSON checks the entire staged stream and fails closed on read errors.
+//
+// An unreadable file is marked File as well, though it is not credential
+// material and the summary will call it such. The alternative reads worse: the
+// other category is "a value inside a file", and a file nobody could open is
+// certainly not that. What the two categories are really steering you toward is
+// the remedy, and the remedy here is the file — the Kind is recorded as
+// "unreadable" for anyone who looks past the sentence.
 func scanNonJSON(srcPath, rel string) *redact.Finding {
 	f, err := transcript.Open(srcPath)
 	if err != nil {
-		return &redact.Finding{Path: rel, Kind: "unreadable"}
+		return &redact.Finding{Path: rel, Kind: "unreadable", File: true}
 	}
 	defer f.Close()
 	found, err := redact.ScanReader(rel, f)
 	if err != nil {
-		return &redact.Finding{Path: rel, Kind: "unreadable"}
+		return &redact.Finding{Path: rel, Kind: "unreadable", File: true}
 	}
 	return found
 }

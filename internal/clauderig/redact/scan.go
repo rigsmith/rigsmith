@@ -8,10 +8,23 @@ import (
 	"strings"
 )
 
-// Finding is one string value that looks like a credential.
+// Finding is one thing that looks like a credential: a string value inside a
+// parsed file, or a whole file that is credential material.
 type Finding struct {
-	Path string // dotted JSON path
+	Path string // dotted JSON path, or the file's path when File is set
 	Kind string // why it tripped (e.g. "anthropic-key", "jwt", "high-entropy")
+	// File marks a WHOLE file of credential material, as opposed to a value
+	// found inside one. The two need different remedies — a value means the
+	// redactor's key rules missed something, a file means it should never have
+	// been in the allowlist — and the difference is only knowable here, where
+	// the finding is made.
+	//
+	// Carried on the finding rather than counted as they are produced. A count
+	// has to be maintained at every append and every early return, and the
+	// first version of this missed both: findings appended by the post-copy
+	// audit were never counted, and a report returned before the audit carried
+	// a count of zero beside a list of findings.
+	File bool
 }
 
 // knownPrefixes are near-zero-false-positive credential shapes.

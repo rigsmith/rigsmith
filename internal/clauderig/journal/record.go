@@ -182,8 +182,10 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 		}
 		for _, f := range rep.Findings {
 			rec.Leaks = append(rec.Leaks, Leak{Path: f.Path, Kind: f.Kind})
+			if f.File {
+				rec.LeakFiles++
+			}
 		}
-		rec.LeakFiles += rep.CredentialFiles
 	}
 
 	if serr != nil {

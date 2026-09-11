@@ -16,7 +16,7 @@ import (
 // Only the rule and path are returned; secret bytes never enter diagnostics.
 func ScanReader(rel string, r io.Reader) (*Finding, error) {
 	if ClassifyName(rel) == NameKeyMaterial {
-		return &Finding{Path: rel, Kind: "key-material"}, nil
+		return &Finding{Path: rel, Kind: "key-material", File: true}, nil
 	}
 	const block = 32 << 10
 	const overlap = 4096
@@ -51,7 +51,7 @@ func ScanReader(rel string, r io.Reader) (*Finding, error) {
 		}
 		total += int64(n)
 		if jwt.feed(buf[kept:kept+n]) || escapedJWT.feed(buf[kept:kept+n]) {
-			return &Finding{Path: rel, Kind: "jwt"}, nil
+			return &Finding{Path: rel, Kind: "jwt", File: true}, nil
 		}
 		if finding := scanText(rel, data); finding != nil {
 			return finding, nil
@@ -85,15 +85,15 @@ func scanText(rel string, data []byte) *Finding {
 	})
 	normalized = bytes.ReplaceAll(normalized, []byte(`\/`), []byte(`/`))
 	if ClassifyName(rel) == NameAuthConfig && hasAuthAssignment(string(normalized)) {
-		return &Finding{Path: rel, Kind: "auth-config"}
+		return &Finding{Path: rel, Kind: "auth-config", File: true}
 	}
 	if HasPrivateKey(normalized) {
-		return &Finding{Path: rel, Kind: "private-key"}
+		return &Finding{Path: rel, Kind: "private-key", File: true}
 	}
 	for _, loc := range textSecretRe.FindAllIndex(normalized, -1) {
 		token := string(normalized[loc[0]:loc[1]])
 		if IsCredentialMatch(token) {
-			return &Finding{Path: rel, Kind: kindOf(token)}
+			return &Finding{Path: rel, Kind: kindOf(token), File: true}
 		}
 	}
 	return nil
