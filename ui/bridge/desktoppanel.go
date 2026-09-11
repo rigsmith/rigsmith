@@ -61,6 +61,16 @@ type PanelView struct {
 	// store knows them — but whether they are open is unknown, and saying
 	// "closed" would send a click to launch a second window.
 	Error string `json:"error,omitempty"`
+	// StoreError is a profile store that could not be read: a different state
+	// with a different sentence, which the notice already separates. Sharing
+	// one field made the popover say "could not read the process list" about a
+	// store it had not managed to open.
+	StoreError string `json:"storeError,omitempty"`
+	// CanRaise is whether this platform can bring one named window forward.
+	// Where it cannot, an open row goes through the CLI like a closed one
+	// rather than calling a raise that returns "unsupported" into a page with
+	// nowhere to print it.
+	CanRaise bool `json:"canRaise"`
 }
 
 // Panel reads everything the popover needs.
@@ -75,10 +85,14 @@ func (d *Desktop) Panel(ctx context.Context) (PanelView, error) {
 		v.Level, v.Summary = "amber", "status unavailable"
 	}
 
+	v.CanRaise = desktop.RaiseSupported()
+
+	// A store that will not open is not a reason to skip the process scan: the
+	// machine-wide app is found by scanning, has nothing to do with the store,
+	// and returning here reported it as closed while it was on screen.
 	profiles, lerr := d.profiles()
 	if lerr != nil {
-		v.Error = lerr.Error()
-		return v, nil
+		v.StoreError = lerr.Error()
 	}
 
 	// One scan for every profile, rather than one per profile: the popover is

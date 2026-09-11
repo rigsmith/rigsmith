@@ -106,15 +106,21 @@ func TestPanelReportsAFailedScanAndStillListsProfiles(t *testing.T) {
 	}
 }
 
-// An unreadable store is its own state: there are no profiles to list, and
-// saying so beats an empty list that reads as "you have none".
-func TestPanelReportsAnUnreadableStore(t *testing.T) {
+// An unreadable store is its own state, in its own field: there are no profiles
+// to list, and saying so beats an empty list that reads as "you have none".
+// Reported apart from Error, which is the process scan — one field for both had
+// the popover announcing an unreadable process list when what had failed was
+// opening the store.
+func TestPanelReportsAnUnreadableStoreApartFromTheScan(t *testing.T) {
 	v, err := panelDesktop(t, nil, nil, errors.New("store unreadable")).Panel(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Error == "" || !strings.Contains(v.Error, "store unreadable") {
-		t.Errorf("Error = %q, want the store failure", v.Error)
+	if !strings.Contains(v.StoreError, "store unreadable") {
+		t.Errorf("StoreError = %q, want the store failure", v.StoreError)
+	}
+	if v.Error != "" {
+		t.Errorf("Error = %q, want the scan's field left alone", v.Error)
 	}
 }
 
@@ -127,5 +133,48 @@ func TestPanelCarriesAStatusLine(t *testing.T) {
 	}
 	if v.Level == "" {
 		t.Error("no level for the popover's status dot")
+	}
+}
+
+// A store that will not open is not a reason to skip the process scan: the
+// machine-wide app is found by scanning, has nothing to do with the store, and
+// returning early reported it as closed while it was on screen.
+func TestPanelStillFindsTheMainAppWhenTheStoreFails(t *testing.T) {
+	d := newTestDesktop(fakeDesktop{instances: []desktop.Instance{
+		{PID: 5, Command: "/Applications/Claude.app/Contents/MacOS/Claude"},
+	}}, nil, errors.New("store unreadable"))
+	v, err := d.Panel(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.MainOpen || v.MainPID != 5 {
+		t.Errorf("main = open:%v pid:%d, want it found despite the store", v.MainOpen, v.MainPID)
+	}
+	if v.StoreError == "" {
+		t.Error("the store failure was not reported")
+	}
+	if v.Error != "" {
+		t.Errorf("Error = %q — a store failure is not a scan failure", v.Error)
+	}
+}
+
+// Two profiles whose directories share a prefix must not share a pid. A
+// substring test on the command line gives one window to both rows.
+func TestPanelDoesNotGiveOneWindowToTwoProfiles(t *testing.T) {
+	dirs := map[string]string{"work": "/store/work/data", "workold": "/store/work/data-old"}
+	v, err := panelDesktop(t, []desktop.Instance{
+		{PID: 31, DataDir: "/store/work/data-old", Command: cmdFor("/store/work/data-old")},
+	}, dirs, nil).Panel(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := map[string]int{}
+	for _, p := range v.Profiles {
+		if p.Open {
+			open[p.Name] = p.PID
+		}
+	}
+	if len(open) != 1 || open["workold"] != 31 {
+		t.Errorf("open profiles = %v, want only workold on pid 31", open)
 	}
 }

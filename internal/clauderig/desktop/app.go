@@ -110,8 +110,27 @@ func HasDataDir(command string) bool {
 // CommandHasDataDir reports whether a command line names exactly this data
 // directory. The comment above dataDirFromCommand has promised this function
 // for a while; it is here now, and the callers that decide identity use it.
+//
+// EXACTLY, which a substring test does not give: "/store/work/data" is a prefix
+// of "/store/work/data-old", so a plain Contains would let `desktop open work`
+// raise a window belonging to another profile — and the popover would show one
+// pid on two rows. The value has to end where the argument ends.
 func CommandHasDataDir(command, dataDir string) bool {
-	return strings.Contains(stripCommandQuotes(command), userDataFlag(dataDir))
+	needle := userDataFlag(dataDir)
+	rest := stripCommandQuotes(command)
+	for {
+		i := strings.Index(rest, needle)
+		if i < 0 {
+			return false
+		}
+		after := rest[i+len(needle):]
+		// End of the command, or the start of the next argument. Anything else
+		// means the value carries on and this is a different directory.
+		if after == "" || after[0] == ' ' || after[0] == '\t' {
+			return true
+		}
+		rest = rest[i+len(needle):]
+	}
 }
 
 // stripCommandQuotes normalises the quoting Windows puts around paths with

@@ -181,10 +181,10 @@ function render(v) {
 
   if (!v.installed) {
     list.append(el('div', 'empty', 'Claude Desktop is not installed on this machine.'));
-  } else if (!v.profiles || v.profiles.length === 0) {
+  } else if ((!v.profiles || v.profiles.length === 0) && !v.storeError) {
     list.append(el('div', 'empty',
       'No profiles yet — `clauderig desktop add <name>` makes one per account.'));
-  } else {
+  } else if (v.profiles) {
     for (const p of v.profiles) {
       const mono = monogramFor(p.email || p.name);
       list.append(row({
@@ -196,9 +196,12 @@ function render(v) {
         title: p.open ? `Bring ${p.name} to the front` : `Open ${p.name}`,
         // Open: raise that pid, the same call the tray menu's rows make, so one
         // window cannot behave two ways depending on which surface asked for
-        // it. Closed: there is no pid to raise, and only the CLI knows how to
-        // launch a profile properly.
-        run: () => p.open
+        // it. Closed, or a platform that cannot name one window of several:
+        // the CLI, which launches a profile properly and — where raising is
+        // unsupported — activates the application, the best that platform
+        // allows. Calling raise anyway would return "unsupported" into a page
+        // with nowhere to print it, so every row would look inert.
+        run: () => (p.open && v.canRaise)
           ? Call.ByName(DESKTOP_RAISE, p.pid)
           : Call.ByName(ACCOUNTS_DESKTOP, p.name),
       }));
@@ -223,18 +226,21 @@ function render(v) {
       // whichever clauderig is INSTALLED — which on this machine was three
       // releases behind the verb it was being asked for, so the click did
       // nothing at all.
-      run: () => v.mainOpen
+      run: () => (v.mainOpen && v.canRaise)
         ? Call.ByName(DESKTOP_RAISE, v.mainPid)
         : Call.ByName(DESKTOP_MAIN),
     }));
     list.append(sec);
   }
 
+  // Two different failures, two different sentences. They were one field once,
+  // and the popover told people their process list was unreadable when what had
+  // actually failed was opening the profile store.
   if (v.error) {
-    // The profiles are still listed — the store knows them — but which are open
-    // is a guess, and a click that launches a second window on a profile that
-    // was already up is the failure worth avoiding.
-    list.append(el('div', 'err', `could not read the process list — open/closed is unknown`));
+    list.append(el('div', 'err', 'could not read the process list — open/closed is unknown'));
+  }
+  if (v.storeError) {
+    list.append(el('div', 'err', 'could not read the profile store — profiles are missing from this list'));
   }
 
   $('lvl').dataset.level = v.level || '';
