@@ -170,7 +170,13 @@ function render(v) {
   $('mute').hidden = v.warn === false;
 }
 
-Events.On('clauderig:desktop', e => render(e?.data?.[0] ?? e?.data));
+// Array.isArray, not `?.[0] ?? data`: a string payload is indexable, so that
+// idiom silently delivers its first character. This one is an object today and
+// would have been fine, which is exactly why it is worth not leaving in.
+Events.On('clauderig:desktop', e => {
+  const d = e?.data;
+  render(Array.isArray(d) ? d[0] : d);
+});
 
 // Asked for directly as well as listened for: the window is revealed the
 // instant the launch is seen, which is up to one watch tick before the next

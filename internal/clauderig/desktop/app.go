@@ -94,6 +94,29 @@ var ErrUnsupported = errors.New("Claude Desktop profiles are not supported on th
 // ErrNotInstalled means the app itself is missing.
 var ErrNotInstalled = errors.New("Claude Desktop is not installed")
 
+// MainPIDs returns the MAIN processes of the instance bound to dataDir.
+//
+// Running() cannot be used for this. It matches the --user-data-dir token
+// anywhere in a command line, and every Electron helper inherits that flag: one
+// profile answers with its main process and a dozen renderers and utilities. A
+// helper is not an application, has no windows, and raising one is either an
+// error or a no-op depending on how you ask — so anything that means "this
+// profile's window" has to start from the process list that excludes them.
+func MainPIDs(a App, dataDir string) ([]int, error) {
+	instances, err := a.Instances()
+	if err != nil {
+		return nil, err
+	}
+	want := CanonicalDir(dataDir)
+	var pids []int
+	for _, inst := range instances {
+		if CanonicalDir(inst.DataDir) == want {
+			pids = append(pids, inst.PID)
+		}
+	}
+	return pids, nil
+}
+
 // RaiseSupported reports whether this platform can bring one named window
 // forward at all.
 //

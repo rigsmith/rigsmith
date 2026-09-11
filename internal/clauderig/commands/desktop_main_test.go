@@ -130,9 +130,20 @@ type raiseApp struct {
 	focused     []string
 	raiseErr    error
 	runningPIDs []int
+	dataDir     string
 }
 
 func (r *raiseApp) Running(string) ([]int, error) { return r.runningPIDs, nil }
+
+// Instances is what the raise path reads now: main processes only, never the
+// helpers that carry the same profile flag.
+func (r *raiseApp) Instances() ([]desktop.Instance, error) {
+	var out []desktop.Instance
+	for _, pid := range r.runningPIDs {
+		out = append(out, desktop.Instance{PID: pid, DataDir: r.dataDir})
+	}
+	return out, nil
+}
 func (r *raiseApp) Raise(pid int) error {
 	r.raised = append(r.raised, pid)
 	return r.raiseErr
@@ -146,8 +157,8 @@ func (r *raiseApp) Focus(dir string) error {
 // OS — so with two profiles open it could put the wrong window in front and
 // report success. The pid is the only thing that names one window.
 func TestOpenRaisesTheProfilesOwnWindow(t *testing.T) {
-	app := &raiseApp{runningPIDs: []int{5150}}
 	p := desktop.Profile{Name: "work"}
+	app := &raiseApp{runningPIDs: []int{5150}, dataDir: p.DataDir()}
 	if err := raiseOrFocus(app, p); err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +173,9 @@ func TestOpenRaisesTheProfilesOwnWindow(t *testing.T) {
 // Where naming one window is impossible, activating the app is imprecise
 // rather than wrong — so it is still done.
 func TestOpenFallsBackToFocusWhereRaisingIsUnsupported(t *testing.T) {
-	app := &raiseApp{runningPIDs: []int{5150}, raiseErr: desktop.ErrRaiseUnsupported}
-	if err := raiseOrFocus(app, desktop.Profile{Name: "work"}); err != nil {
+	p := desktop.Profile{Name: "work"}
+	app := &raiseApp{runningPIDs: []int{5150}, raiseErr: desktop.ErrRaiseUnsupported, dataDir: p.DataDir()}
+	if err := raiseOrFocus(app, p); err != nil {
 		t.Fatal(err)
 	}
 	if len(app.focused) != 1 {
@@ -174,8 +186,9 @@ func TestOpenFallsBackToFocusWhereRaisingIsUnsupported(t *testing.T) {
 // A refused Automation prompt is not the same as a platform that cannot raise
 // windows: falling back would raise some window or other and call it success.
 func TestOpenReportsARefusedRaiseRatherThanFallingBack(t *testing.T) {
-	app := &raiseApp{runningPIDs: []int{5150}, raiseErr: errors.New("not authorized to send Apple events")}
-	if err := raiseOrFocus(app, desktop.Profile{Name: "work"}); err == nil {
+	p := desktop.Profile{Name: "work"}
+	app := &raiseApp{runningPIDs: []int{5150}, raiseErr: errors.New("not authorized"), dataDir: p.DataDir()}
+	if err := raiseOrFocus(app, p); err == nil {
 		t.Fatal("a refused raise was reported as success")
 	}
 	if len(app.focused) != 0 {
@@ -218,6 +231,25 @@ func TestRaiseAnyStopsAtAnUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+// Every Electron helper inherits the profile flag on its command line, so the
+// scan that matches that flag answers with a dozen processes that have no
+// windows. Raising one is an error or a no-op depending on how you ask, which
+// is why this path reads main processes only.
+func TestRaiseOrFocusIgnoresHelpersCarryingTheProfileFlag(t *testing.T) {
+	p := desktop.Profile{Name: "work"}
+	app := &raiseApp{
+		// What Running() would answer: the main process buried among helpers.
+		runningPIDs: []int{9557},
+		dataDir:     p.DataDir(),
+	}
+	if err := raiseOrFocus(app, p); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.raised) != 1 || app.raised[0] != 9557 {
+		t.Errorf("raised %v, want only the main process", app.raised)
+	}
+}
+
 // sequenceApp answers each Raise with the next error in its list.
 type sequenceApp struct {
 	stubApp
@@ -239,7 +271,7 @@ type scanFailRaiseApp struct {
 	focused []string
 }
 
-func (s *scanFailRaiseApp) Running(string) ([]int, error) {
+func (s *scanFailRaiseApp) Instances() ([]desktop.Instance, error) {
 	return nil, errors.New("pgrep exploded")
 }
 func (s *scanFailRaiseApp) Focus(dir string) error { s.focused = append(s.focused, dir); return nil }
@@ -276,8 +308,9 @@ func TestRaiseOrFocusRefusesToFocusAProfileWithNoWindow(t *testing.T) {
 // With a window present but unnameable, activating the application is right:
 // something is running, so nothing is started.
 func TestRaiseOrFocusFocusesOnlyWhenAWindowExists(t *testing.T) {
-	app := &raiseApp{runningPIDs: []int{4242}, raiseErr: desktop.ErrRaiseUnsupported}
-	if err := raiseOrFocus(app, desktop.Profile{Name: "work"}); err != nil {
+	p := desktop.Profile{Name: "work"}
+	app := &raiseApp{runningPIDs: []int{4242}, raiseErr: desktop.ErrRaiseUnsupported, dataDir: p.DataDir()}
+	if err := raiseOrFocus(app, p); err != nil {
 		t.Fatal(err)
 	}
 	if len(app.focused) != 1 {

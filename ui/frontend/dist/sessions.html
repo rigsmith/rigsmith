@@ -552,7 +552,7 @@
 </aside>
 
 <script type="module">
-import { Call } from '/wails/runtime.js';
+import { Call, Events } from '/wails/runtime.js';
 import { monogramFor, paintMono } from './monogram.js';
 
 const $ = id => document.getElementById(id);
@@ -1928,6 +1928,42 @@ function itemRow(it) {
 
 $('mode-list').addEventListener('click', () => setMode('list'));
 $('mode-places').addEventListener('click', () => setMode('places'));
+
+// The tray asks for a mode by name: its menu offers this window's two screens
+// separately. Two ways in, because the two openings are different.
+//
+// ASKED FOR, on load. The first open of this window is also the first load of
+// this page, and an event emitted right after the window is shown arrives
+// before there is anything here to hear it — which looked like "places does
+// nothing" while "list" seemed fine, list being what the window opens on
+// anyway. The pane is recorded before the window is shown, and collected here.
+//
+// TOLD, by event, for the window that is already up: there is no load to race
+// then, and nothing else would deliver a second, different ask.
+const WINDOWS_MODE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Mode';
+
+function applyMode(mode) {
+  if (mode === 'list' || mode === 'places') setMode(mode);
+}
+
+// eventData unwraps a Wails payload without assuming its shape.
+//
+// NOT `e.data?.[0] ?? e.data`, which is what this was. That reads the first
+// element of an array payload — and a STRING is indexable too, so a payload of
+// "places" came through as "p", matched no mode, and was dropped in silence.
+// The event had been arriving all along.
+function eventData(e) {
+  const d = e?.data;
+  return Array.isArray(d) ? d[0] : d;
+}
+
+Events.On('clauderig:sessions-mode', e => applyMode(eventData(e)));
+
+// Asked on load as well, because the window may be shown before this page has
+// registered the listener above. This costs one call answering "" in the
+// ordinary case: the page is loaded when the window is CREATED, at app start,
+// long before anyone asks for a pane.
+Call.ByName(WINDOWS_MODE, 'sessions').then(applyMode).catch(() => {});
 
 </script>
 </body>

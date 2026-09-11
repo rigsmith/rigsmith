@@ -74,8 +74,13 @@ func TestFrontendCallsMatchBoundMethods(t *testing.T) {
 		fqn(&Accounts{}, "OpenDesktop"),
 		fqn(&Accounts{}, "RunCLI"),
 		fqn(&Desktop{}, "Get"),
+		fqn(&Desktop{}, "Panel"),
+		fqn(&Desktop{}, "Raise"),
+		fqn(&Desktop{}, "OpenMain"),
 		fqn(&Desktop{}, "Mute"),
 		fqn(&Windows{}, "Open"),
+		fqn(&Windows{}, "Fit"),
+		fqn(&Windows{}, "Mode"),
 		fqn(&Windows{}, "Hide"),
 	}
 	for _, want := range called {
@@ -101,8 +106,8 @@ func TestBoundMethodsExist(t *testing.T) {
 		{&Actions{}, []string{"Run", "Busy", "RunWith"}},
 		{&Library{}, []string{"List", "Detail", "OpenTerminal", "OpenDesktop", "OpenVSCode", "Materialize", "HandOff", "TakeHandOff", "Delete", "RerootSession"}},
 		{&Accounts{}, []string{"Get", "OpenDesktop", "RunCLI"}},
-		{&Desktop{}, []string{"Get", "Mute", "Warn", "SetWarn", "Raise", "OpenMain"}},
-		{&Windows{}, []string{"Open", "Hide"}},
+		{&Desktop{}, []string{"Get", "Mute", "Warn", "SetWarn", "Raise", "OpenMain", "Panel"}},
+		{&Windows{}, []string{"Open", "Hide", "Fit", "Mode", "SetMode"}},
 	} {
 		typ := reflect.TypeOf(tc.svc)
 		for _, method := range tc.methods {
