@@ -4,7 +4,8 @@
 existing Codex home. It does not write config files, create a missing home,
 publish destination data, invoke Codex, or expose a new CLI command.
 [Application](CODEXRIG-V2-CONFIG-APPLY.md) now consumes these plans for file
-replacement. A concrete validator for supported Codex versions still follows.
+replacement. [Versioned preparation](CODEXRIG-V2-CONFIG-VALIDATION.md) now adds
+a pinned structural validator; production destination-readiness checks still follow.
 
 ## Preparation contract
 
@@ -42,8 +43,9 @@ not forcibly interrupt callback code or OS syscalls.
 
 ## Private plans and validation responsibility
 
-`ConfigRestoreValidator` is an explicit integration boundary, not a bundled Codex
-schema validator. A production caller must supply supported-version and
+`ConfigRestoreValidator` remains an explicit integration boundary. The versioned
+entry point composes the bundled structural validator with this mandatory
+destination callback. A production caller must supply supported-version and
 destination checks for usable base/profile configuration, including missing
 helpers, credentials, referenced artifacts and provider/agent definitions. A nil
 validator fails closed. The synthetic accepting validators in tests do not make
