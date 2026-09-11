@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,5 +123,121 @@ func TestVersionedRestoreRejectsRuntimeRulesBeforeDestinationChecks(t *testing.T
 				t.Fatal("failed preparation changed destination", readErr)
 			}
 		})
+	}
+}
+
+func TestLayeredRestoreUsesContextWithoutInstallingIt(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			root := t.TempDir()
+			putConfig(t, root, "config.toml", "model='old'\ndefault_permissions='managed'")
+			layers := configcodec.ValidationLayers{
+				Before:       [][]byte{[]byte("[model_providers.local]\nname='Local'\nexperimental_bearer_token='private-context'")},
+				Requirements: []byte("[permissions.managed]\nextends=':workspace'"),
+			}
+			if invalid {
+				layers.Requirements = []byte("[permissions.managed]\nextends='missing'")
+			}
+			backup := captureFiles(map[string]string{"config.toml": "model='new'\nmodel_provider='local'"})
+			called := false
+			p, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, backup, configcodec.SupportedConfigVersion, func(context.Context) (configcodec.ValidationLayers, error) { return layers, nil }, func(_ context.Context, proposed []ConfigFile) error {
+				called = true
+				if len(proposed) != 1 || strings.Contains(string(proposed[0].Data), "private-context") {
+					t.Fatal("external context entered restore files")
+				}
+				return nil
+			})
+			if invalid {
+				if p != nil {
+					p.Close()
+					t.Fatal("invalid context produced plan")
+				}
+				if called || !errors.Is(err, ErrConfigValidation) {
+					t.Fatal("invalid context reached callback", err)
+				}
+				return
+			}
+			if err != nil || p == nil || !called {
+				t.Fatal(err)
+			}
+			if _, err := p.Apply(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "config.toml"))
+			if err != nil || strings.Contains(string(data), "private-context") || strings.Contains(string(data), "extends") || !strings.Contains(string(data), "new") {
+				t.Fatal("context was installed", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "requirements.toml")); !os.IsNotExist(err) {
+				t.Fatal("requirements were installed", err)
+			}
+		})
+	}
+}
+
+func TestLayeredRestoreRejectsChangedSourcesAtApply(t *testing.T) {
+	for _, scenario := range []string{"before", "after", "requirements", "order", "arrival", "source error", "oversize", "no-op"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			putConfig(t, root, "config.toml", "model='old'")
+			layers := configcodec.ValidationLayers{Before: [][]byte{[]byte("model='one'"), []byte("model='two'")}, After: [][]byte{[]byte("model_reasoning_effort='high'")}}
+			var sourceErr error
+			source := func(context.Context) (configcodec.ValidationLayers, error) { return layers, sourceErr }
+			model := "new"
+			if scenario == "no-op" {
+				model = "old"
+			}
+			p, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": "model='" + model + "'"}), configcodec.SupportedConfigVersion, source, acceptConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "before", "no-op":
+				layers.Before[0][7] = 'x'
+			case "after":
+				layers.After[0] = []byte("model_reasoning_effort='low'")
+			case "requirements":
+				layers.Requirements = []byte("default_permissions=':read-only'\n[allowed_permission_profiles]\n':read-only'=true")
+			case "order":
+				layers.Before[0], layers.Before[1] = layers.Before[1], layers.Before[0]
+			case "arrival":
+				layers.Requirements = []byte{}
+			case "source error":
+				sourceErr = errors.New("private-context-path")
+			case "oversize":
+				layers.After = make([][]byte, 17)
+			}
+			result, err := p.Apply(t.Context())
+			if !errors.Is(err, ErrConfigLayersChanged) || len(result.Applied) != 0 || result.Uncertain != "" || strings.Contains(err.Error(), "private-context-path") {
+				t.Fatal("stale layer accepted", result, err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "config.toml"))
+			if err != nil || string(data) != "model='old'" {
+				t.Fatal("stale context wrote config", err)
+			}
+			if p.checkContext != nil {
+				t.Fatal("consumed plan retained layer reader")
+			}
+		})
+	}
+}
+
+func TestLayeredRestoreRefusesContextChangeDuringValidation(t *testing.T) {
+	root := t.TempDir()
+	putConfig(t, root, "config.toml", "model='old'")
+	layers := configcodec.ValidationLayers{}
+	source := func(context.Context) (configcodec.ValidationLayers, error) { return layers, nil }
+	p, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": "model='new'"}), configcodec.SupportedConfigVersion, source, func(context.Context, []ConfigFile) error {
+		layers.Requirements = []byte{}
+		return nil
+	})
+	if p != nil {
+		p.Close()
+		t.Fatal("validation change produced plan")
+	}
+	if !errors.Is(err, ErrConfigValidation) {
+		t.Fatal(err)
+	}
+	if p, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, ConfigCapture{}, configcodec.SupportedConfigVersion, nil, acceptConfig); p != nil || !errors.Is(err, ErrConfigRestoreInput) {
+		t.Fatal("nil source accepted", err)
 	}
 }

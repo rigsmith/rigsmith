@@ -8,11 +8,12 @@ it builds on the tested synchronous workflow.
 
 ## Progress
 
-**Current position (after #397):** stages 1–7 and 8a are merged. Config codec,
+**Current position (after #400):** stages 1–7 and 8a are merged. Config codec,
 capture, path policy, restore preparation and guarded application (8b.1–8b.5)
 are merged. **8b.6a is merged in [#397](https://github.com/rigsmith/rigsmith/pull/397).**
-Current 8b.6b work adds provider/MCP runtime rules. Managed layers, permissions
-and destination dependency/credential checks remain; 8b.6 is not complete. Stage 8b remains
+Provider/MCP rules merged in [#400](https://github.com/rigsmith/rigsmith/pull/400).
+Current 8b.6b work adds trusted layer composition and permission catalog/selection
+checks. Production layer discovery/identity checks, full permission compilation and local readiness remain; 8b.6 is not complete. Stage 8b remains
 incomplete until customization, independent state and user-facing sync/restore
 workflows are connected. Codex currently exposes only `inspect`; restore APIs
 are internal. Actual OS restart/hibernation evidence remains an 8e release gate.
@@ -114,7 +115,7 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 8b.3. Machine-local path policy | Merged: [#392](https://github.com/rigsmith/rigsmith/pull/392) | Exclude local paths while preserving destination bindings. |
 | 8b.4. Restore preparation | Merged: [#393](https://github.com/rigsmith/rigsmith/pull/393) | Full-set validation boundary, private proposed bytes and stale-plan detection. |
 | 8b.5. Guarded file application | Merged: [#394](https://github.com/rigsmith/rigsmith/pull/394) | Writer-owned staging/application, partial and uncertain results, case-safe reserved names and bounded lock/scratch capacity. Internal API; no automatic rollback or crash recovery. |
-| 8b.6. Supported-version validation | In progress | 8b.6a merged in [#397](https://github.com/rigsmith/rigsmith/pull/397): pinned schema, independent profile overlays and versioned preparation. Current 8b.6b: provider/MCP runtime rules. Remaining: managed layers, permissions/other runtime constraints and dependency/credential checks. Structural validation does not prove startup readiness. [Contract](CODEXRIG-V2-CONFIG-VALIDATION.md). |
+| 8b.6. Supported-version validation | In progress | 8b.6a merged in [#397](https://github.com/rigsmith/rigsmith/pull/397): pinned schema, independent profile overlays and versioned preparation. Provider/MCP rules merged in [#400](https://github.com/rigsmith/rigsmith/pull/400). Current 8b.6b: layer composition, permission catalog/selection and source rechecks through apply. Remaining: production layer discovery/identity checks, permission compilation/other requirements and local readiness. Structural validation does not prove startup readiness. [Contract](CODEXRIG-V2-CONFIG-VALIDATION.md). |
 | 8b.7. Customization portability | Planned | Instructions, rules, skills and portable hook definitions, with local paths/secrets kept local. Activation stays in 8d. |
 | 8b.8. Independent Codex state and repository | Planned | Separate settings, identity, state and backup repository through existing Git/`gh` integration. |
 | 8b.9. Config sync/restore workflow | Planned | Capture/publication/restore commands, dry-run, partial-result handling and explicit interrupted-restore recovery before user-facing restore ships. Coordinated replacement requires Codex/editors to be idle. |
