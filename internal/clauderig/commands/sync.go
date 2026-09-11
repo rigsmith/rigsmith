@@ -102,12 +102,19 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // redaction is visible, not magic. The tripwire fails the sync loudly if a secret
 // slips past redaction; nothing is pushed in that case.
 func NewSyncCmd() *cobra.Command {
+	return newSyncCmd(defaultQueueCommandDeps())
+}
+
+func newSyncCmd(deps queueCommandDeps) *cobra.Command {
 	var dryRun, flush, hook bool
 	cmd := &cobra.Command{
 		Use:   "sync",
 		Short: "Snapshot, redact, rewrite, and push your Claude Code setup",
 		Long: "Walks the sync roots, redacts secret-bearing fields, rewrites machine\n" +
 			"paths into a portable form, commits, and pushes.\n\n" +
+			"With queue enable-hooks, Stop/SessionEnd hooks save queued requests locally;\n" +
+			"manual sync uses queue sync and its supervision/coverage checks. --dry-run\n" +
+			"never admits hooks or acknowledges requests. SessionStart pull is unchanged.\n\n" +
 			"Coordinates with other staging operations: ordinary hooks skip a busy store;\n" +
 			"manual sync and --flush wait up to 15 seconds before asking you to retry.\n\n" +
 			"Complete staged-text scanning refuses recognized credentials before publication.\n" +
@@ -126,6 +133,9 @@ func NewSyncCmd() *cobra.Command {
 			"hand, `--flush` restages every changed transcript. A payload on stdin\n" +
 			"that names no transcript flushes nothing, and says so.",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if handled, err := routeQueuedSync(cmd, deps, dryRun, flush, hook); handled || err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 

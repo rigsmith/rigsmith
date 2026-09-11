@@ -97,9 +97,14 @@ jobs:
 
       - name: Test Claude service workflows
         if: matrix.group == 'all' || matrix.group == 'service'
+        shell: bash
         env:
           CLAUDERIG_E2E: '1'
-        run: go test ./internal/clauderig/service -count=1 -timeout=10m -skip '^Test(PublishArtifact|QueueAdapter)'
+        # Windows can exceed a cumulative package timer while individual tests
+        # progress normally. Keep bounded, disjoint invocations and fail on either.
+        run: |
+          go test ./internal/clauderig/service -count=1 -timeout=10m -run '^TestQueueRuntime'
+          go test ./internal/clauderig/service -count=1 -timeout=10m -skip '^Test(PublishArtifact|QueueAdapter|QueueRuntime)'
 
       - name: Test retained publication
         if: matrix.group == 'all' || matrix.group == 'publication'

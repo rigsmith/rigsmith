@@ -24,11 +24,12 @@ The runtime manual-sync bridge merged in [#381](https://github.com/rigsmith/rigs
 the explicit manual command merged in [#382](https://github.com/rigsmith/rigsmith/pull/382).
 Bounded hook-request preparation merged in [#384](https://github.com/rigsmith/rigsmith/pull/384).
 Queued worker capture/flush policy merged in [#385](https://github.com/rigsmith/rigsmith/pull/385).
-Durable hook admission and recovery are in review in [#387](https://github.com/rigsmith/rigsmith/pull/387).
+Durable hook admission and recovery merged in [#387](https://github.com/rigsmith/rigsmith/pull/387).
 
 The release path is now: finish opt-in queued Claude commands and hook routing,
 validate rollback and OS lifecycle behavior, then connect the separate `codexrig` adapter.
-Ordinary Claude commands and hooks still use their existing synchronous workflow.
+Synchronous sync remains the default. [#388](https://github.com/rigsmith/rigsmith/pull/388) adds explicit local opt-in routing;
+SessionStart pull stays synchronous.
 
 | Milestone | Status |
 | --- | --- |
@@ -70,8 +71,8 @@ Ordinary Claude commands and hooks still use their existing synchronous workflow
 | Manual queue sync command (7c.2a) | Merged: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
 | Hook-request preparation (7c.2b.1) | Merged: [#384](https://github.com/rigsmith/rigsmith/pull/384). Decode bounded Stop/SessionEnd payloads into saved, retryable producer requests; require direct parent transcripts during capture. |
 | Queued worker capture/flush policy (7c.2b.2a) | Merged: [#385](https://github.com/rigsmith/rigsmith/pull/385). Fully capture requested sessions/subagents, honor all-flush and preserve normal throttling for unrelated plain transcripts; replay saved artifacts unchanged. |
-| Durable hook producer and recovery (7c.2b.2b.1) | In review: [#387](https://github.com/rigsmith/rigsmith/pull/387). Save hook requests before admission, recover original attribution/events, and remove only confirmed producer records. |
-| Opt-in hook installation and rollback (7c.2b.2b.2) | Planned: install opt-in routing, coordinate ordinary sync, and validate producer recovery, stop/drain and rollback. |
+| Durable hook producer and recovery (7c.2b.2b.1) | Merged: [#387](https://github.com/rigsmith/rigsmith/pull/387). Save hook requests before admission, recover original attribution/events, and remove only confirmed producer records. |
+| Opt-in hook installation and rollback (7c.2b.2b.2) | In review: [#388](https://github.com/rigsmith/rigsmith/pull/388). Local hook opt-in, pinned inbox recovery, queue-aware manual sync and checked rollback/re-enable, including retries and destination changes. |
 | Codex adapter and separate `codexrig` executable | Planned as the second consumer of the shared layers. |
 
 The v1/v2 foundation was aligned after v1.15.1; that alignment did not publish a
@@ -97,7 +98,7 @@ Merged in [#341](https://github.com/rigsmith/rigsmith/pull/341): retained append
 It keeps both machines' additions when neither changed the shared history and
 blocks conflicting UUIDs. [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded recovery for canonical chunked
 transcripts, including the default chunking threshold. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering.
-Staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); staged completion before fresh capture merged in [#346](https://github.com/rigsmith/rigsmith/pull/346). Private unresolved-merge planning merged in [#347](https://github.com/rigsmith/rigsmith/pull/347). Recoverable file/index application merged in [#348](https://github.com/rigsmith/rigsmith/pull/348); queue recovery integration merged in [#357](https://github.com/rigsmith/rigsmith/pull/357). Queued hooks stay disabled.
+Staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); staged completion before fresh capture merged in [#346](https://github.com/rigsmith/rigsmith/pull/346). Private unresolved-merge planning merged in [#347](https://github.com/rigsmith/rigsmith/pull/347). Recoverable file/index application merged in [#348](https://github.com/rigsmith/rigsmith/pull/348); queue recovery integration merged in [#357](https://github.com/rigsmith/rigsmith/pull/357). Queued hooks stay disabled unless explicitly enabled locally.
 
 ## Ideas
 

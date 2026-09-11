@@ -6,7 +6,7 @@
 | `sync` | Walk → redact → manifest → tripwire → commit → push (`--dry-run`, `--hook` debounces) |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`); nudges a Desktop restart when Code sessions come back |
-| `queue` | Explicit v2 saved requests, hook admission/recovery, enqueue, supervised manual sync/run/drain, status and retry; [workflow](#explicit-queue-workflow-v2-preview) |
+| `queue` | Explicit v2 saved requests, hook admission/recovery, local hook opt-in/rollback, enqueue, supervised manual sync/run/drain, status and retry; [workflow](#explicit-queue-workflow-v2-preview) |
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
@@ -495,7 +495,7 @@ Configure GitLab/token-only remotes with `config set remote <url>` or
 have `gh`-availability gates, while queue commands verify privacy independently. `--max-archive-bytes` and
 `--max-stored-bytes` on `run`/`drain` control archive admission, not total disk use.
 Keep runtime/request files in private user directories (including inherited
-Windows ACLs). Never copy/reset runtime children. Hooks remain synchronous;
+Windows ACLs). Never copy/reset runtime children. Hooks are synchronous by default;
 no background service is installed. General release still requires actual OS
 restart/hibernation validation.
 
@@ -512,7 +512,7 @@ Use the same runtime/profile flags as init, including every Desktop profile that
 ordinary sync discovers. A subset runtime can continue using run/drain instead.
 The command requires private remote checks and shared history, even for previews.
 It does not debounce or launch merge tools. The first interrupt lets this sync
-finish; a second cancels and waits for cleanup. Ordinary sync/hooks keep their
+finish; a second cancels and waits for cleanup. Without local opt-in, ordinary sync/hooks keep their
 existing behavior. Keep profile and runtime locations stable during the operation.
 
 ### Prepare from a hook payload
@@ -532,13 +532,14 @@ remain retained if removed from the source. Saved intent also governs
 manual-sync coverage. Empty or bad
 input fails without falling back to flushing everything. `--hook` conflicts with
 `--session` and `--flush`. Success goes to stderr; stdout stays empty. No message
-text from the payload is saved. Installed hooks remain synchronous.
+text from the payload is saved. Installed hooks remain synchronous unless opted in locally.
 
 
 ### Managed hook admission and recovery
 
 `clauderig queue hook < hook.json` saves and enqueues a Stop/SessionEnd request
-using a private inbox (default `~/.clauderig/hook-inbox`, override `--inbox`). It
+using a private inbox (the matching saved routing inbox, otherwise
+`~/.clauderig/hook-inbox`; override with `--inbox`). It
 requires an initialized queue. Account identity is captured once; unavailable
 identity requires `--unknown-identity`. The inbox holds at most 128 requests and
 1 MiB of journal data. No worker or hook is installed automatically.
@@ -553,4 +554,41 @@ records are removed; corrupt or mismatched journals block instead of being reset
 Stop producers, recover their inboxes, then drain the queue before rollback.
 An empty queue alone does not prove all inbox requests were admitted. Successful
 inbox recovery means admission; `queue drain` completes publication. Installed
-hooks continue to use ordinary synchronous sync until the opt-in installer lands.
+hooks use ordinary synchronous sync unless opted in locally.
+
+### Enable queued hooks on this machine
+
+Stop Claude sessions, manual syncs and other producers before changing routing.
+After an ordinary sync, `clauderig hooks install`, and `queue init`, run
+`clauderig queue enable-hooks`. Include every local Desktop profile with the same
+`--profile` flags used for init. `--inbox` selects a private journal directory;
+`--unknown-identity` explicitly records unknown attribution for every hook.
+
+Stop and SessionEnd now save requests locally. Start `queue run` separately to
+publish; no service is installed. Manual `sync` uses queue-aware supervised sync.
+`sync --flush` from a terminal or an empty stream flushes all changed tails; a
+complete SessionEnd payload flushes its selected session. Malformed or blank
+payloads fail. `sync --dry-run` never admits or acknowledges requests, including
+when combined with hook flags. SessionStart pull stays synchronous.
+
+`queue hook-status` shows the local routing descriptor. Settings retain their
+portable commands, so another machine remains synchronous until it opts in.
+The descriptor, `~/.clauderig/queue-hooks.json`, must remain private and intact.
+Routed sync rechecks the installed hooks on each invocation; settings must be a
+regular, non-symlink JSON file no larger than 1 MiB. Repair missing,
+disabled or changed hooks before retrying; recovery and rollback remain available.
+Re-enabling after disable requires the retained runtime/inbox to be intact and
+reconciled, with no pending work or active old worker, even when selecting another
+destination. The old state is preserved after a successful switch.
+Do not remove it, switch binaries, move state or edit options to bypass rollback.
+
+For rollback, stop every producer, run `queue recover-hooks` with the saved inbox,
+drain and stop the queue worker, then run `queue disable-hooks` with the saved
+runtime/profile flags. It refuses pending inbox requests, queued work or worker
+ownership. Repeated disables keep those checks. On a fresh home, disable creates no state.
+Default hook/recovery commands follow the saved inbox; separately selected
+`--inbox` locations require separate recovery. It keeps a disabled descriptor and
+all recovery state. If a write
+reports an uncertain result, inspect `hook-status` and retry the same toggle.
+See the [full contract](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md) for recovery
+limits, privacy requirements and restart procedures.

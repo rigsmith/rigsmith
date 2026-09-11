@@ -1,18 +1,15 @@
 package commands
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
@@ -45,7 +42,7 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 		if recoverOnly {
 			name, short = "recover-hooks", "Retry saved hook requests using their original account attribution"
 		}
-		cmd := &cobra.Command{Use: name, Short: short, Long: short + ".\n\nUses a private, bounded inbox tied to one initialized queue runtime.\nEach hook invocation is a new event; after any failure, run recover-hooks\nwith the same --dir, --profile and --inbox instead of replaying stdin.\nFresh hook input must finish within 2 seconds and 128 KiB; queue hook has a 10-second deadline.\nManual recover-hooks uses the caller context and 15-second waits per lock.\nRequests are saved before admission and removed only after confirmed enqueue.\nRecovery never reads stdin or the current account. No worker or hook is installed.\nStop producers, recover this inbox, then drain the queue before rollback.\nWindows callers must provide a private directory ACL.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		cmd := &cobra.Command{Use: name, Short: short, Long: short + ".\n\nUses a private, bounded inbox tied to one initialized queue runtime.\nWithout --inbox, uses the matching local routing inbox when saved, otherwise\n~/.clauderig/hook-inbox. Explicit inboxes require their own recovery.\nEach hook invocation is a new event; after any failure, run recover-hooks\nwith the same --dir, --profile and --inbox instead of replaying stdin.\nFresh hook input must finish within 2 seconds and 128 KiB; queue hook has a 10-second deadline.\nManual recover-hooks uses the caller context and 15-second waits per lock.\nRequests are saved before admission and removed only after confirmed enqueue.\nRecovery never reads stdin or the current account. No worker or hook is installed.\nStop producers, recover this inbox, then drain the queue before rollback.\nWindows callers must provide a private directory ACL.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 			ctx := c.Context()
 			var payload queueHookPayload
 			if !recoverOnly {
@@ -67,6 +64,14 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 				return err
 			}
 			root := inbox
+			if root == "" {
+				var release func()
+				root, release, err = pinnedQueueHookInbox(ctx, deps, r)
+				if err != nil {
+					return err
+				}
+				defer release()
+			}
 			if root == "" {
 				dir, err := config.Dir()
 				if err != nil {
@@ -110,7 +115,7 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 			_, err = fmt.Fprintf(c.ErrOrStderr(), "Hook inbox admission complete; %d requests confirmed in queue. Publication requires a worker.\n", count)
 			return err
 		}}
-		cmd.Flags().StringVar(&inbox, "inbox", "", "private hook inbox directory (default ~/.clauderig/hook-inbox)")
+		cmd.Flags().StringVar(&inbox, "inbox", "", "private hook inbox directory (default matching local routing inbox, otherwise ~/.clauderig/hook-inbox)")
 		_ = cmd.MarkFlagDirname("inbox")
 		if !recoverOnly {
 			cmd.Flags().BoolVar(&unknownIdentity, "unknown-identity", false, "explicitly record unknown account attribution")
@@ -191,43 +196,8 @@ func (in hookInbox) load(scope string) (hookInboxState, error) {
 		return s, fmt.Errorf("hook inbox must be a private directory")
 	}
 	path := filepath.Join(in.dir, "requests.json")
-	info, err = os.Lstat(path)
-	if err != nil {
+	if err := readPrivateQueueState(path, hookInboxLimit, "hook inbox", &s); err != nil {
 		return s, err
-	}
-	if !info.Mode().IsRegular() || !queueInboxPrivate(info) || info.Size() > hookInboxLimit {
-		return s, fmt.Errorf("invalid hook inbox journal")
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return s, err
-	}
-	defer f.Close()
-	opened, err := f.Stat()
-	if err != nil {
-		return s, err
-	}
-	if !os.SameFile(info, opened) {
-		return s, fmt.Errorf("hook inbox changed during read")
-	}
-	if err = validateQueueRequestSingleLink(f); err != nil {
-		return s, err
-	}
-	data, err := io.ReadAll(io.LimitReader(f, hookInboxLimit+1))
-	if err != nil {
-		return s, err
-	}
-	if len(data) > hookInboxLimit {
-		return s, fmt.Errorf("hook inbox exceeds 1 MiB")
-	}
-	if err := json.Unmarshal(data, &s); err != nil {
-		return s, fmt.Errorf("invalid hook inbox JSON")
-	}
-	// Exact canonical encoding rejects unknown/duplicate/case-aliased keys, null
-	// scalar fields, invalid UTF-8 and unpaired surrogates without echoing input.
-	canonical, err := json.Marshal(s)
-	if err != nil || !bytes.Equal(append(canonical, '\n'), data) {
-		return s, fmt.Errorf("noncanonical hook inbox JSON")
 	}
 	if s.Scope != scope {
 		return s, queue.ErrBinding
@@ -243,8 +213,7 @@ func (in hookInbox) load(scope string) (hookInboxState, error) {
 
 func hookInboxChecksum(s hookInboxState) string {
 	s.Checksum = ""
-	data, _ := json.Marshal(s)
-	return artifact.Key(data)
+	return privateQueueStateChecksum(s)
 }
 
 func validateHookInbox(s hookInboxState) error {
@@ -285,15 +254,12 @@ func (in hookInbox) persist(ctx context.Context, s hookInboxState) error {
 		return err
 	}
 	s.Checksum = hookInboxChecksum(s)
-	data, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if len(data) > hookInboxLimit {
+
+	err := writePrivateQueueState(ctx, filepath.Join(in.dir, "requests.json"), s, hookInboxLimit, in.save)
+	if errors.Is(err, errPrivateQueueStateLimit) {
 		return fmt.Errorf("hook inbox full (maximum 1 MiB); recover existing requests before sending new events")
 	}
-	if err := in.save(ctx, filepath.Join(in.dir, "requests.json"), func(out *os.File) error { _, err := out.Write(data); return err }); err != nil {
+	if err != nil {
 		return errors.Join(fmt.Errorf("hook inbox write failed"), err)
 	}
 	return nil

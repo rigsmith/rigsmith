@@ -21,8 +21,16 @@ type queueHookPayload struct {
 // routing fields; do not persist message text, supplied identity or event IDs.
 // Unlike ordinary sync's legacy reader, require a complete bounded document.
 func readQueueHook(ctx context.Context, in io.Reader, wait time.Duration) (queueHookPayload, error) {
-	if err := ctx.Err(); err != nil {
+	data, err := readQueueHookInput(ctx, in, wait)
+	if err != nil {
 		return queueHookPayload{}, err
+	}
+	return decodeQueueHook(data)
+}
+
+func readQueueHookInput(ctx context.Context, in io.Reader, wait time.Duration) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	type result struct {
 		data []byte
@@ -40,7 +48,7 @@ func readQueueHook(ctx context.Context, in io.Reader, wait time.Duration) (queue
 	case *io.PipeReader:
 		closeInput = reader.Close
 	default:
-		return queueHookPayload{}, fmt.Errorf("hook input requires a memory reader, native file or interruptible pipe")
+		return nil, fmt.Errorf("hook input requires a memory reader, native file or interruptible pipe")
 	}
 	read := func() result {
 		data, err := io.ReadAll(io.LimitReader(in, queueRequestLimit+1))
@@ -61,23 +69,23 @@ func readQueueHook(ctx context.Context, in io.Reader, wait time.Duration) (queue
 		select {
 		case <-ctx.Done():
 			stopRead()
-			return queueHookPayload{}, ctx.Err()
+			return nil, ctx.Err()
 		case <-timer.C:
 			stopRead()
-			return queueHookPayload{}, fmt.Errorf("hook input did not finish within its read deadline")
+			return nil, fmt.Errorf("hook input did not finish within its read deadline")
 		case got = <-ready:
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return queueHookPayload{}, err
+		return nil, err
 	}
 	if got.err != nil {
-		return queueHookPayload{}, fmt.Errorf("could not read hook input")
+		return nil, fmt.Errorf("could not read hook input")
 	}
 	if len(got.data) > queueRequestLimit {
-		return queueHookPayload{}, fmt.Errorf("hook input exceeds 128 KiB")
+		return nil, fmt.Errorf("hook input exceeds 128 KiB")
 	}
-	return decodeQueueHook(got.data)
+	return got.data, nil
 }
 
 func decodeQueueHook(data []byte) (queueHookPayload, error) {
@@ -132,8 +140,8 @@ func decodeQueueHook(data []byte) (queueHookPayload, error) {
 		return fail()
 	}
 	if raw, ok := fields["agent_id"]; ok {
-		var agent string
-		if err := json.Unmarshal(raw, &agent); err != nil || agent != "" {
+		var agent *string
+		if err := json.Unmarshal(raw, &agent); err != nil || agent == nil || *agent != "" {
 			return fail()
 		}
 	}

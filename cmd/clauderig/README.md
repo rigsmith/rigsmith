@@ -108,7 +108,7 @@ unchanged. See the [queue workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md).
 | Command | What |
 |---|---|
 | `init` | First-run wizard: remote (private), machine identity, roots, hooks |
-| `queue` | V2 preview: `init`, `prepare`, `enqueue`, `hook`, `recover-hooks`, `status`, `retry`, `sync`, `run`, `drain`. [Explicit workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md); hooks remain synchronous |
+| `queue` | V2 preview: `init`, `prepare`, `enqueue`, `hook`, `recover-hooks`, `enable-hooks`, `hook-status`, `disable-hooks`, `status`, `retry`, `sync`, `run`, `drain`. [Explicit workflow](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md); hooks are synchronous by default |
 | `sync` | Walk → redact → manifest → tripwire → commit → push. `--dry-run`; all syncs take the staging lock; `--hook` also debounces the Stop hook that fires every turn; `--flush` restages the ended session's large transcript past the throttle — the SessionEnd hook's job — or every changed transcript when run by hand |
 | `pull` | Fetch latest; optionally restore a fresh machine when `autoRestore` is enabled; skip a busy staging repo |
 | `restore` | Restore here, rewriting paths (`--dir`, `--backup`, `--force`, `--prune`) |
@@ -151,3 +151,23 @@ Requires `git` with credentials for the remote. Privacy verification uses
 For GitLab/token-only setup, use `clauderig config set remote <url>` or
 `clauderig init --yes --remote <url>`; the interactive wizard and doctor still
 have older `gh`-availability gates. Queue commands verify privacy independently.
+
+### Opt into queued hooks (v2)
+
+Stop Claude sessions and other producers, install the standard hooks with
+`clauderig hooks install`, and initialize the queue after an ordinary sync.
+`clauderig queue enable-hooks` opts this machine into queued Stop/SessionEnd and
+queue-aware manual sync. Select every Desktop profile using the same `--profile`
+flags as init. Start `queue run` separately to publish.
+
+`queue hook-status` shows the saved runtime, profiles, inbox and identity mode.
+Default hook/recovery commands use that matching runtime’s pinned inbox; explicitly
+selected `--inbox` locations require their own recovery.
+To roll back, stop producers, run `recover-hooks`, drain and stop the worker, then
+run `disable-hooks` with the saved runtime/profile flags. Pending work prevents
+disabling, including repeated disables; recovery records and portable hook settings
+are preserved.
+
+Re-enabling also validates and reconciles the retained disabled runtime and inbox
+before selecting a destination. Missing state or pending work blocks the change;
+old recovery records are preserved.

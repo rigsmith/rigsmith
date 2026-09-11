@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 	"github.com/rigsmith/rigsmith/internal/agentrig/process"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
@@ -39,7 +40,7 @@ func newQueueFixture(t *testing.T) *queueCommandFixture {
 	cfg.Roots = cfg.Roots[:1]
 	cfg.Remote = "https://github.com/acme/private-backup.git"
 	f := &queueCommandFixture{req: service.SyncRequest{Config: cfg, Machine: config.Machine{Name: "fixture", OS: config.OSToken(), Home: filepath.Join(root, "home")}, StagingDir: filepath.Join(root, "stage")}, dir: filepath.Join(root, "runtime"), identity: service.Identity{AccountUUID: "11111111-1111-4111-8111-111111111111", Email: "producer@example.com"}}
-	f.deps = queueCommandDeps{resolve: func() (service.SyncRequest, error) { return f.req, nil }, identity: func() (service.Identity, error) { f.reads++; return f.identity, nil }, private: func(_ context.Context, remote string) error {
+	f.deps = queueCommandDeps{resolve: func() (service.SyncRequest, error) { return f.req, nil }, identity: func() (service.Identity, error) { f.reads++; return f.identity, nil }, ensurePrivate: func(_ context.Context, remote string) error {
 		f.privateChecks++
 		f.privateRemotes = append(f.privateRemotes, remote)
 		return nil
@@ -130,14 +131,14 @@ func TestQueueCommandRefusals(t *testing.T) {
 	if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
 		t.Fatal("created missing runtime", err)
 	}
-	f.deps.private = func(context.Context, string) error { return errors.New("privacy refused") }
+	f.deps.ensurePrivate = func(context.Context, string) error { return errors.New("privacy refused") }
 	if _, err := f.execute(t.Context(), "init"); err == nil {
 		t.Fatal("created private-unverified runtime")
 	}
 	if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	f.deps.private = func(context.Context, string) error { return nil }
+	f.deps.ensurePrivate = func(context.Context, string) error { return nil }
 	f.must(t, "init")
 	path := filepath.Join(t.TempDir(), "request")
 	f.identity = service.Identity{}
@@ -202,7 +203,7 @@ func TestQueueCommandStartupRefusalPreservesWork(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "request")
 	f.must(t, "prepare", "--session", "s", "--output", path)
 	f.must(t, "enqueue", path)
-	f.deps.private = func(context.Context, string) error { return errors.New("privacy changed") }
+	f.deps.ensurePrivate = func(context.Context, string) error { return errors.New("privacy changed") }
 	if _, err := f.execute(t.Context(), "drain"); err == nil || !strings.Contains(err.Error(), "privacy changed") {
 		t.Fatal(err)
 	}
@@ -526,24 +527,53 @@ func TestQueueCommandConcurrentAdmissionOfSavedFile(t *testing.T) {
 	f.must(t, "init")
 	path := filepath.Join(t.TempDir(), "request")
 	f.must(t, "prepare", "--session", "s", "--output", path)
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueue := func() error {
+		out, err := f.execute(t.Context(), "enqueue", path)
+		if err == nil && out != "{\"generation\":1,\"batch\":1}\n" {
+			return fmt.Errorf("receipt %s", out)
+		}
+		return err
+	}
 	results := make(chan error, 8)
 	for range 8 {
-		go func() {
-			out, err := f.execute(t.Context(), "enqueue", path)
-			if err == nil && out != "{\"generation\":1,\"batch\":1}\n" {
-				err = fmt.Errorf("receipt %s", out)
-			}
-			results <- err
-		}()
+		go func() { results <- enqueue() }()
 	}
+	retries := 0
 	for range 8 {
-		if err := <-results; err != nil {
-			t.Fatal(err)
+		err := <-results
+		// Windows replacement can fail while another opener holds the destination.
+		// The contract reports uncertainty and requires replaying this same saved
+		// request, not unconditional success on the first concurrent attempt.
+		if errors.Is(err, durable.ErrUncertain) {
+			retries++
+			continue
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	// Account for every opener before retrying, including on a failed assertion.
+	// Retry each uncertain result once after contention ends; persistent errors
+	// still fail. Every confirmed receipt must name the original generation.
+	if t.Failed() {
+		return
+	}
+	for range retries {
+		if err := enqueue(); err != nil {
+			t.Fatal("saved-request retry:", err)
 		}
 	}
 	jobs, err := f.open(t).Snapshot(t.Context())
 	if err != nil || len(jobs) != 1 || len(jobs[0].Events) != 1 {
 		t.Fatal(jobs, err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(original, after) || f.reads != 1 {
+		t.Fatal("retry changed producer identity or saved intent", err, f.reads)
 	}
 }
 

@@ -1,8 +1,8 @@
 # Explicit queued Claude commands (v2)
 
-V2 exposes a foreground queue workflow for deliberate testing and use. It does
-not install a worker or route hooks. Ordinary `sync`, `pull` and hooks keep their
-existing synchronous behavior. Use v2 clients for operations sharing staging.
+V2 exposes a foreground queue workflow and explicit local hook opt-in. It does
+not install a worker service. Sync/hooks remain synchronous by default; `pull`
+stays synchronous in either mode. Use v2 clients for operations sharing staging.
 Actual OS reboot/hibernation validation remains a general-release gate.
 
 When run outside a terminal, bare `queue` prints help; when run in a terminal,
@@ -253,7 +253,7 @@ An active batch can report busy; retry after it finishes. The first interrupt
 lets the single sync finish; a second cancels and waits for supervised cleanup.
 Failure can occur after a snapshot was published; inspect status before retrying.
 A successful manual sync reports the number of acknowledged requests, without
-claiming that the queue is empty. Ordinary `clauderig sync` and installed hooks
+claiming that the queue is empty. Without local opt-in, ordinary `clauderig sync` and installed hooks
 retain their existing synchronous behavior and do not acknowledge queue work.
 
 ## Prepare a request from hook input (7c.2b.1)
@@ -277,8 +277,9 @@ readers. Unsupported reader wrappers are refused before reading. A missing or fa
 flush everything. `--hook` cannot be combined with `--session` or `--flush`.
 
 Only `Stop` and `SessionEnd` are accepted. Require `session_id`, `transcript_path`
-and `hook_event_name`; reject nonempty subagent `agent_id`. The transcript must
-be an absolute native path spelled under the configured, enabled CLI root as
+and `hook_event_name`; `agent_id` must be absent or an empty string. Nonempty
+subagent markers and non-string values, including `null`, are refused. The
+transcript must be an absolute native path under the configured, enabled CLI root as
 `projects/<project>/<canonical-session-id>.jsonl`. Alternate source roots work;
 relative paths, another source and mismatched/nested session paths fail. This is
 an intent/path check, not proof that the transcript exists or remains unchanged.
@@ -321,7 +322,9 @@ each lock wait remains limited to 15 seconds. Caller cancellation stops either
 operation and preserves unfinished journal entries. A blocked filesystem call
 can take longer to return.
 
-The default inbox is `~/.clauderig/hook-inbox`. Override with `--inbox <directory>`;
+Without a matching routing descriptor, the default inbox is `~/.clauderig/hook-inbox`.
+For a matching saved runtime, hook/recovery commands without `--inbox` use the
+pinned inbox, including after disabling routing. Override with `--inbox <directory>`;
 use the same `--dir`, explicit `--profile` selection and inbox for every recovery.
 Its existing parent must be present. First use creates a new private directory;
 an existing inbox must already contain a valid journal bound to this runtime.
@@ -371,8 +374,8 @@ the journal and resolve the expired intent explicitly before resuming producers.
 To finish queued work before rollback: stop hook producers, run `queue recover-hooks`
 for each inbox, then `queue drain`. A successful inbox recovery confirms admission,
 not remote publication. Keep the runtime and inbox intact while anything remains
-unresolved. Automatic hook installation and coordination with ordinary sync follow
-in 7c.2b.2b.2; installed hooks remain synchronous today.
+unresolved. Local opt-in and checked rollback are described below; installed
+hooks remain synchronous unless explicitly enabled on this machine.
 
 ### Inbox journal format
 
@@ -436,3 +439,161 @@ The internal runtime bridge (7c.1), explicit manual command (7c.2a) and bounded
 hook-request preparation (7c.2b.1) are available. Opt-in hook installation,
 ordinary-sync routing and end-to-end stop/drain/rollback remain 7c.2b.2b.2.
 Managed hook admission and inbox recovery are available explicitly.
+
+## Local hook opt-in and rollback (7c.2b.2b.2)
+
+First stop Claude sessions, manual syncs and any other producers or workers.
+Recover any previously used explicit inboxes before changing producer destinations.
+Install the standard hooks with `clauderig hooks install`, perform an ordinary
+sync to establish shared history, and initialize the queue. Use the same runtime
+and every local Desktop profile required by `queue sync`. Then:
+
+```sh
+clauderig queue enable-hooks
+clauderig queue hook-status
+clauderig queue run
+```
+
+`enable-hooks` checks the initialized binding and complete Desktop profile
+selection. It requires exactly one standard owned command for SessionStart, Stop
+and SessionEnd in user settings, with no stale command or matcher. It does not
+rewrite settings. Each routed sync invocation rechecks the current installed hook
+plan using a regular, non-symlink settings file of at most 1 MiB. The read checks
+cancellation between chunks and refuses larger/growing inputs; missing, disabled,
+malformed or changed hooks fail closed without admission
+or synchronous fallback. Recovery and rollback remain available when hook settings
+need repair. Enabling creates or reflushes the private inbox before saving local
+routing. `--inbox` chooses another inbox with an existing parent;
+`--unknown-identity` deliberately records unknown attribution for every hook.
+Repeating the same active enable is safe. Changing active options requires a completed
+disable first. A retained disabled descriptor is not first-ever initialization:
+every re-enable requires its original runtime and inbox to remain intact, its
+inbox empty and its queue idle under worker/transaction ownership. Missing or
+corrupt retained state, pending requests/work and an active old worker block even
+a request for another destination. Old recovery records are never deleted.
+Initialization errors may leave an incomplete inbox: inspect and restore its
+journal rather than discarding potentially saved requests.
+
+The existing portable commands remain `clauderig pull`, `clauderig sync --hook`
+and `clauderig sync --flush`. Each machine chooses routing through its own
+`~/.clauderig/queue-hooks.json`; this state stays outside capture roots. Syncing
+settings does not opt another machine in. SessionStart pull remains synchronous.
+
+With routing enabled, Stop and SessionEnd invoke the durable hook producer. The
+complete input must arrive within two seconds and 128 KiB; the ten-second hook
+budget includes input, settings validation and routing lock contention. Filesystem
+cancellation is cooperative between operations: a stalled kernel filesystem call
+can exceed that budget. `--hook` requires Stop; a
+payload to `--flush` requires SessionEnd. Empty input to `--hook`, blank or
+malformed documents, mismatched events, corrupt routing, missing inbox state or
+changed bindings fail without falling back to synchronous publication. Failure
+before durable intent can still leave that new event unsaved; the existing inbox
+recovery limitations apply. Successful hook diagnostics go to stderr only.
+
+Manual `sync` delegates to the supervised `queue sync` path. A terminal or truly
+empty input to `sync --flush` means all changed tails. `--dry-run` ignores hook
+input and never admits or acknowledges requests. It still performs queue-sync
+startup/privacy checks. Combining `--hook` and `--flush` is refused in queued mode.
+Manual sync keeps its caller context and releases the routing lease before long
+publication, allowing hooks to keep enqueueing; worker/staging ownership protects
+its capture. It does not drain the producer inbox or every queued request.
+
+No worker is launched automatically. After a process or machine restart, use
+`hook-status` to recover the saved options, run `recover-hooks`, then restart
+`queue run` with the same runtime/profiles. Default hook/recovery commands follow
+the matching descriptor’s inbox; explicit `--inbox` selections remain caller-owned
+and must each be recovered separately. Direct `queue hook` still uses its own
+`--unknown-identity` flag; the descriptor’s identity choice applies to installed
+hooks routed through `sync`. Stop producers before deliberate
+reconciliation. A stopped worker or empty queue does not prove the inbox is empty.
+The OS process-fence recovery requirements still apply after an unclean restart.
+
+To restore synchronous operation:
+
+1. Stop Claude sessions, manual syncs and all other producers, including direct
+   callers of `queue hook`, `prepare`/`enqueue` and `queue sync`.
+2. Run `queue recover-hooks` with the saved runtime/profiles/inbox.
+3. Drain the queue and stop every worker. Repair blocked/delayed work first.
+4. Run `queue disable-hooks` with the saved runtime/profile flags.
+
+Disable, including a retry against a retained disabled descriptor, holds the
+routing and inbox leases, reflushes an empty inbox, then takes
+queue worker/transaction ownership, reflushes queue state and requires no pending
+batches before saving a disabled descriptor. It refuses an active worker, even
+if that worker currently has no batch. It never drops pending intent, queue work,
+artifacts or receipt history. Direct producers and manual sync startup must be
+stopped by the operator; the toggle cannot stop an external caller from starting
+new work after its checks. Stable private filesystem roots and no concurrent
+settings/config edits are prerequisites.
+
+If enable/disable reports a write error after a rename, the descriptor may already
+show the requested state. Inspect `hook-status`, keep producers stopped, and retry
+the same command to reflush it. Routed sync also reflushes an enabled descriptor
+before using it. Never delete/edit the descriptor or switch to a v1 binary to
+bypass rollback. A malformed descriptor fails closed even when its damaged bytes
+appear to say disabled. A successful disable retains it for inspection.
+
+### Routing descriptor format
+
+`queue-hooks.json` is a private regular, single-link file of at most 128 KiB.
+Linux/macOS check effective ownership and private modes; Windows callers must
+provision private inherited ACLs, which the command does not inspect or repair.
+Symbolic links are refused. It uses exact compact Go JSON encoding plus one LF,
+with these fields in declaration order:
+
+| Field | Writer, purpose and default | Validation and lifecycle |
+| --- | --- | --- |
+| `Version` | `enable-hooks` supplies integer `1`; no omitted or null form. Identifies the routing format. | Reader accepts only `1`; unknown versions block all routing/toggle commands. No automatic migration. |
+| `Enabled` | Enable writes `true`; disable writes `false`. With no descriptor, routing is off. Persisted values have no omitted/null default. | Must be a JSON boolean. Routed reads and same-command retries retain the value; only an explicit toggle changes it. A disabled record still receives full file/encoding/checksum validation. |
+| `Runtime` | Enable saves the opened runtime's canonical absolute directory, selected by `--dir` or `~/.clauderig/queue-runtime`. No null/empty default in saved data. | Reader requires an absolute path. Enabled operations reopen it against current configuration and the lifecycle scope; disable requires the selected runtime to match. Runtime isolation/private-store rules apply. The descriptor's entire 128 KiB limit bounds the string. |
+| `Inbox` | Enable resolves `--inbox` to an absolute path, defaulting to `~/.clauderig/hook-inbox`. No null/empty saved default. Pins producer recovery location. | Reader requires an absolute path. Enable/use/disable enforce capture/staging/runtime exclusion and keep the descriptor outside the inbox, comparing actual directory identities for case/alias handling. Existing journals must match `Scope`; missing/corrupt state blocks active routing. Bounded by the descriptor's 128 KiB limit. |
+| `Profiles` | Enable saves sorted explicit `--profile` names. No selection writes `null`; an empty array is also readable and preserved. | Elements must be strings. Enable verifies complete local Desktop coverage and runtime binding. Reopen/manual capture revalidate their respective profile/binding rules. No silent sorting, dropping, renaming or rewriting on read; total bytes are bounded by the descriptor limit. |
+| `Scope` | Enable generates the runtime lifecycle's SHA-256 binding digest using `ScopeID`; never taken from hook input. No empty/null default. | Reader requires a nonempty string and valid descriptor checksum. Enabled operations compare it with the reopened runtime's scope; a foreign scope fails. It remains unchanged on disable and reflush, preserving the association with inbox/queue records. |
+| `UnknownIdentity` | Enable saves the explicit `--unknown-identity` choice, default `false`; no omitted/null saved form. Determines whether every installed hook bypasses live identity lookup. | Must be a JSON boolean. It is not an identity observation or fallback policy. Retained on disable/reflush; changing it while enabled requires completed rollback and a new enable. Existing producer events always retain their original attribution. |
+| `Checksum` | Every descriptor write computes SHA-256 hex over the compact typed object with this field set to the empty string, without LF. Generated locally, never supplied by the hook. | Required string matching the recomputed digest. All preceding fields participate, including `Enabled`. It changes on an explicit toggle but not a byte-preserving reflush. Detects accidental damage, not same-user tampering. |
+
+Every field is required in the exact persisted encoding; only `Profiles` permits
+`null`. These are local routing choices, not synchronized user configuration or
+queue event IDs. `enable-hooks` owns creation and option selection; checked
+`disable-hooks` owns the transition back to synchronous behavior. Active reflush
+and idempotent retries write exactly the same typed values, including retained
+disabled options. No read infers replacement identity, runtime or profile defaults.
+
+The common private-state helper owns regular-file/private-mode/link/size checks,
+canonical JSON reads and bounded durable writes. Routing and inbox callers still
+own their paths, schema validation, checksums, limits and lifecycle transitions.
+There is no shared destination chooser that could redirect one format into the
+other. Both formats retain their existing byte representation. Mutating routing
+commands share the lease/descriptor loader and runtime/path validation; disable
+and retained re-enable also share the intact-empty-inbox check. First-enable,
+unchanged active enable, rollback and producer-reflush policies stay in callers.
+
+A valid disabled descriptor does not require its runtime to be reopened merely
+for ordinary synchronous sync. Every `disable-hooks` retry still checks the pinned
+runtime, inbox and worker/queue idleness before reflush. On a fresh home with no
+configuration parent, disable reports that routing is not enabled and creates no
+state. Re-enabling validates current configuration and complete profile coverage
+for the requested destination, then reopens and reconciles the retained runtime
+with its saved profile selection. Both bindings must still validate; changed
+configuration that prevents reopening the old runtime blocks replacement. Restore
+the prior configuration and reconcile rather than deleting the descriptor. This
+preview does not provide a bypass for incompatible lifecycle migration.
+
+For a destination change, both inbox leases are acquired before old-queue
+maintenance ownership. The new inbox is initialized/reflushed and the new routing
+descriptor is written only inside that idle check. Same-directory aliases share
+the existing inbox lease. A pre-replacement failure preserves the old descriptor;
+a post-replacement uncertainty is retried using the same requested options. The
+old inbox and queue remain available after successful retargeting. Do not manually
+edit retained fields or replay a descriptor from another lifecycle: enabling/use
+still enforce scope association.
+Fixed format-v1 fixtures cover enabled and retained-disabled records on Unix and
+Windows; reading and reflush preserve their canonical bytes and every field.
+Pre-/post-replacement error tests cover enable, disable and active reflush with
+unchanged queue/inbox records; truncated descriptors are refused and never reset.
+
+Unknown/duplicate/case-aliased fields, reformatting, invalid Unicode and checksum
+changes are rejected by exact re-encoding. The checksum detects accidental damage,
+not malicious modification by the same user. `hook-status` displays the descriptor
+without claiming inbox, worker or remote health. The routing lease is a stable
+sibling lock; never remove it while operations may be running.
