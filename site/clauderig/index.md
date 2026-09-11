@@ -15,6 +15,7 @@ clauderig queue                # v2: explicit saved requests, foreground worker,
 clauderig queue prepare --hook --output hook-request.json < hook.json  # save intent for later enqueue
 clauderig queue hook < hook.json  # v2: save and admit a new hook event
 clauderig queue recover-hooks   # retry its inbox using the original account
+clauderig queue enable-hooks   # v2: opt this machine into queued sync hooks
 clauderig queue sync --flush   # v2: manual sync, confirm covered queue requests
 clauderig sync                 # snapshot → redact secrets → rewrite paths → commit → push
 clauderig restore              # pull → rewrite slugs for this OS → merge (keeps local secrets)
@@ -37,6 +38,12 @@ clauderig doctor               # health-check env + sync + worktree discipline +
 clauderig hooks install        # SessionStart→pull, Stop→sync, SessionEnd→sync --flush
 clauderig ui                   # interactive dashboard
 ```
+
+Installed sync hooks are synchronous by default. In v2, `queue enable-hooks`
+opts this machine into durable Stop/SessionEnd admission and queue-aware manual
+sync; SessionStart pull stays synchronous. Initialize the queue and stop producers
+before opting in, then run `queue run` separately to publish. See
+[queued hook setup and rollback](./commands#enable-queued-hooks-on-this-machine) for the full workflow.
 
 ## What it does
 

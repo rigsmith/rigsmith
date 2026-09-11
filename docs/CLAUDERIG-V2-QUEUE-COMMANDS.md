@@ -277,8 +277,9 @@ readers. Unsupported reader wrappers are refused before reading. A missing or fa
 flush everything. `--hook` cannot be combined with `--session` or `--flush`.
 
 Only `Stop` and `SessionEnd` are accepted. Require `session_id`, `transcript_path`
-and `hook_event_name`; reject nonempty subagent `agent_id`. The transcript must
-be an absolute native path spelled under the configured, enabled CLI root as
+and `hook_event_name`; `agent_id` must be absent or an empty string. Nonempty
+subagent markers and non-string values, including `null`, are refused. The
+transcript must be an absolute native path under the configured, enabled CLI root as
 `projects/<project>/<canonical-session-id>.jsonl`. Alternate source roots work;
 relative paths, another source and mismatched/nested session paths fail. This is
 an intent/path check, not proof that the transcript exists or remains unchanged.
@@ -456,7 +457,10 @@ clauderig queue run
 `enable-hooks` checks the initialized binding and complete Desktop profile
 selection. It requires exactly one standard owned command for SessionStart, Stop
 and SessionEnd in user settings, with no stale command or matcher. It does not
-rewrite settings. It creates or reflushes the private inbox before saving local
+rewrite settings. Each routed sync invocation rechecks the current installed hook
+plan; missing, disabled, malformed or changed hooks fail closed without admission
+or synchronous fallback. Recovery and rollback remain available when hook settings
+need repair. Enabling creates or reflushes the private inbox before saving local
 routing. `--inbox` chooses another inbox with an existing parent;
 `--unknown-identity` deliberately records unknown attribution for every hook.
 Repeating the same active enable is safe. Changing active options requires a completed

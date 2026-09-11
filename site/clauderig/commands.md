@@ -574,6 +574,8 @@ when combined with hook flags. SessionStart pull stays synchronous.
 `queue hook-status` shows the local routing descriptor. Settings retain their
 portable commands, so another machine remains synchronous until it opts in.
 The descriptor, `~/.clauderig/queue-hooks.json`, must remain private and intact.
+Routed sync rechecks the installed hooks on each invocation. Repair missing,
+disabled or changed hooks before retrying; recovery and rollback remain available.
 Re-enabling after disable requires the retained runtime/inbox to be intact and
 reconciled, with no pending work or active old worker, even when selecting another
 destination. The old state is preserved after a successful switch.

@@ -140,8 +140,8 @@ func decodeQueueHook(data []byte) (queueHookPayload, error) {
 		return fail()
 	}
 	if raw, ok := fields["agent_id"]; ok {
-		var agent string
-		if err := json.Unmarshal(raw, &agent); err != nil || agent != "" {
+		var agent *string
+		if err := json.Unmarshal(raw, &agent); err != nil || agent == nil || *agent != "" {
 			return fail()
 		}
 	}

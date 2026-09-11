@@ -136,11 +136,7 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			if err := r.CheckHookRouting(c.Context()); err != nil {
 				return err
 			}
-			settings, err := deps.hooksPath()
-			if err != nil {
-				return err
-			}
-			if err := hooks.CheckSyncRouting(settings); err != nil {
+			if err := deps.checkInstalledSyncRouting(); err != nil {
 				return err
 			}
 			root := inbox
@@ -360,6 +356,9 @@ func routeQueuedSync(c *cobra.Command, deps queueCommandDeps, dryRun, flush, hoo
 	if s == nil || !s.Enabled || s.Checksum != initial.Checksum {
 		return true, fmt.Errorf("hook routing changed during invocation; inspect status before retrying")
 	}
+	if err := deps.checkInstalledSyncRouting(); err != nil {
+		return true, err
+	}
 	req, err := deps.resolve()
 	if err != nil {
 		return true, err
@@ -527,4 +526,14 @@ func lockEmptyHookInbox(ctx context.Context, r *service.QueueRuntime, path strin
 	}
 	keep = true
 	return release, nil
+}
+
+// Recheck the current portable plan both at opt-in and before every routed use.
+// Keep recovery and rollback available when settings have drifted.
+func (d queueCommandDeps) checkInstalledSyncRouting() error {
+	settings, err := d.hooksPath()
+	if err != nil {
+		return err
+	}
+	return hooks.CheckSyncRouting(settings)
 }

@@ -389,3 +389,131 @@ func TestQueueHookRoutingEnableRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueHookRoutingInstalledPlanDrift(t *testing.T) {
+	for _, drift := range []string{"missing", "stale", "disabled", "invalid"} {
+		t.Run(drift, func(t *testing.T) {
+			f := newQueueFixture(t)
+			path, settings := setupHookRouting(t, f)
+			f.must(t, "init")
+			f.must(t, "enable-hooks")
+			original, err := os.ReadFile(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			descriptor, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed := original
+			switch drift {
+			case "missing":
+				err = os.Remove(settings)
+			case "stale":
+				changed = bytes.Replace(original, []byte("clauderig sync --hook"), []byte("clauderig sync"), 1)
+				if bytes.Equal(changed, original) {
+					t.Fatal("fixture did not change the installed hook")
+				}
+			case "disabled":
+				changed = bytes.Replace(original, []byte("{"), []byte(`{"disableAllHooks":true,`), 1)
+			case "invalid":
+				changed = []byte("{")
+			}
+			if drift != "missing" {
+				err = os.WriteFile(settings, changed, 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := filepath.Join(f.req.Machine.Home, ".claude", "projects", "-fixture", "s.jsonl")
+			for _, invocation := range []struct {
+				name, payload       string
+				dryRun, flush, hook bool
+			}{
+				{name: "manual"},
+				{name: "manual-flush", flush: true},
+				{name: "dry-run", dryRun: true},
+				{name: "Stop", payload: queueHookJSON(t, "Stop", "s", source), hook: true},
+				{name: "SessionEnd", payload: queueHookJSON(t, "SessionEnd", "s", source), flush: true},
+			} {
+				c := &cobra.Command{}
+				c.SetContext(t.Context())
+				c.SetIn(strings.NewReader(invocation.payload))
+				handled, err := routeQueuedSync(c, f.deps, invocation.dryRun, invocation.flush, invocation.hook)
+				if !handled || err == nil {
+					t.Fatal("settings drift did not fail closed", invocation.name, handled, err)
+				}
+			}
+			if f.reads != 0 {
+				t.Fatal("drifted routing read identity")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(descriptor, after) {
+				t.Fatal("drifted routing changed descriptor", err)
+			}
+			saved, err := loadHookRouting(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			inbox, err := (hookInbox{dir: saved.Inbox}).load(saved.Scope)
+			if err != nil || len(inbox.Requests) != 0 {
+				t.Fatal("drifted routing admitted inbox work", inbox, err)
+			}
+			work, err := f.open(t).Snapshot(t.Context())
+			if err != nil || len(work) != 0 {
+				t.Fatal("drifted routing admitted queue work", work, err)
+			}
+			// Recovery and rollback must remain possible without repairing hooks.
+			f.must(t, "recover-hooks")
+			f.must(t, "disable-hooks")
+			if err := os.WriteFile(settings, original, 0600); err != nil {
+				t.Fatal(err)
+			}
+			f.must(t, "enable-hooks")
+			if _, _, err := routedSync(f, t.Context(), queueHookJSON(t, "Stop", "s", source), "--hook"); err != nil {
+				t.Fatal("repaired settings did not restore admission", err)
+			}
+		})
+	}
+}
+
+func TestQueueHookRoutingAgentMarkerTypes(t *testing.T) {
+	f := newQueueFixture(t)
+	path, _ := setupHookRouting(t, f)
+	f.must(t, "init")
+	f.must(t, "enable-hooks")
+	source := filepath.Join(f.req.Machine.Home, ".claude", "projects", "-fixture", "s.jsonl")
+	for _, event := range []string{"Stop", "SessionEnd"} {
+		flag := "--hook"
+		if event == "SessionEnd" {
+			flag = "--flush"
+		}
+		valid := queueHookJSON(t, event, "s", source)
+		for _, marker := range []string{"null", "1", "false", "{}", "[]", `"agent-a"`} {
+			payload := strings.Replace(valid, "{", `{"agent_id":`+marker+`,`, 1)
+			if _, _, err := routedSync(f, t.Context(), payload, flag); err == nil {
+				t.Fatal("accepted agent marker", event, marker)
+			}
+		}
+	}
+	if f.reads != 0 {
+		t.Fatal("invalid agent marker observed identity")
+	}
+	saved, err := loadHookRouting(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox, err := (hookInbox{dir: saved.Inbox}).load(saved.Scope)
+	if err != nil || len(inbox.Requests) != 0 {
+		t.Fatal("invalid marker admitted inbox work", inbox, err)
+	}
+	work, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(work) != 0 {
+		t.Fatal("invalid marker admitted queue work", work, err)
+	}
+	// An explicitly empty string is the supported parent marker.
+	payload := strings.Replace(queueHookJSON(t, "Stop", "s", source), "{", `{"agent_id":"",`, 1)
+	if _, _, err := routedSync(f, t.Context(), payload, "--hook"); err != nil {
+		t.Fatal("empty string parent marker refused", err)
+	}
+}
