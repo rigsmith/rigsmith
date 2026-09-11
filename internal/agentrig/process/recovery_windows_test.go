@@ -234,10 +234,7 @@ func TestWindowsRecoveryCrashHelper(t *testing.T) {
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			if !waitMarker(filepath.Join(root, "leaf")) {
-				t.Fatal("descendant did not start")
-			}
-			data, err := os.ReadFile(filepath.Join(root, "leaf"))
+			data, err := readWindowsMarker(filepath.Join(root, "leaf"), 10*time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -289,18 +286,15 @@ func TestWindowsRecoveryAfterOwnerDeath(t *testing.T) {
 			t.Cleanup(func() { _ = cmd.Process.Kill() })
 			done := make(chan error, 1)
 			go func() { done <- cmd.Wait() }()
-			if !waitMarker(filepath.Join(root, "ready")) {
+			data, err := readWindowsMarker(filepath.Join(root, "ready"), 10*time.Second)
+			if err != nil {
 				_ = cmd.Process.Kill()
 				select {
 				case <-done:
-					t.Fatalf("worker failed: %s", output.String())
+					t.Fatalf("worker failed (%v): %s", err, output.String())
 				case <-time.After(15 * time.Second):
 					t.Fatal("worker did not become ready or exit")
 				}
-			}
-			data, err := os.ReadFile(filepath.Join(root, "ready"))
-			if err != nil {
-				t.Fatal(err)
 			}
 			var pids []uint32
 			if err := json.Unmarshal(data, &pids); err != nil {

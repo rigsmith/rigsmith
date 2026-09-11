@@ -96,10 +96,7 @@ func TestWindowsOwnerHelper(t *testing.T) {
 		}
 		// "started" deliberately stops before owner.started: the command and
 		// its descendant must already be protected at this boundary.
-		if !waitMarker(marker + ".leaf") {
-			t.Fatal("leaf did not start")
-		}
-		data, err := os.ReadFile(marker + ".leaf")
+		data, err := readWindowsMarker(marker+".leaf", 10*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,18 +147,15 @@ func TestWindowsOwnerDeathAtStartupBoundaries(t *testing.T) {
 				t.Cleanup(func() { _ = cmd.Process.Kill() })
 				done := make(chan error, 1)
 				go func() { done <- cmd.Wait() }()
-				if !waitMarker(marker) {
+				data, err := readWindowsMarker(marker, 10*time.Second)
+				if err != nil {
 					_ = cmd.Process.Kill()
 					select {
 					case <-done:
-						t.Fatalf("owner never became ready: %s", output.String())
+						t.Fatalf("owner never became ready (%v): %s", err, output.String())
 					case <-time.After(10 * time.Second):
 						t.Fatal("owner never became ready or exited")
 					}
-				}
-				data, err := os.ReadFile(marker)
-				if err != nil {
-					t.Fatal(err)
 				}
 				var pids []uint32
 				if err := json.Unmarshal(data, &pids); err != nil {
