@@ -49,16 +49,16 @@ func TestActivityForwardsTheRecordsOwnSummary(t *testing.T) {
 	}{
 		{"a whole file", journal.Record{
 			Op: journal.OpSync, Outcome: journal.OutcomeRefused,
-			Leaks: []journal.Leak{{Path: "cli/skills/s/id_rsa", Kind: "key-material"}}, LeakFiles: 1,
+			Leaks: []journal.Leak{{Path: "cli/skills/s/id_rsa", Kind: "key-material", File: true}}, LeakFiles: 1,
 		}},
 		{"a file and a value", journal.Record{
 			Op: journal.OpSync, Outcome: journal.OutcomeRefused,
-			Leaks:     []journal.Leak{{Path: "a", Kind: "key-material"}, {Path: "b", Kind: "github-token"}},
+			Leaks:     []journal.Leak{{Path: "a", Kind: "key-material", File: true}, {Path: "b", Kind: "github-token"}},
 			LeakFiles: 1,
 		}},
 		{"one that could not be read", journal.Record{
 			Op: journal.OpSync, Outcome: journal.OutcomeRefused,
-			Leaks:      []journal.Leak{{Path: "a", Kind: "unreadable"}},
+			Leaks:      []journal.Leak{{Path: "a", Kind: "unreadable", File: true}},
 			LeakUnread: 1,
 		}},
 		{"an ordinary sync", journal.Record{
@@ -75,5 +75,29 @@ func TestActivityForwardsTheRecordsOwnSummary(t *testing.T) {
 		if len(e.Leaks) != len(tc.rec.Leaks) {
 			t.Errorf("%s: %d leak lines, want one per finding", tc.name, len(e.Leaks))
 		}
+	}
+}
+
+// The feed shows one line per finding, and those lines have to carry the same
+// distinction the summary above them counts — otherwise a refusal reads
+// "1 file" over two rows that look identical.
+func TestActivityDistinguishesAWholeFileFromAValue(t *testing.T) {
+	e := toEvent(journal.Record{
+		Op: journal.OpSync, Outcome: journal.OutcomeRefused,
+		Leaks: []journal.Leak{
+			{Path: "cli/projects/x/s.jsonl", Kind: "private-key"},
+			{Path: "cli/skills/s/id_rsa", Kind: "private-key", File: true},
+		},
+		LeakFiles: 1,
+	}, "mbp")
+
+	if len(e.Leaks) != 2 {
+		t.Fatalf("leaks = %v", e.Leaks)
+	}
+	if e.Leaks[0] == e.Leaks[1] {
+		t.Errorf("both rows read %q — the file and the value are indistinguishable", e.Leaks[0])
+	}
+	if e.Leaks[1] != "cli/skills/s/id_rsa (private-key file)" {
+		t.Errorf("whole-file row = %q", e.Leaks[1])
 	}
 }

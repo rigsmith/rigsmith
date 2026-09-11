@@ -100,6 +100,13 @@ type OversizeFile struct {
 type Leak struct {
 	Path string `json:"path"`
 	Kind string `json:"kind"`
+	// File marks a finding that IS the whole file, rather than a value found
+	// inside one. Kind cannot stand in for it: a PEM block pasted into a
+	// transcript and an id_rsa both report "private-key", and the two lead to
+	// different remedies — scrub the value, or drop the file from the
+	// allowlist. Absent on records written before the distinction existed,
+	// which read as values, as they always have.
+	File bool `json:"file,omitempty"`
 }
 
 // Record is one line of the journal.

@@ -95,6 +95,20 @@ func (o Op) verb() string {
 // The distinction is not pedantry. A value means the redactor missed a key
 // inside a file worth syncing; a file means something is in the allowlist that
 // should not be. They send you to different places.
+// Label names one finding for display: its path, its kind, and whether the
+// whole file is the credential. The same helper serves every front end, for the
+// reason LeakPhrase does — two places writing their own sentence about one
+// record is how they came to disagree.
+//
+// An unreadable file carries File too, but says so in its kind already, so it
+// is not labelled twice.
+func (l Leak) Label() string {
+	if l.File && l.Kind != redact.KindUnreadable {
+		return l.Path + " (" + l.Kind + " file)"
+	}
+	return l.Path + " (" + l.Kind + ")"
+}
+
 func LeakPhrase(total, files, unread int) string {
 	values := total - files - unread
 	var parts []string
@@ -207,7 +221,7 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 			}
 		}
 		for _, f := range rep.Findings {
-			rec.Leaks = append(rec.Leaks, Leak{Path: f.Path, Kind: f.Kind})
+			rec.Leaks = append(rec.Leaks, Leak{Path: f.Path, Kind: f.Kind, File: f.File})
 			switch {
 			case f.Kind == redact.KindUnreadable:
 				rec.LeakUnread++

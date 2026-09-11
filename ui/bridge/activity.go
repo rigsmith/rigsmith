@@ -90,7 +90,7 @@ func toEvent(r journal.Record, thisMachine string) Event {
 		This:     r.Machine == thisMachine,
 	}
 	for _, l := range r.Leaks {
-		e.Leaks = append(e.Leaks, l.Path+" ("+l.Kind+")")
+		e.Leaks = append(e.Leaks, l.Label())
 	}
 	return e
 }

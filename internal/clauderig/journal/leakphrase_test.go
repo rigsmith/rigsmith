@@ -105,3 +105,40 @@ func TestFileFindingsAreFilesAndEmbeddedTokensAreValues(t *testing.T) {
 		t.Errorf("Summary() = %q, want %q", got, want)
 	}
 }
+
+// The count says how many findings were whole files; this says WHICH. Kind
+// cannot answer it — "private-key" is what both a PEM block inside a transcript
+// and an id_rsa report — and the two send you to different places, which is the
+// whole reason the distinction is drawn.
+func TestLeakLabelSeparatesAFileFromAValueOfTheSameKind(t *testing.T) {
+	value := Leak{Path: "cli/projects/x/s.jsonl", Kind: "private-key"}
+	file := Leak{Path: "cli/skills/s/id_rsa", Kind: "private-key", File: true}
+
+	if got, want := value.Label(), "cli/projects/x/s.jsonl (private-key)"; got != want {
+		t.Errorf("value = %q, want %q", got, want)
+	}
+	if got, want := file.Label(), "cli/skills/s/id_rsa (private-key file)"; got != want {
+		t.Errorf("file = %q, want %q", got, want)
+	}
+	if value.Label() == file.Label() {
+		t.Error("a value and a whole file of the same kind are indistinguishable")
+	}
+}
+
+// An unreadable file carries File as well, but its kind already says so. Saying
+// it twice — "unreadable file" — is the kind of wording this PR exists to stop.
+func TestLeakLabelDoesNotSayUnreadableTwice(t *testing.T) {
+	l := Leak{Path: "cli/projects/x/s.jsonl", Kind: redact.KindUnreadable, File: true}
+	if got, want := l.Label(), "cli/projects/x/s.jsonl (unreadable)"; got != want {
+		t.Errorf("label = %q, want %q", got, want)
+	}
+}
+
+// A record written before the distinction existed has no File on any finding.
+// It reads as a value, which is how it has always been rendered.
+func TestLeakLabelOnAnOlderRecordReadsAsAValue(t *testing.T) {
+	old := Leak{Path: "env.KEY", Kind: "anthropic-key"}
+	if got, want := old.Label(), "env.KEY (anthropic-key)"; got != want {
+		t.Errorf("label = %q, want %q", got, want)
+	}
+}
