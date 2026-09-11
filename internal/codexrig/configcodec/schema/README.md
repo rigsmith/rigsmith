@@ -101,3 +101,14 @@ boundary, and raw-pattern retention during final upserts. Domain glob syntax
 uses globset's default escaping (disabled on Windows), unlike MITM's explicit
 escaping. Native regex/glob-set compilation, constraints and actual matching
 remain outside these checks. All logic is offline; no runtime dependency is added.
+
+Endpoint declaration checks follow the same release's
+[`NetworkToml::apply_to_network_proxy_config`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/config/src/permissions_toml.rs#L502),
+[`ValidatedUnixSocketPath::parse`, `validate_unix_socket_allowlist_paths` and `resolve_runtime`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/network-proxy/src/config.rs#L401),
+and the nonblank guard in [`parse_host_port`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/network-proxy/src/config.rs#L484).
+They validate exact-key inherited socket allows and explicit address nonblankness;
+they do not reproduce the full native URL parser/fallback or bind behavior.
+Unix-style absolute socket paths work on all platforms; additional absolute paths
+use host Go syntax. NUL refusal for allowed paths and checking selected disabled
+networks before managed enforcement are explicit restore policy. There is no
+socket connection, filesystem lookup or address resolution.

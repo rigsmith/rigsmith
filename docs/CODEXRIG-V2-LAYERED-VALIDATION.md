@@ -202,7 +202,41 @@ managed-network enforcement, even when the selected network is disabled. A child
 may repair a parent's effective rule; unrelated keys remain inherited. Inactive
 profiles are retained without compiling their domains. Managed-profile selection
 and ordinary config overlays use the same checks. Network requirements, exec-policy
-rules, filesystem/socket paths and runtime availability remain separate gates.
+rules, filesystem policy and socket/runtime availability remain separate gates.
+
+## Selected network endpoint declarations
+
+Selected network profiles now check explicit `proxy_url` and `socks_url` values
+for nonblank text after inheritance. An omitted field retains the ancestor's
+value; an absent field throughout the chain uses a valid native default. Both
+explicit addresses are checked even when SOCKS is disabled, matching the order
+in native `resolve_runtime`. This is only the mandatory nonblank check. Full
+native URL parsing, permissive host/port fallback and bind-address handling are
+still destination validation work; a nonblank value such as `http://` does not
+prove readiness. These are Codex's own proxy configuration fields, not a rigsmith
+sync transport.
+
+Unix-socket maps merge by exact raw key. Child entries replace the same ancestor
+key; omitted/empty maps retain other ancestor entries. Only effective `allow`
+entries receive path checks, as in native `validate_unix_socket_allowlist_paths`.
+A child `deny` can therefore disable an invalid ancestor allow entry. Dot segments,
+case and separators are not normalized for inheritance or key comparison.
+
+Allowed socket paths must start with `/` on every platform, or satisfy the
+destination host's Go absolute-path syntax. This mirrors the native acceptance
+of Unix-style absolute paths even on Windows, with the same explicit Go path
+policy used for secret-file declarations. Paths are not trimmed or expanded, and
+no filesystem lookup or connection occurs. Nonexistent absolute paths and dot
+segments are permitted. NUL refusal for allowed paths is an explicit restore
+policy beyond native lexical checks. Denied entries are not used as connection
+paths and remain unvalidated. The `dangerously_allow_all_unix_sockets` flag does
+not bypass validation of explicit allowed entries, matching native call order.
+
+As with the other selected network declarations, restore checks these before
+managed enforcement, including selected disabled networks. Inactive profiles
+remain retained without endpoint validation. Complete address parsing, socket
+availability, policy constraints and platform runtime support remain required
+before production restore can claim destination readiness.
 
 ## Remaining work
 
@@ -263,3 +297,9 @@ refusal before the destination callback without writes.
 A local comparison of 12,007 generated/targeted patterns agreed with the pinned
 native normalization, expansion, global-deny predicate and globset 0.4.18 syntax
 on macOS. This is parser evidence, not native regex compilation or matching.
+
+Endpoint regressions cover schema-valid nonblank/address defaults, native and
+Unix-style absolute paths, NUL policy, denied entries, exact-key inheritance,
+managed fallback, independent profiles, cancellation and private refusal before
+the destination callback without writes. Tests use synthetic paths and never
+open sockets or read user configuration.

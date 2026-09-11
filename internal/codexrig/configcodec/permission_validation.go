@@ -215,7 +215,10 @@ func validatePermissionSelection(ctx context.Context, doc map[string]any, mode p
 			if err := validateInheritedMITMActions(ctx, chain); err != nil {
 				return err
 			}
-			return validateInheritedNetworkDomains(ctx, chain)
+			if err := validateInheritedNetworkDomains(ctx, chain); err != nil {
+				return err
+			}
+			return validateInheritedNetworkEndpoints(ctx, chain)
 		}
 		// :danger-full-access is selectable but not an extensible parent.
 		selected = parent
