@@ -10,8 +10,14 @@ func CheckSyncRouting(path string) error {
 	if err != nil {
 		return err
 	}
-	if disabled, _ := s["disableAllHooks"].(bool); disabled {
-		return fmt.Errorf("Claude hooks are disabled in settings")
+	if value, present := s["disableAllHooks"]; present {
+		disabled, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("disableAllHooks must be a boolean when present")
+		}
+		if disabled {
+			return fmt.Errorf("Claude hooks are disabled in settings")
+		}
 	}
 	h, _ := s["hooks"].(map[string]any)
 	for _, p := range SyncPlans() {

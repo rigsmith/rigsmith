@@ -133,7 +133,7 @@ func TestQueueSyncRefusalsBeforeCapture(t *testing.T) {
 			}
 			switch mode {
 			case "private":
-				f.deps.private = func(context.Context, string) error { return sentinel }
+				f.deps.ensurePrivate = func(context.Context, string) error { return sentinel }
 				f.deps.supervise = func(context.Context) (context.Context, error) {
 					t.Fatal("privacy failure reached supervision")
 					return nil, nil

@@ -47,12 +47,13 @@ type queueSubmission struct {
 }
 
 type queueCommandDeps struct {
-	resolve     func() (service.SyncRequest, error)
-	identity    func() (service.Identity, error)
-	private     func(context.Context, string) error
-	supervise   func(context.Context) (context.Context, error)
-	routingPath func() (string, error)
-	hooksPath   func() (string, error)
+	resolve       func() (service.SyncRequest, error)
+	identity      func() (service.Identity, error)
+	ensurePrivate func(context.Context, string) error
+	supervise     func(context.Context) (context.Context, error)
+	routingPath   func() (string, error)
+	hooksPath     func() (string, error)
+	saveRouting   func(context.Context, string, queueHookRouting) error
 }
 
 // NewQueueCmd exposes a foreground workflow and an explicit local hook opt-in.
@@ -78,9 +79,9 @@ func defaultQueueCommandDeps() queueCommandDeps {
 			a, o, e, err := account.LiveIdentity()
 			return service.Identity{AccountUUID: a, OrganizationUUID: o, Email: e}, err
 		},
-		routingPath: queueHookRoutingPath,
-		hooksPath:   settingsPath,
-		private:     ghrepo.EnsurePrivate,
+		routingPath:   queueHookRoutingPath,
+		hooksPath:     settingsPath,
+		ensurePrivate: ghrepo.EnsurePrivate,
 		supervise: func(ctx context.Context) (context.Context, error) {
 			executable, err := os.Executable()
 			if err != nil {
@@ -638,7 +639,7 @@ func (d queueCommandDeps) remote(ctx context.Context, req service.SyncRequest) (
 	if err != nil {
 		return nil, fmt.Errorf("queued sync requires a supported HTTPS remote: %w", err)
 	}
-	if err = d.private(ctx, req.Config.Remote); err != nil {
+	if err = d.ensurePrivate(ctx, req.Config.Remote); err != nil {
 		return nil, err
 	}
 	return remote, nil

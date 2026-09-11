@@ -520,16 +520,39 @@ provision private inherited ACLs, which the command does not inspect or repair.
 Symbolic links are refused. It uses exact compact Go JSON encoding plus one LF,
 with these fields in declaration order:
 
-| Field | Value |
-| --- | --- |
-| `Version` | Integer `1`. |
-| `Enabled` | Boolean selecting queued routing. |
-| `Runtime` | Canonical absolute runtime directory. |
-| `Inbox` | Absolute private inbox directory outside the descriptor and all capture/staging/runtime trees. |
-| `Profiles` | Sorted explicit Desktop profile names, or `null` for none. |
-| `Scope` | Runtime lifecycle binding digest. |
-| `UnknownIdentity` | Whether hooks bypass live identity lookup and explicitly record unknown attribution. |
-| `Checksum` | SHA-256 hex digest of the compact typed object with `Checksum` set to the empty string, without the final LF. |
+| Field | Writer, purpose and default | Validation and lifecycle |
+| --- | --- | --- |
+| `Version` | `enable-hooks` supplies integer `1`; no omitted or null form. Identifies the routing format. | Reader accepts only `1`; unknown versions block all routing/toggle commands. No automatic migration. |
+| `Enabled` | Enable writes `true`; disable writes `false`. With no descriptor, routing is off. Persisted values have no omitted/null default. | Must be a JSON boolean. Routed reads and same-command retries retain the value; only an explicit toggle changes it. A disabled record still receives full file/encoding/checksum validation. |
+| `Runtime` | Enable saves the opened runtime's canonical absolute directory, selected by `--dir` or `~/.clauderig/queue-runtime`. No null/empty default in saved data. | Reader requires an absolute path. Enabled operations reopen it against current configuration and the lifecycle scope; disable requires the selected runtime to match. Runtime isolation/private-store rules apply. The descriptor's entire 128 KiB limit bounds the string. |
+| `Inbox` | Enable resolves `--inbox` to an absolute path, defaulting to `~/.clauderig/hook-inbox`. No null/empty saved default. Pins producer recovery location. | Reader requires an absolute path. Enable/use/disable enforce capture/staging/runtime exclusion and keep the descriptor outside the inbox, comparing actual directory identities for case/alias handling. Existing journals must match `Scope`; missing/corrupt state blocks active routing. Bounded by the descriptor's 128 KiB limit. |
+| `Profiles` | Enable saves sorted explicit `--profile` names. No selection writes `null`; an empty array is also readable and preserved. | Elements must be strings. Enable verifies complete local Desktop coverage and runtime binding. Reopen/manual capture revalidate their respective profile/binding rules. No silent sorting, dropping, renaming or rewriting on read; total bytes are bounded by the descriptor limit. |
+| `Scope` | Enable generates the runtime lifecycle's SHA-256 binding digest using `ScopeID`; never taken from hook input. No empty/null default. | Reader requires a nonempty string and valid descriptor checksum. Enabled operations compare it with the reopened runtime's scope; a foreign scope fails. It remains unchanged on disable and reflush, preserving the association with inbox/queue records. |
+| `UnknownIdentity` | Enable saves the explicit `--unknown-identity` choice, default `false`; no omitted/null saved form. Determines whether every hook bypasses live identity lookup. | Must be a JSON boolean. It is not an identity observation or fallback policy. Retained on disable/reflush; changing it while enabled requires completed rollback and a new enable. Existing producer events always retain their original attribution. |
+| `Checksum` | Every descriptor write computes SHA-256 hex over the compact typed object with this field set to the empty string, without LF. Generated locally, never supplied by the hook. | Required string matching the recomputed digest. All preceding fields participate, including `Enabled`. It changes on an explicit toggle but not a byte-preserving reflush. Detects accidental damage, not same-user tampering. |
+
+Every field is required in the exact persisted encoding; only `Profiles` permits
+`null`. These are local routing choices, not synchronized user configuration or
+queue event IDs. `enable-hooks` owns creation and option selection; checked
+`disable-hooks` owns the transition back to synchronous behavior. Active reflush
+and idempotent retries write exactly the same typed values, including retained
+disabled options. No read infers replacement identity, runtime or profile defaults.
+
+The common private-state helper owns regular-file/private-mode/link/size checks,
+canonical JSON reads and bounded durable writes. Routing and inbox callers still
+own their paths, schema validation, checksums, limits and lifecycle transitions.
+There is no shared destination chooser that could redirect one format into the
+other. Both formats retain their existing byte representation.
+
+A valid disabled descriptor does not require its runtime to be reopened merely
+for ordinary synchronous sync or an idempotent disable. Re-enabling checks current
+configuration and complete profile coverage and validates/initializes the chosen
+inbox before replacing options. Do not manually edit retained fields or replay a
+descriptor from another lifecycle: enabling/use still enforce scope association.
+Fixed format-v1 fixtures cover enabled and retained-disabled records on Unix and
+Windows; reading and reflush preserve their canonical bytes and every field.
+Pre-/post-replacement error tests cover enable, disable and active reflush with
+unchanged queue/inbox records; truncated descriptors are refused and never reset.
 
 Unknown/duplicate/case-aliased fields, reformatting, invalid Unicode and checksum
 changes are rejected by exact re-encoding. The checksum detects accidental damage,

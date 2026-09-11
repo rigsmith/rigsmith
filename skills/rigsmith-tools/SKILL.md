@@ -247,12 +247,12 @@ lets the single sync finish. A second cancels and waits for supervised cleanup. 
 dropping accepted work. Inspect status and repair the cause before retrying;
 never reset/copy runtime children or bypass process fences/profile isolation.
 Keep paths/links stable and Windows files under a private inherited ACL. Ordinary
-sync does not acknowledge pending queue events. Use `queue sync` for explicit
+sync does not acknowledge pending queue events unless local routing is enabled. Use `queue sync` for explicit
 manual acknowledgement: its profile selection must match every profile ordinary
 sync discovers. `--dry-run` stages/scans without acknowledgement; `--flush`
 includes all changed tails and does not read hook stdin. Privacy/shared-history
 checks apply to previews too. Other identities and incomplete/attempted work stay
-queued; inspect status. Opt-in hook routing and rollout rollback remain pending. Actual OS reboot/hibernation
+queued; inspect status. Use the local opt-in and rollback commands below when requested. Actual OS reboot/hibernation
 validation remains a general-release gate.
 
 ### Worktree & PR discipline (the `clauderig guard` hook)
@@ -304,7 +304,7 @@ Recovery only covers records saved before interruption. Never reset a corrupt or
 mismatched inbox. The journal is bounded to 128 pending requests and 1 MiB;
 recover existing intent before sending more if full. Stop producers, recover every
 inbox, then drain before rollback. Admission success is not publication, and queue
-status excludes requests still in the inbox. Automatic installation remains deferred.
+status excludes requests still in the inbox. Opt-in uses the existing portable hooks; no background service is installed.
 
 For explicitly requested v2 hook opt-in, stop Claude sessions, manual syncs and
 other producers first. Install the standard hooks, initialize after ordinary sync,

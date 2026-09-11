@@ -266,7 +266,7 @@ func TestQueueHookRoutingManualContextAndAdmissionConcurrency(t *testing.T) {
 	// startup. A hook must still be able to acquire routing and enqueue meanwhile.
 	entered := make(chan struct{})
 	resume := make(chan struct{})
-	f.deps.private = func(ctx context.Context, _ string) error {
+	f.deps.ensurePrivate = func(ctx context.Context, _ string) error {
 		if d, ok := ctx.Deadline(); !ok || time.Until(d) < 30*time.Second {
 			return errors.New("manual sync inherited a hook deadline")
 		}

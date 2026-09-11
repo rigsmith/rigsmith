@@ -5,15 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/mattn/go-isatty"
-	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/durable"
 	"github.com/rigsmith/rigsmith/internal/agentrig/queue"
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
@@ -43,44 +40,13 @@ func queueHookRoutingPath() (string, error) {
 
 func routingChecksum(s queueHookRouting) string {
 	s.Checksum = ""
-	data, _ := json.Marshal(s)
-	return artifact.Key(data)
+	return privateQueueStateChecksum(s)
 }
 
 func loadHookRouting(path string) (queueHookRouting, error) {
 	var s queueHookRouting
-	info, err := os.Lstat(path)
-	if err != nil {
+	if err := readPrivateQueueState(path, queueRequestLimit, "hook routing", &s); err != nil {
 		return s, err
-	}
-	if !info.Mode().IsRegular() || !queueInboxPrivate(info) || info.Size() > queueRequestLimit {
-		return s, fmt.Errorf("hook routing must be a private regular file at most 128 KiB")
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return s, err
-	}
-	defer f.Close()
-	opened, err := f.Stat()
-	if err != nil {
-		return s, err
-	}
-	if !os.SameFile(info, opened) {
-		return s, fmt.Errorf("hook routing changed during read")
-	}
-	if err := validateQueueRequestSingleLink(f); err != nil {
-		return s, err
-	}
-	data, err := io.ReadAll(io.LimitReader(f, queueRequestLimit+1))
-	if err != nil {
-		return s, err
-	}
-	if len(data) > queueRequestLimit || json.Unmarshal(data, &s) != nil {
-		return s, fmt.Errorf("invalid hook routing JSON")
-	}
-	canonical, err := json.Marshal(s)
-	if err != nil || !bytes.Equal(append(canonical, '\n'), data) {
-		return s, fmt.Errorf("noncanonical hook routing JSON")
 	}
 	if s.Version != 1 || s.Scope == "" || !filepath.IsAbs(s.Runtime) || !filepath.IsAbs(s.Inbox) || s.Checksum != routingChecksum(s) {
 		return s, fmt.Errorf("invalid hook routing descriptor or checksum")
@@ -90,14 +56,7 @@ func loadHookRouting(path string) (queueHookRouting, error) {
 
 func saveHookRouting(ctx context.Context, path string, s queueHookRouting) error {
 	s.Checksum = routingChecksum(s)
-	data, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	if len(data)+1 > queueRequestLimit {
-		return fmt.Errorf("hook routing exceeds 128 KiB")
-	}
-	return durable.Write(ctx, path, func(f *os.File) error { _, err := f.Write(append(data, '\n')); return err })
+	return writePrivateQueueState(ctx, path, s, queueRequestLimit, durable.Write)
 }
 
 func checkRoutingPaths(r *service.QueueRuntime, path, inbox string) error {
@@ -128,17 +87,30 @@ func checkRoutingPaths(r *service.QueueRuntime, path, inbox string) error {
 	if err != nil {
 		return err
 	}
-	// Paths on distinct Windows volumes cannot contain one another.
-	if !strings.EqualFold(filepath.VolumeName(root), filepath.VolumeName(p)) {
+
+	// Compare directory identities on the actual filesystem. Case folding would
+	// reject distinct directories on case-sensitive volumes (including macOS),
+	// while spelling alone would miss aliases on case-insensitive volumes.
+	rootInfo, err := os.Stat(root)
+	if os.IsNotExist(err) {
 		return nil
-	}
-	rel, err := filepath.Rel(strings.ToLower(root), strings.ToLower(p))
+	} // An absent inbox cannot contain the existing descriptor parent.
 	if err != nil {
 		return err
 	}
-	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
-		return fmt.Errorf("hook routing descriptor must be outside its inbox")
+	for ancestor := p; ; ancestor = filepath.Dir(ancestor) {
+		info, err := os.Stat(ancestor)
+		if err == nil && os.SameFile(rootInfo, info) {
+			return fmt.Errorf("hook routing descriptor must be outside its inbox")
+		}
+		if err != nil && !(ancestor == p && os.IsNotExist(err)) {
+			return err
+		}
+		if filepath.Dir(ancestor) == ancestor {
+			break
+		}
 	}
+
 	return nil
 }
 
@@ -201,7 +173,7 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			state, err := in.load(r.ScopeID())
 			if os.IsNotExist(err) && !old.Enabled {
 				if err := os.Mkdir(root, 0700); err != nil {
-					return fmt.Errorf("incomplete hook inbox; restore its journal before enabling: %w", err)
+					return fmt.Errorf("incomplete hook inbox; restore its journal before enabling: %s", sanitizeForDisplay(err.Error()))
 				}
 				state = hookInboxState{Version: 1, Scope: r.ScopeID(), Requests: []queueSubmission{}}
 			} else if err != nil {
@@ -210,7 +182,7 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			if err := in.persist(c.Context(), state); err != nil {
 				return err
 			}
-			if err := saveHookRouting(c.Context(), path, wanted); err != nil {
+			if err := deps.persistHookRouting(c.Context(), path, wanted); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(c.OutOrStdout(), "Queued hooks enabled on this machine. Run a queue worker to publish; manual sync now uses the queue-aware sync path.")
@@ -242,7 +214,7 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			}
 			// Reflush an already-disabled descriptor after an uncertain disable write.
 			if !s.Enabled {
-				return saveHookRouting(c.Context(), path, s)
+				return deps.persistHookRouting(c.Context(), path, s)
 			}
 			r, err := open(c.Context(), false)
 			if err != nil {
@@ -270,7 +242,7 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			if err := in.persist(c.Context(), state); err != nil {
 				return err
 			}
-			if err := r.WhileIdle(c.Context(), func() error { s.Enabled = false; return saveHookRouting(c.Context(), path, s) }); err != nil {
+			if err := r.WhileIdle(c.Context(), func() error { s.Enabled = false; return deps.persistHookRouting(c.Context(), path, s) }); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(c.OutOrStdout(), "Queued hooks disabled. Sync and installed hooks are synchronous again; recovery state was preserved.")
@@ -386,7 +358,7 @@ func routeQueuedSync(c *cobra.Command, deps queueCommandDeps, dryRun, flush, hoo
 		return true, err
 	}
 	// Reflush before use: a readable descriptor may follow an uncertain rename.
-	if err := saveHookRouting(ctx, path, s); err != nil {
+	if err := deps.persistHookRouting(ctx, path, s); err != nil {
 		return true, err
 	}
 	args := []string{"--dir", s.Runtime}
@@ -426,4 +398,13 @@ func routeQueuedSync(c *cobra.Command, deps queueCommandDeps, dryRun, flush, hoo
 	child.SetIn(bytes.NewReader(input))
 	child.SetArgs(args)
 	return true, child.ExecuteContext(ctx)
+}
+
+// The seam exposes an uncertain descriptor result without changing filesystem
+// operations or journal behavior in production.
+func (d queueCommandDeps) persistHookRouting(ctx context.Context, path string, state queueHookRouting) error {
+	if d.saveRouting != nil {
+		return d.saveRouting(ctx, path, state)
+	}
+	return saveHookRouting(ctx, path, state)
 }

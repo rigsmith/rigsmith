@@ -39,7 +39,7 @@ func newQueueFixture(t *testing.T) *queueCommandFixture {
 	cfg.Roots = cfg.Roots[:1]
 	cfg.Remote = "https://github.com/acme/private-backup.git"
 	f := &queueCommandFixture{req: service.SyncRequest{Config: cfg, Machine: config.Machine{Name: "fixture", OS: config.OSToken(), Home: filepath.Join(root, "home")}, StagingDir: filepath.Join(root, "stage")}, dir: filepath.Join(root, "runtime"), identity: service.Identity{AccountUUID: "11111111-1111-4111-8111-111111111111", Email: "producer@example.com"}}
-	f.deps = queueCommandDeps{resolve: func() (service.SyncRequest, error) { return f.req, nil }, identity: func() (service.Identity, error) { f.reads++; return f.identity, nil }, private: func(_ context.Context, remote string) error {
+	f.deps = queueCommandDeps{resolve: func() (service.SyncRequest, error) { return f.req, nil }, identity: func() (service.Identity, error) { f.reads++; return f.identity, nil }, ensurePrivate: func(_ context.Context, remote string) error {
 		f.privateChecks++
 		f.privateRemotes = append(f.privateRemotes, remote)
 		return nil
@@ -130,14 +130,14 @@ func TestQueueCommandRefusals(t *testing.T) {
 	if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
 		t.Fatal("created missing runtime", err)
 	}
-	f.deps.private = func(context.Context, string) error { return errors.New("privacy refused") }
+	f.deps.ensurePrivate = func(context.Context, string) error { return errors.New("privacy refused") }
 	if _, err := f.execute(t.Context(), "init"); err == nil {
 		t.Fatal("created private-unverified runtime")
 	}
 	if _, err := os.Stat(f.dir); !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	f.deps.private = func(context.Context, string) error { return nil }
+	f.deps.ensurePrivate = func(context.Context, string) error { return nil }
 	f.must(t, "init")
 	path := filepath.Join(t.TempDir(), "request")
 	f.identity = service.Identity{}
@@ -202,7 +202,7 @@ func TestQueueCommandStartupRefusalPreservesWork(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "request")
 	f.must(t, "prepare", "--session", "s", "--output", path)
 	f.must(t, "enqueue", path)
-	f.deps.private = func(context.Context, string) error { return errors.New("privacy changed") }
+	f.deps.ensurePrivate = func(context.Context, string) error { return errors.New("privacy changed") }
 	if _, err := f.execute(t.Context(), "drain"); err == nil || !strings.Contains(err.Error(), "privacy changed") {
 		t.Fatal(err)
 	}

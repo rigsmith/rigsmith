@@ -7,7 +7,7 @@ import (
 )
 
 func TestCheckSyncRouting(t *testing.T) {
-	for _, tc := range []string{"standard", "missing", "stale", "duplicate", "scoped", "matcher-type", "command-type", "disabled", "unrelated"} {
+	for _, tc := range []string{"standard", "missing", "stale", "duplicate", "scoped", "matcher-type", "command-type", "disabled", "disable-string", "disable-null", "disable-number", "explicit-enabled", "unrelated"} {
 		t.Run(tc, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "settings.json")
 			if _, err := Install(path, SyncPlans()); err != nil {
@@ -36,6 +36,14 @@ func TestCheckSyncRouting(t *testing.T) {
 				command["type"] = "prompt"
 			case "disabled":
 				s["disableAllHooks"] = true
+			case "disable-string":
+				s["disableAllHooks"] = "false"
+			case "disable-null":
+				s["disableAllHooks"] = nil
+			case "disable-number":
+				s["disableAllHooks"] = 0
+			case "explicit-enabled":
+				s["disableAllHooks"] = false
 			case "unrelated":
 				h["Stop"] = append(groups, newGroup(Plan{Command: "other-tool"}))
 			}
@@ -44,7 +52,7 @@ func TestCheckSyncRouting(t *testing.T) {
 			}
 			before, _ := os.ReadFile(path)
 			err = CheckSyncRouting(path)
-			wantOK := tc == "standard" || tc == "unrelated"
+			wantOK := tc == "standard" || tc == "unrelated" || tc == "explicit-enabled"
 			if (err == nil) != wantOK {
 				t.Fatal(tc, err)
 			}
