@@ -325,3 +325,9 @@ recovery state; never delete it, change the runtime or downgrade binaries to
 bypass recovery. After an uncertain toggle write, inspect status and retry the
 same command. After restarting the machine, recover the inbox and restart the
 foreground worker explicitly. No automatic service registration is provided.
+
+A retained disabled descriptor is not permission to start over. Before re-enable
+or selecting another destination, reconcile the pinned runtime and inbox and
+stop its worker. Missing/corrupt retained state or pending work blocks re-enable.
+Both old and requested runtime bindings must validate; restore prior configuration
+to reconcile if needed. Preserve the old recovery records after a successful switch.

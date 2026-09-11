@@ -416,3 +416,152 @@ func TestQueueHookRoutingDefaultProducerAndRecoveryUsePinnedInbox(t *testing.T) 
 		})
 	}
 }
+
+func TestQueueHookRoutingReenablePreservesRetainedState(t *testing.T) {
+	for _, target := range []string{"same", "different"} {
+		for _, problem := range []string{"missing-inbox", "corrupt-inbox", "inbox", "queue", "worker", "missing-runtime"} {
+			t.Run(target+"/"+problem, func(t *testing.T) {
+				f := newQueueFixture(t)
+				path, _ := setupHookRouting(t, f)
+				f.must(t, "init")
+				f.must(t, "enable-hooks")
+				f.must(t, "disable-hooks")
+				old, err := loadHookRouting(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				descriptorBefore, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				oldRuntime := f.open(t)
+				switch problem {
+				case "missing-inbox":
+					if err := os.RemoveAll(old.Inbox); err != nil {
+						t.Fatal(err)
+					}
+				case "corrupt-inbox":
+					if err := os.WriteFile(filepath.Join(old.Inbox, "requests.json"), []byte("{"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				case "inbox", "queue":
+					request, err := newQueueSubmission(oldRuntime, "s", queue.Flush{Mode: queue.Normal}, false, f.deps.identity)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if problem == "inbox" {
+						err = (hookInbox{dir: old.Inbox, save: durable.Write}).persist(t.Context(), hookInboxState{Version: 1, Scope: old.Scope, Requests: []queueSubmission{request}})
+					} else {
+						_, err = oldRuntime.Enqueue(t.Context(), request.Identity, request.Request, request.At)
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+				case "worker":
+					_, release, err := storelock.Acquire(t.Context(), filepath.Join(f.dir, "queue", "worker"), 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer release()
+				case "missing-runtime":
+					if err := os.RemoveAll(f.dir); err != nil {
+						t.Fatal(err)
+					}
+				}
+				inboxBefore, inboxErr := os.ReadFile(filepath.Join(old.Inbox, "requests.json"))
+				root := old.Inbox
+				if target == "different" {
+					f.dir = filepath.Join(t.TempDir(), "new-runtime")
+					f.must(t, "init")
+					root = filepath.Join(t.TempDir(), "new-inbox")
+				}
+				if _, err := f.execute(t.Context(), "enable-hooks", "--inbox", root); err == nil {
+					t.Fatal("re-enable bypassed retained recovery", problem)
+				}
+				descriptorAfter, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(descriptorBefore, descriptorAfter) {
+					t.Fatal("re-enable replaced retained descriptor", err)
+				}
+				inboxAfter, afterErr := os.ReadFile(filepath.Join(old.Inbox, "requests.json"))
+				if os.IsNotExist(afterErr) != os.IsNotExist(inboxErr) || !bytes.Equal(inboxBefore, inboxAfter) {
+					t.Fatal("re-enable changed or recreated retained inbox", afterErr)
+				}
+				if target == "different" {
+					if _, err := os.Lstat(root); !os.IsNotExist(err) {
+						t.Fatal("created destination inbox before reconciliation", err)
+					}
+				}
+				if problem == "queue" {
+					work, err := oldRuntime.Snapshot(t.Context())
+					if err != nil || len(work) != 1 || len(work[0].Events) != 1 {
+						t.Fatal("lost retained queue work", work, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestQueueHookRoutingRetargetAfterReconciliation(t *testing.T) {
+	for _, failure := range []string{"none", "before", "after"} {
+		t.Run(failure, func(t *testing.T) {
+			f := newQueueFixture(t)
+			path, _ := setupHookRouting(t, f)
+			f.must(t, "init")
+			f.must(t, "enable-hooks")
+			f.must(t, "disable-hooks")
+			old, err := loadHookRouting(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldRuntime := f.open(t)
+			originalInbox, err := os.ReadFile(filepath.Join(old.Inbox, "requests.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.dir = filepath.Join(t.TempDir(), "next-runtime")
+			f.must(t, "init")
+			nextScope := f.open(t).ScopeID()
+			nextInbox := filepath.Join(t.TempDir(), "next-inbox")
+			if failure != "none" {
+				injected := errors.New("uncertain retained re-enable")
+				f.deps.saveRouting = func(ctx context.Context, path string, s queueHookRouting) error {
+					if failure == "after" {
+						if err := saveHookRouting(ctx, path, s); err != nil {
+							return err
+						}
+					}
+					return injected
+				}
+				if _, err := f.execute(t.Context(), "enable-hooks", "--inbox", nextInbox); !errors.Is(err, injected) {
+					t.Fatal(err)
+				}
+				current, err := loadHookRouting(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if failure == "before" && (current.Enabled || current.Scope != old.Scope) {
+					t.Fatal("lost old routing on failed replacement", current)
+				}
+				if failure == "after" && (!current.Enabled || current.Scope != nextScope) {
+					t.Fatal("lost completed replacement", current)
+				}
+				f.deps.saveRouting = nil
+			}
+			f.must(t, "enable-hooks", "--inbox", nextInbox)
+			current, err := loadHookRouting(path)
+			if err != nil || !current.Enabled || current.Scope != nextScope || current.Inbox != nextInbox {
+				t.Fatal(current, err)
+			}
+			preserved, err := os.ReadFile(filepath.Join(old.Inbox, "requests.json"))
+			if err != nil || !bytes.Equal(originalInbox, preserved) {
+				t.Fatal("retarget changed retained producer state", err)
+			}
+			work, err := oldRuntime.Snapshot(t.Context())
+			if err != nil || len(work) != 0 {
+				t.Fatal("retarget removed or changed retained queue", work, err)
+			}
+			f.must(t, "disable-hooks")
+		})
+	}
+}

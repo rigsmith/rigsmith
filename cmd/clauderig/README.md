@@ -167,3 +167,7 @@ To roll back, stop producers, run `recover-hooks`, drain and stop the worker, th
 run `disable-hooks` with the saved runtime/profile flags. Pending work prevents
 disabling, including repeated disables; recovery records and portable hook settings
 are preserved.
+
+Re-enabling also validates and reconciles the retained disabled runtime and inbox
+before selecting a destination. Missing state or pending work blocks the change;
+old recovery records are preserved.

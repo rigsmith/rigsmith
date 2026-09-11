@@ -459,9 +459,14 @@ and SessionEnd in user settings, with no stale command or matcher. It does not
 rewrite settings. It creates or reflushes the private inbox before saving local
 routing. `--inbox` chooses another inbox with an existing parent;
 `--unknown-identity` deliberately records unknown attribution for every hook.
-Repeating the same enable is safe. Changing active options requires a completed
-disable first. Initialization errors may leave an incomplete inbox: inspect and
-restore its journal rather than discarding potentially saved requests.
+Repeating the same active enable is safe. Changing active options requires a completed
+disable first. A retained disabled descriptor is not first-ever initialization:
+every re-enable requires its original runtime and inbox to remain intact, its
+inbox empty and its queue idle under worker/transaction ownership. Missing or
+corrupt retained state, pending requests/work and an active old worker block even
+a request for another destination. Old recovery records are never deleted.
+Initialization errors may leave an incomplete inbox: inspect and restore its
+journal rather than discarding potentially saved requests.
 
 The existing portable commands remain `clauderig pull`, `clauderig sync --hook`
 and `clauderig sync --flush`. Each machine chooses routing through its own
@@ -550,16 +555,30 @@ The common private-state helper owns regular-file/private-mode/link/size checks,
 canonical JSON reads and bounded durable writes. Routing and inbox callers still
 own their paths, schema validation, checksums, limits and lifecycle transitions.
 There is no shared destination chooser that could redirect one format into the
-other. Both formats retain their existing byte representation.
+other. Both formats retain their existing byte representation. Mutating routing
+commands share the lease/descriptor loader and runtime/path validation; disable
+and retained re-enable also share the intact-empty-inbox check. First-enable,
+unchanged active enable, rollback and producer-reflush policies stay in callers.
 
 A valid disabled descriptor does not require its runtime to be reopened merely
 for ordinary synchronous sync. Every `disable-hooks` retry still checks the pinned
 runtime, inbox and worker/queue idleness before reflush. On a fresh home with no
 configuration parent, disable reports that routing is not enabled and creates no
-state. Re-enabling checks current
-configuration and complete profile coverage and validates/initializes the chosen
-inbox before replacing options. Do not manually edit retained fields or replay a
-descriptor from another lifecycle: enabling/use still enforce scope association.
+state. Re-enabling validates current configuration and complete profile coverage
+for the requested destination, then reopens and reconciles the retained runtime
+with its saved profile selection. Both bindings must still validate; changed
+configuration that prevents reopening the old runtime blocks replacement. Restore
+the prior configuration and reconcile rather than deleting the descriptor. This
+preview does not provide a bypass for incompatible lifecycle migration.
+
+For a destination change, both inbox leases are acquired before old-queue
+maintenance ownership. The new inbox is initialized/reflushed and the new routing
+descriptor is written only inside that idle check. Same-directory aliases share
+the existing inbox lease. A pre-replacement failure preserves the old descriptor;
+a post-replacement uncertainty is retried using the same requested options. The
+old inbox and queue remain available after successful retargeting. Do not manually
+edit retained fields or replay a descriptor from another lifecycle: enabling/use
+still enforce scope association.
 Fixed format-v1 fixtures cover enabled and retained-disabled records on Unix and
 Windows; reading and reflush preserve their canonical bytes and every field.
 Pre-/post-replacement error tests cover enable, disable and active reflush with

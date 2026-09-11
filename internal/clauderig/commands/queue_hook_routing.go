@@ -118,21 +118,17 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 	var inbox string
 	var unknown bool
 	enable := &cobra.Command{Use: "enable-hooks", Short: "Use the queue for this machine's installed sync hooks and manual sync", Args: cobra.NoArgs,
-		Long: "Opt this machine into queued Stop/SessionEnd hooks and queue-aware manual sync.\nFirst stop Claude sessions, workers and other sync producers; install the standard\nsync hooks with clauderig hooks install and initialize the queue. Select every\nlocal Desktop profile, as required by queue sync. The portable hook commands\nstay unchanged; a private local descriptor pins --dir, --profile, --inbox and\nthe explicit unknown-identity choice. No worker or background service is installed.\nStart queue run separately to publish queued work. Windows callers must provide\nprivate directory ACLs; they are not validated or repaired.",
+		Long: "Opt this machine into queued Stop/SessionEnd hooks and queue-aware manual sync.\nFirst stop Claude sessions, workers and other sync producers; install the standard\nsync hooks with clauderig hooks install and initialize the queue. Select every\nlocal Desktop profile, as required by queue sync. The portable hook commands\nstay unchanged; a private local descriptor pins --dir, --profile, --inbox and\nthe explicit unknown-identity choice. Re-enabling a retained disabled selection\nrequires its original runtime and inbox to be intact, reconciled and idle first.\nNo worker or background service is installed.\nStart queue run separately to publish queued work. Windows callers must provide\nprivate directory ACLs; they are not validated or repaired.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			path, err := deps.routingPath()
 			if err != nil {
 				return err
 			}
-			release, err := queueRequestLease(c.Context(), path)
+			old, release, err := lockHookRouting(c.Context(), path)
 			if err != nil {
 				return err
 			}
 			defer release()
-			old, err := loadHookRouting(path)
-			if err != nil && !os.IsNotExist(err) {
-				return err
-			}
 			r, err := open(c.Context(), false)
 			if err != nil {
 				return err
@@ -161,28 +157,67 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			selected := slices.Clone(*profiles)
 			slices.Sort(selected)
 			wanted := queueHookRouting{Version: 1, Enabled: true, Runtime: r.Directory(), Inbox: root, Profiles: selected, Scope: r.ScopeID(), UnknownIdentity: unknown}
-			if old.Enabled && routingChecksum(old) != routingChecksum(wanted) {
+			if old != nil && old.Enabled && routingChecksum(*old) != routingChecksum(wanted) {
 				return fmt.Errorf("hook routing is already enabled with different options; stop producers, recover, drain and disable it before changing options")
 			}
-			in := hookInbox{dir: root, save: durable.Write}
-			_, unlock, err := storelock.Acquire(c.Context(), root, service.StoreWait)
-			if err != nil {
-				return err
-			}
-			defer unlock()
-			state, err := in.load(r.ScopeID())
-			if os.IsNotExist(err) && !old.Enabled {
-				if err := os.Mkdir(root, 0700); err != nil {
-					return fmt.Errorf("incomplete hook inbox; restore its journal before enabling: %s", sanitizeForDisplay(err.Error()))
+
+			var retained *service.QueueRuntime
+			sameInbox := false
+			if old != nil && !old.Enabled {
+				req, err := deps.resolve()
+				if err != nil {
+					return err
 				}
-				state = hookInboxState{Version: 1, Scope: r.ScopeID(), Requests: []queueSubmission{}}
-			} else if err != nil {
-				return err
+				retained, err = service.OpenQueueRuntime(c.Context(), old.Runtime, req, old.Profiles)
+				if err != nil {
+					return fmt.Errorf("reconcile the retained routing runtime before re-enabling: %w", err)
+				}
+				unlock, err := lockEmptyHookInbox(c.Context(), retained, path, *old)
+				if err != nil {
+					return fmt.Errorf("reconcile the retained routing inbox before re-enabling: %w", err)
+				}
+				defer unlock()
+				previous, err := os.Stat(old.Inbox)
+				if err != nil {
+					return err
+				}
+				target, err := os.Stat(root)
+				if err != nil && !os.IsNotExist(err) {
+					return err
+				}
+				sameInbox = err == nil && os.SameFile(previous, target)
 			}
-			if err := in.persist(c.Context(), state); err != nil {
-				return err
+			// Acquire destination ownership before queue maintenance; acquiring
+			// an inbox inside WhileIdle would invert producer inbox -> queue order.
+			if !sameInbox {
+				_, unlock, err := storelock.Acquire(c.Context(), root, service.StoreWait)
+				if err != nil {
+					return err
+				}
+				defer unlock()
 			}
-			if err := deps.persistHookRouting(c.Context(), path, wanted); err != nil {
+			commit := func() error {
+				in := hookInbox{dir: root, save: durable.Write}
+				state, err := in.load(r.ScopeID())
+				if os.IsNotExist(err) && (old == nil || (retained != nil && !sameInbox)) {
+					if err := os.Mkdir(root, 0700); err != nil {
+						return fmt.Errorf("incomplete hook inbox; restore its journal before enabling: %s", sanitizeForDisplay(err.Error()))
+					}
+					state = hookInboxState{Version: 1, Scope: r.ScopeID(), Requests: []queueSubmission{}}
+				} else if err != nil {
+					return err
+				}
+				if err := in.persist(c.Context(), state); err != nil {
+					return err
+				}
+				return deps.persistHookRouting(c.Context(), path, wanted)
+			}
+			if retained != nil {
+				err = retained.WhileIdle(c.Context(), commit)
+			} else {
+				err = commit()
+			}
+			if err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(c.OutOrStdout(), "Queued hooks enabled on this machine. Run a queue worker to publish; manual sync now uses the queue-aware sync path.")
@@ -208,17 +243,13 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			} else if err != nil {
 				return err
 			}
-			release, err := queueRequestLease(c.Context(), path)
+			s, release, err := lockHookRouting(c.Context(), path)
 			if err != nil {
 				return err
 			}
 			defer release()
-			s, err := loadHookRouting(path)
-			if os.IsNotExist(err) {
+			if s == nil {
 				_, err = fmt.Fprintln(c.OutOrStdout(), "Queued hooks are not enabled on this machine.")
-				return err
-			}
-			if err != nil {
 				return err
 			}
 			// Repeated disables retain the same rollback checks: explicit
@@ -227,29 +258,12 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			if err != nil {
 				return err
 			}
-			if r.Directory() != s.Runtime || r.ScopeID() != s.Scope {
-				return queue.ErrBinding
-			}
-			if err := checkRoutingPaths(r, path, s.Inbox); err != nil {
-				return err
-			}
-			in := hookInbox{dir: s.Inbox, save: durable.Write}
-			_, unlock, err := storelock.Acquire(c.Context(), s.Inbox, service.StoreWait)
+			unlock, err := lockEmptyHookInbox(c.Context(), r, path, *s)
 			if err != nil {
 				return err
 			}
 			defer unlock()
-			state, err := in.load(s.Scope)
-			if err != nil {
-				return err
-			}
-			if len(state.Requests) != 0 {
-				return fmt.Errorf("hook inbox still has saved requests; run queue recover-hooks before draining and disabling")
-			}
-			if err := in.persist(c.Context(), state); err != nil {
-				return err
-			}
-			if err := r.WhileIdle(c.Context(), func() error { s.Enabled = false; return deps.persistHookRouting(c.Context(), path, s) }); err != nil {
+			if err := r.WhileIdle(c.Context(), func() error { s.Enabled = false; return deps.persistHookRouting(c.Context(), path, *s) }); err != nil {
 				return err
 			}
 			_, err = fmt.Fprintln(c.OutOrStdout(), "Queued hooks disabled. Sync and installed hooks are synchronous again; recovery state was preserved.")
@@ -333,7 +347,7 @@ func routeQueuedSync(c *cobra.Command, deps queueCommandDeps, dryRun, flush, hoo
 			defer cancel()
 		}
 	}
-	release, err := queueRequestLease(ctx, path)
+	s, release, err := lockHookRouting(ctx, path)
 	if err != nil {
 		return true, err
 	}
@@ -343,11 +357,7 @@ func routeQueuedSync(c *cobra.Command, deps queueCommandDeps, dryRun, flush, hoo
 			release()
 		}
 	}()
-	s, err := loadHookRouting(path)
-	if err != nil {
-		return true, err
-	}
-	if !s.Enabled || s.Checksum != initial.Checksum {
+	if s == nil || !s.Enabled || s.Checksum != initial.Checksum {
 		return true, fmt.Errorf("hook routing changed during invocation; inspect status before retrying")
 	}
 	req, err := deps.resolve()
@@ -358,14 +368,11 @@ func routeQueuedSync(c *cobra.Command, deps queueCommandDeps, dryRun, flush, hoo
 	if err != nil {
 		return true, err
 	}
-	if r.ScopeID() != s.Scope {
-		return true, queue.ErrBinding
-	}
-	if err := checkRoutingPaths(r, path, s.Inbox); err != nil {
+	if err := s.checkRuntime(r, path); err != nil {
 		return true, err
 	}
 	// Reflush before use: a readable descriptor may follow an uncertain rename.
-	if err := deps.persistHookRouting(ctx, path, s); err != nil {
+	if err := deps.persistHookRouting(ctx, path, *s); err != nil {
 		return true, err
 	}
 	args := []string{"--dir", s.Runtime}
@@ -434,7 +441,7 @@ func pinnedQueueHookInbox(ctx context.Context, deps queueCommandDeps, r *service
 	} else if err != nil {
 		return "", noop, err
 	}
-	release, err := queueRequestLease(ctx, path)
+	saved, release, err := lockHookRouting(ctx, path)
 	if err != nil {
 		return "", noop, err
 	}
@@ -444,25 +451,80 @@ func pinnedQueueHookInbox(ctx context.Context, deps queueCommandDeps, r *service
 			release()
 		}
 	}()
-	saved, err := loadHookRouting(path)
-	if err != nil {
-		return "", noop, err
+	if saved == nil {
+		return "", noop, fmt.Errorf("saved hook routing disappeared; inspect state before retrying")
 	}
 	if saved.Runtime != r.Directory() {
 		return "", noop, nil
 	}
-	if saved.Scope != r.ScopeID() {
-		return "", noop, queue.ErrBinding
-	}
-	if err := checkRoutingPaths(r, path, saved.Inbox); err != nil {
+	if err := saved.checkRuntime(r, path); err != nil {
 		return "", noop, err
 	}
 	if _, err := (hookInbox{dir: saved.Inbox}).load(saved.Scope); err != nil {
 		return "", noop, err
 	}
-	if err := deps.persistHookRouting(ctx, path, saved); err != nil {
+	if err := deps.persistHookRouting(ctx, path, *saved); err != nil {
 		return "", noop, err
 	}
 	keep = true
 	return saved.Inbox, release, nil
+}
+
+// All mutating routing callers share ownership and descriptor loading. A nil
+// descriptor means confirmed absence under the lease, not damaged saved state.
+// Policy (first enable, no-op disable, or refused disappearance) stays with callers.
+func lockHookRouting(ctx context.Context, path string) (*queueHookRouting, func(), error) {
+	noop := func() {}
+	release, err := queueRequestLease(ctx, path)
+	if err != nil {
+		return nil, noop, err
+	}
+	saved, err := loadHookRouting(path)
+	if os.IsNotExist(err) {
+		return nil, release, nil
+	}
+	if err != nil {
+		release()
+		return nil, noop, err
+	}
+	return &saved, release, nil
+}
+
+func (s queueHookRouting) checkRuntime(r *service.QueueRuntime, path string) error {
+	if r.Directory() != s.Runtime || r.ScopeID() != s.Scope {
+		return queue.ErrBinding
+	}
+	return checkRoutingPaths(r, path, s.Inbox)
+}
+
+// The caller already owns routing. Hold an intact, durably empty inbox before
+// taking queue maintenance ownership, for both disable and retained re-enable.
+func lockEmptyHookInbox(ctx context.Context, r *service.QueueRuntime, path string, saved queueHookRouting) (func(), error) {
+	noop := func() {}
+	if err := saved.checkRuntime(r, path); err != nil {
+		return noop, err
+	}
+	_, release, err := storelock.Acquire(ctx, saved.Inbox, service.StoreWait)
+	if err != nil {
+		return noop, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			release()
+		}
+	}()
+	in := hookInbox{dir: saved.Inbox, save: durable.Write}
+	state, err := in.load(saved.Scope)
+	if err != nil {
+		return noop, err
+	}
+	if len(state.Requests) != 0 {
+		return noop, fmt.Errorf("hook inbox still has saved requests; recover the pinned inbox before changing routing")
+	}
+	if err := in.persist(ctx, state); err != nil {
+		return noop, err
+	}
+	keep = true
+	return release, nil
 }
