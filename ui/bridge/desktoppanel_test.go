@@ -71,7 +71,10 @@ func TestPanelSeparatesTheMachineWideApp(t *testing.T) {
 
 // A path a flattened command line cannot be split back into parses as empty,
 // which reads as "no profile flag" — and would list somebody's work profile as
-// the main app, under a row saying no account is bound to it.
+// the main app, under a row saying no account is bound to it. The window may
+// end up unmatched, which is a row saying "closed" about something open; being
+// listed as the MACHINE-WIDE app is the failure that matters, because that row
+// says no account is bound to it.
 func TestPanelDoesNotMistakeAnUnparseablePathForTheMainApp(t *testing.T) {
 	dir := "/store/odd -- name/data"
 	v, err := panelDesktop(t, []desktop.Instance{
@@ -80,11 +83,38 @@ func TestPanelDoesNotMistakeAnUnparseablePathForTheMainApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.MainOpen {
-		t.Error("a profile window was listed as the machine-wide app")
+	if v.MainOpen || v.MainPID != 0 {
+		t.Errorf("a profile window was listed as the machine-wide app: main=%v pid=%d", v.MainOpen, v.MainPID)
 	}
-	if len(v.Profiles) != 1 || !v.Profiles[0].Open || v.Profiles[0].PID != 21 {
-		t.Errorf("profiles = %+v, want the profile matched by its command line", v.Profiles)
+}
+
+// The same path, quoted — which is how Windows writes one with spaces — is
+// matched from the command line even when the parsed DataDir came back empty.
+func TestPanelMatchesAQuotedPathTheParseCouldNotRecover(t *testing.T) {
+	dir := "/store/my work/data"
+	v, err := panelDesktop(t, []desktop.Instance{
+		{PID: 22, DataDir: "", Command: `/Applications/Claude.app/Contents/MacOS/Claude --user-data-dir="` + dir + `"`},
+	}, map[string]string{"work": dir}, nil).Panel(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Profiles) != 1 || !v.Profiles[0].Open || v.Profiles[0].PID != 22 {
+		t.Errorf("profiles = %+v, want the profile matched by its quoted command line", v.Profiles)
+	}
+}
+
+// And when the parse DID recover the directory, that is the fallback which
+// matches it — no command line required.
+func TestPanelFallsBackToTheParsedDirectory(t *testing.T) {
+	dir := "/store/work/data"
+	v, err := panelDesktop(t, []desktop.Instance{
+		{PID: 23, DataDir: dir, Command: "claude --user-data-dir=" + dir},
+	}, map[string]string{"work": dir}, nil).Panel(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Profiles) != 1 || v.Profiles[0].PID != 23 {
+		t.Errorf("profiles = %+v, want the profile matched by its data directory", v.Profiles)
 	}
 }
 
