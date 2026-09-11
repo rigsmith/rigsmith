@@ -85,6 +85,13 @@ type Report struct {
 	SidecarsPruned   int              // staged Desktop sidecars removed as orphaned
 	LedgerError      string           // why the ledger could not be updated ("" = fine); never fatal
 	Findings         []redact.Finding // non-empty ⇒ Sync returned an error (tripwire)
+	// CredentialFiles is how many of Findings are whole FILES of credential
+	// material rather than values inside one. The two need different remedies —
+	// a value means the redactor's key rules missed something, a file means it
+	// should never have been in the allowlist — and until this was carried out
+	// of the engine, everything downstream called both "values", which sent
+	// somebody looking for a JSON field that did not exist.
+	CredentialFiles int
 }
 
 // Options configure a sync.
@@ -768,6 +775,7 @@ func Sync(opts Options) (*Report, error) {
 	// staged from. Recorded even when the tripwire refuses below: the files
 	// were still copied, and the reason to distrust their mtimes is gone.
 	writeStageClock(opts.StagingDir, startedAt)
+	rep.CredentialFiles = credentialFiles
 	if len(rep.Findings) > 0 {
 		// The two halves of the wire need different remedies, so say which one
 		// fired: a JSON value means the redactor's key rules missed something, a

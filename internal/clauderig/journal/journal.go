@@ -138,6 +138,10 @@ type Record struct {
 	Projects      int            `json:"projects,omitempty"`
 
 	Leaks []Leak `json:"leaks,omitempty"`
+	// LeakFiles is how many of Leaks are whole files of credential material.
+	// Older records have no such field and read as zero, which renders them the
+	// way they always were rendered — as values.
+	LeakFiles int `json:"leakFiles,omitempty"`
 
 	// RedactedFiles names the files behind Redactions. The count alone said a
 	// secret was caught but not where, which is the only part anyone can act on.

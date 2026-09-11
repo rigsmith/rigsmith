@@ -145,7 +145,9 @@ func Of(info status.Info, last journal.Record) Report {
 		// tripwire is invisible again — which is the whole reason the journal
 		// exists.
 		r.Level, r.Reason = Red, ReasonLastRunRefused
-		r.Summary = fmt.Sprintf("Sync refused — %s look like credentials", values(len(last.Leaks)))
+		// Through the journal's own renderer: this line and `clauderig status`
+		// describe one event, and the two sentences had already drifted apart.
+		r.Summary = "Sync refused — " + journal.LeakPhrase(len(last.Leaks), last.LeakFiles)
 
 	case last.Outcome == journal.OutcomeFailed:
 		r.Level, r.Reason = Red, ReasonLastRunFailed
@@ -221,12 +223,6 @@ func truncate(s string, n int) string {
 }
 
 // values renders "1 value" / "12 values".
-func values(n int) string {
-	if n == 1 {
-		return "1 value"
-	}
-	return fmt.Sprintf("%d values", n)
-}
 
 // commits renders "1 commit behind" / "65 commits behind".
 func commits(n int, direction string) string {

@@ -18,7 +18,7 @@ func (r Record) Summary() string {
 	case OutcomeRefused:
 		// Say what was caught and that nothing was pushed. "Refused" alone
 		// reads as a malfunction rather than as the tripwire doing its job.
-		return fmt.Sprintf("Refused to push — %s look like credentials", plural(len(r.Leaks), "value", "values"))
+		return "Refused to push — " + LeakPhrase(len(r.Leaks), r.LeakFiles)
 	case OutcomeFailed:
 		if r.Error != "" {
 			return r.Op.verb() + " failed: " + r.Error
@@ -81,6 +81,59 @@ func (o Op) verb() string {
 	}
 }
 
+// LeakPhrase names what the tripwire caught, in numbers that agree with their
+// verb and in a noun that is true.
+//
+// Exported and shared because two front ends render this — `clauderig status`
+// through Record.Summary, the health report through its own line — and they had
+// drifted into two sentences for one event: "1 value look like credentials"
+// beside a journal entry that said "1 file(s) are credential material". One
+// wrong about grammar, the other about what was found.
+//
+// The distinction is not pedantry. A value means the redactor missed a key
+// inside a file worth syncing; a file means something is in the allowlist that
+// should not be. They send you to different places.
+func LeakPhrase(total, files int) string {
+	values := total - files
+	switch {
+	case files > 0 && values > 0:
+		return fmt.Sprintf("%s of credential material and %s that %s like %s",
+			plural(files, "file", "files"), plural(values, "value", "values"),
+			verb(values), article(values, "a credential", "credentials"))
+	case files > 0:
+		return fmt.Sprintf("%s %s credential material",
+			plural(files, "file", "files"), beVerb(files))
+	default:
+		return fmt.Sprintf("%s %s like %s",
+			plural(values, "value", "values"), verb(values),
+			article(values, "a credential", "credentials"))
+	}
+}
+
+// verb, beVerb and article keep the sentence agreeing with its own count. The
+// bug this replaces was a plural noun helper with the verb written out beside
+// it, which read correctly for every number except the commonest one: 1.
+func verb(n int) string {
+	if n == 1 {
+		return "looks"
+	}
+	return "look"
+}
+
+func beVerb(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
+}
+
+func article(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return "1 " + one
@@ -130,6 +183,7 @@ func FromSync(machine string, rep *engine.Report, serr error) Record {
 		for _, f := range rep.Findings {
 			rec.Leaks = append(rec.Leaks, Leak{Path: f.Path, Kind: f.Kind})
 		}
+		rec.LeakFiles += rep.CredentialFiles
 	}
 
 	if serr != nil {
