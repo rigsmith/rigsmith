@@ -182,6 +182,34 @@ func TestPrepareRefusesWithAStableReason(t *testing.T) {
 	})
 }
 
+// --no-share means "don't link anything in", not "unlink what an earlier shared
+// run linked" — the same contract as `run --no-share`, and what the help and
+// docs now say. Pinned so the wording and the behaviour cannot drift apart.
+func TestPrepareNoShareKeepsLinksAnEarlierSharedRunMade(t *testing.T) {
+	st := prepareFixture(t)
+	link := filepath.Join(st.ConfigDir("w-x-com"), "settings.json")
+
+	if _, errOut, err := runPrepareCmd(t, "w@x.com"); err != nil {
+		t.Fatalf("shared prepare: %v\nstderr: %s", err, errOut)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Fatalf("shared prepare did not link settings.json: %v", err)
+	}
+
+	out, errOut, err := runPrepareCmd(t, "w@x.com", "--no-share", "--json")
+	if err != nil {
+		t.Fatalf("no-share replay: %v\nstderr: %s", err, errOut)
+	}
+	if _, err := os.Lstat(link); err != nil {
+		t.Errorf("--no-share removed a link an earlier shared run made; the contract is that it is kept: %v", err)
+	}
+	var got prepareJSON
+	_ = json.Unmarshal([]byte(out), &got)
+	if got.Shared {
+		t.Error("shared should report the mode requested — false under --no-share — even though earlier links remain")
+	}
+}
+
 // A bare `prepare` in a mapped directory prints the mapped note — and in plain
 // mode that note must not land on stdout, or `$(clauderig account prepare)`
 // captures two lines. Pinned because the first cut did exactly that.
