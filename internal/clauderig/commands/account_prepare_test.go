@@ -143,8 +143,7 @@ func TestPrepareRefusesWithAStableReason(t *testing.T) {
 		if err == nil {
 			t.Fatal("an unmapped directory was silently prepared as some account")
 		}
-		var got prepareJSON
-		_ = json.Unmarshal([]byte(out), &got)
+		got := decodePrepare(t, out)
 		if got.Reason != prepareUnmapped {
 			t.Errorf("reason = %q, want %q", got.Reason, prepareUnmapped)
 		}
@@ -171,8 +170,7 @@ func TestPrepareRefusesWithAStableReason(t *testing.T) {
 		if err == nil {
 			t.Fatal("a profile that cannot authenticate was reported as prepared")
 		}
-		var got prepareJSON
-		_ = json.Unmarshal([]byte(out), &got)
+		got := decodePrepare(t, out)
 		if got.Prepared || got.Reason != prepareNoTokens {
 			t.Errorf("reason = %q prepared=%v, want %q", got.Reason, got.Prepared, prepareNoTokens)
 		}
@@ -203,9 +201,17 @@ func TestPrepareNoShareKeepsLinksAnEarlierSharedRunMade(t *testing.T) {
 	if _, err := os.Lstat(link); err != nil {
 		t.Errorf("--no-share removed a link an earlier shared run made; the contract is that it is kept: %v", err)
 	}
-	var got prepareJSON
-	_ = json.Unmarshal([]byte(out), &got)
-	if got.Shared {
+	// Decoded as *bool on purpose: an ABSENT field also reads as false through
+	// the real struct, and absent is exactly the contract breach to catch.
+	var got struct {
+		Shared *bool `json:"shared"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v\n%s", err, out)
+	}
+	if got.Shared == nil {
+		t.Error("shared must be present under --no-share")
+	} else if *got.Shared {
 		t.Error("shared should report the mode requested — false under --no-share — even though earlier links remain")
 	}
 }
@@ -256,8 +262,7 @@ func TestPrepareNamesTheRightRefusalForResolution(t *testing.T) {
 		if err == nil {
 			t.Fatal("an ambiguous reference was prepared")
 		}
-		var got prepareJSON
-		_ = json.Unmarshal([]byte(out), &got)
+		got := decodePrepare(t, out)
 		if got.Reason != prepareAmbiguous {
 			t.Errorf("reason = %q, want %q — the fix is to be more specific, not to add an account", got.Reason, prepareAmbiguous)
 		}
@@ -273,8 +278,7 @@ func TestPrepareNamesTheRightRefusalForResolution(t *testing.T) {
 		if err == nil {
 			t.Fatal("a broken mapping was silently prepared")
 		}
-		var got prepareJSON
-		_ = json.Unmarshal([]byte(out), &got)
+		got := decodePrepare(t, out)
 		if got.Reason != prepareFailed {
 			t.Errorf("reason = %q, want %q — sending the user to `account map` for a directory that IS mapped is the wrong advice", got.Reason, prepareFailed)
 		}
@@ -300,8 +304,7 @@ func TestPrepareReportsAnUnreadableProfileCredentialAsUnknown(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unreadable profile credential was prepared over")
 	}
-	var got prepareJSON
-	_ = json.Unmarshal([]byte(out), &got)
+	got := decodePrepare(t, out)
 	if got.Reason != prepareSessionUnknown {
 		t.Errorf("reason = %q, want %q", got.Reason, prepareSessionUnknown)
 	}
@@ -351,3 +354,15 @@ type wrapped struct{ err error }
 
 func (w *wrapped) Error() string { return "wrapped: " + w.err.Error() }
 func (w *wrapped) Unwrap() error { return w.err }
+
+// decodePrepare reads the one object stdout must carry, failing the test on
+// anything else — a refusal that is not JSON is a broken contract, not a
+// refusal, and `_ = json.Unmarshal` would have let it pass as one.
+func decodePrepare(t *testing.T, out string) prepareJSON {
+	t.Helper()
+	var got prepareJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v\n%s", err, out)
+	}
+	return got
+}
