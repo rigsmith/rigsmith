@@ -90,7 +90,7 @@ are resolved from ancestors to child. Ancestor actions remain available, child
 hooks replace the same hook's action list, and distinct ancestor hooks remain.
 Child actions can satisfy references in inherited hooks. Sibling profiles cannot
 supply actions. The two extensible built-ins supply no MITM actions or hooks.
-This resolves only the action/reference portion; it does not construct a runtime
+This resolves the action/reference and header-declaration portion; it does not construct a runtime
 network policy or change the input bytes.
 
 Restore policy refuses an unresolved reference in the selected profile, even
@@ -102,11 +102,46 @@ references, matching the existing inactive-inheritance boundary. Managed fallbac
 selection and every separate config-profile scenario receive the same checks.
 Diagnostics omit action names and all private configuration values.
 
+## Selected network hook headers and source declarations
+
+Effective hooks in the selected permission profile now check their header-match
+keys and referenced actions' strip/inject header names. Names must be nonempty
+ASCII HTTP tokens of at most 65,535 bytes, matching the pinned header parser;
+whitespace, separators and Unicode letters are rejected without trimming.
+Header-match values and patterns are not compiled in this slice. Empty header
+value lists are retained, as allowed by native header-constraint validation.
+
+Each referenced injected-header declaration must name exactly one secret source:
+a nonblank `secret_env_var` or a nonblank absolute `secret_file`. Omission of the
+header name defaults to empty and is rejected. Either source containing a NUL is
+refused by restore policy, including an environment-variable name. Absolute-path checks use the destination host's Go
+path syntax; they are lexical and do not expand `~`, resolve links, normalize
+paths, or inspect files. These entry points therefore validate a local restore,
+not the path syntax of an arbitrary other target OS. A missing absolute file and
+an unavailable environment variable can still pass this declaration check.
+
+Only actions referenced by effective selected hooks receive these checks.
+Inactive profiles and unused actions can retain invalid header/source content;
+the existing nonempty action-definition checks still apply to every declaration.
+Selected profiles are checked even with networking disabled, as an explicit
+restore policy. Action definitions override by name during permission-profile
+inheritance: both native operation vectors default to empty when omitted, so a
+child declaring only strip operations removes inherited inject operations.
+Ordinary config-layer overlays still recursively combine the raw declarations
+before those defaults are applied. Hook header maps merge recursively; a child
+empty map cannot remove an invalid ancestor header key.
+
+No environment values or secret files are read and no headers are produced.
+Prefix/secret value validity, source availability, hook matching and actual
+proxy policy remain destination-readiness checks. The code applies checks once
+per referenced action and preserves the original private input bytes.
+
 ## Remaining work
 
 This validates permission shapes, catalogs and selection, not a usable sandbox.
 Filesystem path/glob compilation, network-domain normalization, inherited
-filesystem/network policy compilation, MITM matcher/header/secret-source checks, platform
+filesystem/network policy compilation, MITM matcher compilation and secret-source
+availability/value checks, platform
 constraints and other managed requirements still need enforcement. The existing
 provider/MCP checks also apply to each effective scenario.
 
@@ -136,3 +171,9 @@ and preparation/application without copying external context. Network-action tes
 cover native definition checks, inherited and managed references, child hook
 replacement, sibling isolation, independent config profiles and refusal before
 the destination callback without writes or private diagnostics.
+
+Header regressions cover ASCII/length limits, conflicting/missing sources,
+platform-local path syntax, nonexistent absolute files, inherited action defaults
+versus raw layer overlays, retained header keys, unused actions, managed fallback,
+cancellation and refusal before destination validation without writes or private
+diagnostics.

@@ -62,5 +62,22 @@ name visibility. The restore policy refuses unresolved selected references,
 including disabled networks: upstream `validate_action_references` describes
 that invariant, while `selected_actions` silently skips missing names. This
 stricter restore policy is documented explicitly rather than presented as a
-universal native startup rejection. MITM matcher/header validation and secret
+universal native startup rejection. MITM matcher validation and secret
 source readiness remain separate gates; this code does not read those sources.
+
+Selected hook header/source declaration checks follow
+[`validate_header_constraints`, `validate_strip_request_headers`, and `validate_injected_headers`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/network-proxy/src/mitm_hook.rs#L585-L640).
+The pinned Cargo.lock resolves `rama-http-types` 0.3.0-alpha.4, which reexports
+`http` 1.4.0's header types. The latter accepts ASCII token names with a maximum
+length of 65,535 bytes. Audited source packages (checksums match Cargo.lock):
+
+- `rama-http-types` 0.3.0-alpha.4: `b6dae655a72da5f2b97cfacb67960d8b28c5025e62707b4c8c5f0c5c9843a444`
+- `http` 1.4.0: `e3ba2a386d7f85a81f119ad7498ebe444d2e22c2af0b86b069416ace48b3311a`
+
+These are source references, not added runtime dependencies. Secret-file paths
+use local Go absolute-path syntax; NUL refusal for both environment names and file paths, and checking selected disabled
+networks are explicit restore policy. Files and environment values are not read.
+Native action operation vectors default to empty during profile inheritance,
+while hook header maps retain ancestor keys; tests distinguish that from raw
+config-layer overlays. Matcher compilation and source/value readiness remain
+outside these checks.
