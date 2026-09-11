@@ -17,11 +17,13 @@ import (
 	"log"
 	"log/slog"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/health"
 	"github.com/rigsmith/rigsmith/ui/assets"
 	"github.com/rigsmith/rigsmith/ui/bridge"
@@ -528,6 +530,24 @@ func newTray(app *application.App, window, sessions, notice *application.Webview
 	return tray, warn, menu, windows
 }
 
+// reportMenuError puts a failed menu action in front of the user.
+//
+// A tray menu has nowhere to print: the item is gone the moment it is clicked,
+// and the status window may not be open. A dialog is intrusive, which is the
+// point — these actions are asked for explicitly, so silence would read as the
+// app ignoring the click. Success says nothing.
+func reportMenuError(what string, err error) {
+	if err == nil {
+		return
+	}
+	app := application.Get()
+	if app == nil {
+		log.Printf("%s: %v", what, err)
+		return
+	}
+	app.Dialog.Error().SetTitle(what).SetMessage(err.Error()).Show()
+}
+
 // fillDesktopWindows rewrites the window list in place.
 //
 // Rebuilt wholesale rather than diffed: the list is three items on a busy day,
@@ -548,11 +568,18 @@ func fillDesktopWindows(sub, root *application.Menu, desk *bridge.Desktop, v bri
 	default:
 		for _, w := range v.Windows {
 			pid, label := w.PID, w.Label()
-			sub.Add(label).OnClick(func(*application.Context) {
-				// Errors here are almost always "it closed while the menu was
-				// open", which is not worth a dialog: the next tick removes the
-				// row that no longer names anything.
-				_ = desk.Raise(context.Background(), pid)
+			item := sub.Add(label)
+			if !desktop.RaiseSupported() {
+				// Asked up front rather than discovered per click. On Windows
+				// every one of these would do nothing at all, and a menu whose
+				// every item is inert reads as a broken app rather than as a
+				// platform that cannot name one window of several.
+				item.SetEnabled(false)
+				continue
+			}
+			item.OnClick(func(*application.Context) {
+				reportMenuError("Could not bring that window forward",
+					desk.Raise(context.Background(), pid))
 			})
 		}
 	}
@@ -561,8 +588,13 @@ func fillDesktopWindows(sub, root *application.Menu, desk *bridge.Desktop, v bri
 	// starts it when it is not, so one item covers both and neither case needs
 	// this menu to have guessed correctly.
 	sub.Add("Open the main app").OnClick(func(*application.Context) {
-		_ = desk.OpenMain(context.Background())
+		reportMenuError("Could not open the main Claude Desktop", desk.OpenMain(context.Background()))
 	})
+	if !desktop.RaiseSupported() && len(v.Windows) > 0 {
+		// Said once, rather than implied by rows that do nothing.
+		sub.AddSeparator()
+		sub.Add("(this platform cannot bring one window forward)").SetEnabled(false)
+	}
 	root.Update()
 }
 
@@ -656,11 +688,16 @@ func windowSignature(v bridge.DesktopView) string {
 	if v.Error != "" {
 		return "error:" + v.Error
 	}
-	var b strings.Builder
+	// Sorted, and quoted. Nothing promises the process scan returns windows in
+	// a stable order, so an unsorted signature would call a reshuffle a change
+	// and rebuild the menu under whoever was reading it. %q because a label can
+	// contain a path, and a path can contain the separators.
+	rows := make([]string, 0, len(v.Windows))
 	for _, w := range v.Windows {
-		fmt.Fprintf(&b, "%d=%s;", w.PID, w.Label())
+		rows = append(rows, fmt.Sprintf("%d=%q", w.PID, w.Label()))
 	}
-	return b.String()
+	sort.Strings(rows)
+	return strings.Join(rows, ";")
 }
 
 // watchDesktop raises the notice when the machine-wide Claude Desktop is

@@ -94,6 +94,14 @@ var ErrUnsupported = errors.New("Claude Desktop profiles are not supported on th
 // ErrNotInstalled means the app itself is missing.
 var ErrNotInstalled = errors.New("Claude Desktop is not installed")
 
+// RaiseSupported reports whether this platform can bring one named window
+// forward at all.
+//
+// Asked BEFORE offering the action, not discovered by attempting it: a menu
+// that raises nothing on every click, or answers every click with the same
+// dialog, is worse than a menu that says plainly it cannot.
+func RaiseSupported() bool { return raiseSupported }
+
 // ErrRaiseUnsupported means this platform has no way to bring one named
 // instance forward. Not a failure: the window is there, and the caller should
 // say so rather than imply something went wrong.

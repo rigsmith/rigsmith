@@ -103,8 +103,15 @@ func raiseAny(app desktop.App, pids []int) error {
 // only way to mean one window of several. Where that is not supported the
 // fallback is the old behaviour, which is imprecise rather than wrong.
 func raiseOrFocus(app desktop.App, p desktop.Profile) error {
+	// A scan that failed is NOT a platform that cannot raise windows. Falling
+	// through to Focus here would activate the application with no idea which
+	// window that brings forward — and with two profiles open, reporting
+	// success over the wrong one is worse than saying the scan failed.
 	pids, err := app.Running(p.DataDir())
-	if err == nil && len(pids) > 0 {
+	if err != nil {
+		return fmt.Errorf("could not tell which window belongs to %s: %w", p.Name, err)
+	}
+	if len(pids) > 0 {
 		if rerr := raiseAny(app, pids); rerr == nil {
 			return nil
 		} else if !errors.Is(rerr, desktop.ErrRaiseUnsupported) {
@@ -113,6 +120,9 @@ func raiseOrFocus(app desktop.App, p desktop.Profile) error {
 			return rerr
 		}
 	}
+	// Only two ways here: this platform cannot name one window, or the profile
+	// has no window of its own to name. Activating the app is the best either
+	// case allows.
 	return app.Focus(p.DataDir())
 }
 
@@ -1155,7 +1165,13 @@ func runDesktopUI(cmd *cobra.Command) error {
 				continue
 			}
 			if open {
-				_ = raiseOrFocus(app, p)
+				// The note is what the screen says happened. Discarding the
+				// error here left it claiming the window had been brought
+				// forward when a refused permission meant nothing moved.
+				if rerr := raiseOrFocus(app, p); rerr != nil {
+					note = ErrStyle.Render(rerr.Error())
+					continue
+				}
 				note = "already open: " + p.Label()
 				continue
 			}

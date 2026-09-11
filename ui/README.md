@@ -121,6 +121,14 @@ profile from the machine-wide app is to click one and look. Nothing in macOS
 badges another application's tile — the tile belongs to that process, and there
 is no API into it — so the discrimination has to live somewhere we own.
 
+Where a window cannot be raised at all the rows are listed but **disabled**, and
+the menu says so once at the bottom. `desktop.RaiseSupported()` is asked before
+the rows are built rather than discovered by clicking: a menu whose every item
+does nothing reads as a broken app, not as a platform limit. A raise that fails
+for any other reason — a refused permission, a window that closed — puts up an
+error dialog, because a tray menu has nowhere else to print and silence after an
+explicit click reads as the app ignoring it.
+
 Raising is by **pid**, through `desktop.App.Raise`. Activating the application
 is what the Dock already does and is exactly the ambiguity being solved: every
 instance is one application to the OS, which then picks the window itself. On

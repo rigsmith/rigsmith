@@ -290,3 +290,7 @@ func (d darwinApp) Instances() ([]Instance, error) {
 	}
 	return found, nil
 }
+
+// raiseSupported is what RaiseSupported answers on this platform.
+// System Events can address a process by pid.
+const raiseSupported = true

@@ -305,3 +305,8 @@ func (w windowsApp) Instances() ([]Instance, error) {
 	}
 	return found, nil
 }
+
+// raiseSupported is what RaiseSupported answers on this platform.
+// Bringing one window of several forward needs window-handle work
+// that is not worth the dependency; see Raise.
+const raiseSupported = false

@@ -232,3 +232,40 @@ func (s *sequenceApp) Raise(pid int) error {
 	}
 	return nil
 }
+
+// scanFailRaiseApp cannot list a profile's windows.
+type scanFailRaiseApp struct {
+	stubApp
+	focused []string
+}
+
+func (s *scanFailRaiseApp) Running(string) ([]int, error) {
+	return nil, errors.New("pgrep exploded")
+}
+func (s *scanFailRaiseApp) Focus(dir string) error { s.focused = append(s.focused, dir); return nil }
+
+// "I could not look" must not become "I activated the application". Focus
+// raises whichever window the OS prefers, so with two profiles open, falling
+// back after a failed scan reports success over the wrong one.
+func TestRaiseOrFocusReportsAFailedScanRatherThanActivatingTheApp(t *testing.T) {
+	app := &scanFailRaiseApp{}
+	err := raiseOrFocus(app, desktop.Profile{Name: "work"})
+	if err == nil {
+		t.Fatal("a failed scan was answered by activating the app")
+	}
+	if len(app.focused) != 0 {
+		t.Errorf("focused %v after a failed scan", app.focused)
+	}
+}
+
+// A profile with no window of its own still gets the app activated: there is
+// nothing to name, and that is the best this case allows.
+func TestRaiseOrFocusFallsBackWhenTheProfileHasNoWindow(t *testing.T) {
+	app := &raiseApp{runningPIDs: nil}
+	if err := raiseOrFocus(app, desktop.Profile{Name: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.focused) != 1 {
+		t.Errorf("focused %v, want the fallback", app.focused)
+	}
+}

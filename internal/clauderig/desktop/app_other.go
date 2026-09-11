@@ -25,3 +25,7 @@ func (unsupportedApp) Instances() ([]Instance, error) { return nil, nil }
 
 // Supported reports whether Anthropic ships Claude Desktop for this platform.
 func Supported() bool { return false }
+
+// raiseSupported is what RaiseSupported answers on this platform.
+// No Claude Desktop here to raise.
+const raiseSupported = false
