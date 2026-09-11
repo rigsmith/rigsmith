@@ -19,7 +19,7 @@
 # window's (ui/vX.Y.Z), whose slash then lands in archive names and cask urls.
 # Name the tag you mean:
 #
-#   GORELEASER_CURRENT_TAG=$(git tag --list --sort=-v:refname \
+#   GORELEASER_CURRENT_TAG=$(git tag --list --merged HEAD --sort=-v:refname \
 #     | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1) \
 #     goreleaser release --snapshot --clean --skip=publish
 #

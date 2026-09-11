@@ -143,16 +143,25 @@ jobs:
       - name: Name the dry run after the last CLI release
         if: github.event_name == 'workflow_dispatch'
         run: |
-          # The newest vX.Y.Z in the repository, by VERSION order rather than by
-          # ancestry or by string: `git describe` answers with the nearest tag
-          # behind HEAD, which on a branch is whatever release it forked from,
-          # and plain sorting puts v1.9.0 above v1.18.0.
+          # The newest vX.Y.Z this ref actually contains. Three constraints,
+          # each of which was a separate wrong answer on the way here:
           #
-          # Anchored, because a glob is not a shape. `v[0-9]*.[0-9]*.[0-9]*`
-          # also matches v1.18.0-rc.1 and v1.18.0.1, and a dry run named after a
-          # release candidate is a dry run testing the wrong artifact names.
-          # `ui/v*` never matches either pattern, which remains the point.
-          tag=$(git tag --list --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+          #   --merged HEAD   reachability. The whole repository's newest tag
+          #                   lets a dry run from an old branch name its
+          #                   artifacts after a release that branch does not
+          #                   contain.
+          #   --sort=-v:refname  version order. `git describe --abbrev=0` picks
+          #                   the NEAREST reachable tag, not the newest, and
+          #                   plain string order puts v1.9.0 above v1.18.0.
+          #   ^v[0-9]+...$    shape. A glob like v[0-9]*.[0-9]*.[0-9]* also
+          #                   matches v1.18.0-rc.1 and v1.18.0.1, and a dry run
+          #                   named after a release candidate proves the wrong
+          #                   artifact names.
+          #
+          # `ui/v*` fails the shape test, which is what keeps the window's tags
+          # out of the CLI's dry run — the whole reason this step exists.
+          tag=$(git tag --list --merged HEAD --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
           if [ -z "$tag" ]; then
             # A checkout with no release tag at all — a fresh fork, or this repo
             # before its first release. Not a reason to abort a build: leaving
