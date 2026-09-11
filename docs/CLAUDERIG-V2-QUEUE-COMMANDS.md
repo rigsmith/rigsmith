@@ -321,7 +321,9 @@ each lock wait remains limited to 15 seconds. Caller cancellation stops either
 operation and preserves unfinished journal entries. A blocked filesystem call
 can take longer to return.
 
-The default inbox is `~/.clauderig/hook-inbox`. Override with `--inbox <directory>`;
+Without a matching routing descriptor, the default inbox is `~/.clauderig/hook-inbox`.
+For a matching saved runtime, hook/recovery commands without `--inbox` use the
+pinned inbox, including after disabling routing. Override with `--inbox <directory>`;
 use the same `--dir`, explicit `--profile` selection and inbox for every recovery.
 Its existing parent must be present. First use creates a new private directory;
 an existing inbox must already contain a valid journal bound to this runtime.
@@ -440,6 +442,7 @@ Managed hook admission and inbox recovery are available explicitly.
 ## Local hook opt-in and rollback (7c.2b.2b.2)
 
 First stop Claude sessions, manual syncs and any other producers or workers.
+Recover any previously used explicit inboxes before changing producer destinations.
 Install the standard hooks with `clauderig hooks install`, perform an ordinary
 sync to establish shared history, and initialize the queue. Use the same runtime
 and every local Desktop profile required by `queue sync`. Then:
@@ -484,7 +487,11 @@ its capture. It does not drain the producer inbox or every queued request.
 
 No worker is launched automatically. After a process or machine restart, use
 `hook-status` to recover the saved options, run `recover-hooks`, then restart
-`queue run` with the same runtime/profiles. Stop producers before deliberate
+`queue run` with the same runtime/profiles. Default hook/recovery commands follow
+the matching descriptor’s inbox; explicit `--inbox` selections remain caller-owned
+and must each be recovered separately. Direct `queue hook` still uses its own
+`--unknown-identity` flag; the descriptor’s identity choice applies to installed
+hooks routed through `sync`. Stop producers before deliberate
 reconciliation. A stopped worker or empty queue does not prove the inbox is empty.
 The OS process-fence recovery requirements still apply after an unclean restart.
 
@@ -496,7 +503,8 @@ To restore synchronous operation:
 3. Drain the queue and stop every worker. Repair blocked/delayed work first.
 4. Run `queue disable-hooks` with the saved runtime/profile flags.
 
-Disable holds the routing and inbox leases, reflushes an empty inbox, then takes
+Disable, including a retry against a retained disabled descriptor, holds the
+routing and inbox leases, reflushes an empty inbox, then takes
 queue worker/transaction ownership, reflushes queue state and requires no pending
 batches before saving a disabled descriptor. It refuses an active worker, even
 if that worker currently has no batch. It never drops pending intent, queue work,
@@ -528,7 +536,7 @@ with these fields in declaration order:
 | `Inbox` | Enable resolves `--inbox` to an absolute path, defaulting to `~/.clauderig/hook-inbox`. No null/empty saved default. Pins producer recovery location. | Reader requires an absolute path. Enable/use/disable enforce capture/staging/runtime exclusion and keep the descriptor outside the inbox, comparing actual directory identities for case/alias handling. Existing journals must match `Scope`; missing/corrupt state blocks active routing. Bounded by the descriptor's 128 KiB limit. |
 | `Profiles` | Enable saves sorted explicit `--profile` names. No selection writes `null`; an empty array is also readable and preserved. | Elements must be strings. Enable verifies complete local Desktop coverage and runtime binding. Reopen/manual capture revalidate their respective profile/binding rules. No silent sorting, dropping, renaming or rewriting on read; total bytes are bounded by the descriptor limit. |
 | `Scope` | Enable generates the runtime lifecycle's SHA-256 binding digest using `ScopeID`; never taken from hook input. No empty/null default. | Reader requires a nonempty string and valid descriptor checksum. Enabled operations compare it with the reopened runtime's scope; a foreign scope fails. It remains unchanged on disable and reflush, preserving the association with inbox/queue records. |
-| `UnknownIdentity` | Enable saves the explicit `--unknown-identity` choice, default `false`; no omitted/null saved form. Determines whether every hook bypasses live identity lookup. | Must be a JSON boolean. It is not an identity observation or fallback policy. Retained on disable/reflush; changing it while enabled requires completed rollback and a new enable. Existing producer events always retain their original attribution. |
+| `UnknownIdentity` | Enable saves the explicit `--unknown-identity` choice, default `false`; no omitted/null saved form. Determines whether every installed hook bypasses live identity lookup. | Must be a JSON boolean. It is not an identity observation or fallback policy. Retained on disable/reflush; changing it while enabled requires completed rollback and a new enable. Existing producer events always retain their original attribution. |
 | `Checksum` | Every descriptor write computes SHA-256 hex over the compact typed object with this field set to the empty string, without LF. Generated locally, never supplied by the hook. | Required string matching the recomputed digest. All preceding fields participate, including `Enabled`. It changes on an explicit toggle but not a byte-preserving reflush. Detects accidental damage, not same-user tampering. |
 
 Every field is required in the exact persisted encoding; only `Profiles` permits
@@ -545,7 +553,10 @@ There is no shared destination chooser that could redirect one format into the
 other. Both formats retain their existing byte representation.
 
 A valid disabled descriptor does not require its runtime to be reopened merely
-for ordinary synchronous sync or an idempotent disable. Re-enabling checks current
+for ordinary synchronous sync. Every `disable-hooks` retry still checks the pinned
+runtime, inbox and worker/queue idleness before reflush. On a fresh home with no
+configuration parent, disable reports that routing is not enabled and creates no
+state. Re-enabling checks current
 configuration and complete profile coverage and validates/initializes the chosen
 inbox before replacing options. Do not manually edit retained fields or replay a
 descriptor from another lifecycle: enabling/use still enforce scope association.

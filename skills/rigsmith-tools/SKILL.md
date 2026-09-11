@@ -297,7 +297,8 @@ to stderr. Installed hooks remain synchronous unless explicitly opted in locally
 
 For explicit managed v2 hook admission, use `clauderig queue hook < hook.json`
 after `queue init`. This saves and enqueues a new event in a private inbox
-(default `~/.clauderig/hook-inbox`, override `--inbox`). Each invocation is a new
+(default: the matching saved routing inbox, otherwise `~/.clauderig/hook-inbox`;
+override with `--inbox`). Each invocation is a new
 event: after failure or interruption, use `queue recover-hooks` with the same
 `--dir`, `--profile` and `--inbox`, without replaying stdin or refreshing identity.
 Recovery only covers records saved before interruption. Never reset a corrupt or
@@ -317,7 +318,9 @@ and SessionStart pull stay unchanged.
 
 To roll back, stop all producers, recover the saved inbox, drain and stop workers,
 then `queue disable-hooks` with the saved runtime/profile flags. Pending inbox or
-queue work and active workers block disabling. Preserve the descriptor and all
+queue work and active workers block disabling, including repeat requests. Default
+hook/recovery commands follow the pinned inbox even after disable; explicitly
+selected inboxes require separate recovery. Preserve the descriptor and all
 recovery state; never delete it, change the runtime or downgrade binaries to
 bypass recovery. After an uncertain toggle write, inspect status and retry the
 same command. After restarting the machine, recover the inbox and restart the

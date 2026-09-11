@@ -42,7 +42,7 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 		if recoverOnly {
 			name, short = "recover-hooks", "Retry saved hook requests using their original account attribution"
 		}
-		cmd := &cobra.Command{Use: name, Short: short, Long: short + ".\n\nUses a private, bounded inbox tied to one initialized queue runtime.\nEach hook invocation is a new event; after any failure, run recover-hooks\nwith the same --dir, --profile and --inbox instead of replaying stdin.\nFresh hook input must finish within 2 seconds and 128 KiB; queue hook has a 10-second deadline.\nManual recover-hooks uses the caller context and 15-second waits per lock.\nRequests are saved before admission and removed only after confirmed enqueue.\nRecovery never reads stdin or the current account. No worker or hook is installed.\nStop producers, recover this inbox, then drain the queue before rollback.\nWindows callers must provide a private directory ACL.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
+		cmd := &cobra.Command{Use: name, Short: short, Long: short + ".\n\nUses a private, bounded inbox tied to one initialized queue runtime.\nWithout --inbox, uses the matching local routing inbox when saved, otherwise\n~/.clauderig/hook-inbox. Explicit inboxes require their own recovery.\nEach hook invocation is a new event; after any failure, run recover-hooks\nwith the same --dir, --profile and --inbox instead of replaying stdin.\nFresh hook input must finish within 2 seconds and 128 KiB; queue hook has a 10-second deadline.\nManual recover-hooks uses the caller context and 15-second waits per lock.\nRequests are saved before admission and removed only after confirmed enqueue.\nRecovery never reads stdin or the current account. No worker or hook is installed.\nStop producers, recover this inbox, then drain the queue before rollback.\nWindows callers must provide a private directory ACL.", Args: cobra.NoArgs, RunE: func(c *cobra.Command, _ []string) error {
 			ctx := c.Context()
 			var payload queueHookPayload
 			if !recoverOnly {
@@ -64,6 +64,14 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 				return err
 			}
 			root := inbox
+			if root == "" {
+				var release func()
+				root, release, err = pinnedQueueHookInbox(ctx, deps, r)
+				if err != nil {
+					return err
+				}
+				defer release()
+			}
 			if root == "" {
 				dir, err := config.Dir()
 				if err != nil {
@@ -107,7 +115,7 @@ func addQueueHookProducerCommands(parent *cobra.Command, deps queueCommandDeps, 
 			_, err = fmt.Fprintf(c.ErrOrStderr(), "Hook inbox admission complete; %d requests confirmed in queue. Publication requires a worker.\n", count)
 			return err
 		}}
-		cmd.Flags().StringVar(&inbox, "inbox", "", "private hook inbox directory (default ~/.clauderig/hook-inbox)")
+		cmd.Flags().StringVar(&inbox, "inbox", "", "private hook inbox directory (default matching local routing inbox, otherwise ~/.clauderig/hook-inbox)")
 		_ = cmd.MarkFlagDirname("inbox")
 		if !recoverOnly {
 			cmd.Flags().BoolVar(&unknownIdentity, "unknown-identity", false, "explicitly record unknown account attribution")

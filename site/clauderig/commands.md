@@ -538,7 +538,8 @@ text from the payload is saved. Installed hooks remain synchronous unless opted 
 ### Managed hook admission and recovery
 
 `clauderig queue hook < hook.json` saves and enqueues a Stop/SessionEnd request
-using a private inbox (default `~/.clauderig/hook-inbox`, override `--inbox`). It
+using a private inbox (the matching saved routing inbox, otherwise
+`~/.clauderig/hook-inbox`; override with `--inbox`). It
 requires an initialized queue. Account identity is captured once; unavailable
 identity requires `--unknown-identity`. The inbox holds at most 128 requests and
 1 MiB of journal data. No worker or hook is installed automatically.
@@ -578,7 +579,10 @@ Do not remove it, switch binaries, move state or edit options to bypass rollback
 For rollback, stop every producer, run `queue recover-hooks` with the saved inbox,
 drain and stop the queue worker, then run `queue disable-hooks` with the saved
 runtime/profile flags. It refuses pending inbox requests, queued work or worker
-ownership. It keeps a disabled descriptor and all recovery state. If a write
+ownership. Repeated disables keep those checks. On a fresh home, disable creates no state.
+Default hook/recovery commands follow the saved inbox; separately selected
+`--inbox` locations require separate recovery. It keeps a disabled descriptor and
+all recovery state. If a write
 reports an uncertain result, inspect `hook-status` and retry the same toggle.
 See the [full contract](../../docs/CLAUDERIG-V2-QUEUE-COMMANDS.md) for recovery
 limits, privacy requirements and restart procedures.

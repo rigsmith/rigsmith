@@ -161,6 +161,9 @@ queue-aware manual sync. Select every Desktop profile using the same `--profile`
 flags as init. Start `queue run` separately to publish.
 
 `queue hook-status` shows the saved runtime, profiles, inbox and identity mode.
+Default hook/recovery commands use that matching runtime’s pinned inbox; explicitly
+selected `--inbox` locations require their own recovery.
 To roll back, stop producers, run `recover-hooks`, drain and stop the worker, then
 run `disable-hooks` with the saved runtime/profile flags. Pending work prevents
-disabling; recovery records and portable hook settings are preserved.
+disabling, including repeated disables; recovery records and portable hook settings
+are preserved.

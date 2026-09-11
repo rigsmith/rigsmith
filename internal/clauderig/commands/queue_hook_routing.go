@@ -193,10 +193,19 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 	enable.Flags().BoolVar(&unknown, "unknown-identity", false, "explicitly record unknown account attribution for every hook")
 	parent.AddCommand(enable)
 	parent.AddCommand(&cobra.Command{Use: "disable-hooks", Short: "Restore synchronous sync after the saved inbox and queue are empty", Args: cobra.NoArgs,
-		Long: "Stop Claude sessions and all other producers first. Run recover-hooks with\nthe saved inbox and runtime, then drain the queue and stop every worker.\nThis command refuses pending inbox requests, queued work or an active worker.\nIt restores synchronous sync by retaining a disabled local descriptor; hook\nsettings and all recovery records remain intact. Use the saved --dir and --profile.",
+		Long: "Stop Claude sessions and all other producers first. Run recover-hooks with\nthe saved inbox and runtime, then drain the queue and stop every worker.\nEvery disable, including a retry, refuses pending inbox requests, queued work\nor an active worker. Recover separately selected inboxes as well.\nIt restores synchronous sync by retaining a disabled local descriptor; hook\nsettings and all recovery records remain intact. Use the saved --dir and --profile.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			path, err := deps.routingPath()
 			if err != nil {
+				return err
+			}
+			// A missing parent means routing has never been installed here.
+			// Existing parents still take the lease before checking absence, so
+			// concurrent first enable/disable commands serialize normally.
+			if _, err := os.Lstat(filepath.Dir(path)); os.IsNotExist(err) {
+				_, err = fmt.Fprintln(c.OutOrStdout(), "Queued hooks are not enabled on this machine.")
+				return err
+			} else if err != nil {
 				return err
 			}
 			release, err := queueRequestLease(c.Context(), path)
@@ -212,10 +221,8 @@ func addQueueHookRoutingCommands(parent *cobra.Command, deps queueCommandDeps, o
 			if err != nil {
 				return err
 			}
-			// Reflush an already-disabled descriptor after an uncertain disable write.
-			if !s.Enabled {
-				return deps.persistHookRouting(c.Context(), path, s)
-			}
+			// Repeated disables retain the same rollback checks: explicit
+			// queue producers may have added work since the previous disable.
 			r, err := open(c.Context(), false)
 			if err != nil {
 				return err
@@ -407,4 +414,55 @@ func (d queueCommandDeps) persistHookRouting(ctx context.Context, path string, s
 		return d.saveRouting(ctx, path, state)
 	}
 	return saveHookRouting(ctx, path, state)
+}
+
+// Default producer/recovery commands follow the matching local routing inbox,
+// including a retained disabled descriptor. Explicit --inbox remains an explicit
+// producer selection. Hold routing ownership until admission/recovery finishes;
+// automatic sync dispatch already supplies its pinned inbox under its own lease.
+func pinnedQueueHookInbox(ctx context.Context, deps queueCommandDeps, r *service.QueueRuntime) (string, func(), error) {
+	noop := func() {}
+	if deps.routingPath == nil {
+		return "", noop, nil
+	}
+	path, err := deps.routingPath()
+	if err != nil {
+		return "", noop, err
+	}
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return "", noop, nil
+	} else if err != nil {
+		return "", noop, err
+	}
+	release, err := queueRequestLease(ctx, path)
+	if err != nil {
+		return "", noop, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			release()
+		}
+	}()
+	saved, err := loadHookRouting(path)
+	if err != nil {
+		return "", noop, err
+	}
+	if saved.Runtime != r.Directory() {
+		return "", noop, nil
+	}
+	if saved.Scope != r.ScopeID() {
+		return "", noop, queue.ErrBinding
+	}
+	if err := checkRoutingPaths(r, path, saved.Inbox); err != nil {
+		return "", noop, err
+	}
+	if _, err := (hookInbox{dir: saved.Inbox}).load(saved.Scope); err != nil {
+		return "", noop, err
+	}
+	if err := deps.persistHookRouting(ctx, path, saved); err != nil {
+		return "", noop, err
+	}
+	keep = true
+	return saved.Inbox, release, nil
 }
