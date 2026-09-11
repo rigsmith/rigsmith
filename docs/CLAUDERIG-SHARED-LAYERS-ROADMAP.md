@@ -8,6 +8,16 @@ it builds on the tested synchronous workflow.
 
 ## Progress
 
+**Current position (after #394):** stages 1–7 and 8a are merged. Config codec,
+capture, path policy, restore preparation and guarded application (8b.1–8b.5)
+are merged. **Next is 8b.6: supported-version validation.** Stage 8b remains
+incomplete until customization, independent state and user-facing sync/restore
+workflows are connected. Codex currently exposes only `inspect`; restore APIs
+are internal. Actual OS restart/hibernation evidence remains an 8e release gate.
+
+See the [summary roadmap](../roadmap.md#stage-8b-completed-work-and-next-steps)
+for the current overview. The evidence and implementation history follow.
+
 **Completed:** store coordination (6a) merged into `codex/v2` through
 [#308](https://github.com/rigsmith/rigsmith/pull/308) as `f2ad7302`.
 **Completed:** durable queue storage and recovery (6b.1) in
@@ -96,7 +106,16 @@ credential providers and SSH-agent/keychain discovery are deferred.
 | 7c.2b.2b.1. Durable hook producer and recovery | Merged: [#387](https://github.com/rigsmith/rigsmith/pull/387) | Bounded private inbox, saved attribution before admission, replay after uncertain writes and removal after confirmed enqueue. |
 | 7c.2b.2b.2. Opt-in hook installation and rollback | Merged: [#388](https://github.com/rigsmith/rigsmith/pull/388) | Local enable/status/disable commands, queued Stop/SessionEnd, pinned inbox recovery and manual coverage sync. Every rollback or retained re-enable requires an intact empty inbox and idle queue before changing routing. Portable hooks and the synchronous default are preserved. |
 | 8a. Codex foundation and separate executable | Merged: [#389](https://github.com/rigsmith/rigsmith/pull/389) | `codexrig inspect`, independent source/file policy, shared allowlist and synthetic inventory fixtures. [Contract](CODEXRIG-V2-FOUNDATION.md). |
-| 8b. Codex config portability | In progress | TOML codec (8b.1) merged in [#390](https://github.com/rigsmith/rigsmith/pull/390). Bounded config file capture (8b.2) merged in [#391](https://github.com/rigsmith/rigsmith/pull/391). Machine-local path policy (8b.3) merged in [#392](https://github.com/rigsmith/rigsmith/pull/392). Restore preparation (8b.4) merged in [#393](https://github.com/rigsmith/rigsmith/pull/393). Current: guarded file application (8b.5). Remaining: supported-version validation, hooks/customizations, independent state/repository and sync/restore wiring including crash recovery policy. [Apply contract](CODEXRIG-V2-CONFIG-APPLY.md). |
+| 8b. Codex config and customization portability | In progress | Internal config primitives are merged; remaining acceptance steps are explicit below. [Apply contract](CODEXRIG-V2-CONFIG-APPLY.md). |
+| 8b.1. TOML codec | Merged: [#390](https://github.com/rigsmith/rigsmith/pull/390) | Portable sanitization and destination-secret-preserving merge. |
+| 8b.2. Bounded config capture | Merged: [#391](https://github.com/rigsmith/rigsmith/pull/391) | Selected base/profile capture with byte, identity and change limits. |
+| 8b.3. Machine-local path policy | Merged: [#392](https://github.com/rigsmith/rigsmith/pull/392) | Exclude local paths while preserving destination bindings. |
+| 8b.4. Restore preparation | Merged: [#393](https://github.com/rigsmith/rigsmith/pull/393) | Full-set validation boundary, private proposed bytes and stale-plan detection. |
+| 8b.5. Guarded file application | Merged: [#394](https://github.com/rigsmith/rigsmith/pull/394) | Writer-owned staging/application, partial and uncertain results, case-safe reserved names and bounded lock/scratch capacity. Internal API; no automatic rollback or crash recovery. |
+| 8b.6. Supported-version validation | Next | Implement the required full-config validator and document supported Codex versions. |
+| 8b.7. Customization portability | Planned | Instructions, rules, skills and portable hook definitions, with local paths/secrets kept local. Activation stays in 8d. |
+| 8b.8. Independent Codex state and repository | Planned | Separate settings, identity, state and backup repository through existing Git/`gh` integration. |
+| 8b.9. Config sync/restore workflow | Planned | Capture/publication/restore commands, dry-run, partial-result handling and explicit interrupted-restore recovery before user-facing restore ships. Coordinated replacement requires Codex/editors to be idle. |
 | 8c. Codex session portability | Planned | Native artifact preservation, metadata/search and isolated discovery/resume tests; preserve divergence, never union arbitrary rollout lines or copy live SQLite state. |
 | 8d. Codex queue and hooks | Planned | Connect Codex capture/commit/publication to the shared queue; explicit producer identity, recovery, hook opt-in and rollback. |
 | 8e. V2 release validation | Planned | Installer entries, supported-version documentation, native round trips and actual OS restart/hibernation validation. |
