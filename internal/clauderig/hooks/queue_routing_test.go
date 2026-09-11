@@ -51,7 +51,7 @@ func TestCheckSyncRouting(t *testing.T) {
 				t.Fatal(err)
 			}
 			before, _ := os.ReadFile(path)
-			err = CheckSyncRouting(path)
+			err = CheckSyncRouting(t.Context(), path)
 			wantOK := tc == "standard" || tc == "unrelated" || tc == "explicit-enabled"
 			if (err == nil) != wantOK {
 				t.Fatal(tc, err)

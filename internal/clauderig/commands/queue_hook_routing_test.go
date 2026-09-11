@@ -517,3 +517,27 @@ func TestQueueHookRoutingAgentMarkerTypes(t *testing.T) {
 		t.Fatal("empty string parent marker refused", err)
 	}
 }
+
+func TestQueueHookRoutingSettingsContext(t *testing.T) {
+	f := newQueueFixture(t)
+	_, settings := setupHookRouting(t, f)
+	f.must(t, "init")
+	f.must(t, "enable-hooks")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.deps.hooksPath = func() (string, error) {
+		cancel() // The settings reader must receive this invocation's context.
+		return settings, nil
+	}
+	source := filepath.Join(f.req.Machine.Home, ".claude", "projects", "-fixture", "s.jsonl")
+	if _, _, err := routedSync(f, ctx, queueHookJSON(t, "Stop", "s", source), "--hook"); !errors.Is(err, context.Canceled) {
+		t.Fatal("settings validation ignored routed context", err)
+	}
+	if f.reads != 0 {
+		t.Fatal("canceled settings check reached admission identity")
+	}
+	work, err := f.open(t).Snapshot(t.Context())
+	if err != nil || len(work) != 0 {
+		t.Fatal("canceled settings check admitted work", work, err)
+	}
+}

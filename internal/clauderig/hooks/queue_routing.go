@@ -1,12 +1,15 @@
 package hooks
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // CheckSyncRouting requires one standard command per owned sync event. Enabling
-// local routing must not silently accept stale, duplicate or scoped producers.
+// or using local routing must not accept stale, duplicate or scoped producers.
 // It does not edit settings; unrelated hooks remain the user's responsibility.
-func CheckSyncRouting(path string) error {
-	s, err := load(path)
+func CheckSyncRouting(ctx context.Context, path string) error {
+	s, err := loadRoutingSettings(ctx, path)
 	if err != nil {
 		return err
 	}
@@ -21,6 +24,9 @@ func CheckSyncRouting(path string) error {
 	}
 	h, _ := s["hooks"].(map[string]any)
 	for _, p := range SyncPlans() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		groups, _ := h[p.Event].([]any)
 		count := 0
 		for _, raw := range groups {
@@ -34,7 +40,7 @@ func CheckSyncRouting(path string) error {
 				matcherOK = ok && matcher == p.Matcher
 			}
 			if !matcherOK || !groupMatchesPlan(g, p) {
-				return fmt.Errorf("%s hook differs from the standard command; run clauderig hooks install before enabling queued hooks", p.Event)
+				return fmt.Errorf("%s hook differs from the standard command; run clauderig hooks install before using queued hooks", p.Event)
 			}
 			hs, _ := g["hooks"].([]any)
 			for _, raw := range hs {
@@ -49,8 +55,8 @@ func CheckSyncRouting(path string) error {
 			}
 		}
 		if count != 1 {
-			return fmt.Errorf("%s needs exactly one standard clauderig hook; install or repair hooks before enabling queued hooks", p.Event)
+			return fmt.Errorf("%s needs exactly one standard clauderig hook; install or repair hooks before using queued hooks", p.Event)
 		}
 	}
-	return nil
+	return ctx.Err()
 }

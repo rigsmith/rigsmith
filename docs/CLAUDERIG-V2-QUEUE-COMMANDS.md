@@ -458,7 +458,9 @@ clauderig queue run
 selection. It requires exactly one standard owned command for SessionStart, Stop
 and SessionEnd in user settings, with no stale command or matcher. It does not
 rewrite settings. Each routed sync invocation rechecks the current installed hook
-plan; missing, disabled, malformed or changed hooks fail closed without admission
+plan using a regular, non-symlink settings file of at most 1 MiB. The read checks
+cancellation between chunks and refuses larger/growing inputs; missing, disabled,
+malformed or changed hooks fail closed without admission
 or synchronous fallback. Recovery and rollback remain available when hook settings
 need repair. Enabling creates or reflushes the private inbox before saving local
 routing. `--inbox` chooses another inbox with an existing parent;
@@ -479,7 +481,9 @@ settings does not opt another machine in. SessionStart pull remains synchronous.
 
 With routing enabled, Stop and SessionEnd invoke the durable hook producer. The
 complete input must arrive within two seconds and 128 KiB; the ten-second hook
-budget includes input and routing lock contention. `--hook` requires Stop; a
+budget includes input, settings validation and routing lock contention. Filesystem
+cancellation is cooperative between operations: a stalled kernel filesystem call
+can exceed that budget. `--hook` requires Stop; a
 payload to `--flush` requires SessionEnd. Empty input to `--hook`, blank or
 malformed documents, mismatched events, corrupt routing, missing inbox state or
 changed bindings fail without falling back to synchronous publication. Failure
