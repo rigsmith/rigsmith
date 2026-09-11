@@ -12,6 +12,16 @@ import (
 // executing configured helpers or exposing private diagnostics. No command is
 // exposed and no files are written until the resulting plan is applied.
 func PrepareVersionedConfigRestore(ctx context.Context, root Root, backup ConfigCapture, version string, destination ConfigRestoreValidator) (*ConfigRestorePlan, error) {
+	return PrepareLayeredConfigRestore(ctx, root, backup, version, configcodec.ValidationLayers{}, destination)
+}
+
+// PrepareLayeredConfigRestore checks proposed home files in caller-selected
+// destination layers. Layers must come from trusted local resolution, never the
+// backup. The caller must pin/recheck external layer sources through application
+// and enforce requirements beyond permission catalog selection. Those sources
+// are not covered by ConfigRestorePlan.Check. The destination callback remains
+// mandatory; this API does not discover layers or certify startup readiness.
+func PrepareLayeredConfigRestore(ctx context.Context, root Root, backup ConfigCapture, version string, layers configcodec.ValidationLayers, destination ConfigRestoreValidator) (*ConfigRestorePlan, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -31,7 +41,7 @@ func PrepareVersionedConfigRestore(ctx context.Context, root Root, backup Config
 				profiles = append(profiles, file.Data)
 			}
 		}
-		if err := configcodec.ValidateConfigSet(ctx, version, base, profiles); err != nil {
+		if err := configcodec.ValidateConfigSetWithLayers(ctx, version, base, profiles, layers); err != nil {
 			return err
 		}
 		return destination(ctx, proposed)

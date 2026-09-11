@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,6 +121,54 @@ func TestVersionedRestoreRejectsRuntimeRulesBeforeDestinationChecks(t *testing.T
 			data, readErr := os.ReadFile(filepath.Join(root, "config.toml"))
 			if readErr != nil || string(data) != original {
 				t.Fatal("failed preparation changed destination", readErr)
+			}
+		})
+	}
+}
+
+func TestLayeredRestoreUsesContextWithoutInstallingIt(t *testing.T) {
+	for _, invalid := range []bool{false, true} {
+		t.Run(fmt.Sprint(invalid), func(t *testing.T) {
+			root := t.TempDir()
+			putConfig(t, root, "config.toml", "model='old'\ndefault_permissions='managed'")
+			layers := configcodec.ValidationLayers{
+				Before:       [][]byte{[]byte("[model_providers.local]\nname='Local'\nexperimental_bearer_token='private-context'")},
+				Requirements: []byte("[permissions.managed]\nextends=':workspace'"),
+			}
+			if invalid {
+				layers.Requirements = []byte("[permissions.managed]\nextends='missing'")
+			}
+			backup := captureFiles(map[string]string{"config.toml": "model='new'\nmodel_provider='local'"})
+			called := false
+			p, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, backup, configcodec.SupportedConfigVersion, layers, func(_ context.Context, proposed []ConfigFile) error {
+				called = true
+				if len(proposed) != 1 || strings.Contains(string(proposed[0].Data), "private-context") {
+					t.Fatal("external context entered restore files")
+				}
+				return nil
+			})
+			if invalid {
+				if p != nil {
+					p.Close()
+					t.Fatal("invalid context produced plan")
+				}
+				if called || !errors.Is(err, ErrConfigValidation) {
+					t.Fatal("invalid context reached callback", err)
+				}
+				return
+			}
+			if err != nil || p == nil || !called {
+				t.Fatal(err)
+			}
+			if _, err := p.Apply(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join(root, "config.toml"))
+			if err != nil || strings.Contains(string(data), "private-context") || strings.Contains(string(data), "extends") || !strings.Contains(string(data), "new") {
+				t.Fatal("context was installed", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "requirements.toml")); !os.IsNotExist(err) {
+				t.Fatal("requirements were installed", err)
 			}
 		})
 	}

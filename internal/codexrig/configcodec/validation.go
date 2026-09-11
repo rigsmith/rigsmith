@@ -56,6 +56,11 @@ var compiledConfigSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	if err != nil {
 		return nil, ErrValidation
 	}
+	// Fill known serde-flatten schema gaps in a private parsed copy. The embedded
+	// upstream artifact and its provenance hash remain unchanged.
+	if err := addPermissionMapSchemas(doc); err != nil {
+		return nil, err
+	}
 	const resource = "urn:codexrig:config:0.144.6"
 	if err := compiler.AddResource(resource, doc); err != nil {
 		return nil, ErrValidation
@@ -75,56 +80,7 @@ var compiledConfigSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 // destination readiness. Callers must still check managed layers, artifacts,
 // credentials and runtime constraints not covered by this pinned policy.
 func ValidateConfigSet(ctx context.Context, version string, base []byte, profiles [][]byte) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if version != SupportedConfigVersion {
-		return ErrUnsupportedVersion
-	}
-	count := len(profiles)
-	if base != nil {
-		count++
-	}
-	if count > 32 {
-		return ErrSize
-	}
-	total := len(base)
-	for _, data := range profiles {
-		if len(data) > MaxBytes {
-			return ErrSize
-		}
-		total += len(data)
-	}
-	if len(base) > MaxBytes || total > 8<<20 {
-		return ErrSize
-	}
-	schema, err := compiledConfigSchema()
-	if err != nil {
-		return err
-	}
-	current, err := validationDocument(base)
-	if err != nil {
-		return err
-	}
-	if err := validateEffective(ctx, schema, current); err != nil {
-		return err
-	}
-	for _, data := range profiles {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		profile, err := validationDocument(data)
-		if err != nil {
-			return err
-		}
-		// Profiles overlay the base independently. They never inherit from another
-		// profile, and table merge is distinct from the secret-preserving restore.
-		effective := overlayConfig(current, profile)
-		if err := validateEffective(ctx, schema, effective); err != nil {
-			return err
-		}
-	}
-	return ctx.Err()
+	return ValidateConfigSetWithLayers(ctx, version, base, profiles, ValidationLayers{})
 }
 
 func validationDocument(data []byte) (map[string]any, error) {

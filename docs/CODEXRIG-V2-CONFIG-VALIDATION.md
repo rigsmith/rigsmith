@@ -14,13 +14,15 @@ Older, newer, prerelease and decorated version strings fail closed before the
 source directory is opened. Support for a release means the pinned validation
 policy is available, not that all Codex workflows have been certified.
 
-The embedded schema is the unmodified Draft 7 schema from release commit
+The embedded artifact is the unmodified Draft 7 schema from release commit
 `5d1fbf26c43abc65a203928b2e31561cb039e06d`. Its hash, license and provenance are in
 [the schema directory](../internal/codexrig/configcodec/schema/README.md).
 `github.com/santhosh-tekuri/jsonschema/v6` is pinned to v6.0.3 for Draft 7
 validation. The existing indirect schema dependency does not resolve this
 snapshot's Draft 7 `definitions` references correctly. URL/file loading is
-disabled, and validation never refreshes its schema from the network.
+disabled, and validation never refreshes its schema from the network. A private
+parsed copy now fills five known permission-map gaps from the same release; see
+[layered validation](CODEXRIG-V2-LAYERED-VALIDATION.md).
 
 ## Full-set validation
 
@@ -63,7 +65,8 @@ base/profile overlay gets another depth check. Parsing/schema calls are bounded
 but not forcibly interrupted mid-call; cancellation is checked between documents
 and after validation. No config bytes, local paths or validation values appear in
 returned diagnostics. Unknown fields follow the exact schema: closed objects
-reject them; explicitly open objects remain open.
+reject them; known permission-map gaps receive the documented supplemental value
+constraints, and other explicitly open objects remain open.
 
 ## Remaining destination validation (8b.6b)
 
@@ -75,8 +78,11 @@ records the native validation order. In particular, reserved provider declaratio
 are rejected before the catalog merge; the initial 8b.6a description of ordinary
 collisions being ignored was incomplete and is corrected here.
 
-The required destination callback still needs a production implementation covering
-managed/system/project layers, permissions semantics, remaining runtime constraints,
+Layer composition and permission catalog/selection checks are now available via
+[`PrepareLayeredConfigRestore`](CODEXRIG-V2-LAYERED-VALIDATION.md), using trusted
+caller-supplied context. The required destination callback still needs production
+discovery/freshness checks for managed/system/project sources, full permission
+compilation and other managed requirements, remaining runtime constraints,
 referenced files and agent definitions, helper availability and
 credential readiness. It must not execute configured helpers or expose private
 diagnostics. Model-dependent values such as reasoning effort also remain outside
