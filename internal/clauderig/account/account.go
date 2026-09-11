@@ -440,6 +440,10 @@ func (s *Store) read(id string) (Account, bool) {
 var (
 	ErrNoAccounts    = errors.New("no accounts yet — run `clauderig account add` while logged in")
 	ErrNoSuchAccount = errors.New("no account matches")
+	// ErrAmbiguousRef: the reference is a substring of more than one account.
+	// Distinct from ErrNoSuchAccount because the fix is different — be more
+	// specific, not add an account.
+	ErrAmbiguousRef = errors.New("ambiguous account reference")
 )
 
 // Resolve finds an account by exact id or email, otherwise by a unique
@@ -485,7 +489,7 @@ func (s *Store) Resolve(ref string) (Account, error) {
 		for i, a := range matches {
 			emails[i] = a.Email
 		}
-		return Account{}, fmt.Errorf("%q matches %d accounts (%s) — be more specific", ref, len(matches), strings.Join(emails, ", "))
+		return Account{}, fmt.Errorf("%w: %q matches %d accounts (%s) — be more specific", ErrAmbiguousRef, ref, len(matches), strings.Join(emails, ", "))
 	}
 }
 

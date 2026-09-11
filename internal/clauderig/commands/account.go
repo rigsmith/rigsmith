@@ -599,7 +599,7 @@ func newAccountRunCmd() *cobra.Command {
 				ref = args[0]
 				args = args[1:]
 			}
-			a, err := sessionAccount(cmd, st, ref, cmd.ErrOrStderr())
+			a, err := sessionAccount(cmd, st, ref)
 			if err != nil {
 				return err
 			}

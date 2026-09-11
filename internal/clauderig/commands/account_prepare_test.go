@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
+	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
 )
 
 // prepareFixture points HOME at a temp dir (so DefaultStore and ClaudeHome both
@@ -179,6 +180,122 @@ func TestPrepareRefusesWithAStableReason(t *testing.T) {
 			t.Errorf("a refusal must not hand back a directory to launch under, got %q", got.ConfigDir)
 		}
 	})
+}
+
+// A bare `prepare` in a mapped directory prints the mapped note — and in plain
+// mode that note must not land on stdout, or `$(clauderig account prepare)`
+// captures two lines. Pinned because the first cut did exactly that.
+func TestPrepareMappedDirectoryKeepsStdoutToTheDir(t *testing.T) {
+	st := prepareFixture(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dm, err := dirmapStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dm.Set(cwd, func(e *dirmap.Entry) { e.Account = "w-x-com" }); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := runPrepareCmd(t)
+	if err != nil {
+		t.Fatalf("prepare: %v\nstderr: %s", err, errOut)
+	}
+	if strings.TrimSpace(out) != st.ConfigDir("w-x-com") {
+		t.Errorf("stdout = %q, want ONLY the config dir", out)
+	}
+	if !strings.Contains(errOut, "mapped:") {
+		t.Errorf("the mapped note belongs on stderr, got %q", errOut)
+	}
+}
+
+func TestPrepareNamesTheRightRefusalForResolution(t *testing.T) {
+	st := prepareFixture(t)
+	// A second account sharing the domain makes "x.com" ambiguous.
+	cred, _ := json.Marshal(map[string]any{
+		"claudeAiOauth":    map[string]any{"accessToken": "acc-v", "refreshToken": "ref-v", "subscriptionType": "max"},
+		"organizationUuid": "org-v",
+	})
+	oauth, _ := json.Marshal(map[string]any{"emailAddress": "v@x.com", "organizationUuid": "org-v"})
+	if _, _, err := st.CaptureLive(cred, oauth); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("ambiguous reference is not a miss", func(t *testing.T) {
+		out, _, err := runPrepareCmd(t, "x.com", "--json")
+		if err == nil {
+			t.Fatal("an ambiguous reference was prepared")
+		}
+		var got prepareJSON
+		_ = json.Unmarshal([]byte(out), &got)
+		if got.Reason != prepareAmbiguous {
+			t.Errorf("reason = %q, want %q — the fix is to be more specific, not to add an account", got.Reason, prepareAmbiguous)
+		}
+	})
+
+	t.Run("a mapping to a vanished account is not unmapped", func(t *testing.T) {
+		cwd, _ := os.Getwd()
+		dm, _ := dirmapStore()
+		if _, err := dm.Set(cwd, func(e *dirmap.Entry) { e.Account = "ghost" }); err != nil {
+			t.Fatal(err)
+		}
+		out, _, err := runPrepareCmd(t, "--json")
+		if err == nil {
+			t.Fatal("a broken mapping was silently prepared")
+		}
+		var got prepareJSON
+		_ = json.Unmarshal([]byte(out), &got)
+		if got.Reason != prepareFailed {
+			t.Errorf("reason = %q, want %q — sending the user to `account map` for a directory that IS mapped is the wrong advice", got.Reason, prepareFailed)
+		}
+		if !strings.Contains(got.Message, "ghost") {
+			t.Errorf("message should name the mapped account, got %q", got.Message)
+		}
+	})
+}
+
+// A credential file that exists but cannot be read is "unknown", not "no
+// tokens": treating it as absent would let EnsureSession seed over a credential
+// it never saw.
+func TestPrepareReportsAnUnreadableProfileCredentialAsUnknown(t *testing.T) {
+	st := prepareFixture(t)
+	dir := st.ConfigDir("w-x-com")
+	// A directory where the file should be: exists, and ReadFile fails on
+	// every platform without needing to fiddle with permissions.
+	if err := os.MkdirAll(filepath.Join(dir, ".credentials.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runPrepareCmd(t, "w@x.com", "--json")
+	if err == nil {
+		t.Fatal("an unreadable profile credential was prepared over")
+	}
+	var got prepareJSON
+	_ = json.Unmarshal([]byte(out), &got)
+	if got.Reason != prepareSessionUnknown {
+		t.Errorf("reason = %q, want %q", got.Reason, prepareSessionUnknown)
+	}
+}
+
+func TestClassifyPrepareResolveOnlyCallsAMissAMiss(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want string
+	}{
+		"unmapped":    {errUnmappedDirectory, prepareUnmapped},
+		"no such":     {wrap(account.ErrNoSuchAccount), prepareNoSuchAccount},
+		"no accounts": {account.ErrNoAccounts, prepareNoSuchAccount},
+		"ambiguous":   {wrap(account.ErrAmbiguousRef), prepareAmbiguous},
+		"getwd/other": {os.ErrPermission, prepareFailed},
+		"broken map":  {wrap(os.ErrClosed), prepareFailed},
+	}
+	for name, c := range cases {
+		if got := classifyPrepareResolve(c.err); got != c.want {
+			t.Errorf("%s: classify = %q, want %q", name, got, c.want)
+		}
+	}
 }
 
 // The classifier is sentinel-based on purpose — prose changes must not

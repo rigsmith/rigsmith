@@ -64,10 +64,18 @@ func readSessionCredential(configDir string) (raw []byte, found bool, err error)
 		}
 		return nil, false, nil
 	}
-	if f, ferr := os.ReadFile(sessionCredFile(configDir)); ferr == nil && hasTokens(f) {
-		return f, true, nil
+	f, ferr := os.ReadFile(sessionCredFile(configDir))
+	switch {
+	case ferr == nil:
+		return f, hasTokens(f), nil
+	case errors.Is(ferr, os.ErrNotExist):
+		return nil, false, nil
+	default:
+		// A file that exists but cannot be read is not "no tokens" — reporting
+		// it as such would let EnsureSession seed over a credential it never
+		// saw. Propagate, like a Keychain read failure.
+		return nil, false, ferr
 	}
-	return nil, false, nil
 }
 
 // sessionCredentialUsable reports whether the profile can authenticate as-is.

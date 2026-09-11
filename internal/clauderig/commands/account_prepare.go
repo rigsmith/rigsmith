@@ -26,7 +26,8 @@ import (
 // Stable refusal codes for `prepare --json`. A launcher branches on these; the
 // sentence lives in `message` and may change wording freely.
 const (
-	prepareNoSuchAccount  = "no-such-account"    // nothing matches the reference
+	prepareNoSuchAccount  = "no-such-account"    // nothing matches the reference (or there are no accounts at all)
+	prepareAmbiguous      = "ambiguous-account"  // the reference matches more than one account
 	prepareUnmapped       = "unmapped-directory" // no reference and no directory mapping
 	prepareNoTokens       = "no-tokens"          // the stored credential has nothing to seed the profile with
 	prepareSessionUnknown = "session-unknown"    // the profile's credential could not be read (locked Keychain)
@@ -46,7 +47,9 @@ type prepareJSON struct {
 	// vocabulary (ok · no-tokens · unknown). A prepared profile is "ok" unless
 	// the Keychain cannot be read back, which is reported rather than assumed.
 	Session string `json:"session,omitempty"`
-	// Shared says whether ~/.claude customizations were linked in.
+	// Shared is the sharing mode the profile was prepared with: true unless
+	// --no-share. It says what was asked for, not an inventory of what was
+	// linked — an entry absent from ~/.claude is skipped either way.
 	Shared bool `json:"shared"`
 	// Reason is a stable code from the list above — branch on this.
 	Reason string `json:"reason,omitempty"`
@@ -62,8 +65,9 @@ func newAccountPrepareCmd() *cobra.Command {
 		Long: "For programs that launch `claude` themselves. Does everything `run` does\n" +
 			"short of starting Claude Code — seeds the profile's credential if it needs\n" +
 			"it, leaves a live profile's own refreshed token alone, links ~/.claude\n" +
-			"customizations in (--no-share for a bare profile) — and prints the\n" +
-			"CLAUDE_CONFIG_DIR to export. Never touches your machine-wide login.\n\n" +
+			"customizations in (--no-share skips that; links an earlier shared run\n" +
+			"made are kept) — and prints the CLAUDE_CONFIG_DIR to export. Never\n" +
+			"touches your machine-wide login.\n\n" +
 			"With no account named, uses the one mapped to this directory\n" +
 			"(`clauderig account map`), inheriting the nearest mapped ancestor.\n\n" +
 			"--json emits one object on stdout, refusals included, with a stable\n" +
@@ -81,22 +85,26 @@ func newAccountPrepareCmd() *cobra.Command {
 			return runPrepare(cmd, ref, !noShare, asJSON)
 		},
 	}
-	cmd.Flags().BoolVar(&noShare, "no-share", false, "don't share ~/.claude customizations into the profile (bare profile)")
+	cmd.Flags().BoolVar(&noShare, "no-share", false, "don't link ~/.claude customizations into the profile (links an earlier shared run made are kept)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the outcome as JSON (one object on stdout; prose on stderr)")
 	return cmd
 }
 
 func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
-	// With --json, stdout carries exactly one object and every human line moves
-	// to stderr — a launcher reading the object must never have to strip prose.
-	report := func(prepareJSON) {}
-	notes := cmd.OutOrStdout()
+	// stdout carries the VALUE and nothing else — one object with --json, the
+	// bare directory without — so `$(clauderig account prepare work)` and a
+	// JSON reader never have to strip prose. Every human line goes to stderr in
+	// both modes.
+	report := func(prepareJSON) error { return nil }
 	if asJSON {
-		notes = cmd.ErrOrStderr()
-		report = func(j prepareJSON) { _ = emitJSON(cmd.OutOrStdout(), j) }
+		report = func(j prepareJSON) error { return emitJSON(cmd.OutOrStdout(), j) }
 	}
 	refuse := func(a account.Account, reason string, err error) error {
-		report(prepareJSON{ID: a.ID, Email: a.Email, Alias: a.Alias, Reason: reason, Message: err.Error()})
+		// The refusal is the outcome a launcher branches on, so a failure to
+		// deliver it is reported alongside the refusal itself, never instead.
+		if rerr := report(prepareJSON{ID: a.ID, Email: a.Email, Alias: a.Alias, Reason: reason, Message: err.Error()}); rerr != nil {
+			return errors.Join(err, rerr)
+		}
 		return err
 	}
 
@@ -104,7 +112,7 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 	if err != nil {
 		return refuse(account.Account{}, prepareFailed, err)
 	}
-	a, err := sessionAccount(cmd, st, ref, notes)
+	a, err := sessionAccount(cmd, st, ref)
 	if err != nil {
 		return refuse(account.Account{}, classifyPrepareResolve(err), err)
 	}
@@ -117,17 +125,27 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 	if err != nil {
 		return refuse(a, classifyPrepareFailure(err), err)
 	}
+	// Re-read the profile AFTER preparing it. EnsureSession holds no lock, so a
+	// concurrent `remove`/`purge` can take the directory out from under a
+	// success; reporting a directory that no longer exists would hand the
+	// launcher a profile that fails every test in [AssemblyInitialize]-style —
+	// far from the cause. "none" is therefore a refusal here, never a status.
+	session := st.SessionStatus(a.ID)
+	if session == account.SessionNone {
+		return refuse(a, prepareFailed, fmt.Errorf("the profile at %s disappeared while it was being prepared", dir))
+	}
 
-	report(prepareJSON{
+	if err := report(prepareJSON{
 		Prepared: true, ID: a.ID, Email: a.Email, Alias: a.Alias,
-		ConfigDir: dir, Session: st.SessionStatus(a.ID), Shared: share,
-	})
+		ConfigDir: dir, Session: session, Shared: share,
+	}); err != nil {
+		return err
+	}
 	if !asJSON {
-		// The directory alone on stdout, so `export CLAUDE_CONFIG_DIR=$(clauderig
-		// account prepare work)` is the whole shell integration; the title is a
-		// note, not part of the value.
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n", DimStyle.Render("prepared:"), accountTitle(a))
-		fmt.Fprintln(cmd.OutOrStdout(), dir)
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), dir); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -137,8 +155,9 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 // directory. An unmapped directory is an error rather than a silent fallback to
 // the live login: both commands promise an isolated profile, and quietly handing
 // over the machine-wide one instead is exactly the surprise they exist to avoid.
-func sessionAccount(cmd *cobra.Command, st *account.Store, ref string,
-	notes interface{ Write([]byte) (int, error) }) (account.Account, error) {
+// A mapping that exists but cannot be honoured is its own error, not "unmapped".
+// Notes go to stderr: stdout is the value in both commands.
+func sessionAccount(cmd *cobra.Command, st *account.Store, ref string) (account.Account, error) {
 	if ref != "" {
 		return st.Resolve(ref)
 	}
@@ -146,23 +165,37 @@ func sessionAccount(cmd *cobra.Command, st *account.Store, ref string,
 	if err != nil {
 		return account.Account{}, err
 	}
-	mapped, ok := mappedAccount(st, cwd)
+	mapped, ok, err := mappedAccount(st, cwd)
+	if err != nil {
+		return account.Account{}, err
+	}
 	if !ok {
 		return account.Account{}, fmt.Errorf("%w: no account named, and this directory is not mapped to one.\n"+
 			"Name it (`clauderig account %s <id|email|alias>`), or bind this directory "+
 			"with `clauderig account map <id|email|alias>`", errUnmappedDirectory, cmd.Name())
 	}
-	fmt.Fprintf(notes, "%s %s\n", DimStyle.Render("mapped:"), DimStyle.Render(cwd))
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n", DimStyle.Render("mapped:"), DimStyle.Render(cwd))
 	return mapped, nil
 }
 
 var errUnmappedDirectory = errors.New("unmapped directory")
 
+// classifyPrepareResolve names why no account was picked. Only an explicit miss
+// is "no-such-account": an ambiguous reference, an unreadable directory map, a
+// mapped account that no longer resolves, or a failed Getwd are different
+// problems with different fixes, and calling them "no such account" would send
+// a launcher's user to add an account they may already have.
 func classifyPrepareResolve(err error) string {
-	if errors.Is(err, errUnmappedDirectory) {
+	switch {
+	case errors.Is(err, errUnmappedDirectory):
 		return prepareUnmapped
+	case errors.Is(err, account.ErrNoSuchAccount), errors.Is(err, account.ErrNoAccounts):
+		return prepareNoSuchAccount
+	case errors.Is(err, account.ErrAmbiguousRef):
+		return prepareAmbiguous
+	default:
+		return prepareFailed
 	}
-	return prepareNoSuchAccount
 }
 
 // classifyPrepareFailure maps an EnsureSession error onto a stable code. Both

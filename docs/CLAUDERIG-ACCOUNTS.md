@@ -156,7 +156,8 @@ can name both the CLI account and the Desktop profile it belongs to.
 `clauderig account prepare <ref>` is `run` without the exec. It makes the account's
 session profile ready — seeds the credential when the profile is new or stale,
 leaves a live profile's own refreshed token alone, links the shared
-customizations in (`--no-share` for a bare profile) — and prints the
+customizations in (`--no-share` skips that; links an earlier shared `run` or
+`prepare` made are kept, as with `run`) — and prints the
 `CLAUDE_CONFIG_DIR` to export. It never touches the machine-wide login, and the
 profile it readies is the same one `run` uses, so a session started by a
 launcher and one started from a terminal are the same account with the same
@@ -171,11 +172,14 @@ export CLAUDE_CONFIG_DIR=$(clauderig account prepare work)   # the bare dir is a
 clauderig account prepare work --json                        # {"prepared":true,"id":"…","configDir":"…","session":"ok","shared":true}
 ```
 
-`--json` refusals carry a stable `reason` — `no-such-account`, `unmapped-directory`,
-`no-tokens` (the stored credential has nothing to seed the profile with; re-run
-`account add` for it while it is your live login), `session-unknown` (the
-profile's Keychain entry could not be read), or `failed` — and set a non-zero
-exit code. A refusal never includes a `configDir`.
+`--json` refusals carry a stable `reason` — `no-such-account`, `ambiguous-account`
+(be more specific), `unmapped-directory`, `no-tokens` (the stored credential has
+nothing to seed the profile with; re-run `account add` for it while it is your
+live login), `session-unknown` (the profile's credential could not be read), or
+`failed` (anything else, including a directory mapping that names an account
+which no longer exists) — and set a non-zero exit code. A refusal never includes
+a `configDir`. `shared` reports the mode requested (false under `--no-share`),
+not an inventory of what was linked.
 
 ## JSON output
 
