@@ -13,13 +13,17 @@ import (
 	"context"
 	"embed"
 	"flag"
+	"fmt"
 	"log"
 	"log/slog"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/health"
 	"github.com/rigsmith/rigsmith/ui/assets"
 	"github.com/rigsmith/rigsmith/ui/bridge"
@@ -120,7 +124,7 @@ func main() {
 	window := newWindow(app)
 	sessionsWindow := newSessionsWindow(app)
 	noticeWindow := newNoticeWindow(app)
-	tray, warnItem := newTray(app, window, sessionsWindow, noticeWindow, desktopSvc, actionsSvc)
+	tray, warnItem, trayMenu, windowsMenu := newTray(app, window, sessionsWindow, noticeWindow, desktopSvc, actionsSvc)
 
 	// Registered by name so the status window can raise the sessions window
 	// without the frontend knowing anything about how windows are built.
@@ -129,7 +133,9 @@ func main() {
 	windowsSvc.Register("notice", func() { reveal(noticeWindow) }, func() { noticeWindow.Hide() })
 
 	go poll(app, statusSvc, tray, window)
-	go watchDesktop(app, desktopSvc, noticeWindow, func(on bool) { warnItem.SetChecked(on) })
+	go watchDesktop(app, desktopSvc, noticeWindow,
+		func(on bool) { warnItem.SetChecked(on) },
+		func(v bridge.DesktopView) { fillDesktopWindows(windowsMenu, trayMenu, desktopSvc, v) })
 
 	// An action changes exactly what the tray reports, so repaint the moment
 	// one finishes rather than waiting out the poll interval.
@@ -460,12 +466,21 @@ func reveal(w *application.WebviewWindow) {
 
 // newTray builds the menu bar icon. Clicking it toggles the window beneath the
 // icon; the menu carries the actions.
-func newTray(app *application.App, window, sessions, notice *application.WebviewWindow, desk *bridge.Desktop, actions *bridge.Actions) (*application.SystemTray, *application.MenuItem) {
+func newTray(app *application.App, window, sessions, notice *application.WebviewWindow, desk *bridge.Desktop, actions *bridge.Actions) (*application.SystemTray, *application.MenuItem, *application.Menu, *application.Menu) {
 	tray := app.SystemTray.New()
 
 	menu := app.NewMenu()
 	menu.Add("Open " + AppName).OnClick(func(*application.Context) { reveal(window) })
 	menu.Add("Sessions…").OnClick(func(*application.Context) { reveal(sessions) })
+
+	// Every Claude Desktop window, named and raisable. The Dock cannot do this:
+	// each instance gets its own tile, but they carry the same icon and the same
+	// name, so the only way to tell the work profile from the machine-wide app
+	// is to click one and see. Nothing in macOS badges another app's tile — the
+	// tile belongs to that process — so the discrimination has to live here.
+	windows := menu.AddSubmenu("Claude Desktop")
+	fillDesktopWindows(windows, menu, desk, bridge.DesktopView{})
+
 	menu.AddSeparator()
 	// Running an action from the tray opens the window too: the output streams
 	// into the drawer, and a sync that reports a tripwire refusal with nobody
@@ -512,7 +527,75 @@ func newTray(app *application.App, window, sessions, notice *application.Webview
 	// NIM_MODIFY failed". Early is the quiet path, not the noisy one.
 	applyLevel(tray, health.Amber)
 	tray.SetTooltip(AppName + " — checking…")
-	return tray, warn
+	return tray, warn, menu, windows
+}
+
+// reportMenuError puts a failed menu action in front of the user.
+//
+// A tray menu has nowhere to print: the item is gone the moment it is clicked,
+// and the status window may not be open. A dialog is intrusive, which is the
+// point — these actions are asked for explicitly, so silence would read as the
+// app ignoring the click. Success says nothing.
+func reportMenuError(what string, err error) {
+	if err == nil {
+		return
+	}
+	app := application.Get()
+	if app == nil {
+		log.Printf("%s: %v", what, err)
+		return
+	}
+	app.Dialog.Error().SetTitle(what).SetMessage(err.Error()).Show()
+}
+
+// fillDesktopWindows rewrites the window list in place.
+//
+// Rebuilt wholesale rather than diffed: the list is three items on a busy day,
+// and a diff would be more code than the thing it maintains. root.Update() is
+// what carries the change to the native menu — before the app is running it is
+// a no-op, which is why the first fill happens at build time and the poll takes
+// it from there.
+func fillDesktopWindows(sub, root *application.Menu, desk *bridge.Desktop, v bridge.DesktopView) {
+	sub.Clear()
+	switch {
+	case v.Error != "":
+		// A scan that failed is not an empty machine, and a menu that says
+		// "none" over an unknown state is the same lie the alarm refuses to
+		// tell.
+		sub.Add("could not read the process list").SetEnabled(false)
+	case len(v.Windows) == 0:
+		sub.Add("no windows open").SetEnabled(false)
+	default:
+		for _, w := range v.Windows {
+			pid, label := w.PID, w.Label()
+			item := sub.Add(label)
+			if !desktop.RaiseSupported() {
+				// Asked up front rather than discovered per click. On Windows
+				// every one of these would do nothing at all, and a menu whose
+				// every item is inert reads as a broken app rather than as a
+				// platform that cannot name one window of several.
+				item.SetEnabled(false)
+				continue
+			}
+			item.OnClick(func(*application.Context) {
+				reportMenuError("Could not bring that window forward",
+					desk.Raise(context.Background(), pid))
+			})
+		}
+	}
+	sub.AddSeparator()
+	// Always offered, running or not: `desktop main` raises it when it is up and
+	// starts it when it is not, so one item covers both and neither case needs
+	// this menu to have guessed correctly.
+	sub.Add("Open the main app").OnClick(func(*application.Context) {
+		reportMenuError("Could not open the main Claude Desktop", desk.OpenMain(context.Background()))
+	})
+	if !desktop.RaiseSupported() && len(v.Windows) > 0 {
+		// Said once, rather than implied by rows that do nothing.
+		sub.AddSeparator()
+		sub.Add("(this platform cannot bring one window forward)").SetEnabled(false)
+	}
+	root.Update()
 }
 
 // trayReadyGrace is how long the poll waits before its first pass, so it cannot
@@ -597,6 +680,26 @@ const (
 // desktopEvent carries the current Desktop picture to the notice window.
 const desktopEvent = "clauderig:desktop"
 
+// windowSignature is what "the same windows as last time" means: the pids and
+// the names they are listed under. A window that closed, opened, or turned out
+// to belong to a profile the store has only just become able to name is a
+// different menu; anything else is the same menu and is left alone.
+func windowSignature(v bridge.DesktopView) string {
+	if v.Error != "" {
+		return "error:" + v.Error
+	}
+	// Sorted, and quoted. Nothing promises the process scan returns windows in
+	// a stable order, so an unsorted signature would call a reshuffle a change
+	// and rebuild the menu under whoever was reading it. %q because a label can
+	// contain a path, and a path can contain the separators.
+	rows := make([]string, 0, len(v.Windows))
+	for _, w := range v.Windows {
+		rows = append(rows, fmt.Sprintf("%d=%q", w.PID, w.Label()))
+	}
+	sort.Strings(rows)
+	return strings.Join(rows, ";")
+}
+
 // watchDesktop raises the notice when the machine-wide Claude Desktop is
 // launched, and takes it away when that window closes.
 //
@@ -604,10 +707,15 @@ const desktopEvent = "clauderig:desktop"
 // as a launch, what a failed scan means, and when a profile-less machine should
 // be left alone are the parts worth testing, and they cannot be tested here.
 // This is the wiring: scan, ask, show or hide.
-func watchDesktop(app *application.App, svc *bridge.Desktop, notice *application.WebviewWindow, syncWarn func(bool)) {
+func watchDesktop(app *application.App, svc *bridge.Desktop, notice *application.WebviewWindow,
+	syncWarn func(bool), syncWindows func(bridge.DesktopView)) {
 	ctx := app.Context()
 	var alarm bridge.DesktopAlarm
 	warned := svc.Warn()
+	// The menu is rebuilt only when the set of windows changes. A native menu
+	// rewritten every ten seconds is a menu that can be rewritten under a hand
+	// already reaching for it.
+	windows := ""
 	for {
 		// Scanned FIRST, before any wait. The alarm's first answer is a seed
 		// rather than a launch, so a wait up front would make the seed the
@@ -622,6 +730,11 @@ func watchDesktop(app *application.App, svc *bridge.Desktop, notice *application
 			// while a second profile window opens should say so rather than
 			// describe the machine as it was when it appeared.
 			notice.EmitEvent(desktopEvent, v)
+
+			if sig := windowSignature(v); sig != windows {
+				windows = sig
+				syncWindows(v)
+			}
 
 			// The notice's own "don't warn again" writes the preference; the
 			// tray tick is the only place that shows it. Re-reading here is

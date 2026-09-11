@@ -97,14 +97,23 @@ func (w windowsApp) Launch(dataDir string) error {
 	if !ok {
 		return requireInstalled(w)
 	}
-	cmd := exec.Command(exe, userDataFlag(dataDir))
+	return startDetached(exe, userDataFlag(dataDir))
+}
+
+// startDetached runs the app free of this process: its own process group, no
+// console, and released so nothing here holds it as a zombie-equivalent.
+//
+// One copy, because a profile launch and a machine-wide launch differ only in
+// the argument they pass — and two copies of "how this app is started" is how
+// one of them quietly stops being detached.
+func startDetached(exe string, args ...string) error {
+	cmd := exec.Command(exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windowsCreateNewProcessGroup | windowsDetachedProcess,
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch Claude Desktop: %w", err)
 	}
-	// Release the child so this process doesn't hold it as a zombie-equivalent.
 	return cmd.Process.Release()
 }
 
@@ -112,6 +121,23 @@ const (
 	windowsCreateNewProcessGroup = 0x00000200
 	windowsDetachedProcess       = 0x00000008
 )
+
+// LaunchDefault starts the machine-wide install: the same detached start as
+// Launch, with no --user-data-dir. Windows has no LaunchServices to activate an
+// existing instance instead, so there is no -n equivalent to insist on here.
+func (w windowsApp) LaunchDefault() error {
+	exe, ok := w.Installed()
+	if !ok {
+		return requireInstalled(w)
+	}
+	return startDetached(exe)
+}
+
+// Raise is not available here for the same reason Focus is not: bringing one
+// window of several forward needs window-handle work that is not worth the
+// dependency. Reported as unsupported so the caller can say the window is
+// there rather than imply something failed.
+func (w windowsApp) Raise(int) error { return ErrRaiseUnsupported }
 
 // procRow is the shape asked of PowerShell — an array of {ProcessId, CommandLine}.
 type procRow struct {
@@ -279,3 +305,8 @@ func (w windowsApp) Instances() ([]Instance, error) {
 	}
 	return found, nil
 }
+
+// raiseSupported is what RaiseSupported answers on this platform.
+// Bringing one window of several forward needs window-handle work
+// that is not worth the dependency; see Raise.
+const raiseSupported = false

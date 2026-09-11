@@ -96,6 +96,7 @@ than working around it.
 | --- | --- |
 | `clauderig desktop add <name> [--email X]` | Create a profile, seed it from your existing install, and open a window to log into. `--no-seed` starts empty. |
 | `clauderig desktop open [<name\|email>]` | Open the profile's window, or focus it if already open. `--session` opens it on a Claude Code session; `-i` picks one from a list. |
+| `clauderig desktop main` (alias `default`) | Open, or bring forward, the machine-wide install — the one with no profile. The only verb that touches it. |
 | `clauderig desktop list` (alias `ls`) | Saved profiles; `●` marks the ones open right now. |
 | `clauderig desktop quit [<name\|email>]` | Close that profile's window (SIGTERM, then firmly, then confirmed). |
 | `clauderig desktop prune [<name\|email>] [--vm\|--all] [--dry-run] [--yes]` | Reclaim disk without deleting the profile: Electron caches by default; `--vm` also the unpacked Cowork VM image (re-extracted next launch, VM contents lost); `--all` the whole bundle (re-downloaded). No name means every profile; `--vm` and `--all` confirm first, and off a terminal need `--yes`. |
@@ -318,6 +319,41 @@ toast:
   lock, so nothing clauderig registers can route a link to a chosen window. The
   evidence is in
   [CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md](CLAUDERIG-DESKTOP-LAUNCHER-DESIGN.md).
+
+### Reaching the machine-wide app again
+
+> Status: **implemented** (2026-09-10).
+
+Once a profile window is open, the ordinary Claude Desktop becomes unreachable
+from the OS. Every instance is one application to macOS, so the Dock icon,
+Spotlight and `open -a` all activate whichever instance is already running — and
+that is the profile. There is no gesture anywhere that means "the other one".
+
+`clauderig desktop main` is that gesture. It scans first, because the two cases
+need opposite things:
+
+- **not running** → `open -n -a <bundle>` with no `--args`. The `-n` is what
+  refuses to reuse the running instance, and saying nothing about a profile is
+  what leaves the new one on the app's own data directory — which is the
+  definition of the machine-wide install.
+- **running** → raise that process. `open -a` cannot do it: it activates the
+  application and the OS picks the window, which is the problem restated. The
+  pid goes to System Events instead, the only way to name one instance of
+  several. That needs Automation permission, so the first run prompts and a
+  refusal is reported rather than swallowed. Windows has no equivalent worth the
+  dependency, so it says the window is open and names the pid.
+
+Launching over a running instance would give two machine-wide windows on one
+data directory, which is why the scan comes first and a failed scan refuses
+rather than guessing.
+
+Every path that leaves a window on screen prints the same sentence: it is not a
+clauderig profile. No account is bound to it, `open`, `quit` and `send` cannot
+name it, and it competes for deep links like any other window. The paths that
+return early — not installed, a failed scan, a launch that failed, a raise
+refused — print nothing, because there is no window to say it about. Its history *is* backed up — sync walks it as
+the `desktop` root, same as any profile — but whose sessions those are is
+whatever that install happens to be signed into.
 
 ### The UI says when the main app is open
 

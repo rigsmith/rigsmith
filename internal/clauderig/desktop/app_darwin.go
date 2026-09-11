@@ -59,6 +59,54 @@ func (d darwinApp) Launch(dataDir string) error {
 	return nil
 }
 
+// LaunchDefault starts the machine-wide install.
+//
+// `-n` and NO `--args`, and both halves are load-bearing. Without -n,
+// LaunchServices activates whatever instance is already running rather than
+// starting one — which is exactly the complaint this exists to answer: with a
+// profile window open, asking for Claude gets you that window, because every
+// instance is the same application to the OS. Without --args it starts on the
+// app's own application-support directory, and a Claude Desktop with no
+// --user-data-dir IS the machine-wide install.
+func (d darwinApp) LaunchDefault() error {
+	bundle, ok := d.Installed()
+	if !ok {
+		return requireInstalled(d)
+	}
+	if out, err := exec.Command("/usr/bin/open", "-n", "-a", bundle).CombinedOutput(); err != nil {
+		return fmt.Errorf("launch Claude Desktop: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Raise brings one instance forward by pid.
+//
+// System Events, because `open -a` activates the application and the OS then
+// decides which of its windows comes with it. Addressing the process is the
+// only way to name one instance of several.
+//
+// This is the one thing in the package that needs the user's permission:
+// driving System Events is Automation, so the first run prompts and a refusal
+// comes back here as an error. That is reported rather than swallowed — a
+// window that never appears with no explanation is worse than a sentence about
+// System Settings.
+func (d darwinApp) Raise(pid int) error {
+	script := fmt.Sprintf(
+		`tell application "System Events" to set frontmost of (first process whose unix id is %d) to true`, pid)
+	out, err := exec.Command("/usr/bin/osascript", "-e", script).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	msg := strings.TrimSpace(string(out))
+	// -1743 is "not authorised to send Apple events", which is the permission
+	// prompt having been declined rather than anything about the window.
+	if strings.Contains(msg, "-1743") || strings.Contains(strings.ToLower(msg), "not authorized") {
+		return fmt.Errorf("not allowed to bring Claude Desktop forward: grant this terminal Automation access to System Events "+
+			"in System Settings → Privacy & Security → Automation, or switch to the window yourself: %s", msg)
+	}
+	return fmt.Errorf("could not bring Claude Desktop (pid %d) forward: %w: %s", pid, err, msg)
+}
+
 // Running matches the full --user-data-dir= token so one profile's helper
 // processes are never mistaken for another's (the profile paths share a prefix
 // by construction: they are siblings under the same root).
@@ -242,3 +290,7 @@ func (d darwinApp) Instances() ([]Instance, error) {
 	}
 	return found, nil
 }
+
+// raiseSupported is what RaiseSupported answers on this platform.
+// System Events can address a process by pid.
+const raiseSupported = true

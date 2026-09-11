@@ -51,6 +51,7 @@ func NewDesktopCmd() *cobra.Command {
 			"safe where moving a session around was not.\n\n" +
 			"  add       create a profile and open a window to log into\n" +
 			"  open      open (or focus) a profile's window, optionally on a session\n" +
+			"  main      open (or bring forward) the machine-wide app, which is not a profile\n" +
 			"  list      show saved profiles and which are open\n" +
 			"  quit      close a profile's window\n" +
 			"  map       bind a directory to a profile, for a bare `open` there\n" +
@@ -65,11 +66,152 @@ func NewDesktopCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopListCmd(),
+	cmd.AddCommand(newDesktopAddCmd(), newDesktopOpenCmd(), newDesktopMainCmd(), newDesktopListCmd(),
 		newDesktopQuitCmd(), newDesktopRemoveCmd(), newDesktopMapCmd(), newDesktopUnmapCmd(),
 		newDesktopShortcutCmd(), newDesktopPruneCmd())
 	return cmd
 }
+
+// raiseAny brings the first window it can to the front, trying each pid in turn.
+//
+// Not pids[0] alone: the scan and the raise are separate moments, and a window
+// that closed in between fails on a pid nothing owns any more — which would be
+// reported as "could not bring it forward" while another instance of the same
+// app sat there, live, unraised. Only when every pid fails is there nothing to
+// come forward, and then the last failure is the one worth showing.
+//
+// An unsupported platform is not a per-pid failure and is returned as soon as it
+// is seen: trying the rest would be asking the same question again.
+func raiseAny(app desktop.App, pids []int) error {
+	var last error
+	for _, pid := range pids {
+		err := app.Raise(pid)
+		if err == nil || errors.Is(err, desktop.ErrRaiseUnsupported) {
+			return err
+		}
+		last = err
+	}
+	return last
+}
+
+// raiseOrFocus brings a profile's own window forward, falling back to
+// activating the application where one window cannot be named.
+//
+// Focus alone raises the APPLICATION, and every instance is one application to
+// the OS — so with two profiles open, `desktop open work` could put the personal
+// window in front and report success. Raise names the process, which is the
+// only way to mean one window of several. Where that is not supported the
+// fallback is the old behaviour, which is imprecise rather than wrong.
+func raiseOrFocus(app desktop.App, p desktop.Profile) error {
+	// A scan that failed is NOT a platform that cannot raise windows. Falling
+	// through to Focus here would activate the application with no idea which
+	// window that brings forward — and with two profiles open, reporting
+	// success over the wrong one is worse than saying the scan failed.
+	pids, err := app.Running(p.DataDir())
+	if err != nil {
+		return fmt.Errorf("could not tell which window belongs to %s: %w", p.Name, err)
+	}
+	if len(pids) == 0 {
+		// It closed between the caller's scan and this one. Focus must NOT be
+		// the answer: on macOS it is `open -a`, which with no instance running
+		// LAUNCHES one — and a launch with no profile flag is the machine-wide
+		// install, so asking for the work profile would open the very window
+		// this package spends its time keeping separate. The caller knows what
+		// it wanted; it can launch the profile properly.
+		return errProfileNotOpen
+	}
+	if rerr := raiseAny(app, pids); rerr == nil {
+		return nil
+	} else if !errors.Is(rerr, desktop.ErrRaiseUnsupported) {
+		// A refused Automation prompt is worth saying out loud rather than
+		// quietly falling back to raising some window or other.
+		return rerr
+	}
+	// One way here: the platform cannot name one window of several. A window
+	// does exist, so activating the application raises that app rather than
+	// starting anything.
+	return app.Focus(p.DataDir())
+}
+
+// errProfileNotOpen means the profile had no window by the time we looked.
+// Sentinel rather than a message: every caller has already decided what to do
+// about a profile that is not running, and none of them want it focused.
+var errProfileNotOpen = errors.New("that profile has no window open")
+
+// newDesktopMainCmd opens, or brings forward, the Claude Desktop that is not a
+// profile — the one the Dock and Spotlight start.
+//
+// It exists because that app becomes unreachable once a profile window is up.
+// Every instance is one application as far as macOS is concerned, so asking for
+// Claude activates whichever instance is running: with a profile open, clicking
+// the Dock icon gets you the profile, and there is no gesture anywhere in the
+// OS that means "the other one".
+func newDesktopMainCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "main",
+		Aliases: []string{"default"},
+		Short:   "Open (or bring forward) the machine-wide Claude Desktop",
+		Long: "Opens the ordinary Claude Desktop — the one with no profile behind it,\n" +
+			"the one the Dock and Spotlight start — or brings it forward when it is\n" +
+			"already running.\n\n" +
+			"With a profile window open, the OS has no way to say which you meant:\n" +
+			"every instance is the same application to it, so asking for Claude\n" +
+			"activates the instance that is already there. This starts a NEW instance\n" +
+			"against no profile, which is what the machine-wide install is.\n\n" +
+			"It is not a clauderig profile, and this is the one verb that touches it:\n" +
+			"no account is bound to it, `desktop open`, `quit` and `send` cannot name\n" +
+			"it, and it competes for a claude:// deep link like any other window. Its\n" +
+			"history IS backed up — `clauderig sync` walks it as the `desktop` root,\n" +
+			"the same as every profile — but which account those sessions belong to is\n" +
+			"whatever that install happens to be signed into.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
+			app := newDesktopApp()
+			if _, ok := app.Installed(); !ok {
+				return desktopUnavailable()
+			}
+
+			// Asked before acting, because the two answers need opposite things
+			// and getting it wrong is visible: launching while it runs gives a
+			// SECOND machine-wide window on the same data directory, which is
+			// two of the same app arguing over one history.
+			pids, err := app.RunningDefault()
+			if err != nil {
+				return fmt.Errorf("could not tell whether the main Claude Desktop is open: %w", err)
+			}
+
+			if len(pids) == 0 {
+				if lerr := app.LaunchDefault(); lerr != nil {
+					return lerr
+				}
+				fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ opened"), "the main Claude Desktop app")
+				fmt.Fprintln(out, DimStyle.Render(mainNotAProfile))
+				return nil
+			}
+
+			switch rerr := raiseAny(app, pids); {
+			case rerr == nil:
+				fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ brought forward"), "the main Claude Desktop app")
+			case errors.Is(rerr, desktop.ErrRaiseUnsupported):
+				// Running is running. Reporting a failure here would be a lie
+				// about the window, which is exactly where the user wants to go.
+				fmt.Fprintf(out, "%s\n", DimStyle.Render(fmt.Sprintf(
+					"the main Claude Desktop app is already open (pid %d) — switch to it from the taskbar", pids[0])))
+			default:
+				return rerr
+			}
+			fmt.Fprintln(out, DimStyle.Render(mainNotAProfile))
+			return nil
+		},
+	}
+}
+
+// mainNotAProfile is the sentence that keeps this verb honest about what it
+// just opened. Printed every time on purpose: the window looks identical to a
+// profile's, and the difference only shows up later, when a session lands in it
+// under an account nobody chose.
+const mainNotAProfile = "not a clauderig profile: no account is bound to it, and it competes for deep links"
 
 // desktopStore roots the profiles beside the rest of clauderig's local state.
 // Deliberately under ~/.clauderig and NOT under ~/.claude: these directories
@@ -429,9 +571,18 @@ func newDesktopOpenCmd() *cobra.Command {
 					"Launching now would risk a second window on the same profile", p.Name, rerr)
 			}
 			if running {
-				if ferr := app.Focus(p.DataDir()); ferr != nil {
+				// It can close between the scan above and this call, in which
+				// case there is nothing to raise and the right answer is the
+				// launch below — not Focus, which would start the machine-wide
+				// app instead of this profile.
+				switch ferr := raiseOrFocus(app, p); {
+				case errors.Is(ferr, errProfileNotOpen):
+					running = false
+				case ferr != nil:
 					return ferr
 				}
+			}
+			if running {
 				// target.ID, not sessionRef: -i resolves a session with no
 				// reference at all, so keying the early return on the reference
 				// focused the window and dropped the session the user had just
@@ -1035,9 +1186,22 @@ func runDesktopUI(cmd *cobra.Command) error {
 				continue
 			}
 			if open {
-				_ = app.Focus(p.DataDir())
-				note = "already open: " + p.Label()
-				continue
+				// The note is what the screen says happened. Discarding the
+				// error here left it claiming the window had been brought
+				// forward when a refused permission meant nothing moved — and
+				// a profile that closed since the scan is not an error at all,
+				// it is a launch.
+				rerr := raiseOrFocus(app, p)
+				switch {
+				case rerr == nil:
+					note = "already open: " + p.Label()
+					continue
+				case !errors.Is(rerr, errProfileNotOpen):
+					note = ErrStyle.Render(rerr.Error())
+					continue
+				}
+				// Falls through to the launch below: every other branch above
+				// has continued.
 			}
 			if lerr := app.Launch(p.DataDir()); lerr != nil {
 				note = ErrStyle.Render(lerr.Error())

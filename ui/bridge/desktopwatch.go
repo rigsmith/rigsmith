@@ -2,7 +2,11 @@ package bridge
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os/exec"
 	"slices"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 )
@@ -153,6 +157,62 @@ func (d *Desktop) SetWarn(on bool) error {
 // with no visible on switch is the thing to avoid here, and it is why the tray
 // item exists at all.
 func (d *Desktop) Mute(ctx context.Context) error { return d.SetWarn(false) }
+
+// Label names a window the way the tray and the notice both say it.
+//
+// In Go rather than only in the page, because the tray menu is built here now
+// and two spellings of "the main Claude Desktop app" — one per surface — is how
+// the same window ends up with two names in one product.
+func (w DesktopWindow) Label() string {
+	switch {
+	case w.Main:
+		return "the main Claude Desktop app"
+	case w.Profile != "":
+		return w.Profile + " (clauderig profile)"
+	case w.DataDir != "":
+		return "a window on " + w.DataDir
+	}
+	return "a Claude Desktop window"
+}
+
+// Raise brings one Claude Desktop window to the front.
+//
+// The pid is checked against the live process list first. It arrives from a
+// menu built up to ten seconds ago, and a pid that has been recycled since
+// belongs to some other program by now — raising a window that has closed
+// should do nothing, not raise a stranger.
+func (d *Desktop) Raise(ctx context.Context, pid int) error {
+	instances, err := d.app.Instances()
+	if err != nil {
+		return err
+	}
+	for _, inst := range instances {
+		if inst.PID == pid {
+			return d.app.Raise(pid)
+		}
+	}
+	return fmt.Errorf("no Claude Desktop window with pid %d — it has closed since the menu was built", pid)
+}
+
+// OpenMain opens, or brings forward, the machine-wide Claude Desktop.
+//
+// Through the CLI, like every other launch this window offers: `desktop main`
+// owns the scan-then-launch-or-raise decision, and a second implementation of
+// "is it already running" is how two machine-wide windows end up on one history.
+func (d *Desktop) OpenMain(ctx context.Context) error {
+	bin, err := resolveCLI()
+	if err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, bin, "desktop", "main").CombinedOutput()
+	if err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return errors.New(msg)
+		}
+		return err
+	}
+	return nil
+}
 
 // Alarm is what a watch tick decided.
 type Alarm int

@@ -358,6 +358,22 @@ is routed by scheme rather than to a window, so the OS would pick the recipient
 and could file the session under the wrong account. Quit the others, or pass
 `--anyway` when any window will do.
 
+### Getting back to the ordinary Claude Desktop
+
+Once a profile window is open, the plain Claude Desktop is hard to reach: every
+instance is one application as far as macOS is concerned, so the Dock icon and
+Spotlight activate the window that is already there — the profile.
+
+```sh
+clauderig desktop main     # open it, or bring it forward if it is already running
+```
+
+It is the only verb that touches the machine-wide install, and it says so every
+time it runs: no account is bound to it, `open`, `quit` and `send` cannot name
+it, and it competes for `claude://` links like any other window. Its history is
+still backed up — sync walks it the same as any profile — but whose sessions
+those are is whatever that install is signed into.
+
 The profile model this sits on is in
 [`docs/CLAUDERIG-DESKTOP-PROFILES.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/CLAUDERIG-DESKTOP-PROFILES.md).
 

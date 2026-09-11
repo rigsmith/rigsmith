@@ -18,6 +18,8 @@ type stubApp struct{ open map[string]bool }
 func (s stubApp) Installed() (string, bool) { return "/Applications/Claude.app", true }
 func (s stubApp) Launch(string) error       { return nil }
 func (s stubApp) Focus(string) error        { return nil }
+func (s stubApp) LaunchDefault() error      { return nil }
+func (s stubApp) Raise(int) error           { return nil }
 func (s stubApp) OpenURL(string) error      { return nil }
 func (s stubApp) Instances() ([]desktop.Instance, error) {
 	var out []desktop.Instance
