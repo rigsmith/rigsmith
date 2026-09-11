@@ -288,6 +288,40 @@ func TestPrepareNamesTheRightRefusalForResolution(t *testing.T) {
 	})
 }
 
+// A profile is keyed by an account, but `/login` as someone else inside it
+// leaves the first account's name on the directory and the second account's
+// token in it. EnsureSession rightly never clobbers a live token, so only
+// prepare can catch this — and a launcher recording "this ran as X" must.
+func TestPrepareRefusesAProfileReLoggedAsAnotherAccount(t *testing.T) {
+	st := prepareFixture(t)
+	dir := st.ConfigDir("w-x-com")
+	other, _ := json.Marshal(map[string]any{
+		"claudeAiOauth":    map[string]any{"accessToken": "acc-o", "refreshToken": "ref-o"},
+		"organizationUuid": "org-someone-else",
+	})
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), other, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runPrepareCmd(t, "w@x.com", "--json")
+	if err == nil {
+		t.Fatal("a profile authenticating as another organization was handed to the launcher under this account's name")
+	}
+	got := decodePrepare(t, out)
+	if got.Reason != prepareProfileDesync {
+		t.Errorf("reason = %q, want %q", got.Reason, prepareProfileDesync)
+	}
+	if got.ConfigDir != "" {
+		t.Errorf("a desynced profile must not be handed back, got %q", got.ConfigDir)
+	}
+	if !strings.Contains(got.Message, "org-someone-else") {
+		t.Errorf("message should name the organization the profile actually holds, got %q", got.Message)
+	}
+}
+
 // A credential file that exists but cannot be read is "unknown", not "no
 // tokens": treating it as absent would let EnsureSession seed over a credential
 // it never saw.

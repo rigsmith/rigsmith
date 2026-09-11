@@ -459,13 +459,34 @@ func (s *Store) Resolve(ref string) (Account, error) {
 	// An exact id, email or alias wins outright (even if it's a substring of
 	// another). Aliases are compared case-insensitively: they are typed by hand,
 	// and SetAlias already refuses one that would shadow another account.
+	//
+	// Ids and aliases are unique by construction; an EMAIL is not — the same
+	// login in two organizations is stored twice (the second id suffixed), and
+	// returning whichever sorts first would silently pick an org. That is the
+	// one case where an exact reference is ambiguous, and it is reported as
+	// such with the ids to use instead.
+	var byEmail []Account
 	for _, a := range all {
-		if a.ID == ref || a.Email == ref {
+		if a.ID == ref {
 			return a, nil
 		}
 		if a.Alias != "" && strings.EqualFold(a.Alias, ref) {
 			return a, nil
 		}
+		if a.Email == ref {
+			byEmail = append(byEmail, a)
+		}
+	}
+	switch len(byEmail) {
+	case 1:
+		return byEmail[0], nil
+	case 0:
+	default:
+		ids := make([]string, len(byEmail))
+		for i, a := range byEmail {
+			ids[i] = a.ID
+		}
+		return Account{}, fmt.Errorf("%w: %q is stored for %d organizations — name the id (%s)", ErrAmbiguousRef, ref, len(byEmail), strings.Join(ids, ", "))
 	}
 	// Otherwise fuzzy: a case-insensitive substring of the email or id — so
 	// "relate"/"rel" find john@relatecpa.com and "bright"/"bri" find brightshore.

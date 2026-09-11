@@ -170,6 +170,25 @@ func (s *Store) SessionStatus(id string) string {
 	}
 }
 
+// SessionOrganization reports which organization the profile's CURRENT
+// credential belongs to — "" when the profile has no usable credential or the
+// blob carries no org. A profile is keyed by account, but nothing stops a user
+// running `/login` as someone else inside it; after that the directory still
+// carries the first account's name and the second account's token. A launcher
+// that records "this ran as X" needs to know before it spawns, so this is
+// exposed for `prepare` to compare against the account it was asked for.
+func (s *Store) SessionOrganization(id string) (string, error) {
+	raw, found, err := readSessionCredential(s.ConfigDir(id))
+	if err != nil || !found {
+		return "", err
+	}
+	var b blob
+	if json.Unmarshal(raw, &b) != nil {
+		return "", nil
+	}
+	return b.OrganizationUUID, nil
+}
+
 // Sentinels EnsureSession wraps, so a caller reporting to a script can name the
 // failure with a stable code instead of matching prose.
 var (

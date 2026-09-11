@@ -31,6 +31,7 @@ const (
 	prepareUnmapped       = "unmapped-directory" // no reference and no directory mapping
 	prepareNoTokens       = "no-tokens"          // the stored credential has nothing to seed the profile with
 	prepareSessionUnknown = "session-unknown"    // the profile's credential could not be read (locked Keychain)
+	prepareProfileDesync  = "profile-desync"     // the profile authenticates as a DIFFERENT organization than the account named
 	prepareFailed         = "failed"             // anything else; read message
 )
 
@@ -145,6 +146,21 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 		return refuse(a, prepareFailed, fmt.Errorf("the profile at %s disappeared while it was being prepared", dir))
 	default:
 		return refuse(a, prepareFailed, fmt.Errorf("unexpected session status %q", session))
+	}
+	// The profile is keyed by this account, but its credential may not be —
+	// `/login` as someone else inside the session leaves the first account's
+	// name on the directory and the second account's token in it. EnsureSession
+	// (rightly) never clobbers a live profile's token, so it cannot catch this;
+	// a launcher recording "this ran as X" must, before it spawns. The
+	// credential carries no email, so the organization is the comparable half
+	// (the same check `doctor` makes on the machine-wide login).
+	if org, err := st.SessionOrganization(a.ID); err != nil {
+		return refuse(a, prepareSessionUnknown, fmt.Errorf("%w: %v", account.ErrSessionUnreadable, err))
+	} else if org != "" && a.OrganizationUUID != "" && org != a.OrganizationUUID {
+		return refuse(a, prepareProfileDesync, fmt.Errorf(
+			"the profile for %s authenticates as organization %s, not %s — someone logged in as another account inside it; "+
+				"re-run `clauderig account add` for %s while it is your live login, or `account remove` and re-add it",
+			a.Email, org, a.OrganizationUUID, a.Email))
 	}
 
 	if err := report(prepareJSON{
