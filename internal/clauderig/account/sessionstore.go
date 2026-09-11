@@ -2,6 +2,7 @@ package account
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -143,6 +144,37 @@ const (
 	SessionUnknown  = "unknown"   // Keychain unreadable — health can't be determined
 )
 
+// SessionStatus is one account's profile state — the same word `list --json`
+// reports, computed for a single account so a launcher can ask about the one it
+// is about to use without listing everything.
+func (s *Store) SessionStatus(id string) string {
+	dir := s.ConfigDir(id)
+	if !dirExists(dir) {
+		return SessionNone
+	}
+	switch usable, err := sessionCredentialUsable(dir); {
+	case err != nil:
+		return SessionUnknown
+	case usable:
+		return SessionOK
+	default:
+		return SessionNoTokens
+	}
+}
+
+// Sentinels EnsureSession wraps, so a caller reporting to a script can name the
+// failure with a stable code instead of matching prose.
+var (
+	// ErrSessionUnreadable: the profile's credential could not be read (a locked
+	// Keychain, typically), so whether it still authenticates is unknowable —
+	// and EnsureSession refuses to guess in either direction.
+	ErrSessionUnreadable = errors.New("could not read the session credential")
+	// ErrStoredNoTokens: the profile needs seeding and the STORED credential has
+	// nothing to seed it with. The fix is a fresh `account add` while that
+	// account is the live login.
+	ErrStoredNoTokens = errors.New("the stored credential has no OAuth token")
+)
+
 // StoredStatus is one account's health as `doctor` reports it: whether the
 // stored credential would survive a `switch`, and whether its session profile
 // can still authenticate.
@@ -162,23 +194,12 @@ func (s *Store) StoredStatuses() ([]StoredStatus, error) {
 	active, _ := s.Active()
 	out := make([]StoredStatus, 0, len(all))
 	for _, a := range all {
-		st := StoredStatus{
+		out = append(out, StoredStatus{
 			Account:          a,
 			Active:           a.ID == active,
 			CredentialTokens: s.CredentialHealthy(a.ID),
-			Session:          SessionNone,
-		}
-		if dir := s.ConfigDir(a.ID); dirExists(dir) {
-			switch usable, uerr := sessionCredentialUsable(dir); {
-			case uerr != nil:
-				st.Session = SessionUnknown
-			case usable:
-				st.Session = SessionOK
-			default:
-				st.Session = SessionNoTokens
-			}
-		}
-		out = append(out, st)
+			Session:          s.SessionStatus(a.ID),
+		})
 	}
 	return out, nil
 }

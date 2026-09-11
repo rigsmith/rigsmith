@@ -23,6 +23,7 @@ the machine-wide login.
 | `clauderig account add` | Capture the currently logged-in account into claudeRig's store (and mark it the live one). |
 | `clauderig account list` | Show stored accounts; `→` marks the live one. `--json` for one machine-readable object. |
 | `clauderig account run <id\|email> [-- claude args…]` | **Session mode** — run as that account in *this terminal only*. |
+| `clauderig account prepare [<id\|email\|alias>]` | **For launchers** — make the account's session profile ready (what `run` does short of starting Claude Code) and print its `CLAUDE_CONFIG_DIR`. `--json` for one object with a stable `reason` on refusal. |
 | `clauderig account switch [<id\|email>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. `--dry-run` previews; `--force` swaps despite live sessions; `--kill` ends them first; `--json` reports the outcome, refusals included. |
 | `clauderig account sessions` (alias `ps`) | List running Claude Code instances — what blocks a switch. |
 | `clauderig account remove <id\|email>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
@@ -149,6 +150,32 @@ synced** (they name absolute paths that mean nothing elsewhere), and are dropped
 when their account is removed. The same table holds Desktop bindings — see
 [CLAUDERIG-DESKTOP-PROFILES.md](CLAUDERIG-DESKTOP-PROFILES.md) — so one directory
 can name both the CLI account and the Desktop profile it belongs to.
+
+## Prepare — for programs that launch `claude` themselves
+
+`clauderig account prepare <ref>` is `run` without the exec. It makes the account's
+session profile ready — seeds the credential when the profile is new or stale,
+leaves a live profile's own refreshed token alone, links the shared
+customizations in (`--no-share` for a bare profile) — and prints the
+`CLAUDE_CONFIG_DIR` to export. It never touches the machine-wide login, and the
+profile it readies is the same one `run` uses, so a session started by a
+launcher and one started from a terminal are the same account with the same
+history.
+
+Until this existed the only way to get a *ready* profile was through `run`,
+which owns the terminal; a launcher that built the path by hand got a directory
+that might never have been seeded. Tweed is the first consumer.
+
+```sh
+export CLAUDE_CONFIG_DIR=$(clauderig account prepare work)   # the bare dir is all stdout carries
+clauderig account prepare work --json                        # {"prepared":true,"id":"…","configDir":"…","session":"ok","shared":true}
+```
+
+`--json` refusals carry a stable `reason` — `no-such-account`, `unmapped-directory`,
+`no-tokens` (the stored credential has nothing to seed the profile with; re-run
+`account add` for it while it is your live login), `session-unknown` (the
+profile's Keychain entry could not be read), or `failed` — and set a non-zero
+exit code. A refusal never includes a `configDir`.
 
 ## JSON output
 

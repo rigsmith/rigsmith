@@ -667,7 +667,7 @@ func (s *Store) EnsureSession(a Account, share bool, claudeHome string) (string,
 		// Can't tell whether the session still authenticates (e.g. locked
 		// Keychain) — refuse to guess: seeding could clobber a live login, and
 		// skipping could hand out a dead profile.
-		return "", fmt.Errorf("read session credential: %w", uerr)
+		return "", fmt.Errorf("%w: %v", ErrSessionUnreadable, uerr)
 	}
 	stale := fileExists(s.stalePath(a.ID))
 	if !usable || stale {
@@ -681,7 +681,7 @@ func (s *Store) EnsureSession(a Account, share bool, claudeHome string) (string,
 				return "", err
 			}
 		case !usable:
-			return "", fmt.Errorf("the stored credential for %s has no OAuth token — log in (`claude` → /login as %s) and run `clauderig account add`", a.Email, a.Email)
+			return "", fmt.Errorf("%w for %s — log in (`claude` → /login as %s) and run `clauderig account add`", ErrStoredNoTokens, a.Email, a.Email)
 		}
 		_ = os.Remove(s.stalePath(a.ID))
 	}

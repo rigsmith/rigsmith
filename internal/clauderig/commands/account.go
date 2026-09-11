@@ -42,6 +42,8 @@ func NewAccountCmd() *cobra.Command {
 			"  list    show stored accounts and which one is live\n" +
 			"  run     launch Claude Code as an account in THIS terminal only\n" +
 			"          (isolated, self-refreshing — never touches your live login)\n" +
+			"  prepare ready an account's profile and print its CLAUDE_CONFIG_DIR,\n" +
+			"          for programs that launch claude themselves\n" +
 			"  switch  change the machine-wide login (guarded: refuses while Claude runs)\n" +
 			"  alias   give an account a short handle (`switch dev`)\n" +
 			"  map     bind a directory to an account, for a bare `run` there\n" +
@@ -55,7 +57,7 @@ func NewAccountCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newAccountAddCmd(), newAccountListCmd(), newAccountRunCmd(),
+	cmd.AddCommand(newAccountAddCmd(), newAccountListCmd(), newAccountRunCmd(), newAccountPrepareCmd(),
 		newAccountSwitchCmd(), newAccountSessionsCmd(), newAccountRemoveCmd(), newAccountPurgeCmd(),
 		newAccountDoctorCmd(), newAccountWatchCmd(),
 		newAccountAliasCmd(), newAccountDisableCmd(), newAccountEnableCmd(),
@@ -587,39 +589,19 @@ func newAccountRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var a account.Account
 			// Cobra removes the `--` from args, so `run -- --resume` arrives as
 			// args[0]=="--resume" and would be read as an account reference.
 			// ArgsLenAtDash reports how many args preceded the separator: zero
 			// means every argument belongs to claude, and the account comes from
-			// the directory mapping.
-			named := len(args) > 0 && cmd.ArgsLenAtDash() != 0
-			if named {
-				a, err = st.Resolve(args[0])
-				if err != nil {
-					return err
-				}
+			// the directory mapping (see sessionAccount).
+			ref := ""
+			if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
+				ref = args[0]
 				args = args[1:]
-			} else {
-				// No account named: fall back to this directory's mapping. An
-				// unmapped directory is an error rather than a silent launch of
-				// the live login — `run` promises an isolated profile, and
-				// quietly giving you the machine-wide one instead is exactly the
-				// kind of surprise this command exists to avoid.
-				cwd, cerr := os.Getwd()
-				if cerr != nil {
-					return cerr
-				}
-				mapped, ok := mappedAccount(st, cwd)
-				if !ok {
-					return errors.New(
-						"no account named, and this directory is not mapped to one.\n" +
-							"Name it (`clauderig account run <id|email|alias>`), or bind this directory " +
-							"with `clauderig account map <id|email|alias>`")
-				}
-				a = mapped
-				fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\n",
-					DimStyle.Render("mapped:"), DimStyle.Render(cwd))
+			}
+			a, err := sessionAccount(cmd, st, ref, cmd.ErrOrStderr())
+			if err != nil {
+				return err
 			}
 			warnIfActive(cmd, st, a)
 			home, err := account.ClaudeHome()
