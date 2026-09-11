@@ -36,42 +36,41 @@ func TestToEvent(t *testing.T) {
 // the whole point of rendering through Record.Summary is that they cannot say
 // different things about it. Only a test holds that: toEvent could start
 // composing its own sentence and nothing else would notice.
+//
+// Compared against the record's OWN summary rather than against a sentence
+// written out here. What the feed must do is forward; what the sentence must
+// say is pinned where it is produced, in journal and health. Restating it here
+// would mean a wording change breaks three files and this test stops being
+// about forwarding at all.
 func TestActivityForwardsTheRecordsOwnSummary(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		rec  journal.Record
-		want string
 	}{
-		{
-			"a whole file",
-			journal.Record{
-				Op: journal.OpSync, Outcome: journal.OutcomeRefused,
-				Leaks: []journal.Leak{{Path: "cli/skills/s/id_rsa", Kind: "key-material"}}, LeakFiles: 1,
-			},
-			"Refused to push — 1 file is credential material",
-		},
-		{
-			"a file and a value",
-			journal.Record{
-				Op: journal.OpSync, Outcome: journal.OutcomeRefused,
-				Leaks:     []journal.Leak{{Path: "a", Kind: "key-material"}, {Path: "b", Kind: "github-token"}},
-				LeakFiles: 1,
-			},
-			"Refused to push — 1 file of credential material and 1 value that looks like a credential",
-		},
-		{
-			"one that could not be read",
-			journal.Record{
-				Op: journal.OpSync, Outcome: journal.OutcomeRefused,
-				Leaks:      []journal.Leak{{Path: "a", Kind: "unreadable"}},
-				LeakUnread: 1,
-			},
-			"Refused to push — 1 file could not be read",
-		},
+		{"a whole file", journal.Record{
+			Op: journal.OpSync, Outcome: journal.OutcomeRefused,
+			Leaks: []journal.Leak{{Path: "cli/skills/s/id_rsa", Kind: "key-material"}}, LeakFiles: 1,
+		}},
+		{"a file and a value", journal.Record{
+			Op: journal.OpSync, Outcome: journal.OutcomeRefused,
+			Leaks:     []journal.Leak{{Path: "a", Kind: "key-material"}, {Path: "b", Kind: "github-token"}},
+			LeakFiles: 1,
+		}},
+		{"one that could not be read", journal.Record{
+			Op: journal.OpSync, Outcome: journal.OutcomeRefused,
+			Leaks:      []journal.Leak{{Path: "a", Kind: "unreadable"}},
+			LeakUnread: 1,
+		}},
+		{"an ordinary sync", journal.Record{
+			Op: journal.OpSync, Outcome: journal.OutcomeOK, Files: 3,
+		}},
 	} {
 		e := toEvent(tc.rec, "mbp")
-		if e.Summary != tc.want {
-			t.Errorf("%s: Summary = %q, want %q", tc.name, e.Summary, tc.want)
+		if want := tc.rec.Summary(); e.Summary != want {
+			t.Errorf("%s: Summary = %q, want the record's own %q", tc.name, e.Summary, want)
+		}
+		if e.Summary == "" {
+			t.Errorf("%s: the feed would show a blank line", tc.name)
 		}
 		if len(e.Leaks) != len(tc.rec.Leaks) {
 			t.Errorf("%s: %d leak lines, want one per finding", tc.name, len(e.Leaks))
