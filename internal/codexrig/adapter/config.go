@@ -18,8 +18,8 @@ const (
 	maxConfigDirectoryEntries = 4096
 )
 
-// ErrConfigSource shares identity with changes detected by the source reader.
-var ErrConfigSource = files.ErrSourceChanged
+// ErrConfigSourceChanged shares identity with changes detected by the source reader.
+var ErrConfigSourceChanged = files.ErrSourceChanged
 var ErrConfigNames = errors.New("Codex configuration filenames are not portable across supported platforms")
 
 // ConfigFile contains sanitized TOML for one native base/profile filename. Data
@@ -126,7 +126,7 @@ func captureConfig(ctx context.Context, source configSource) (ConfigCapture, err
 			return ConfigCapture{}, err
 		}
 		if sha256.Sum256(raw) != fingerprints[i] {
-			return ConfigCapture{}, ErrConfigSource
+			return ConfigCapture{}, ErrConfigSourceChanged
 		}
 	}
 	final, err := source.Names(ctx, maxConfigDirectoryEntries)
@@ -138,7 +138,7 @@ func captureConfig(ctx context.Context, source configSource) (ConfigCapture, err
 		return ConfigCapture{}, err
 	}
 	if !slices.Equal(names, final) {
-		return ConfigCapture{}, ErrConfigSource
+		return ConfigCapture{}, ErrConfigSourceChanged
 	}
 	if err := source.Check(ctx); err != nil {
 		return ConfigCapture{}, err

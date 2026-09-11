@@ -61,7 +61,7 @@ config names and checks the root again. New/deleted profiles refuse the batch;
 unrelated history/log activity is ignored. Source fingerprints are temporary and
 are never added to the returned batch or diagnostics. Reader and adapter change detection share
 the same error identity (`files.ErrSourceChanged`, also exposed as
-`adapter.ErrConfigSource`) for future retry classification.
+`adapter.ErrConfigSourceChanged`) for future retry classification.
 
 These checks detect observed changes. They are not an atomic transaction with
 Codex or a defense against every mutation by an uncooperative/hostile writer. A

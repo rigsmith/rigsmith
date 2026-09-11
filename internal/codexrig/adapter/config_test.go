@@ -249,7 +249,7 @@ func TestCaptureRefusesCredentialShapedProfileName(t *testing.T) {
 }
 
 func TestCaptureUsesOneSourceChangeSentinel(t *testing.T) {
-	if !errors.Is(ErrConfigSource, files.ErrSourceChanged) || !errors.Is(files.ErrSourceChanged, ErrConfigSource) {
+	if !errors.Is(ErrConfigSourceChanged, files.ErrSourceChanged) || !errors.Is(files.ErrSourceChanged, ErrConfigSourceChanged) {
 		t.Fatal("source-change identities differ")
 	}
 	root := t.TempDir()
