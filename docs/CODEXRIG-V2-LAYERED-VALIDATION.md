@@ -170,11 +170,45 @@ These checks apply to effective selected hooks, including a selected disabled
 network under the existing restore policy. Inactive profiles retain malformed
 matchers until selected; native definition checks still apply globally.
 
+## Selected network domain declarations
+
+Selected domain maps now follow the pinned native inheritance and final upsert
+order. When both ancestor and child have a domain map, even an empty one, each
+map is normalized in sorted original-key order before child keys replace matching
+ancestor keys. Within one map, the last equivalent key in that order wins. An
+absent map retains the ancestor unchanged. Final runtime upserts also compare
+normalized keys in sorted order, but retain the winning pattern's spelling.
+These separate stages matter for aliases involving ports, brackets and scopes;
+validation does not rewrite the configuration or collapse them prematurely.
+
+Normalization trims outer whitespace, strips brackets or a single port suffix,
+lowercases ASCII, removes trailing dots and normalizes percent-encoded IP scopes
+only for valid IP literals. It retains native permissive behavior, including
+ignored bracket suffixes; it does not impose DNS/URL grammar. Domain patterns
+then use native wildcard expansion: `**.example.test` includes the apex and
+subdomains, while `*.example.test` excludes the apex. An expanded candidate of
+exactly `*` is refused for a deny rule and accepted for an allow rule. Empty
+patterns and empty wildcard suffixes retain native syntax behavior. This is the
+native exact-candidate guard, not proof that no other glob could match all hosts.
+
+Expanded candidates receive glob syntax checks. Unlike MITM matchers, domain
+globs use default backslash handling: escaping on Unix, separators on Windows.
+There is no `literal:`/`pattern:` selector here. No request is evaluated and no
+native regex or glob set is compiled; engine limits and matching behavior remain
+outside this guarantee. The existing schema and input-size bounds still apply.
+
+As with selected MITM declarations, this is restore policy applied before other
+managed-network enforcement, even when the selected network is disabled. A child
+may repair a parent's effective rule; unrelated keys remain inherited. Inactive
+profiles are retained without compiling their domains. Managed-profile selection
+and ordinary config overlays use the same checks. Network requirements, exec-policy
+rules, filesystem/socket paths and runtime availability remain separate gates.
+
 ## Remaining work
 
 This validates permission shapes, catalogs and selection, not a usable sandbox.
-Filesystem path/glob compilation, network-domain normalization, inherited
-filesystem/network policy compilation, native MITM regex compilation/matching and secret-source
+Filesystem path/glob compilation, managed network constraints and complete inherited
+filesystem/network policy compilation, native domain/MITM regex compilation/matching and secret-source
 availability/value checks, platform
 constraints and other managed requirements still need enforcement. The existing
 provider/MCP checks also apply to each effective scenario.
@@ -220,3 +254,12 @@ against globset 0.4.18 `GlobBuilder::build` with the same options; all agreed on
 macOS. That syntax comparison did not invoke Codex, compile runtime regexes,
 read real configuration or contact any configured endpoint. Permanent tests
 also cover Windows-specific recursive-star separator handling.
+
+Domain regressions cover normalized collisions, sorted tie-breaking, empty versus
+absent inherited maps, global-deny expansion, native empty-pattern handling,
+platform escaping, managed selection, independent config profiles and private
+refusal before the destination callback without writes.
+
+A local comparison of 12,007 generated/targeted patterns agreed with the pinned
+native normalization, expansion, global-deny predicate and globset 0.4.18 syntax
+on macOS. This is parser evidence, not native regex compilation or matching.

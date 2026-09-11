@@ -118,6 +118,11 @@ func validateNetworkMatcher(ctx context.Context, pattern string, path bool) erro
 // allow_unclosed_class=false. Iterative and linear; stars have no syntax errors.
 // This does not compile the native regex engine or certify matching semantics.
 func validateNetworkGlobSyntax(ctx context.Context, pattern string) error {
+	return validateNetworkGlobSyntaxWithEscape(ctx, pattern, true)
+}
+
+// Domain globs use upstream platform defaults, unlike MITM's explicit escaping.
+func validateNetworkGlobSyntaxWithEscape(ctx context.Context, pattern string, backslashEscape bool) error {
 	chars := []rune(pattern)
 	branches := []bool{false} // whether this alternate branch has a token
 	for i := 0; i < len(chars); i++ {
@@ -126,9 +131,11 @@ func validateNetworkGlobSyntax(ctx context.Context, pattern string) error {
 		}
 		switch chars[i] {
 		case '\\':
-			i++
-			if i == len(chars) {
-				return ErrValidation
+			if backslashEscape {
+				i++
+				if i == len(chars) {
+					return ErrValidation
+				}
 			}
 		case '*':
 			if i+1 < len(chars) && chars[i+1] == '*' {
