@@ -97,14 +97,23 @@ func (w windowsApp) Launch(dataDir string) error {
 	if !ok {
 		return requireInstalled(w)
 	}
-	cmd := exec.Command(exe, userDataFlag(dataDir))
+	return startDetached(exe, userDataFlag(dataDir))
+}
+
+// startDetached runs the app free of this process: its own process group, no
+// console, and released so nothing here holds it as a zombie-equivalent.
+//
+// One copy, because a profile launch and a machine-wide launch differ only in
+// the argument they pass — and two copies of "how this app is started" is how
+// one of them quietly stops being detached.
+func startDetached(exe string, args ...string) error {
+	cmd := exec.Command(exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windowsCreateNewProcessGroup | windowsDetachedProcess,
 	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch Claude Desktop: %w", err)
 	}
-	// Release the child so this process doesn't hold it as a zombie-equivalent.
 	return cmd.Process.Release()
 }
 
@@ -121,14 +130,7 @@ func (w windowsApp) LaunchDefault() error {
 	if !ok {
 		return requireInstalled(w)
 	}
-	cmd := exec.Command(exe)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		CreationFlags: windowsCreateNewProcessGroup | windowsDetachedProcess,
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("launch Claude Desktop: %w", err)
-	}
-	return cmd.Process.Release()
+	return startDetached(exe)
 }
 
 // Raise is not available here for the same reason Focus is not: bringing one

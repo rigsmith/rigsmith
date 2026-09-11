@@ -72,6 +72,50 @@ func NewDesktopCmd() *cobra.Command {
 	return cmd
 }
 
+// raiseAny brings the first window it can to the front, trying each pid in turn.
+//
+// Not pids[0] alone: the scan and the raise are separate moments, and a window
+// that closed in between fails on a pid nothing owns any more — which would be
+// reported as "could not bring it forward" while another instance of the same
+// app sat there, live, unraised. Only when every pid fails is there nothing to
+// come forward, and then the last failure is the one worth showing.
+//
+// An unsupported platform is not a per-pid failure and is returned as soon as it
+// is seen: trying the rest would be asking the same question again.
+func raiseAny(app desktop.App, pids []int) error {
+	var last error
+	for _, pid := range pids {
+		err := app.Raise(pid)
+		if err == nil || errors.Is(err, desktop.ErrRaiseUnsupported) {
+			return err
+		}
+		last = err
+	}
+	return last
+}
+
+// raiseOrFocus brings a profile's own window forward, falling back to
+// activating the application where one window cannot be named.
+//
+// Focus alone raises the APPLICATION, and every instance is one application to
+// the OS — so with two profiles open, `desktop open work` could put the personal
+// window in front and report success. Raise names the process, which is the
+// only way to mean one window of several. Where that is not supported the
+// fallback is the old behaviour, which is imprecise rather than wrong.
+func raiseOrFocus(app desktop.App, p desktop.Profile) error {
+	pids, err := app.Running(p.DataDir())
+	if err == nil && len(pids) > 0 {
+		if rerr := raiseAny(app, pids); rerr == nil {
+			return nil
+		} else if !errors.Is(rerr, desktop.ErrRaiseUnsupported) {
+			// A refused Automation prompt is worth saying out loud rather than
+			// quietly falling back to raising some window or other.
+			return rerr
+		}
+	}
+	return app.Focus(p.DataDir())
+}
+
 // newDesktopMainCmd opens, or brings forward, the Claude Desktop that is not a
 // profile — the one the Dock and Spotlight start.
 //
@@ -124,7 +168,7 @@ func newDesktopMainCmd() *cobra.Command {
 				return nil
 			}
 
-			switch rerr := app.Raise(pids[0]); {
+			switch rerr := raiseAny(app, pids); {
 			case rerr == nil:
 				fmt.Fprintf(out, "%s %s\n", OkStyle.Render("✓ brought forward"), "the main Claude Desktop app")
 			case errors.Is(rerr, desktop.ErrRaiseUnsupported):
@@ -505,7 +549,7 @@ func newDesktopOpenCmd() *cobra.Command {
 					"Launching now would risk a second window on the same profile", p.Name, rerr)
 			}
 			if running {
-				if ferr := app.Focus(p.DataDir()); ferr != nil {
+				if ferr := raiseOrFocus(app, p); ferr != nil {
 					return ferr
 				}
 				// target.ID, not sessionRef: -i resolves a session with no
@@ -1111,7 +1155,7 @@ func runDesktopUI(cmd *cobra.Command) error {
 				continue
 			}
 			if open {
-				_ = app.Focus(p.DataDir())
+				_ = raiseOrFocus(app, p)
 				note = "already open: " + p.Label()
 				continue
 			}

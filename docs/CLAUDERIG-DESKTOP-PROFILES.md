@@ -347,9 +347,11 @@ Launching over a running instance would give two machine-wide windows on one
 data directory, which is why the scan comes first and a failed scan refuses
 rather than guessing.
 
-Every path prints the same sentence: it is not a clauderig profile. No account
-is bound to it, `open`, `quit` and `send` cannot name it, and it competes for
-deep links like any other window. Its history *is* backed up — sync walks it as
+Every path that leaves a window on screen prints the same sentence: it is not a
+clauderig profile. No account is bound to it, `open`, `quit` and `send` cannot
+name it, and it competes for deep links like any other window. The paths that
+return early — not installed, a failed scan, a launch that failed, a raise
+refused — print nothing, because there is no window to say it about. Its history *is* backed up — sync walks it as
 the `desktop` root, same as any profile — but whose sessions those are is
 whatever that install happens to be signed into.
 

@@ -101,7 +101,7 @@ func TestBoundMethodsExist(t *testing.T) {
 		{&Actions{}, []string{"Run", "Busy", "RunWith"}},
 		{&Library{}, []string{"List", "Detail", "OpenTerminal", "OpenDesktop", "OpenVSCode", "Materialize", "HandOff", "TakeHandOff", "Delete", "RerootSession"}},
 		{&Accounts{}, []string{"Get", "OpenDesktop", "RunCLI"}},
-		{&Desktop{}, []string{"Get", "Mute", "Warn", "SetWarn"}},
+		{&Desktop{}, []string{"Get", "Mute", "Warn", "SetWarn", "Raise", "OpenMain"}},
 		{&Windows{}, []string{"Open", "Hide"}},
 	} {
 		typ := reflect.TypeOf(tc.svc)

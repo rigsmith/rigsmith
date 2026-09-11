@@ -191,3 +191,52 @@ func TestAlarmWarnsWhenTheStoreCannotBeRead(t *testing.T) {
 		t.Errorf("launch with an unreadable store = %v, want AlarmRaise", got)
 	}
 }
+
+// The pid comes from a menu built up to ten seconds ago. A window that has
+// closed since should raise nothing — and a pid the OS has recycled belongs to
+// some other program by now, which must not be dragged to the front.
+func TestDesktopRaiseRefusesAPidThatIsNotAClaudeWindow(t *testing.T) {
+	app := &raiseRecorder{instances: []desktop.Instance{{PID: 11, DataDir: ""}}}
+	d := newTestDesktop(app, nil, nil)
+
+	if err := d.Raise(context.Background(), 11); err != nil {
+		t.Fatalf("refused a live Claude window: %v", err)
+	}
+	if len(app.raised) != 1 || app.raised[0] != 11 {
+		t.Errorf("raised %v, want the window that exists", app.raised)
+	}
+	if err := d.Raise(context.Background(), 99); err == nil {
+		t.Error("raised a pid that is not a Claude Desktop window")
+	}
+	if len(app.raised) != 1 {
+		t.Errorf("raised %v after being given a stranger's pid", app.raised)
+	}
+}
+
+// The label the tray shows is the label the notice shows.
+func TestDesktopWindowLabels(t *testing.T) {
+	for _, tc := range []struct {
+		w    DesktopWindow
+		want string
+	}{
+		{DesktopWindow{Main: true}, "the main Claude Desktop app"},
+		{DesktopWindow{Profile: "work"}, "work (clauderig profile)"},
+		{DesktopWindow{DataDir: "/tmp/x"}, "a window on /tmp/x"},
+		{DesktopWindow{}, "a Claude Desktop window"},
+	} {
+		if got := tc.w.Label(); got != tc.want {
+			t.Errorf("Label() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// raiseRecorder answers the process scan from a fixed list and remembers what
+// it was asked to raise.
+type raiseRecorder struct {
+	fakeDesktop
+	instances []desktop.Instance
+	raised    []int
+}
+
+func (r *raiseRecorder) Instances() ([]desktop.Instance, error) { return r.instances, nil }
+func (r *raiseRecorder) Raise(pid int) error                    { r.raised = append(r.raised, pid); return nil }

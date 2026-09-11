@@ -122,3 +122,113 @@ func TestDesktopMainAlwaysSaysItIsNotAProfile(t *testing.T) {
 		}
 	}
 }
+
+// raiseApp records which window `desktop open` brought forward.
+type raiseApp struct {
+	stubApp
+	raised      []int
+	focused     []string
+	raiseErr    error
+	runningPIDs []int
+}
+
+func (r *raiseApp) Running(string) ([]int, error) { return r.runningPIDs, nil }
+func (r *raiseApp) Raise(pid int) error {
+	r.raised = append(r.raised, pid)
+	return r.raiseErr
+}
+func (r *raiseApp) Focus(dir string) error {
+	r.focused = append(r.focused, dir)
+	return nil
+}
+
+// Focus raises the APPLICATION, and every instance is one application to the
+// OS — so with two profiles open it could put the wrong window in front and
+// report success. The pid is the only thing that names one window.
+func TestOpenRaisesTheProfilesOwnWindow(t *testing.T) {
+	app := &raiseApp{runningPIDs: []int{5150}}
+	p := desktop.Profile{Name: "work"}
+	if err := raiseOrFocus(app, p); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.raised) != 1 || app.raised[0] != 5150 {
+		t.Errorf("raised %v, want the running window's pid", app.raised)
+	}
+	if len(app.focused) != 0 {
+		t.Errorf("fell back to focusing the app: %v", app.focused)
+	}
+}
+
+// Where naming one window is impossible, activating the app is imprecise
+// rather than wrong — so it is still done.
+func TestOpenFallsBackToFocusWhereRaisingIsUnsupported(t *testing.T) {
+	app := &raiseApp{runningPIDs: []int{5150}, raiseErr: desktop.ErrRaiseUnsupported}
+	if err := raiseOrFocus(app, desktop.Profile{Name: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.focused) != 1 {
+		t.Errorf("focused %v, want the fallback to have run", app.focused)
+	}
+}
+
+// A refused Automation prompt is not the same as a platform that cannot raise
+// windows: falling back would raise some window or other and call it success.
+func TestOpenReportsARefusedRaiseRatherThanFallingBack(t *testing.T) {
+	app := &raiseApp{runningPIDs: []int{5150}, raiseErr: errors.New("not authorized to send Apple events")}
+	if err := raiseOrFocus(app, desktop.Profile{Name: "work"}); err == nil {
+		t.Fatal("a refused raise was reported as success")
+	}
+	if len(app.focused) != 0 {
+		t.Errorf("fell back after a refusal: %v", app.focused)
+	}
+}
+
+// A pid that died between the scan and the raise must not stop the search: the
+// point of raising is to reach a live window, and another instance of the same
+// app may be sitting right there.
+func TestRaiseAnySkipsAStalePidForALiveOne(t *testing.T) {
+	dead := errors.New("no such process")
+	app := &sequenceApp{errs: []error{dead, nil}}
+	if err := raiseAny(app, []int{111, 222}); err != nil {
+		t.Fatalf("gave up on a stale pid with a live window behind it: %v", err)
+	}
+	if len(app.tried) != 2 || app.tried[1] != 222 {
+		t.Errorf("tried %v, want it to move on to the live window", app.tried)
+	}
+}
+
+// When every window is gone, the last failure is the answer.
+func TestRaiseAnyReportsTheLastFailureWhenNoneAnswer(t *testing.T) {
+	app := &sequenceApp{errs: []error{errors.New("first"), errors.New("last")}}
+	err := raiseAny(app, []int{1, 2})
+	if err == nil || err.Error() != "last" {
+		t.Errorf("err = %v, want the last failure", err)
+	}
+}
+
+// An unsupported platform is not a per-window failure — asking again about the
+// next pid is asking the same question.
+func TestRaiseAnyStopsAtAnUnsupportedPlatform(t *testing.T) {
+	app := &sequenceApp{errs: []error{desktop.ErrRaiseUnsupported, nil}}
+	if err := raiseAny(app, []int{1, 2}); !errors.Is(err, desktop.ErrRaiseUnsupported) {
+		t.Errorf("err = %v, want ErrRaiseUnsupported", err)
+	}
+	if len(app.tried) != 1 {
+		t.Errorf("tried %v, want it to stop after the first answer", app.tried)
+	}
+}
+
+// sequenceApp answers each Raise with the next error in its list.
+type sequenceApp struct {
+	stubApp
+	errs  []error
+	tried []int
+}
+
+func (s *sequenceApp) Raise(pid int) error {
+	s.tried = append(s.tried, pid)
+	if len(s.tried) <= len(s.errs) {
+		return s.errs[len(s.tried)-1]
+	}
+	return nil
+}

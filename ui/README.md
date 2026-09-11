@@ -109,6 +109,38 @@ beside it reading the remote through `peek`; it was folded in and removed once
 the manager covered listing, reading, and — via *Bring to this Mac* —
 materialising.
 
+## The Claude Desktop window list
+
+The tray's **Claude Desktop** submenu names every open Claude Desktop window —
+each profile, the machine-wide app, and anything running on a directory outside
+the store — and clicking one brings that window forward.
+
+This exists because the Dock cannot. Each instance does get its own tile, but
+they carry the same icon and the same name, so the only way to tell the work
+profile from the machine-wide app is to click one and look. Nothing in macOS
+badges another application's tile — the tile belongs to that process, and there
+is no API into it — so the discrimination has to live somewhere we own.
+
+Raising is by **pid**, through `desktop.App.Raise`. Activating the application
+is what the Dock already does and is exactly the ambiguity being solved: every
+instance is one application to the OS, which then picks the window itself. On
+macOS that means System Events and therefore Automation permission, so the first
+raise prompts; on Windows it is not supported and the CLI says so rather than
+pretending.
+
+Two details that are deliberate rather than incidental:
+
+- **The menu is rebuilt only when the set of windows changes**, keyed on the
+  pids and their labels. A native menu rewritten on every ten-second tick is a
+  menu that can be rewritten under a hand already reaching for it.
+- **The pid is re-validated before the raise.** It comes from a menu built up to
+  ten seconds ago; a window that has closed should raise nothing, and a pid the
+  OS has recycled belongs to another program by now.
+
+**Open the main app** at the bottom runs `clauderig desktop main`, which decides
+for itself whether to launch or raise — so the item works whether or not that
+window exists, and this menu never has to have guessed right.
+
 ## The Claude Desktop notice
 
 A watch (`watchDesktop` in `main.go`) scans for running Claude Desktop windows
