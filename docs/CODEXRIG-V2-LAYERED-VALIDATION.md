@@ -75,11 +75,38 @@ nested type/enum checks and rejects invalid profile fields. The source artifact,
 its hash and its license remain unchanged. If a future schema already constrains
 one of those maps, compilation refuses the policy augmentation until re-audited.
 
+## Network hook action validation
+
+After layer composition, MITM action definitions are checked in every config and
+managed permission profile, including inactive profiles and disabled networks.
+As in native `NetworkMitmToml` deserialization, each action must contain at least
+one strip-header or inject-header operation, and each hook must have a nonempty
+`action` list. Unknown action fields do not count as operations. This check runs
+before inheritance: a child cannot repair an empty parent action definition.
+Schema checks continue to establish the required hook fields and value types.
+
+For the selected custom permission profile, action names and hook action lists
+are resolved from ancestors to child. Ancestor actions remain available, child
+hooks replace the same hook's action list, and distinct ancestor hooks remain.
+Child actions can satisfy references in inherited hooks. Sibling profiles cannot
+supply actions. The two extensible built-ins supply no MITM actions or hooks.
+This resolves only the action/reference portion; it does not construct a runtime
+network policy or change the input bytes.
+
+Restore policy refuses an unresolved reference in the selected profile, even
+when its network is disabled. This is deliberately stricter than the pinned
+runtime's `selected_actions`, which skips missing names. It uses the invariant
+expressed by upstream `validate_action_references`, without claiming that every
+native load path invokes that function. Inactive profiles may retain unresolved
+references, matching the existing inactive-inheritance boundary. Managed fallback
+selection and every separate config-profile scenario receive the same checks.
+Diagnostics omit action names and all private configuration values.
+
 ## Remaining work
 
 This validates permission shapes, catalogs and selection, not a usable sandbox.
 Filesystem path/glob compilation, network-domain normalization, inherited
-filesystem/network policy compilation, MITM action/reference checks, platform
+filesystem/network policy compilation, MITM matcher/header/secret-source checks, platform
 constraints and other managed requirements still need enforcement. The existing
 provider/MCP checks also apply to each effective scenario.
 
@@ -105,4 +132,7 @@ The exact-release source references are in [schema provenance](../internal/codex
 Synthetic tests cover field shapes, managed conflicts/fallbacks, active and
 inactive inheritance, precedence in both directions, profile independence, limits,
 privacy, source changes during preparation and before apply (including no-ops),
-and preparation/application without copying external context.
+and preparation/application without copying external context. Network-action tests
+cover native definition checks, inherited and managed references, child hook
+replacement, sibling isolation, independent config profiles and refusal before
+the destination callback without writes or private diagnostics.
