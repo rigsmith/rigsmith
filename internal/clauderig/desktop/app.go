@@ -104,7 +104,29 @@ var ErrNotInstalled = errors.New("Claude Desktop is not installed")
 // app. A profile shown as the main app is the one mistake this whole package
 // exists to prevent.
 func HasDataDir(command string) bool {
-	return strings.Contains(stripCommandQuotes(command), userDataFlagName)
+	return flagAt(stripCommandQuotes(command), 0) >= 0
+}
+
+// flagAt finds --user-data-dir= starting at an ARGUMENT boundary, at or after
+// from, and returns the index just past the flag. -1 when there is none.
+//
+// The boundary matters at both ends, and each end was a separate review finding.
+// Without it, `--diagnostic=--user-data-dir=/store/work/data` contains the flag
+// without carrying it, and a window would be matched to a profile by a string
+// that happens to appear inside one of its other arguments.
+func flagAt(command string, from int) int {
+	for at := from; at < len(command); {
+		i := strings.Index(command[at:], userDataFlagName)
+		if i < 0 {
+			return -1
+		}
+		k := at + i
+		if k == 0 || command[k-1] == ' ' || command[k-1] == '\t' {
+			return k + len(userDataFlagName)
+		}
+		at = k + 1
+	}
+	return -1
 }
 
 // CommandHasDataDir reports whether a command line names exactly this data
@@ -116,20 +138,23 @@ func HasDataDir(command string) bool {
 // raise a window belonging to another profile — and the popover would show one
 // pid on two rows. The value has to end where the argument ends.
 func CommandHasDataDir(command, dataDir string) bool {
-	needle := userDataFlag(dataDir)
-	rest := stripCommandQuotes(command)
-	for {
-		i := strings.Index(rest, needle)
-		if i < 0 {
+	cmd := stripCommandQuotes(command)
+	for at := 0; ; {
+		start := flagAt(cmd, at)
+		if start < 0 {
 			return false
 		}
-		after := rest[i+len(needle):]
-		// End of the command, or the start of the next argument. Anything else
-		// means the value carries on and this is a different directory.
-		if after == "" || after[0] == ' ' || after[0] == '\t' {
-			return true
+		value := cmd[start:]
+		// The value has to BE this directory, not merely begin with it:
+		// /store/work/data is a prefix of /store/work/data-old. So it ends
+		// where the argument ends — at the next space, or at the end.
+		if strings.HasPrefix(value, dataDir) {
+			after := value[len(dataDir):]
+			if after == "" || after[0] == ' ' || after[0] == '\t' {
+				return true
+			}
 		}
-		rest = rest[i+len(needle):]
+		at = start
 	}
 }
 

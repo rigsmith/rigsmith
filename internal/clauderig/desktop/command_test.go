@@ -21,6 +21,10 @@ func TestCommandHasDataDirNeedsAnArgumentBoundary(t *testing.T) {
 		{"quoted, as Windows writes it", exe + `--user-data-dir="/store/work/data"`, "/store/work/data", true},
 		{"no flag at all — the machine-wide app", exe, "/store/work/data", false},
 		{"the prefix appears before the real one", exe + "--user-data-dir=/store/work/data-old --user-data-dir=/store/work/data", "/store/work/data", true},
+		// The other end of the same mistake: the flag has to start an argument,
+		// or a string that merely contains it counts as carrying it.
+		{"the flag embedded in another argument", exe + "--diagnostic=--user-data-dir=/store/work/data", "/store/work/data", false},
+		{"embedded first, real one after", exe + "--diagnostic=--user-data-dir=/x --user-data-dir=/store/work/data", "/store/work/data", true},
 	} {
 		if got := CommandHasDataDir(tc.command, tc.dir); got != tc.want {
 			t.Errorf("%s: CommandHasDataDir(%q, %q) = %v, want %v", tc.name, tc.command, tc.dir, got, tc.want)
@@ -36,5 +40,8 @@ func TestHasDataDir(t *testing.T) {
 	}
 	if HasDataDir("/Applications/Claude.app/Contents/MacOS/Claude") {
 		t.Error("the machine-wide app read as a profile window")
+	}
+	if HasDataDir("/Applications/Claude.app/Contents/MacOS/Claude --diagnostic=--user-data-dir=/x") {
+		t.Error("a flag embedded in another argument read as carrying a profile")
 	}
 }
