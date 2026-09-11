@@ -94,6 +94,32 @@ var ErrUnsupported = errors.New("Claude Desktop profiles are not supported on th
 // ErrNotInstalled means the app itself is missing.
 var ErrNotInstalled = errors.New("Claude Desktop is not installed")
 
+// HasDataDir reports whether a command line carries a --user-data-dir at all,
+// which is what tells a profile instance from the machine-wide install.
+//
+// Asked of the COMMAND, never of Instance.DataDir. That field is parsed out of
+// a flattened command line and is documented as best-effort: a path containing
+// " --" cannot be recovered from one, and the failure is silent — an empty
+// DataDir, which reads as "no profile flag" and therefore as the machine-wide
+// app. A profile shown as the main app is the one mistake this whole package
+// exists to prevent.
+func HasDataDir(command string) bool {
+	return strings.Contains(stripCommandQuotes(command), userDataFlagName)
+}
+
+// CommandHasDataDir reports whether a command line names exactly this data
+// directory. The comment above dataDirFromCommand has promised this function
+// for a while; it is here now, and the callers that decide identity use it.
+func CommandHasDataDir(command, dataDir string) bool {
+	return strings.Contains(stripCommandQuotes(command), userDataFlag(dataDir))
+}
+
+// stripCommandQuotes normalises the quoting Windows puts around paths with
+// spaces, so one needle matches on both platforms.
+func stripCommandQuotes(command string) string {
+	return strings.ReplaceAll(command, `"`, "")
+}
+
 // MainPIDs returns the MAIN processes of the instance bound to dataDir.
 //
 // Running() cannot be used for this. It matches the --user-data-dir token
@@ -110,7 +136,12 @@ func MainPIDs(a App, dataDir string) ([]int, error) {
 	want := CanonicalDir(dataDir)
 	var pids []int
 	for _, inst := range instances {
-		if CanonicalDir(inst.DataDir) == want {
+		// The command line first, because it is the thing that cannot be
+		// truncated: an exact token match on --user-data-dir=<dir> is what
+		// Running has always used. CanonicalDir second, so a store entry that
+		// is a directory symlink still matches the window running behind it.
+		if CommandHasDataDir(inst.Command, dataDir) ||
+			(inst.DataDir != "" && CanonicalDir(inst.DataDir) == want) {
 			pids = append(pids, inst.PID)
 		}
 	}

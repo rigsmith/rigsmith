@@ -169,6 +169,7 @@ func main() {
 		window.SetBackgroundColour(inkColour)
 		sessionsWindow.SetBackgroundColour(inkColour)
 		noticeWindow.SetBackgroundColour(inkColour)
+		desktopsWindow.SetBackgroundColour(inkColour)
 
 		if *showWindow {
 			reveal(window)
@@ -243,24 +244,7 @@ func newWindow(app *application.App) *application.WebviewWindow {
 			// the active one" signals, which is what clicking away actually is.
 			// Everything else is Wails' default, restated because supplying a
 			// mapping replaces it wholesale rather than merging.
-			EventMapping: map[events.WindowEventType]events.WindowEventType{
-				events.Windows.WindowInactive:     events.Common.WindowLostFocus,
-				events.Windows.WindowActive:       events.Common.WindowFocus,
-				events.Windows.WindowClickActive:  events.Common.WindowFocus,
-				events.Windows.WindowClosing:      events.Common.WindowClosing,
-				events.Windows.WindowShow:         events.Common.WindowShow,
-				events.Windows.WindowHide:         events.Common.WindowHide,
-				events.Windows.WindowDidMove:      events.Common.WindowDidMove,
-				events.Windows.WindowDidResize:    events.Common.WindowDidResize,
-				events.Windows.WindowMinimise:     events.Common.WindowMinimise,
-				events.Windows.WindowUnMinimise:   events.Common.WindowUnMinimise,
-				events.Windows.WindowMaximise:     events.Common.WindowMaximise,
-				events.Windows.WindowUnMaximise:   events.Common.WindowUnMaximise,
-				events.Windows.WindowRestore:      events.Common.WindowRestore,
-				events.Windows.WindowFullscreen:   events.Common.WindowFullscreen,
-				events.Windows.WindowUnFullscreen: events.Common.WindowUnFullscreen,
-				events.Windows.WindowDPIChanged:   events.Common.WindowDPIChanged,
-			},
+			EventMapping: popoverEventMapping(),
 			// A tray popover is not a program you alt-tab to. macOS says the same
 			// thing with ActivationPolicyAccessory and LSUIElement, which keep it
 			// out of the Dock; this is the Windows half of that, and without it
@@ -329,6 +313,42 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		w.Hide()
 	})
 	return w
+}
+
+// popoverEventMapping is the Windows event mapping both tray popovers need.
+//
+// Wails funnels five Windows events into the two common focus ones, and two of
+// them — WindowSetFocus and WindowKillFocus — fire as focus shuttles between the
+// host window and WebView2's own child window. That shuttle looks exactly like
+// the user clicking away, so a window that hides on lost focus hides itself
+// while it is being used.
+//
+// WindowInactive and WindowActive are the "this window is no longer the active
+// one" signals, which is what clicking away actually is. Everything else is
+// Wails' default, restated because supplying a mapping replaces it wholesale
+// rather than merging.
+//
+// Shared, because the second window to hide on focus loss inherited the bug the
+// first one had already fixed — which is what a copied mapping buys you.
+func popoverEventMapping() map[events.WindowEventType]events.WindowEventType {
+	return map[events.WindowEventType]events.WindowEventType{
+		events.Windows.WindowInactive:     events.Common.WindowLostFocus,
+		events.Windows.WindowActive:       events.Common.WindowFocus,
+		events.Windows.WindowClickActive:  events.Common.WindowFocus,
+		events.Windows.WindowClosing:      events.Common.WindowClosing,
+		events.Windows.WindowShow:         events.Common.WindowShow,
+		events.Windows.WindowHide:         events.Common.WindowHide,
+		events.Windows.WindowDidMove:      events.Common.WindowDidMove,
+		events.Windows.WindowDidResize:    events.Common.WindowDidResize,
+		events.Windows.WindowMinimise:     events.Common.WindowMinimise,
+		events.Windows.WindowUnMinimise:   events.Common.WindowUnMinimise,
+		events.Windows.WindowMaximise:     events.Common.WindowMaximise,
+		events.Windows.WindowUnMaximise:   events.Common.WindowUnMaximise,
+		events.Windows.WindowRestore:      events.Common.WindowRestore,
+		events.Windows.WindowFullscreen:   events.Common.WindowFullscreen,
+		events.Windows.WindowUnFullscreen: events.Common.WindowUnFullscreen,
+		events.Windows.WindowDPIChanged:   events.Common.WindowDPIChanged,
+	}
 }
 
 // revealGrace is how long after a reveal focus loss is ignored. Long enough to
@@ -432,7 +452,14 @@ func newDesktopsWindow(app *application.App) *application.WebviewWindow {
 		// window you leave open, and on macOS the traffic lights would be three
 		// controls for something a click away dismisses.
 		Frameless: true,
-		Windows:   application.WindowsWindow{Theme: application.Dark, HiddenOnTaskbar: true},
+		Windows: application.WindowsWindow{
+			Theme:           application.Dark,
+			HiddenOnTaskbar: true,
+			// This window hides on lost focus, so it needs the same mapping the
+			// status window does — without it, WebView2's own focus shuttle
+			// closes the popover under the pointer.
+			EventMapping: popoverEventMapping(),
+		},
 		Mac: application.MacWindow{
 			// Same as the status window: see newWindow.
 			Backdrop: application.MacBackdropTransparent,

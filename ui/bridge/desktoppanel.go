@@ -6,6 +6,18 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 )
 
+// profileRow is one saved profile, flattened out of the store.
+//
+// A type of this bridge's own rather than desktop.Profile, because a Profile
+// keeps its directory unexported and can only be made by a real store on disk —
+// which would put "does the popover list what the store holds" beyond the reach
+// of a test, and that is most of what the popover does.
+type profileRow struct {
+	Name    string
+	Email   string
+	DataDir string
+}
+
 // PanelProfile is one Claude Desktop profile as the tray's popover lists it.
 type PanelProfile struct {
 	Name  string `json:"name"`
@@ -63,12 +75,7 @@ func (d *Desktop) Panel(ctx context.Context) (PanelView, error) {
 		v.Level, v.Summary = "amber", "status unavailable"
 	}
 
-	st, err := desktop.DefaultStore()
-	if err != nil {
-		v.Error = err.Error()
-		return v, nil
-	}
-	profiles, lerr := st.List()
+	profiles, lerr := d.profiles()
 	if lerr != nil {
 		v.Error = lerr.Error()
 		return v, nil
@@ -81,23 +88,37 @@ func (d *Desktop) Panel(ctx context.Context) (PanelView, error) {
 	// anywhere in a command line and every Electron helper inherits it, so it
 	// answers with a dozen processes that have no windows. The pid recorded here
 	// has to be one that can actually be raised.
-	pid := map[string]int{}
 	instances, ierr := d.app.Instances()
 	if ierr != nil {
 		v.Error = ierr.Error()
 	}
+	type window struct {
+		pid     int
+		command string
+		dir     string
+	}
+	var windows []window
 	for _, inst := range instances {
-		if inst.DataDir == "" {
+		// Whether this is the machine-wide app is asked of the COMMAND, not of
+		// the parsed DataDir. That field is best-effort — a path it cannot
+		// split out of a flattened command line comes back empty — and an empty
+		// one here would list somebody's work profile as "the main app", under
+		// a row that says no account is bound to it.
+		if !desktop.HasDataDir(inst.Command) {
 			v.MainOpen, v.MainPID = true, inst.PID
 			continue
 		}
-		pid[desktop.CanonicalDir(inst.DataDir)] = inst.PID
+		windows = append(windows, window{pid: inst.PID, command: inst.Command, dir: inst.DataDir})
 	}
 
 	for _, p := range profiles {
 		row := PanelProfile{Name: p.Name, Email: p.Email}
-		if got, ok := pid[desktop.CanonicalDir(p.DataDir())]; ok {
-			row.Open, row.PID = true, got
+		for _, w := range windows {
+			if desktop.CommandHasDataDir(w.command, p.DataDir) ||
+				(w.dir != "" && desktop.CanonicalDir(w.dir) == desktop.CanonicalDir(p.DataDir)) {
+				row.Open, row.PID = true, w.pid
+				break
+			}
 		}
 		v.Profiles = append(v.Profiles, row)
 	}

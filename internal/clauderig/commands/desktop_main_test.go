@@ -131,19 +131,41 @@ type raiseApp struct {
 	raiseErr    error
 	runningPIDs []int
 	dataDir     string
+	// instances overrides what Instances() answers, for the cases where the
+	// parsed DataDir and the command line disagree.
+	instances []desktop.Instance
 }
 
-func (r *raiseApp) Running(string) ([]int, error) { return r.runningPIDs, nil }
+// Running answers the way the real one does: the profile's main process buried
+// among the helpers that inherit its flag. Deliberately NOT the same list
+// Instances returns — when both answered from one field, a revert to Running
+// passed this file.
+func (r *raiseApp) Running(string) ([]int, error) {
+	if len(r.runningPIDs) == 0 {
+		return nil, nil
+	}
+	return append([]int{helperPID}, r.runningPIDs...), nil
+}
 
-// Instances is what the raise path reads now: main processes only, never the
-// helpers that carry the same profile flag.
+// Instances is what the raise path reads: main processes only.
 func (r *raiseApp) Instances() ([]desktop.Instance, error) {
+	if r.instances != nil {
+		return r.instances, nil
+	}
 	var out []desktop.Instance
 	for _, pid := range r.runningPIDs {
-		out = append(out, desktop.Instance{PID: pid, DataDir: r.dataDir})
+		out = append(out, desktop.Instance{
+			PID: pid, DataDir: r.dataDir,
+			Command: "/Applications/Claude.app/Contents/MacOS/Claude --user-data-dir=" + r.dataDir,
+		})
 	}
 	return out, nil
 }
+
+// helperPID is a renderer: it carries the profile flag, has no window, and is
+// what Running would hand over first. Raising it is the bug.
+const helperPID = 9560
+
 func (r *raiseApp) Raise(pid int) error {
 	r.raised = append(r.raised, pid)
 	return r.raiseErr
@@ -237,16 +259,32 @@ func TestRaiseAnyStopsAtAnUnsupportedPlatform(t *testing.T) {
 // is why this path reads main processes only.
 func TestRaiseOrFocusIgnoresHelpersCarryingTheProfileFlag(t *testing.T) {
 	p := desktop.Profile{Name: "work"}
-	app := &raiseApp{
-		// What Running() would answer: the main process buried among helpers.
-		runningPIDs: []int{9557},
-		dataDir:     p.DataDir(),
-	}
+	app := &raiseApp{runningPIDs: []int{9557}, dataDir: p.DataDir()}
 	if err := raiseOrFocus(app, p); err != nil {
 		t.Fatal(err)
 	}
 	if len(app.raised) != 1 || app.raised[0] != 9557 {
-		t.Errorf("raised %v, want only the main process", app.raised)
+		t.Errorf("raised %v, want only the main process — %d is a helper with no window",
+			app.raised, helperPID)
+	}
+}
+
+// A data directory a flattened command line cannot be split back into — a path
+// containing " --" — parses as empty, which reads as "no profile flag" and so
+// as the machine-wide app. Identity comes from the command instead.
+func TestRaiseOrFocusFindsAProfileWhosePathCannotBeParsed(t *testing.T) {
+	p := desktop.Profile{Name: "work"}
+	app := &raiseApp{raised: nil}
+	app.instances = []desktop.Instance{{
+		PID:     4242,
+		DataDir: "", // what dataDirFromCommand makes of the path below
+		Command: "/Applications/Claude.app/Contents/MacOS/Claude --user-data-dir=" + p.DataDir(),
+	}}
+	if err := raiseOrFocus(app, p); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.raised) != 1 || app.raised[0] != 4242 {
+		t.Errorf("raised %v, want the window whose command names this profile", app.raised)
 	}
 }
 

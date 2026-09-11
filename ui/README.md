@@ -25,7 +25,10 @@ CGO_LDFLAGS="-O2 -g -mmacosx-version-min=12.0" \
 ```
 
 `--window` opens the status window at startup, `--sessions` the sessions
-manager, and `--notice` the Claude Desktop notice — which is otherwise raised
+manager, `--desktops` the tray popover — which is otherwise only reachable by
+clicking the menu bar icon, so it is the way to work on its layout, and the way
+in when the tray icon has not appeared at all — and `--notice` the Claude
+Desktop notice — which is otherwise raised
 only by a launch you cannot schedule, so it is the way to look at that window on
 purpose. Without any of them the app starts in the tray only — which is the intended
 behaviour, and also the escape hatch for Linux desktops where the tray never
@@ -36,7 +39,7 @@ terminal** button hands the resume script to; it defaults to `Terminal`, which
 is the one macOS always has. The **Copy command** button beside it is the path
 that works with any terminal, multiplexer or remote host.
 
-All three flags reveal their window on `events.Common.ApplicationStarted` rather
+All four flags reveal their window on `events.Common.ApplicationStarted` rather
 than before `app.Run()`. Showing a window before the app is running silently does
 nothing for any window but the first, which made `--sessions` look like a dead
 flag while the same window opened fine from the tray menu.
