@@ -226,14 +226,21 @@ func TestQueueHookRoutingPartialDescriptorRestart(t *testing.T) {
 
 func TestQueueHookRoutingFilesystemCaseAndAliases(t *testing.T) {
 	f := newQueueFixture(t)
-	path, _ := setupHookRouting(t, f)
+	_, _ = setupHookRouting(t, f)
 	f.must(t, "init")
 	r := f.open(t)
-	original := filepath.Dir(path)
+	// Keep this geometry separate from the runtime's independently conservative
+	// capture/profile exclusions. A .CLAUDERIG inbox overlaps that protected
+	// profile tree under those rules, even on a case-sensitive volume.
+	original := filepath.Join(t.TempDir(), "routing")
+	if err := os.Mkdir(original, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(original, "queue-hooks.json")
 	if err := checkRoutingPaths(r, path, original); err == nil {
 		t.Fatal("allowed containing inbox")
 	}
-	distinct := filepath.Join(filepath.Dir(original), ".CLAUDERIG")
+	distinct := filepath.Join(filepath.Dir(original), "ROUTING")
 	if err := os.Mkdir(distinct, 0700); err != nil && !os.IsExist(err) {
 		t.Fatal(err)
 	}
