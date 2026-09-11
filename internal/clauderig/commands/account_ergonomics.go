@@ -121,6 +121,10 @@ const (
 	switchClaudeBusy   = "claude-busy" // a credential lock is held (refresh in flight)
 	switchScanFailed   = "process-scan-failed"
 	switchFailed       = "failed" // anything else; read message
+
+	// Shared with `prepare --json` — the same failure gets the same word.
+	switchNoSuchAccount = prepareNoSuchAccount // the reference names nothing (or there are no accounts)
+	switchAmbiguous     = prepareAmbiguous     // the reference names more than one account
 )
 
 // switchJSON reports the outcome of a switch — including the refusals, which are

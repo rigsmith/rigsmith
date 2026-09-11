@@ -198,8 +198,10 @@ $ clauderig account switch dev --json    # {"switched":true,"from":"…","to":"�
 ```
 
 `switch --json` reports refusals too — a token-less credential, live sessions
-(with their pids), a held credential lock — because a refusal is the outcome a
-script most needs to branch on. The error still sets a non-zero exit code.
+(with their pids), a held credential lock, a reference that names nothing
+(`no-such-account`) or two accounts (`ambiguous-account`, the same words
+`prepare` uses) — because a refusal is the outcome a script most needs to branch
+on. The error still sets a non-zero exit code.
 
 ## Why not Claude Desktop
 

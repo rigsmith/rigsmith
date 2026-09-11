@@ -649,6 +649,9 @@ func newAccountSwitchCmd() *cobra.Command {
 			"will have to log in again. --kill terminates those sessions first (SIGTERM,\n" +
 			"then SIGKILL), then swaps.",
 		Args: cobra.MaximumNArgs(1),
+		// A refusal is an outcome, not a usage error — and with --json the
+		// usage text would land on stdout after the object (see prepare).
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSwitch(cmd, args, dryRun, force, kill, asJSON)
 		},
@@ -991,12 +994,19 @@ func runSwitch(cmd *cobra.Command, args []string, dryRun, force, kill, asJSON bo
 	active, _ := st.Active()
 
 	var target account.Account
+	ref := ""
 	if len(args) == 1 {
-		target, err = st.Resolve(args[0])
+		ref = args[0]
+		target, err = st.Resolve(ref)
 	} else {
 		target, err = nextAccount(st, active)
 	}
 	if err != nil {
+		// A reference that names nothing, or two things, is a refusal like any
+		// other — it used to return before the object was emitted, which broke
+		// the one promise --json makes. Same codes prepare uses for the same
+		// failures, so a script learns one vocabulary.
+		report(switchJSON{From: active, To: ref, Reason: classifyResolveFailure(err), Message: err.Error()})
 		return err
 	}
 	if active == target.ID {

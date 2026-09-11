@@ -400,7 +400,7 @@ func TestClassifyPrepareResolveOnlyCallsAMissAMiss(t *testing.T) {
 		"broken map":  {wrap(os.ErrClosed), prepareFailed},
 	}
 	for name, c := range cases {
-		if got := classifyPrepareResolve(c.err); got != c.want {
+		if got := classifyResolveFailure(c.err); got != c.want {
 			t.Errorf("%s: classify = %q, want %q", name, got, c.want)
 		}
 	}
@@ -442,4 +442,44 @@ func decodePrepare(t *testing.T, out string) prepareJSON {
 		t.Fatalf("stdout is not one JSON object: %v\n%s", err, out)
 	}
 	return got
+}
+
+// `switch --json` promises exactly one object on stdout, refusals included. A
+// reference that resolved to nothing used to return before the object was
+// written — a pre-existing gap the shared exact-email ambiguity made one input
+// wider, so both are pinned here with the words `prepare` uses.
+func TestSwitchJSONReportsAResolverRefusal(t *testing.T) {
+	st := prepareFixture(t)
+	cred, _ := json.Marshal(map[string]any{
+		"claudeAiOauth":    map[string]any{"accessToken": "acc-2", "refreshToken": "ref-2"},
+		"organizationUuid": "org-2",
+	})
+	oauth, _ := json.Marshal(map[string]any{"emailAddress": "w@x.com", "organizationUuid": "org-2"})
+	if _, _, err := st.CaptureLive(cred, oauth); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(args ...string) (switchJSON, error) {
+		t.Helper()
+		cmd := newAccountSwitchCmd()
+		var out, errOut bytes.Buffer
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		var got switchJSON
+		if jerr := json.Unmarshal([]byte(out.String()), &got); jerr != nil {
+			t.Fatalf("stdout is not one JSON object: %v\n%s", jerr, out.String())
+		}
+		return got, err
+	}
+
+	got, err := run("nobody", "--json")
+	if err == nil || got.Switched || got.Reason != switchNoSuchAccount {
+		t.Errorf("switch nobody: reason=%q switched=%v err=%v, want %q", got.Reason, got.Switched, err, switchNoSuchAccount)
+	}
+	got, err = run("w@x.com", "--json")
+	if err == nil || got.Switched || got.Reason != switchAmbiguous {
+		t.Errorf("switch <email in two orgs>: reason=%q switched=%v err=%v, want %q", got.Reason, got.Switched, err, switchAmbiguous)
+	}
 }

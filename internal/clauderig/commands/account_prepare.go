@@ -120,7 +120,7 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 	}
 	a, err := sessionAccount(cmd, st, ref)
 	if err != nil {
-		return refuse(account.Account{}, classifyPrepareResolve(err), err)
+		return refuse(account.Account{}, classifyResolveFailure(err), err)
 	}
 	warnIfActive(cmd, st, a)
 	home, err := account.ClaudeHome()
@@ -218,12 +218,13 @@ func sessionAccount(cmd *cobra.Command, st *account.Store, ref string) (account.
 
 var errUnmappedDirectory = errors.New("unmapped directory")
 
-// classifyPrepareResolve names why no account was picked. Only an explicit miss
-// is "no-such-account": an ambiguous reference, an unreadable directory map, a
-// mapped account that no longer resolves, or a failed Getwd are different
-// problems with different fixes, and calling them "no such account" would send
-// a launcher's user to add an account they may already have.
-func classifyPrepareResolve(err error) string {
+// classifyResolveFailure names why no account was picked — shared by `prepare`
+// and `switch`, so the same failure gets the same word in both objects. Only an
+// explicit miss is "no-such-account": an ambiguous reference, an unreadable
+// directory map, a mapped account that no longer resolves, or a failed Getwd
+// are different problems with different fixes, and calling them "no such
+// account" would send a launcher's user to add an account they may already have.
+func classifyResolveFailure(err error) string {
 	switch {
 	case errors.Is(err, errUnmappedDirectory):
 		return prepareUnmapped
