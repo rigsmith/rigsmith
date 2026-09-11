@@ -30,8 +30,9 @@ checked September 11, 2026. They do not describe restrictions imposed by Codex.
 ## Unclassified references
 
 Outside omitted fields, decoded TOML keys and string values are checked for
-explicit local references. A match refuses the entire capture with
-`ErrUnclassifiedLocalReference` and no partial output. The diagnostic contains no key, source path, or value.
+explicit local references. If a reference matches, capture returns
+`ErrUnclassifiedLocalReference` with no partial output. The diagnostic contains
+no key, source path, or value.
 
 The same platform-independent checks run on every OS. They recognize rooted
 POSIX and Windows paths, drive-relative Windows paths, UNC/device paths, explicit
