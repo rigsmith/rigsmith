@@ -2,6 +2,7 @@ package account
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -145,6 +146,37 @@ func TestCaptureLiveSameEmailDifferentOrg(t *testing.T) {
 	a3, existed, _ := st.CaptureLive(sampleBlob("z", "pro"), sampleOAuthOrg("john@x.com", "orgA"))
 	if !existed || a3.ID != "john-x-com" {
 		t.Fatalf("re-capture orgA = %+v existed=%v", a3, existed)
+	}
+}
+
+// The same login in two organizations is stored twice with a suffixed id. An
+// exact EMAIL then names both, and Resolve used to hand back whichever sorted
+// first — a silent choice of org that `run`/`prepare`/`switch` all acted on.
+func TestResolveExactEmailAcrossTwoOrgsIsAmbiguous(t *testing.T) {
+	st := &Store{Root: t.TempDir()}
+	first, _, err := st.CaptureLive(sampleBlob("a", "max"), sampleOAuthOrg("john@x.com", "org-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := st.CaptureLive(sampleBlob("b", "max"), sampleOAuthOrg("john@x.com", "org-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID {
+		t.Fatalf("two orgs collapsed into one id %q", first.ID)
+	}
+
+	_, err = st.Resolve("john@x.com")
+	if !errors.Is(err, ErrAmbiguousRef) {
+		t.Fatalf("Resolve(email shared by two orgs) = %v, want ErrAmbiguousRef", err)
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if !strings.Contains(err.Error(), id) {
+			t.Errorf("the ambiguity should name %s as the id to use, got %q", id, err)
+		}
+		if got, err := st.Resolve(id); err != nil || got.ID != id {
+			t.Errorf("Resolve(%q) = %q, %v — an exact id must still win", id, got.ID, err)
+		}
 	}
 }
 
