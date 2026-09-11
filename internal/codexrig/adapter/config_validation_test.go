@@ -271,3 +271,25 @@ func TestLayeredRestoreRejectsNetworkActionReferencesBeforeDestination(t *testin
 		})
 	}
 }
+
+func TestLayeredRestoreRejectsHeaderSourceBeforeDestination(t *testing.T) {
+	root := t.TempDir()
+	original := "model='old'\ndefault_permissions='work'"
+	putConfig(t, root, "config.toml", original)
+	requirements := []byte("[permissions.work.network.mitm.actions.inject]\ninject_request_headers=[{name='x-example',secret_env_var='PRIVATE_SOURCE_NAME',secret_file='/private/source'}]\n[permissions.work.network.mitm.hooks.request]\nhost='example.test'\nmethods=['GET']\npath_prefixes=['/']\naction=['inject']")
+	called := false
+	plan, err := PrepareLayeredConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": "model='new'"}), configcodec.SupportedConfigVersion, func(context.Context) (configcodec.ValidationLayers, error) {
+		return configcodec.ValidationLayers{Requirements: requirements}, nil
+	}, func(context.Context, []ConfigFile) error { called = true; return nil })
+	if plan != nil {
+		plan.Close()
+		t.Fatal("invalid header source produced plan")
+	}
+	if !errors.Is(err, ErrConfigValidation) || called || strings.Contains(err.Error(), "PRIVATE_SOURCE_NAME") || strings.Contains(err.Error(), "/private/source") {
+		t.Fatal("invalid header source escaped validation", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(root, "config.toml"))
+	if readErr != nil || string(data) != original {
+		t.Fatal("failed validation changed destination", readErr)
+	}
+}
