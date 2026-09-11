@@ -24,6 +24,7 @@ clauderig search "auth refactor"  # find a session by title/content, with a resu
 clauderig pull                 # fetch latest into the staging repo (SessionStart hook target)
 clauderig account list         # show stored Claude Code logins (alias: ls / status)
 clauderig account run me@x.com # launch Claude Code as another account, isolated session
+clauderig account prepare work # ready an account's profile and print its CLAUDE_CONFIG_DIR (for launchers; --json)
 clauderig mcp add ctx7 npx -y @upstash/context7-mcp   # manage MCP servers (list/add/remove/enable)
 clauderig desktop open work    # a Claude Desktop window per account, each its own profile
 clauderig desktop main         # back to the plain Claude Desktop, which a profile window hides

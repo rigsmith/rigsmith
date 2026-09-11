@@ -2,6 +2,7 @@ package account
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -63,10 +64,18 @@ func readSessionCredential(configDir string) (raw []byte, found bool, err error)
 		}
 		return nil, false, nil
 	}
-	if f, ferr := os.ReadFile(sessionCredFile(configDir)); ferr == nil && hasTokens(f) {
-		return f, true, nil
+	f, ferr := os.ReadFile(sessionCredFile(configDir))
+	switch {
+	case ferr == nil:
+		return f, hasTokens(f), nil
+	case errors.Is(ferr, os.ErrNotExist):
+		return nil, false, nil
+	default:
+		// A file that exists but cannot be read is not "no tokens" — reporting
+		// it as such would let EnsureSession seed over a credential it never
+		// saw. Propagate, like a Keychain read failure.
+		return nil, false, ferr
 	}
-	return nil, false, nil
 }
 
 // sessionCredentialUsable reports whether the profile can authenticate as-is.
@@ -143,6 +152,79 @@ const (
 	SessionUnknown  = "unknown"   // Keychain unreadable — health can't be determined
 )
 
+// SessionStatus is one account's profile state — the same word `list --json`
+// reports, computed for a single account so a launcher can ask about the one it
+// is about to use without listing everything.
+func (s *Store) SessionStatus(id string) string {
+	dir := s.ConfigDir(id)
+	if !dirExists(dir) {
+		return SessionNone
+	}
+	switch usable, err := sessionCredentialUsable(dir); {
+	case err != nil:
+		return SessionUnknown
+	case usable:
+		return SessionOK
+	default:
+		return SessionNoTokens
+	}
+}
+
+// SessionIdentity is who the profile CURRENTLY authenticates as, from the two
+// places Claude Code records it, each best-effort:
+//
+//   - the credential's organizationUuid — the server-truth half, but the
+//     per-profile Keychain entry Claude Code migrates a profile to carries only
+//     claudeAiOauth (verified on macOS: both real profiles' entries have no
+//     organizationUuid), so on a migrated profile this half is simply absent;
+//   - the profile's own .claude.json → oauthAccount (email + org) — what
+//     Claude Code shows the user, and what `/login` rewrites inside the profile.
+//
+// A profile is keyed by account, but nothing stops a user running `/login` as
+// someone else inside it; after that the directory still carries the first
+// account's name and the second account's identity. A launcher that records
+// "this ran as X" needs to know before it spawns, so this is exposed for
+// `prepare` to compare against the account it was asked for. "" in any field
+// means "not recorded here", never "matches".
+func (s *Store) SessionIdentity(id string) (email, org string, err error) {
+	dir := s.ConfigDir(id)
+	raw, found, err := readSessionCredential(dir)
+	if err != nil {
+		return "", "", err
+	}
+	if found {
+		var b blob
+		if json.Unmarshal(raw, &b) == nil {
+			org = b.OrganizationUUID
+		}
+	}
+	block, err := readOAuthAccountFrom(filepath.Join(dir, ".claude.json"))
+	if err != nil {
+		return "", "", err
+	}
+	if len(block) > 0 {
+		m := parseOAuthMeta(block)
+		email = m.EmailAddress
+		if org == "" {
+			org = m.OrganizationUUID
+		}
+	}
+	return email, org, nil
+}
+
+// Sentinels EnsureSession wraps, so a caller reporting to a script can name the
+// failure with a stable code instead of matching prose.
+var (
+	// ErrSessionUnreadable: the profile's credential could not be read (a locked
+	// Keychain, typically), so whether it still authenticates is unknowable —
+	// and EnsureSession refuses to guess in either direction.
+	ErrSessionUnreadable = errors.New("could not read the session credential")
+	// ErrStoredNoTokens: the profile needs seeding and the STORED credential has
+	// nothing to seed it with. The fix is a fresh `account add` while that
+	// account is the live login.
+	ErrStoredNoTokens = errors.New("the stored credential has no OAuth token")
+)
+
 // StoredStatus is one account's health as `doctor` reports it: whether the
 // stored credential would survive a `switch`, and whether its session profile
 // can still authenticate.
@@ -162,23 +244,12 @@ func (s *Store) StoredStatuses() ([]StoredStatus, error) {
 	active, _ := s.Active()
 	out := make([]StoredStatus, 0, len(all))
 	for _, a := range all {
-		st := StoredStatus{
+		out = append(out, StoredStatus{
 			Account:          a,
 			Active:           a.ID == active,
 			CredentialTokens: s.CredentialHealthy(a.ID),
-			Session:          SessionNone,
-		}
-		if dir := s.ConfigDir(a.ID); dirExists(dir) {
-			switch usable, uerr := sessionCredentialUsable(dir); {
-			case uerr != nil:
-				st.Session = SessionUnknown
-			case usable:
-				st.Session = SessionOK
-			default:
-				st.Session = SessionNoTokens
-			}
-		}
-		out = append(out, st)
+			Session:          s.SessionStatus(a.ID),
+		})
 	}
 	return out, nil
 }

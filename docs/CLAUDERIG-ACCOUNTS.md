@@ -23,6 +23,7 @@ the machine-wide login.
 | `clauderig account add` | Capture the currently logged-in account into claudeRig's store (and mark it the live one). |
 | `clauderig account list` | Show stored accounts; `→` marks the live one. `--json` for one machine-readable object. |
 | `clauderig account run <id\|email> [-- claude args…]` | **Session mode** — run as that account in *this terminal only*. |
+| `clauderig account prepare [<id\|email\|alias>]` | **For launchers** — make the account's session profile ready (what `run` does short of starting Claude Code) and print its `CLAUDE_CONFIG_DIR`. `--json` for one object with a stable `reason` on refusal. |
 | `clauderig account switch [<id\|email>]` | **Global swap** — change the machine-wide login. Guarded; no arg rotates. `--dry-run` previews; `--force` swaps despite live sessions; `--kill` ends them first; `--json` reports the outcome, refusals included. |
 | `clauderig account sessions` (alias `ps`) | List running Claude Code instances — what blocks a switch. |
 | `clauderig account remove <id\|email>` (alias `rm`) | Stop tracking an account (and delete its session profile). |
@@ -150,6 +151,42 @@ when their account is removed. The same table holds Desktop bindings — see
 [CLAUDERIG-DESKTOP-PROFILES.md](CLAUDERIG-DESKTOP-PROFILES.md) — so one directory
 can name both the CLI account and the Desktop profile it belongs to.
 
+## Prepare — for programs that launch `claude` themselves
+
+`clauderig account prepare <ref>` is `run` without the exec. It makes the account's
+session profile ready — seeds the credential when the profile is new or stale,
+leaves a live profile's own refreshed token alone, links the shared
+customizations in (`--no-share` skips that; links an earlier shared `run` or
+`prepare` made are kept, as with `run`) — and prints the
+`CLAUDE_CONFIG_DIR` to export. It never touches the machine-wide login, and the
+profile it readies is the same one `run` uses, so a session started by a
+launcher and one started from a terminal are the same account with the same
+history.
+
+Until this existed the only way to get a *ready* profile was through `run`,
+which owns the terminal; a launcher that built the path by hand got a directory
+that might never have been seeded. Tweed is the first consumer.
+
+```sh
+export CLAUDE_CONFIG_DIR=$(clauderig account prepare work)   # the bare dir is all stdout carries
+clauderig account prepare work --json                        # {"prepared":true,"id":"…","configDir":"…","session":"ok","shared":true}
+```
+
+`--json` refusals carry a stable `reason` — `no-such-account`, `ambiguous-account`
+(be more specific), `unmapped-directory`, `no-tokens` (the stored credential has
+nothing to seed the profile with; re-run `account add` for it while it is your
+live login), `session-unknown` (the profile's credential could not be read), `profile-desync`
+(the profile is logged in as a different account than the one named — someone
+ran `/login` as another account inside it; re-`add` the account while it is your
+live login. Checked from both the credential's organization and the profile's
+own `.claude.json` identity block, each where present: on macOS the per-profile
+Keychain entry carries no organization, so the block is the half that catches it), or `failed` (anything else, including a directory mapping that names an account
+which no longer exists) — and set a non-zero exit code. A refusal never includes
+a `configDir`, and a success always reports `session: ok` — a profile that reads
+back as anything else after preparation is refused with the matching reason.
+`shared` reports the mode requested (false under `--no-share`), not an inventory
+of what was linked, on success and refusal alike.
+
 ## JSON output
 
 `list` and `switch` take `--json`: exactly one object on **stdout**, every human
@@ -161,8 +198,10 @@ $ clauderig account switch dev --json    # {"switched":true,"from":"…","to":"�
 ```
 
 `switch --json` reports refusals too — a token-less credential, live sessions
-(with their pids), a held credential lock — because a refusal is the outcome a
-script most needs to branch on. The error still sets a non-zero exit code.
+(with their pids), a held credential lock, a reference that names nothing
+(`no-such-account`) or two accounts (`ambiguous-account`, the same words
+`prepare` uses) — because a refusal is the outcome a script most needs to branch
+on. The error still sets a non-zero exit code.
 
 ## Why not Claude Desktop
 

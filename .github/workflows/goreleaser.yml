@@ -129,6 +129,50 @@ jobs:
             echo "::warning::Could not sync the JohnCampionJr/winget-pkgs fork — it will drift further behind upstream (komac still branches from upstream master, so the PRs are unaffected). If this is the `workflow` scope error, add that scope to WINGET_TOKEN. Continuing; the release does not depend on this."
           fi
 
+      # A dry run has no tag of its own, so GoReleaser asks `git describe` — and
+      # since the window started shipping on ui/vX.Y.Z, the newest tag in this
+      # history is usually the window's. That version is not merely wrong, it
+      # contains a SLASH: archives came out as `dist/changerig_ui/…` (a
+      # directory), and the casks as `version "ui/v0.3.0-SNAPSHOT-…"` with a
+      # url pointing at `…/download/ui%2Fv0.3.0/…`.
+      #
+      # Tag pushes are unaffected — the ref IS the version — but the dry run is
+      # the one run whose whole job is to prove packaging works, so it has to
+      # see the same shape a release would. --match 'v*' passes over the
+      # window's tags without knowing anything about them.
+      - name: Name the dry run after the last CLI release
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # The newest vX.Y.Z this ref actually contains. Three constraints,
+          # each of which was a separate wrong answer on the way here:
+          #
+          #   --merged HEAD   reachability. The whole repository's newest tag
+          #                   lets a dry run from an old branch name its
+          #                   artifacts after a release that branch does not
+          #                   contain.
+          #   --sort=-v:refname  version order. `git describe --abbrev=0` picks
+          #                   the NEAREST reachable tag, not the newest, and
+          #                   plain string order puts v1.9.0 above v1.18.0.
+          #   ^v[0-9]+...$    shape. A glob like v[0-9]*.[0-9]*.[0-9]* also
+          #                   matches v1.18.0-rc.1 and v1.18.0.1, and a dry run
+          #                   named after a release candidate proves the wrong
+          #                   artifact names.
+          #
+          # `ui/v*` fails the shape test, which is what keeps the window's tags
+          # out of the CLI's dry run — the whole reason this step exists.
+          tag=$(git tag --list --merged HEAD --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)
+          if [ -z "$tag" ]; then
+            # A checkout with no release tag at all — a fresh fork, or this repo
+            # before its first release. Not a reason to abort a build: leaving
+            # the variable unset puts GoReleaser back on its own default, which
+            # is what every dry run used before this step existed.
+            echo "::warning::no vX.Y.Z tag in this checkout — GoReleaser will name the dry run itself"
+            exit 0
+          fi
+          echo "GORELEASER_CURRENT_TAG=$tag" >> "$GITHUB_ENV"
+          echo "dry run will build as $tag"
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser

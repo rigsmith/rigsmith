@@ -121,6 +121,10 @@ const (
 	switchClaudeBusy   = "claude-busy" // a credential lock is held (refresh in flight)
 	switchScanFailed   = "process-scan-failed"
 	switchFailed       = "failed" // anything else; read message
+
+	// Shared with `prepare --json` — the same failure gets the same word.
+	switchNoSuchAccount = prepareNoSuchAccount // the reference names nothing (or there are no accounts)
+	switchAmbiguous     = prepareAmbiguous     // the reference names more than one account
 )
 
 // switchJSON reports the outcome of a switch — including the refusals, which are
@@ -413,22 +417,40 @@ func joinWords(parts []string, sep string) string {
 	return out
 }
 
-// mappedAccount resolves the account bound to dir, for a bare `account run`.
-func mappedAccount(st *account.Store, dir string) (account.Account, bool) {
+// mappedAccount resolves the account bound to dir, for a bare `account run` or
+// `prepare`. ok=false means there is no binding; an error means there IS one
+// (or there may be) and it could not be honoured — an unreadable map, or a
+// mapped account that no longer resolves. The two used to collapse into false,
+// which made a broken mapping indistinguishable from an absent one and sent the
+// user to `account map` for a directory that was already mapped.
+func mappedAccount(st *account.Store, dir string) (account.Account, bool, error) {
 	dm, err := dirmapStore()
 	if err != nil {
-		return account.Account{}, false
+		return account.Account{}, false, err
 	}
 	entry, err := dm.Lookup(dir)
-	if err != nil || entry.Account == "" {
-		return account.Account{}, false
+	switch {
+	case errors.Is(err, dirmap.ErrNoMapping):
+		return account.Account{}, false, nil
+	case err != nil:
+		return account.Account{}, false, fmt.Errorf("read directory mappings: %w", err)
+	case entry.Account == "":
+		// A Desktop-only binding covers this directory; no CLI account does.
+		return account.Account{}, false, nil
 	}
-	a, rerr := st.Resolve(entry.Account)
-	if rerr != nil {
-		return account.Account{}, false
+	a, err := st.Resolve(entry.Account)
+	if err != nil {
+		// Wrapped under its own sentinel and the store's error flattened to
+		// text on purpose: a mapping to a vanished account must not read as
+		// "no such account" to a classifier, or the advice becomes "add one"
+		// for a directory that is already bound.
+		return account.Account{}, false, fmt.Errorf("%w: this directory is mapped to %q, which %v", errBrokenMapping, entry.Account, err)
 	}
-	return a, true
+	return a, true, nil
 }
+
+// errBrokenMapping: the directory IS mapped, and the mapping cannot be honoured.
+var errBrokenMapping = errors.New("broken directory mapping")
 
 // pruneMappingsForAccount drops a removed account's bindings.
 //

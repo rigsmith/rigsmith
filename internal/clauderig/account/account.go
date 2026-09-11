@@ -440,6 +440,10 @@ func (s *Store) read(id string) (Account, bool) {
 var (
 	ErrNoAccounts    = errors.New("no accounts yet — run `clauderig account add` while logged in")
 	ErrNoSuchAccount = errors.New("no account matches")
+	// ErrAmbiguousRef: the reference is a substring of more than one account.
+	// Distinct from ErrNoSuchAccount because the fix is different — be more
+	// specific, not add an account.
+	ErrAmbiguousRef = errors.New("ambiguous account reference")
 )
 
 // Resolve finds an account by exact id or email, otherwise by a unique
@@ -455,13 +459,34 @@ func (s *Store) Resolve(ref string) (Account, error) {
 	// An exact id, email or alias wins outright (even if it's a substring of
 	// another). Aliases are compared case-insensitively: they are typed by hand,
 	// and SetAlias already refuses one that would shadow another account.
+	//
+	// Ids and aliases are unique by construction; an EMAIL is not — the same
+	// login in two organizations is stored twice (the second id suffixed), and
+	// returning whichever sorts first would silently pick an org. That is the
+	// one case where an exact reference is ambiguous, and it is reported as
+	// such with the ids to use instead.
+	var byEmail []Account
 	for _, a := range all {
-		if a.ID == ref || a.Email == ref {
+		if a.ID == ref {
 			return a, nil
 		}
 		if a.Alias != "" && strings.EqualFold(a.Alias, ref) {
 			return a, nil
 		}
+		if a.Email == ref {
+			byEmail = append(byEmail, a)
+		}
+	}
+	switch len(byEmail) {
+	case 1:
+		return byEmail[0], nil
+	case 0:
+	default:
+		ids := make([]string, len(byEmail))
+		for i, a := range byEmail {
+			ids[i] = a.ID
+		}
+		return Account{}, fmt.Errorf("%w: %q is stored for %d organizations — name the id (%s)", ErrAmbiguousRef, ref, len(byEmail), strings.Join(ids, ", "))
 	}
 	// Otherwise fuzzy: a case-insensitive substring of the email or id — so
 	// "relate"/"rel" find john@relatecpa.com and "bright"/"bri" find brightshore.
@@ -485,7 +510,7 @@ func (s *Store) Resolve(ref string) (Account, error) {
 		for i, a := range matches {
 			emails[i] = a.Email
 		}
-		return Account{}, fmt.Errorf("%q matches %d accounts (%s) — be more specific", ref, len(matches), strings.Join(emails, ", "))
+		return Account{}, fmt.Errorf("%w: %q matches %d accounts (%s) — be more specific", ErrAmbiguousRef, ref, len(matches), strings.Join(emails, ", "))
 	}
 }
 
@@ -667,7 +692,7 @@ func (s *Store) EnsureSession(a Account, share bool, claudeHome string) (string,
 		// Can't tell whether the session still authenticates (e.g. locked
 		// Keychain) — refuse to guess: seeding could clobber a live login, and
 		// skipping could hand out a dead profile.
-		return "", fmt.Errorf("read session credential: %w", uerr)
+		return "", fmt.Errorf("%w: %v", ErrSessionUnreadable, uerr)
 	}
 	stale := fileExists(s.stalePath(a.ID))
 	if !usable || stale {
@@ -681,7 +706,7 @@ func (s *Store) EnsureSession(a Account, share bool, claudeHome string) (string,
 				return "", err
 			}
 		case !usable:
-			return "", fmt.Errorf("the stored credential for %s has no OAuth token — log in (`claude` → /login as %s) and run `clauderig account add`", a.Email, a.Email)
+			return "", fmt.Errorf("%w for %s — log in (`claude` → /login as %s) and run `clauderig account add`", ErrStoredNoTokens, a.Email, a.Email)
 		}
 		_ = os.Remove(s.stalePath(a.ID))
 	}
