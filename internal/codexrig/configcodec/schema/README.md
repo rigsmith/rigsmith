@@ -81,3 +81,13 @@ Native action operation vectors default to empty during profile inheritance,
 while hook header maps retain ancestor keys; tests distinguish that from raw
 config-layer overlays. Matcher compilation and source/value readiness remain
 outside these checks.
+
+Matcher declarations follow [`validate_mitm_hook_config`, `parse_matcher_pattern`,
+`compile_path_matchers` and `compile_value_matchers`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/network-proxy/src/mitm_hook.rs),
+with host handling from [`normalize_host`](https://github.com/openai/codex/blob/5d1fbf26c43abc65a203928b2e31561cb039e06d/codex-rs/network-proxy/src/policy.rs#L101).
+Glob syntax was audited against the release's `globset` 0.4.18 source package,
+SHA-256 `52dfc19153a48bde0cbd630453615c8151bce3a5adfac7a0aebfbf0a1e1f57e3`
+(verified against Cargo.lock). No runtime dependency is added. Syntax checks
+cover the native parser with backslash escaping enabled, including Windows
+recursive-star separator consumption. They do not compile native regexes or
+certify regex-engine limits and path/value matching behavior.
