@@ -3,6 +3,7 @@ package adapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,69 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/files"
 )
+
+func TestConfigRestoreApplyDirectoryCapacity(t *testing.T) {
+	root := t.TempDir()
+	backup := map[string]string{}
+	for i := range MaxConfigFiles {
+		name := fmt.Sprintf("profile%d.config.toml", i)
+		backup[name] = "model='first'"
+		if i < MaxConfigFiles-1 {
+			putConfig(t, root, name, "model='old'")
+		}
+	}
+	for i := range maxConfigDirectoryEntries - MaxConfigFiles {
+		putConfig(t, root, fmt.Sprintf("other%d", i), "unselected")
+	}
+	// First create the final user entry; then replace all 32 files with exactly
+	// 4,096 user entries present. Both batches need their own scratch allowance.
+	for _, model := range []string{"first", "second"} {
+		for name := range backup {
+			backup[name] = "model='" + model + "'"
+		}
+		p, err := PrepareConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(backup), acceptConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := p.Apply(t.Context())
+		if err != nil || len(result.Applied) != MaxConfigFiles || result.Uncertain != "" {
+			t.Fatal("bounded directory could not apply", result, err)
+		}
+		captured, err := CaptureConfig(t.Context(), Root{CodexHome, root})
+		if err != nil || len(captured.Files) != MaxConfigFiles {
+			t.Fatal("persistent lock consumed capture capacity", err)
+		}
+	}
+	// Keep the user count at capacity but make room in the selected-file count.
+	if err := os.Rename(filepath.Join(root, "profile0.config.toml"), filepath.Join(root, "unselected-profile")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := PrepareConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"extra.config.toml": "model='extra'"}), acceptConfig)
+	if p != nil {
+		p.Close()
+	}
+	if !errors.Is(err, files.ErrSourceLimit) {
+		t.Fatal("creation beyond user-entry capacity accepted", err)
+	}
+	putConfig(t, root, "one-too-many", "unselected")
+	if _, err := CaptureConfig(t.Context(), Root{CodexHome, root}); !errors.Is(err, files.ErrSourceLimit) {
+		t.Fatal("artifact allowance increased user-entry limit", err)
+	}
+}
+
+func TestConfigDirectoryReplacementAllowanceIsBounded(t *testing.T) {
+	root := t.TempDir()
+	putConfig(t, root, "config.toml", "model='local'")
+	for i := range maxConfigReplacementEntries + 1 {
+		putConfig(t, root, fmt.Sprintf(".agentrig-replace-leftover%d", i), "private leftover")
+	}
+	if _, err := CaptureConfig(t.Context(), Root{CodexHome, root}); !errors.Is(err, files.ErrSourceLimit) {
+		t.Fatal("unbounded reserved-name allowance", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".agentrig-replace-leftover0")); err != nil {
+		t.Fatal("capture removed unowned scratch", err)
+	}
+}
 
 func TestConfigRestoreApplyRoundTrip(t *testing.T) {
 	root := t.TempDir()

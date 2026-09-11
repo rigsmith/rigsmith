@@ -50,6 +50,12 @@ links, then takes a nonblocking OS lock (`flock` or `LockFileEx`). It checks tha
 the name still refers to the locked object. Closing releases the OS lock; the
 empty file stays in place to avoid splitting ownership across different inodes.
 A competing participating writer gets `ErrReplacementBusy`.
+Config enumeration budgets the persistent lock and staged siblings separately
+from the 4,096-user-entry bound: at most 33 reserved artifact names and 4,129
+total names. Preparation includes incoming new files in the user-entry budget,
+so our own lock, staging and creation cannot consume unreserved capacity.
+Old scratch names count toward the same bounded artifact allowance; recognizing
+a reserved name never establishes ownership or permits cleanup.
 Replacement targets cannot use the lock name or scratch prefix in any letter
 case, so case-insensitive filesystems cannot alias these reserved objects.
 

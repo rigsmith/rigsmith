@@ -106,8 +106,13 @@ func (b *Replacements) check(ctx context.Context) error {
 }
 
 func replacementName(name string) bool {
-	return filepath.IsLocal(name) && name != "." && !strings.ContainsAny(name, "/\\:") &&
-		!strings.EqualFold(name, replacementLock) && !strings.HasPrefix(strings.ToLower(name), replacementPrefix)
+	return filepath.IsLocal(name) && name != "." && !strings.ContainsAny(name, "/\\:") && !IsReplacementArtifact(name)
+}
+
+// IsReplacementArtifact identifies reserved direct-child names, not ownership
+// or safe-to-delete files. Callers must still bound their total enumeration.
+func IsReplacementArtifact(name string) bool {
+	return strings.EqualFold(name, replacementLock) || strings.HasPrefix(strings.ToLower(name), replacementPrefix)
 }
 
 // Stage verifies expected content, then writes, flushes and closes a temporary

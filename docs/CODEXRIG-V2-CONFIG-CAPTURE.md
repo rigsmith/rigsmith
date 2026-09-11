@@ -15,7 +15,7 @@ with recognizable credential signatures are also refused before reading them. Un
 credentials, hooks, instructions, skills, sessions and databases are not opened.
 The reader never descends into subdirectories.
 
-Capture is bounded by 4,096 direct directory entries, 32 selected files, 1 MiB per
+Capture is bounded by 4,096 non-replacement direct directory entries, 32 selected files, 1 MiB per
 file, and 8 MiB each for aggregate raw and sanitized bytes. Directory enumeration
 stops at its limit without collecting an unbounded list. Oversized files fail
 before reading when metadata already exceeds the limit; reads also enforce the
@@ -93,3 +93,9 @@ limits, codec refusal with no partial output, metadata-preserving content edits,
 profile arrivals/deletions and unrelated source activity. Linux/macOS also test
 FIFO open and internal-symlink refusal directly. Native CI covers the three
 supported platforms alongside the pinned Claude compatibility suite.
+
+Directory enumeration has a separate allowance of at most 33 reserved replacement
+artifact names (one lock and up to 32 scratch siblings), with a hard total cap of
+4,129 names. The allowance does not increase the user-entry limit, establish
+ownership, or authorize reading or deleting leftovers. Excess artifacts fail
+the scan rather than permitting unbounded enumeration.

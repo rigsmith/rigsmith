@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	MaxConfigFiles            = 32
-	MaxConfigBytes            = 8 << 20
-	maxConfigDirectoryEntries = 4096
+	MaxConfigFiles              = 32
+	MaxConfigBytes              = 8 << 20
+	maxConfigDirectoryEntries   = 4096
+	maxConfigReplacementEntries = MaxConfigFiles + 1 // One batch's scratch plus the persistent lock.
 )
 
 // ErrConfigSourceChanged shares identity with changes detected by the source reader.
@@ -58,6 +59,28 @@ type configSource interface {
 	Check(context.Context) error
 }
 
+// configDirectoryNames reserves a bounded allowance for replacement artifacts.
+// Recognizing a reserved name never establishes ownership or permits cleanup.
+func configDirectoryNames(ctx context.Context, source configSource) ([]string, error) {
+	names, err := source.Names(ctx, maxConfigDirectoryEntries+maxConfigReplacementEntries)
+	if err != nil {
+		return nil, err
+	}
+	var visible []string
+	internal := 0
+	for _, name := range names {
+		if files.IsReplacementArtifact(name) {
+			internal++
+		} else {
+			visible = append(visible, name)
+		}
+		if internal > maxConfigReplacementEntries || len(visible) > maxConfigDirectoryEntries {
+			return nil, files.ErrSourceLimit
+		}
+	}
+	return visible, nil
+}
+
 func configNames(names []string) ([]string, error) {
 	var selected []string
 	seen := map[string]bool{}
@@ -83,7 +106,7 @@ func configNames(names []string) ([]string, error) {
 }
 
 func captureConfig(ctx context.Context, source configSource) (ConfigCapture, error) {
-	names, err := source.Names(ctx, maxConfigDirectoryEntries)
+	names, err := configDirectoryNames(ctx, source)
 	if err != nil {
 		return ConfigCapture{}, err
 	}
@@ -129,7 +152,7 @@ func captureConfig(ctx context.Context, source configSource) (ConfigCapture, err
 			return ConfigCapture{}, ErrConfigSourceChanged
 		}
 	}
-	final, err := source.Names(ctx, maxConfigDirectoryEntries)
+	final, err := configDirectoryNames(ctx, source)
 	if err != nil {
 		return ConfigCapture{}, err
 	}

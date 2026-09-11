@@ -34,7 +34,9 @@ replacement. A concrete validator for supported Codex versions still follows.
 Each document is limited to the codec's 1 MiB cap. Incoming raw and normalized
 bytes, local raw bytes, and complete proposed bytes each have independent 8 MiB
 aggregate caps. Incoming, local and combined file sets are each limited to 32
-files. Directory enumeration retains the existing 4,096-entry bound. Validation
+files. Directory enumeration retains the 4,096-user-entry bound with a separate capped
+allowance for replacement artifacts, as described by [capture](CODEXRIG-V2-CONFIG-CAPTURE.md).
+Preparation also reserves capacity for incoming new files. Validation
 callbacks receive a context and must cooperate with cancellation; the API does
 not forcibly interrupt callback code or OS syscalls.
 
