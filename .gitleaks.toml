@@ -56,3 +56,20 @@ description = "Fabricated PEM body in the transcript scrub tests"
 regexes = [
   '''MIIEowIBAAKCAQEA1234''',
 ]
+
+# The published jwt.io sample token, used by the stream scanner's tests because
+# they need a value the JWT rule actually matches — proving ScanReader holds a
+# value finding until it knows whether a whole-file verdict follows it.
+#
+# It is HS256 over {"sub":"1234567890"}, signed with the literal string
+# "secret", and appears in jwt.io's own documentation. There is nothing to leak.
+#
+# By VALUE, with no `paths` entry, for the reason given at the top of this file:
+# `stream_test.go` is not one of the scanner's own pattern files, so allowing the
+# whole path would hide a real token pasted into it later. text_test.go carries
+# the same sample and is covered by the path list above.
+[[allowlists]]
+description = "jwt.io's published sample token, in the stream scanner tests"
+regexes = [
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk''',
+]
