@@ -78,5 +78,7 @@ replacement is complete.
 Synthetic tests cover full-set validation, local credential preservation, no-op
 formatting, immutable input boundaries, private representations, malformed or
 unsafe late files, limits, selected links/directories, name aliases, cancellation,
-concurrent destination edits, profile churn and pinned-root replacement. Claude
+concurrent destination edits, profile churn and pinned-root replacement. When
+Windows prevents moving the open root, tests verify that protection and confirm
+that closing the plan releases the directory. Claude
 behavior and the shared file-writing helpers are unchanged.

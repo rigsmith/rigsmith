@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/pelletier/go-toml/v2"
@@ -236,7 +238,25 @@ func TestConfigRestorePlanDetectsLaterChangesAndRootReplacement(t *testing.T) {
 	}
 	putConfig(t, root, "config.toml", "model='old'")
 	if err := os.Rename(root, root+"-moved"); err != nil {
-		t.Fatal(err)
+		// Windows pins the directory against rename (ERROR_SHARING_VIOLATION).
+		// Assert that protection and handle release instead of requiring a move
+		// which the OS correctly disallows. Other errors remain test failures.
+		if runtime.GOOS != "windows" || !errors.Is(err, syscall.Errno(32)) {
+			t.Fatal(err)
+		}
+		if err := p.Check(t.Context()); err != nil {
+			t.Fatalf("blocked rename invalidated the intact plan: %v", err)
+		}
+		if err := p.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(root, root+"-moved"); err != nil {
+			t.Fatalf("closing plan did not release directory: %v", err)
+		}
+		if !errors.Is(p.Check(t.Context()), ErrConfigPlanClosed) {
+			t.Fatal("closed plan accepted after directory move")
+		}
+		return
 	}
 	putConfig(t, root, "config.toml", "model='old'")
 	if !errors.Is(p.Check(t.Context()), ErrConfigSourceChanged) {
