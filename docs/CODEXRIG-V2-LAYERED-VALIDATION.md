@@ -108,7 +108,8 @@ Effective hooks in the selected permission profile now check their header-match
 keys and referenced actions' strip/inject header names. Names must be nonempty
 ASCII HTTP tokens of at most 65,535 bytes, matching the pinned header parser;
 whitespace, separators and Unicode letters are rejected without trimming.
-Header-match values and patterns are not compiled in this slice. Empty header
+Header-match value declarations and glob syntax are checked as described below;
+runtime matchers are not compiled. Empty header
 value lists are retained, as allowed by native header-constraint validation.
 
 Each referenced injected-header declaration must name exactly one secret source:
@@ -132,15 +133,48 @@ before those defaults are applied. Hook header maps merge recursively; a child
 empty map cannot remove an invalid ancestor header key.
 
 No environment values or secret files are read and no headers are produced.
-Prefix/secret value validity, source availability, hook matching and actual
+Prefix/secret value validity, source availability, runtime hook matching and actual
 proxy policy remain destination-readiness checks. The code applies checks once
 per referenced action and preserves the original private input bytes.
+
+## Selected matcher declarations and glob syntax
+
+The selected inheritance chain now composes each hook's matcher declarations.
+Required host/method/path/action fields replace those of the same ancestor hook;
+query and header maps merge by key, with each child value list replacing the same
+ancestor list. An omitted or empty child map cannot remove an ancestor key.
+Optional body declarations survive inheritance and are rejected because this
+Codex release does not support body matchers. Inputs remain private and unchanged.
+
+Host checks follow native normalization for the two relevant tests: trim outer
+whitespace, remove brackets or a single port suffix, and strip trailing dots,
+then reject an empty host or a wildcard. This is not DNS/URL validation. Methods
+must have at least one entry and every entry must be nonblank; like native code,
+this does not impose an additional HTTP method token grammar. Paths must have at
+least one entry. Query names must be nonempty and each query must list at least
+one value. Empty header value lists remain valid.
+
+`literal:` removes that prefix and treats everything after it literally.
+`pattern:` selects glob syntax and must have nonempty contents. Unprefixed values
+are literals even when they contain glob metacharacters. Path literals cannot be
+empty; query/header literals can. The syntax checker follows pinned globset
+0.4.18 with backslash escaping enabled and unclosed classes rejected: nested
+alternates, escapes, classes and ascending ranges are checked iteratively.
+Recursive-star separator consumption follows the host platform, including the
+upstream Windows backslash behavior. No glob is evaluated and no native regex is
+compiled; regex-engine limits and actual matching semantics remain outside this
+syntax guarantee. Both path and value patterns use the same syntax checks;
+their different slash-matching behavior belongs to runtime compilation.
+
+These checks apply to effective selected hooks, including a selected disabled
+network under the existing restore policy. Inactive profiles retain malformed
+matchers until selected; native definition checks still apply globally.
 
 ## Remaining work
 
 This validates permission shapes, catalogs and selection, not a usable sandbox.
 Filesystem path/glob compilation, network-domain normalization, inherited
-filesystem/network policy compilation, MITM matcher compilation and secret-source
+filesystem/network policy compilation, native MITM regex compilation/matching and secret-source
 availability/value checks, platform
 constraints and other managed requirements still need enforcement. The existing
 provider/MCP checks also apply to each effective scenario.
@@ -177,3 +211,12 @@ platform-local path syntax, nonexistent absolute files, inherited action default
 versus raw layer overlays, retained header keys, unused actions, managed fallback,
 cancellation and refusal before destination validation without writes or private
 diagnostics.
+
+Matcher tests cover literal versus pattern prefixes, class/range/alternate syntax,
+host/method/body rules, query/header empty-value differences, inherited map keys,
+child overrides, inactive profiles and private refusal before restore writes.
+A local differential check compared 12,000 deterministic generated patterns
+against globset 0.4.18 `GlobBuilder::build` with the same options; all agreed on
+macOS. That syntax comparison did not invoke Codex, compile runtime regexes,
+read real configuration or contact any configured endpoint. Permanent tests
+also cover Windows-specific recursive-star separator handling.

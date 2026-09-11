@@ -42,12 +42,12 @@ func validateMITMDefinitions(ctx context.Context, mitm map[string]any) error {
 // Resolve the action/reference and header portion of the selected network policy.
 // Child declarations replace matching action operations (native omitted vectors
 // deserialize to empty), and each hook has a required, replacing action list.
-// Other hook fields, domain maps and filesystem policy are not compiled here.
+// Domain maps and filesystem policy are not compiled here.
 // Keeping each child action whole applies native default-empty operation lists.
 // Fresh maps avoid mutating the input or repeatedly copying the growing catalog.
 func validateInheritedMITMActions(ctx context.Context, chain []map[string]any) error {
 	actions := make(map[string]map[string]any)
-	hooks := make(map[string][]any)
+	hooks := make(map[string]map[string]any)
 	for i := len(chain) - 1; i >= 0; i-- {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -63,23 +63,15 @@ func validateInheritedMITMActions(ctx context.Context, chain []map[string]any) e
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			hook := profileMap(value)
-			hooks[name], _ = hook["action"].([]any)
-			// Hook header maps merge recursively, so an invalid ancestor key
-			// survives any child values or an empty child header map.
-			for header := range profileMap(hook["headers"]) {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if !validNetworkHeaderName(header) {
-					return ErrValidation
-				}
-			}
+			hooks[name] = mergePermissionHook(hooks[name], profileMap(value))
 		}
 	}
 	validated := make(map[string]bool)
-	for _, references := range hooks {
-		for _, reference := range references {
+	for _, hook := range hooks {
+		if err := validateNetworkHookMatchers(ctx, hook); err != nil {
+			return err
+		}
+		for _, reference := range hook["action"].([]any) {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
