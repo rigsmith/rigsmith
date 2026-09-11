@@ -111,20 +111,32 @@ func raiseOrFocus(app desktop.App, p desktop.Profile) error {
 	if err != nil {
 		return fmt.Errorf("could not tell which window belongs to %s: %w", p.Name, err)
 	}
-	if len(pids) > 0 {
-		if rerr := raiseAny(app, pids); rerr == nil {
-			return nil
-		} else if !errors.Is(rerr, desktop.ErrRaiseUnsupported) {
-			// A refused Automation prompt is worth saying out loud rather than
-			// quietly falling back to raising some window or other.
-			return rerr
-		}
+	if len(pids) == 0 {
+		// It closed between the caller's scan and this one. Focus must NOT be
+		// the answer: on macOS it is `open -a`, which with no instance running
+		// LAUNCHES one — and a launch with no profile flag is the machine-wide
+		// install, so asking for the work profile would open the very window
+		// this package spends its time keeping separate. The caller knows what
+		// it wanted; it can launch the profile properly.
+		return errProfileNotOpen
 	}
-	// Only two ways here: this platform cannot name one window, or the profile
-	// has no window of its own to name. Activating the app is the best either
-	// case allows.
+	if rerr := raiseAny(app, pids); rerr == nil {
+		return nil
+	} else if !errors.Is(rerr, desktop.ErrRaiseUnsupported) {
+		// A refused Automation prompt is worth saying out loud rather than
+		// quietly falling back to raising some window or other.
+		return rerr
+	}
+	// One way here: the platform cannot name one window of several. A window
+	// does exist, so activating the application raises that app rather than
+	// starting anything.
 	return app.Focus(p.DataDir())
 }
+
+// errProfileNotOpen means the profile had no window by the time we looked.
+// Sentinel rather than a message: every caller has already decided what to do
+// about a profile that is not running, and none of them want it focused.
+var errProfileNotOpen = errors.New("that profile has no window open")
 
 // newDesktopMainCmd opens, or brings forward, the Claude Desktop that is not a
 // profile — the one the Dock and Spotlight start.
@@ -559,9 +571,18 @@ func newDesktopOpenCmd() *cobra.Command {
 					"Launching now would risk a second window on the same profile", p.Name, rerr)
 			}
 			if running {
-				if ferr := raiseOrFocus(app, p); ferr != nil {
+				// It can close between the scan above and this call, in which
+				// case there is nothing to raise and the right answer is the
+				// launch below — not Focus, which would start the machine-wide
+				// app instead of this profile.
+				switch ferr := raiseOrFocus(app, p); {
+				case errors.Is(ferr, errProfileNotOpen):
+					running = false
+				case ferr != nil:
 					return ferr
 				}
+			}
+			if running {
 				// target.ID, not sessionRef: -i resolves a session with no
 				// reference at all, so keying the early return on the reference
 				// focused the window and dropped the session the user had just
@@ -1167,13 +1188,20 @@ func runDesktopUI(cmd *cobra.Command) error {
 			if open {
 				// The note is what the screen says happened. Discarding the
 				// error here left it claiming the window had been brought
-				// forward when a refused permission meant nothing moved.
-				if rerr := raiseOrFocus(app, p); rerr != nil {
+				// forward when a refused permission meant nothing moved — and
+				// a profile that closed since the scan is not an error at all,
+				// it is a launch.
+				rerr := raiseOrFocus(app, p)
+				switch {
+				case rerr == nil:
+					note = "already open: " + p.Label()
+					continue
+				case !errors.Is(rerr, errProfileNotOpen):
 					note = ErrStyle.Render(rerr.Error())
 					continue
 				}
-				note = "already open: " + p.Label()
-				continue
+				// Falls through to the launch below: every other branch above
+				// has continued.
 			}
 			if lerr := app.Launch(p.DataDir()); lerr != nil {
 				note = ErrStyle.Render(lerr.Error())

@@ -258,14 +258,29 @@ func TestRaiseOrFocusReportsAFailedScanRatherThanActivatingTheApp(t *testing.T) 
 	}
 }
 
-// A profile with no window of its own still gets the app activated: there is
-// nothing to name, and that is the best this case allows.
-func TestRaiseOrFocusFallsBackWhenTheProfileHasNoWindow(t *testing.T) {
+// The window can close between the caller's scan and the raise. Focus must not
+// be the answer: on macOS it is `open -a`, which with nothing running LAUNCHES
+// the machine-wide install — so asking for the work profile would open the one
+// window this package exists to keep separate.
+func TestRaiseOrFocusRefusesToFocusAProfileWithNoWindow(t *testing.T) {
 	app := &raiseApp{runningPIDs: nil}
+	err := raiseOrFocus(app, desktop.Profile{Name: "work"})
+	if !errors.Is(err, errProfileNotOpen) {
+		t.Fatalf("err = %v, want errProfileNotOpen so the caller can launch it properly", err)
+	}
+	if len(app.focused) != 0 {
+		t.Errorf("focused %v — on macOS that starts the machine-wide app", app.focused)
+	}
+}
+
+// With a window present but unnameable, activating the application is right:
+// something is running, so nothing is started.
+func TestRaiseOrFocusFocusesOnlyWhenAWindowExists(t *testing.T) {
+	app := &raiseApp{runningPIDs: []int{4242}, raiseErr: desktop.ErrRaiseUnsupported}
 	if err := raiseOrFocus(app, desktop.Profile{Name: "work"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(app.focused) != 1 {
-		t.Errorf("focused %v, want the fallback", app.focused)
+		t.Errorf("focused %v, want the fallback with a live window", app.focused)
 	}
 }
