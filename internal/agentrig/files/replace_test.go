@@ -203,6 +203,40 @@ func TestReplacementInputAndScratchCleanup(t *testing.T) {
 	}
 }
 
+func TestReplacementRejectsReservedCaseAliases(t *testing.T) {
+	root, s, b := replacementFixture(t)
+	before, err := os.Stat(filepath.Join(root, replacementLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		strings.ToUpper(replacementLock), ".AgentRig-Replace.Lock",
+		strings.ToUpper(replacementPrefix) + "scratch", ".AgentRig-Replace-scratch",
+	} {
+		// Supply the lock's actual empty content so a case-insensitive alias
+		// cannot pass staging by matching the existing lock's content.
+		expected := ExpectedFile{Exists: true, SHA256: sha256.Sum256(nil)}
+		if err := b.Stage(t.Context(), name, expected, []byte("replacement"), 100); !errors.Is(err, ErrReplacementState) {
+			t.Fatalf("reserved alias %q was not rejected: %v", name, err)
+		}
+	}
+	after, err := os.Stat(filepath.Join(root, replacementLock))
+	if err != nil || !os.SameFile(before, after) || after.Size() != 0 {
+		t.Fatal("reserved alias changed the lock", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 || entries[0].Name() != replacementLock {
+		t.Fatal("reserved alias created scratch", err)
+	}
+	other, err := BeginReplace(t.Context(), s)
+	if other != nil {
+		other.Close()
+	}
+	if !errors.Is(err, ErrReplacementBusy) {
+		t.Fatal("reserved alias damaged writer exclusion", err)
+	}
+}
+
 func TestReplacementRejectsLinksAndLockSubstitution(t *testing.T) {
 	t.Run("target link", func(t *testing.T) {
 		root, _, b := replacementFixture(t)

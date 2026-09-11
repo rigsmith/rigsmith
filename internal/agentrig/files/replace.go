@@ -106,7 +106,8 @@ func (b *Replacements) check(ctx context.Context) error {
 }
 
 func replacementName(name string) bool {
-	return filepath.IsLocal(name) && name != "." && !strings.ContainsAny(name, "/\\:") && name != replacementLock && !strings.HasPrefix(name, replacementPrefix)
+	return filepath.IsLocal(name) && name != "." && !strings.ContainsAny(name, "/\\:") &&
+		!strings.EqualFold(name, replacementLock) && !strings.HasPrefix(strings.ToLower(name), replacementPrefix)
 }
 
 // Stage verifies expected content, then writes, flushes and closes a temporary

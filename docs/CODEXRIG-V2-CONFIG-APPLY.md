@@ -50,6 +50,8 @@ links, then takes a nonblocking OS lock (`flock` or `LockFileEx`). It checks tha
 the name still refers to the locked object. Closing releases the OS lock; the
 empty file stays in place to avoid splitting ownership across different inodes.
 A competing participating writer gets `ErrReplacementBusy`.
+Replacement targets cannot use the lock name or scratch prefix in any letter
+case, so case-insensitive filesystems cannot alias these reserved objects.
 
 Random `.agentrig-replace-*` files contain private staged output and are excluded
 from Codex capture by the existing file policy. Normal cleanup removes only
