@@ -129,6 +129,24 @@ jobs:
             echo "::warning::Could not sync the JohnCampionJr/winget-pkgs fork — it will drift further behind upstream (komac still branches from upstream master, so the PRs are unaffected). If this is the `workflow` scope error, add that scope to WINGET_TOKEN. Continuing; the release does not depend on this."
           fi
 
+      # A dry run has no tag of its own, so GoReleaser asks `git describe` — and
+      # since the window started shipping on ui/vX.Y.Z, the newest tag in this
+      # history is usually the window's. That version is not merely wrong, it
+      # contains a SLASH: archives came out as `dist/changerig_ui/…` (a
+      # directory), and the casks as `version "ui/v0.3.0-SNAPSHOT-…"` with a
+      # url pointing at `…/download/ui%2Fv0.3.0/…`.
+      #
+      # Tag pushes are unaffected — the ref IS the version — but the dry run is
+      # the one run whose whole job is to prove packaging works, so it has to
+      # see the same shape a release would. --match 'v*' passes over the
+      # window's tags without knowing anything about them.
+      - name: Name the dry run after the last CLI release
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          tag=$(git describe --tags --match 'v*' --abbrev=0)
+          echo "GORELEASER_CURRENT_TAG=$tag" >> "$GITHUB_ENV"
+          echo "dry run will build as $tag"
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser

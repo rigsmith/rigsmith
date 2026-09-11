@@ -13,6 +13,17 @@
 # and `rig self-update`); shiprig has no version var yet.
 #
 # Run `goreleaser check` after editing to validate.
+#
+# Running a snapshot BY HAND needs one thing said: GoReleaser takes its version
+# from `git describe`, and the newest tag in this history is usually the
+# window's (ui/vX.Y.Z), whose slash then lands in archive names and cask urls.
+# Name the tag you mean:
+#
+#   GORELEASER_CURRENT_TAG=$(git describe --tags --match 'v*' --abbrev=0) \
+#     goreleaser release --snapshot --clean --skip=publish
+#
+# The release workflow does exactly this for its dry run; a tag push needs
+# nothing, since the ref is the version.
 version: 2
 
 project_name: rigsmith
