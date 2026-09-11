@@ -143,7 +143,21 @@ jobs:
       - name: Name the dry run after the last CLI release
         if: github.event_name == 'workflow_dispatch'
         run: |
-          tag=$(git describe --tags --match 'v*' --abbrev=0)
+          # The newest vX.Y.Z in the repository, by VERSION order rather than by
+          # ancestry or by string: `git describe` answers with the nearest tag
+          # behind HEAD, which on a branch is whatever release it forked from,
+          # and plain sorting puts v1.9.0 above v1.18.0. The glob is numeric so
+          # a tag like `vnext` cannot be chosen, and `ui/v*` never matches at
+          # all — which is the whole point.
+          tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$tag" ]; then
+            # A checkout with no release tag at all — a fresh fork, or this repo
+            # before its first release. Not a reason to abort a build: leaving
+            # the variable unset puts GoReleaser back on its own default, which
+            # is what every dry run used before this step existed.
+            echo "::warning::no vX.Y.Z tag in this checkout — GoReleaser will name the dry run itself"
+            exit 0
+          fi
           echo "GORELEASER_CURRENT_TAG=$tag" >> "$GITHUB_ENV"
           echo "dry run will build as $tag"
 
