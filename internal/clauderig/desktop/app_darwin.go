@@ -79,32 +79,40 @@ func (d darwinApp) LaunchDefault() error {
 	return nil
 }
 
-// Raise brings one instance forward by pid.
+// Raise brings one instance forward by pid, through NSRunningApplication.
 //
-// System Events, because `open -a` activates the application and the OS then
-// decides which of its windows comes with it. Addressing the process is the
-// only way to name one instance of several.
+// Not `open -a`, which activates the APPLICATION and lets the OS choose the
+// window — the ambiguity this exists to resolve. And no longer System Events,
+// which was measurably wrong here: `set frontmost` raised the first Claude
+// instance reliably and did nothing at all for the second, silently, with both
+// instances holding one visible window each. Two processes sharing a bundle
+// confuse activation-by-application; addressing the process does not.
 //
-// This is the one thing in the package that needs the user's permission:
-// driving System Events is Automation, so the first run prompts and a refusal
-// comes back here as an error. That is reported rather than swallowed — a
-// window that never appears with no explanation is worse than a sentence about
-// System Settings.
+// NSRunningApplication is the API that takes a pid. Reached through JXA because
+// these binaries build with CGO_ENABLED=0 and cannot call AppKit directly.
+// NSApplicationActivateAllWindows (1) alone: the ignore-other-apps flag beside
+// it is deprecated on current macOS and unnecessary — activation by pid already
+// names the instance.
+//
+// It also needs no Automation grant, unlike the System Events approach: nothing
+// here sends an Apple Event to another application, it asks AppKit about a
+// process in the calling process.
+//
+// A pid that is not an application — every Claude Helper is one, and they carry
+// the profile flag on their command lines — comes back as "no such app" rather
+// than as a silent success over a process with no windows.
 func (d darwinApp) Raise(pid int) error {
-	script := fmt.Sprintf(
-		`tell application "System Events" to set frontmost of (first process whose unix id is %d) to true`, pid)
-	out, err := exec.Command("/usr/bin/osascript", "-e", script).CombinedOutput()
-	if err == nil {
-		return nil
+	script := fmt.Sprintf(`ObjC.import("AppKit");
+const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(%d);
+if (app.isNil()) { throw new Error("pid %d is not an application"); }
+if (!app.activateWithOptions(1)) { throw new Error("pid %d refused activation"); }`, pid, pid, pid)
+
+	out, err := exec.Command("/usr/bin/osascript", "-l", "JavaScript", "-e", script).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("could not bring Claude Desktop (pid %d) forward: %w: %s",
+			pid, err, strings.TrimSpace(string(out)))
 	}
-	msg := strings.TrimSpace(string(out))
-	// -1743 is "not authorised to send Apple events", which is the permission
-	// prompt having been declined rather than anything about the window.
-	if strings.Contains(msg, "-1743") || strings.Contains(strings.ToLower(msg), "not authorized") {
-		return fmt.Errorf("not allowed to bring Claude Desktop forward: grant this terminal Automation access to System Events "+
-			"in System Settings → Privacy & Security → Automation, or switch to the window yourself: %s", msg)
-	}
-	return fmt.Errorf("could not bring Claude Desktop (pid %d) forward: %w: %s", pid, err, msg)
+	return nil
 }
 
 // Running matches the full --user-data-dir= token so one profile's helper

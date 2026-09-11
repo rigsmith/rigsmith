@@ -94,6 +94,114 @@ var ErrUnsupported = errors.New("Claude Desktop profiles are not supported on th
 // ErrNotInstalled means the app itself is missing.
 var ErrNotInstalled = errors.New("Claude Desktop is not installed")
 
+// HasDataDir reports whether a command line carries a --user-data-dir at all,
+// which is what tells a profile instance from the machine-wide install.
+//
+// Asked of the COMMAND, never of Instance.DataDir. That field is parsed out of
+// a flattened command line and is documented as best-effort: a path containing
+// " --" cannot be recovered from one, and the failure is silent — an empty
+// DataDir, which reads as "no profile flag" and therefore as the machine-wide
+// app. A profile shown as the main app is the one mistake this whole package
+// exists to prevent.
+func HasDataDir(command string) bool {
+	for _, arg := range commandArgs(command) {
+		if strings.HasPrefix(arg, userDataFlagName) {
+			return true
+		}
+	}
+	return false
+}
+
+// CommandHasDataDir reports whether a command line names exactly this data
+// directory. The comment above dataDirFromCommand has promised this function
+// for a while; it is here now, and the callers that decide identity use it.
+func CommandHasDataDir(command, dataDir string) bool {
+	for _, arg := range commandArgs(command) {
+		if arg == userDataFlag(dataDir) {
+			return true
+		}
+	}
+	return false
+}
+
+// commandArgs splits a flattened command line back into arguments, honouring
+// double quotes.
+//
+// Three review rounds arrived at this, each finding the previous shortcut from
+// a different side, and every one of them was the same mistake: asking whether
+// the flag APPEARS in the string rather than whether it IS an argument.
+//
+//	strings.Contains          "/store/work/data" matched "/store/work/data-old"
+//	+ end-of-value boundary   "--diagnostic=--user-data-dir=/store/work/data" still matched
+//	+ start-of-flag boundary  quotes stripped first, so a space inside a quoted
+//	                          value looked like the boundary that check wanted
+//
+// Splitting properly ends the class. An argument either is the flag and the
+// directory or it is not, and neither question needs a rule about what may
+// surround it. Quotes are how Windows writes a path with spaces, and they are
+// removed as they are consumed rather than globally, so text inside them can no
+// longer be read as structure.
+//
+// A path containing spaces and NO quotes — which is what a flattened macOS
+// command line gives — still cannot be recovered, and never could. That is why
+// MainPIDs keeps the parsed directory as a fallback.
+func commandArgs(command string) []string {
+	var (
+		args    []string
+		cur     strings.Builder
+		inQuote bool
+		started bool
+	)
+	for i := 0; i < len(command); i++ {
+		switch c := command[i]; {
+		case c == '"':
+			inQuote = !inQuote
+			started = true
+		case (c == ' ' || c == '\t') && !inQuote:
+			if started {
+				args = append(args, cur.String())
+				cur.Reset()
+				started = false
+			}
+		default:
+			cur.WriteByte(c)
+			started = true
+		}
+	}
+	if started {
+		args = append(args, cur.String())
+	}
+	return args
+}
+
+// MainPIDs returns the MAIN processes of the instance bound to dataDir.
+//
+// Running() cannot be used for this. It matches the --user-data-dir token
+// anywhere in a command line, and every Electron helper inherits that flag: one
+// profile answers with its main process and a dozen renderers and utilities. A
+// helper is not an application, has no windows, and raising one is either an
+// error or a no-op depending on how you ask — so anything that means "this
+// profile's window" has to start from the process list that excludes them.
+func MainPIDs(a App, dataDir string) ([]int, error) {
+	instances, err := a.Instances()
+	if err != nil {
+		return nil, err
+	}
+	want := CanonicalDir(dataDir)
+	var pids []int
+	for _, inst := range instances {
+		// The command line first, because it is the thing that cannot be
+		// truncated: an exact token match on --user-data-dir=<dir> is what
+		// Running has always used. CanonicalDir second, so a store entry that
+		// is a directory symlink still matches the window running behind it.
+		if CommandHasDataDir(inst.Command, dataDir) ||
+			(inst.DataDir != "" && CanonicalDir(inst.DataDir) == want) {
+			pids = append(pids, inst.PID)
+		}
+	}
+	return pids, nil
+}
+
 // RaiseSupported reports whether this platform can bring one named window
 // forward at all.
 //

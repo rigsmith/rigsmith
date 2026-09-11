@@ -25,7 +25,10 @@ CGO_LDFLAGS="-O2 -g -mmacosx-version-min=12.0" \
 ```
 
 `--window` opens the status window at startup, `--sessions` the sessions
-manager, and `--notice` the Claude Desktop notice — which is otherwise raised
+manager, `--desktops` the tray popover — which is otherwise only reachable by
+clicking the menu bar icon, so it is the way to work on its layout, and the way
+in when the tray icon has not appeared at all — and `--notice` the Claude
+Desktop notice — which is otherwise raised
 only by a launch you cannot schedule, so it is the way to look at that window on
 purpose. Without any of them the app starts in the tray only — which is the intended
 behaviour, and also the escape hatch for Linux desktops where the tray never
@@ -36,7 +39,7 @@ terminal** button hands the resume script to; it defaults to `Terminal`, which
 is the one macOS always has. The **Copy command** button beside it is the path
 that works with any terminal, multiplexer or remote host.
 
-All three flags reveal their window on `events.Common.ApplicationStarted` rather
+All four flags reveal their window on `events.Common.ApplicationStarted` rather
 than before `app.Run()`. Showing a window before the app is running silently does
 nothing for any window but the first, which made `--sessions` look like a dead
 flag while the same window opened fine from the tray menu.
@@ -108,6 +111,54 @@ row each, via `internal/clauderig/sessions`. A `Sessions` service used to sit
 beside it reading the remote through `peek`; it was folded in and removed once
 the manager covered listing, reading, and — via *Bring to this Mac* —
 materialising.
+
+## The first click is the Desktop popover
+
+Clicking the menu bar icon opens a small window listing every Claude Desktop
+profile — account monogram, name, email, and whether it is open — over one line
+of sync health with a button through to the full status window. The status
+window used to be the first click; it is now one click further in, and named in
+the right-click menu beside the two sessions screens.
+
+The reason is what each is for. Sync status is something you check, occasionally
+and usually because something told you to. Which Claude Desktop window to go to
+is something you do many times a day, and the OS is no help: every instance is
+one application, so the Dock shows identical tiles and the app switcher one
+entry. The thing this tray can do that nothing else can became the thing it does
+first.
+
+One click per row, and which action it takes depends on the row's own state:
+
+- **open** → raise that window by pid, in-process, the same call the tray menu's
+  rows make. One window cannot behave two ways depending on which surface asked.
+- **closed** → `clauderig desktop open <name>` through the CLI, which owns
+  launching a profile.
+
+The machine-wide app is the last row, dimmed, below a rule: it is not a profile,
+no account is bound to it, and a session opened there lands under whichever login
+that install happens to hold. Same two paths — raised by pid when it is up,
+`desktop main` when it is not.
+
+The popover **sizes itself** to the profiles it found, through `Windows.Fit`.
+The page measures its own content and asks; Go bounds the answer, because a
+height arriving from a page should not be able to make a window one pixel tall
+or taller than the display.
+
+## Opening the sessions window on a named screen
+
+The right-click menu offers *Sessions — list…* and *Sessions — places…*
+separately, because that window was always two screens wearing one label.
+
+The mode reaches the page two ways, and it needs both. The window is **created**
+at app start, so its page loads long before anyone asks for a screen — which
+makes a read on load useless on its own. The event is what delivers the request,
+and `Windows.SetMode`/`Mode` covers the case where a page has not yet registered
+its listener when the window is shown.
+
+One trap worth naming, since it cost an afternoon: a Wails payload was unwrapped
+with `e.data?.[0] ?? e.data`, which reads the first element of an array — and a
+**string is indexable**, so a payload of `"places"` arrived as `"p"`, matched no
+mode, and was dropped in silence. Check `Array.isArray` before indexing.
 
 ## The Claude Desktop window list
 

@@ -83,6 +83,11 @@ func main() {
 	// would otherwise be no way to look at it on purpose — including for anyone
 	// changing its copy or its layout.
 	showNotice := flag.Bool("notice", false, "open the Claude Desktop notice at startup, whatever is running")
+	// The popover is normally opened by clicking the menu bar icon, which is
+	// not something a test run or a person working on its layout can do — and
+	// on a desktop where the tray icon has not appeared at all, it is the only
+	// way in.
+	showDesktops := flag.Bool("desktops", false, "open the Claude Desktop popover at startup")
 	flag.Parse()
 
 	statusSvc := bridge.NewStatus()
@@ -124,13 +129,22 @@ func main() {
 	window := newWindow(app)
 	sessionsWindow := newSessionsWindow(app)
 	noticeWindow := newNoticeWindow(app)
-	tray, warnItem, trayMenu, windowsMenu := newTray(app, window, sessionsWindow, noticeWindow, desktopSvc, actionsSvc)
+	desktopsWindow := newDesktopsWindow(app)
+	tray, warnItem, trayMenu, windowsMenu := newTray(app, window, sessionsWindow, noticeWindow, desktopsWindow, desktopSvc, windowsSvc, actionsSvc)
 
 	// Registered by name so the status window can raise the sessions window
 	// without the frontend knowing anything about how windows are built.
 	windowsSvc.Register("sessions", func() { reveal(sessionsWindow) }, func() { sessionsWindow.Hide() })
 	windowsSvc.Register("main", func() { reveal(window) }, func() { window.Hide() })
 	windowsSvc.Register("notice", func() { reveal(noticeWindow) }, func() { noticeWindow.Hide() })
+	windowsSvc.Register("desktops", func() { reveal(desktopsWindow) }, func() { desktopsWindow.Hide() })
+	// The popover sizes itself to the profiles it found. Width stays put: the
+	// rows are a fixed measure and a popover that changed width as windows
+	// opened and closed would be a moving target under the cursor.
+	windowsSvc.Resizable("desktops", func(h int) {
+		w, _ := desktopsWindow.Size()
+		desktopsWindow.SetSize(w, h)
+	})
 
 	go poll(app, statusSvc, tray, window)
 	go watchDesktop(app, desktopSvc, noticeWindow,
@@ -155,6 +169,7 @@ func main() {
 		window.SetBackgroundColour(inkColour)
 		sessionsWindow.SetBackgroundColour(inkColour)
 		noticeWindow.SetBackgroundColour(inkColour)
+		desktopsWindow.SetBackgroundColour(inkColour)
 
 		if *showWindow {
 			reveal(window)
@@ -164,6 +179,9 @@ func main() {
 		}
 		if *showNotice {
 			reveal(noticeWindow)
+		}
+		if *showDesktops {
+			reveal(desktopsWindow)
 		}
 	})
 
@@ -226,24 +244,7 @@ func newWindow(app *application.App) *application.WebviewWindow {
 			// the active one" signals, which is what clicking away actually is.
 			// Everything else is Wails' default, restated because supplying a
 			// mapping replaces it wholesale rather than merging.
-			EventMapping: map[events.WindowEventType]events.WindowEventType{
-				events.Windows.WindowInactive:     events.Common.WindowLostFocus,
-				events.Windows.WindowActive:       events.Common.WindowFocus,
-				events.Windows.WindowClickActive:  events.Common.WindowFocus,
-				events.Windows.WindowClosing:      events.Common.WindowClosing,
-				events.Windows.WindowShow:         events.Common.WindowShow,
-				events.Windows.WindowHide:         events.Common.WindowHide,
-				events.Windows.WindowDidMove:      events.Common.WindowDidMove,
-				events.Windows.WindowDidResize:    events.Common.WindowDidResize,
-				events.Windows.WindowMinimise:     events.Common.WindowMinimise,
-				events.Windows.WindowUnMinimise:   events.Common.WindowUnMinimise,
-				events.Windows.WindowMaximise:     events.Common.WindowMaximise,
-				events.Windows.WindowUnMaximise:   events.Common.WindowUnMaximise,
-				events.Windows.WindowRestore:      events.Common.WindowRestore,
-				events.Windows.WindowFullscreen:   events.Common.WindowFullscreen,
-				events.Windows.WindowUnFullscreen: events.Common.WindowUnFullscreen,
-				events.Windows.WindowDPIChanged:   events.Common.WindowDPIChanged,
-			},
+			EventMapping: popoverEventMapping(),
 			// A tray popover is not a program you alt-tab to. macOS says the same
 			// thing with ActivationPolicyAccessory and LSUIElement, which keep it
 			// out of the Dock; this is the Windows half of that, and without it
@@ -312,6 +313,42 @@ func newWindow(app *application.App) *application.WebviewWindow {
 		w.Hide()
 	})
 	return w
+}
+
+// popoverEventMapping is the Windows event mapping both tray popovers need.
+//
+// Wails funnels five Windows events into the two common focus ones, and two of
+// them — WindowSetFocus and WindowKillFocus — fire as focus shuttles between the
+// host window and WebView2's own child window. That shuttle looks exactly like
+// the user clicking away, so a window that hides on lost focus hides itself
+// while it is being used.
+//
+// WindowInactive and WindowActive are the "this window is no longer the active
+// one" signals, which is what clicking away actually is. Everything else is
+// Wails' default, restated because supplying a mapping replaces it wholesale
+// rather than merging.
+//
+// Shared, because the second window to hide on focus loss inherited the bug the
+// first one had already fixed — which is what a copied mapping buys you.
+func popoverEventMapping() map[events.WindowEventType]events.WindowEventType {
+	return map[events.WindowEventType]events.WindowEventType{
+		events.Windows.WindowInactive:     events.Common.WindowLostFocus,
+		events.Windows.WindowActive:       events.Common.WindowFocus,
+		events.Windows.WindowClickActive:  events.Common.WindowFocus,
+		events.Windows.WindowClosing:      events.Common.WindowClosing,
+		events.Windows.WindowShow:         events.Common.WindowShow,
+		events.Windows.WindowHide:         events.Common.WindowHide,
+		events.Windows.WindowDidMove:      events.Common.WindowDidMove,
+		events.Windows.WindowDidResize:    events.Common.WindowDidResize,
+		events.Windows.WindowMinimise:     events.Common.WindowMinimise,
+		events.Windows.WindowUnMinimise:   events.Common.WindowUnMinimise,
+		events.Windows.WindowMaximise:     events.Common.WindowMaximise,
+		events.Windows.WindowUnMaximise:   events.Common.WindowUnMaximise,
+		events.Windows.WindowRestore:      events.Common.WindowRestore,
+		events.Windows.WindowFullscreen:   events.Common.WindowFullscreen,
+		events.Windows.WindowUnFullscreen: events.Common.WindowUnFullscreen,
+		events.Windows.WindowDPIChanged:   events.Common.WindowDPIChanged,
+	}
 }
 
 // revealGrace is how long after a reveal focus loss is ignored. Long enough to
@@ -388,6 +425,75 @@ func newSessionsWindow(app *application.App) *application.WebviewWindow {
 	return w
 }
 
+// newDesktopsWindow builds the popover the menu bar icon opens: the Claude
+// Desktop profiles, one click each, over a line of sync status.
+//
+// This is the first click now, where the status window used to be. The reason
+// is what the two are for. Sync status is something you check — occasionally,
+// and usually because something told you to. Which Claude Desktop window to go
+// to is something you do, many times a day, and the OS is no help with it: every
+// instance is one application, so the Dock shows identical tiles and the app
+// switcher one entry. The thing the tray can do that nothing else can became
+// the thing it does first; the status it displaced is one line at the bottom
+// and one click behind that.
+func newDesktopsWindow(app *application.App) *application.WebviewWindow {
+	w := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:  "desktops",
+		Title: AppName,
+		// Same reason as the status window: see newWindow.
+		BackgroundColour: application.NewRGB(0x0E, 0x0E, 0x12),
+		Width:            320,
+		Height:           360,
+		Hidden:           true,
+		DisableResize:    true,
+		URL:              "/desktops.html",
+		// Frameless everywhere, unlike the status window, which is frameless
+		// only on Windows. A popover hanging off the menu bar icon is not a
+		// window you leave open, and on macOS the traffic lights would be three
+		// controls for something a click away dismisses.
+		Frameless: true,
+		Windows: application.WindowsWindow{
+			Theme:           application.Dark,
+			HiddenOnTaskbar: true,
+			// This window hides on lost focus, so it needs the same mapping the
+			// status window does — without it, WebView2's own focus shuttle
+			// closes the popover under the pointer.
+			EventMapping: popoverEventMapping(),
+		},
+		Mac: application.MacWindow{
+			// Same as the status window: see newWindow.
+			Backdrop: application.MacBackdropTransparent,
+		},
+	})
+	w.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if quitting.Load() {
+			return
+		}
+		e.Cancel()
+		w.Hide()
+	})
+	// Click away and it is gone, exactly as the status window behaves when it
+	// is the popover. The grace period is the same one, for the same reason:
+	// showing a window is not instantaneous and a stray resign-key during the
+	// reveal reads as the icon doing nothing.
+	w.OnWindowEvent(events.Common.WindowFocus, func(*application.WindowEvent) {
+		markRevealed(w)
+	})
+	w.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
+		if time.Since(lastReveal(w)) < revealGrace {
+			return
+		}
+		w.Hide()
+	})
+	// Re-read on every show. The tray positions and shows this window itself on
+	// a click, so this event is the only signal the page gets that it is back
+	// on screen — and a list of which profiles are open goes stale in seconds.
+	w.OnWindowEvent(events.Common.WindowShow, func(*application.WindowEvent) {
+		w.EmitEvent("clauderig:shown", nil)
+	})
+	return w
+}
+
 // newNoticeWindow builds the Desktop-launch notice: a small window that appears
 // when the machine-wide Claude Desktop is started, and goes away when it is
 // closed or dismissed.
@@ -434,6 +540,26 @@ func newNoticeWindow(app *application.App) *application.WebviewWindow {
 	return w
 }
 
+// revealSessions opens the sessions window on one of its two modes.
+//
+// The mode is emitted rather than encoded in the URL: the window is reused
+// rather than reloaded, so a second click asking for the other mode has to
+// reach a page that is already running. The page applies it on arrival and on
+// every later event, which is what makes the two menu items land where they
+// say.
+func revealSessions(w *application.WebviewWindow, windows *bridge.Windows, mode string) {
+	// Recorded BEFORE the window is shown, because showing it for the first
+	// time is also loading its page, and the event below would arrive before
+	// anything was listening. The page collects this on load; the event is for
+	// the window that is already up, where there is no load to race.
+	windows.SetMode("sessions", mode)
+	reveal(w)
+	w.EmitEvent(sessionsModeEvent, mode)
+}
+
+// sessionsModeEvent asks the sessions window for one of its modes by name.
+const sessionsModeEvent = "clauderig:sessions-mode"
+
 // reveal shows the window and raises it. Show alone leaves it behind whatever
 // has focus, which reads as "the menu item did nothing" — and as an accessory
 // app there is no Dock icon to click as a fallback.
@@ -466,12 +592,17 @@ func reveal(w *application.WebviewWindow) {
 
 // newTray builds the menu bar icon. Clicking it toggles the window beneath the
 // icon; the menu carries the actions.
-func newTray(app *application.App, window, sessions, notice *application.WebviewWindow, desk *bridge.Desktop, actions *bridge.Actions) (*application.SystemTray, *application.MenuItem, *application.Menu, *application.Menu) {
+func newTray(app *application.App, window, sessions, notice, desktops *application.WebviewWindow, desk *bridge.Desktop, windowsSvc *bridge.Windows, actions *bridge.Actions) (*application.SystemTray, *application.MenuItem, *application.Menu, *application.Menu) {
 	tray := app.SystemTray.New()
 
 	menu := app.NewMenu()
-	menu.Add("Open " + AppName).OnClick(func(*application.Context) { reveal(window) })
-	menu.Add("Sessions…").OnClick(func(*application.Context) { reveal(sessions) })
+	// Every window by name. The left click is the Desktop popover now, so the
+	// three screens it is not have to be somewhere obvious — and "Sessions" was
+	// always two screens wearing one label: a list you search and a map of where
+	// things are kept.
+	menu.Add("Status…").OnClick(func(*application.Context) { reveal(window) })
+	menu.Add("Sessions — list…").OnClick(func(*application.Context) { revealSessions(sessions, windowsSvc, "list") })
+	menu.Add("Sessions — places…").OnClick(func(*application.Context) { revealSessions(sessions, windowsSvc, "places") })
 
 	// Every Claude Desktop window, named and raisable. The Dock cannot do this:
 	// each instance gets its own tile, but they carry the same icon and the same
@@ -508,6 +639,7 @@ func newTray(app *application.App, window, sessions, notice *application.Webview
 		// process down around live ones is what makes Chromium complain on exit.
 		// Close() is synchronous, so by app.Quit() they are gone.
 		quitting.Store(true)
+		desktops.Close()
 		notice.Close()
 		sessions.Close()
 		window.Close()
@@ -515,7 +647,8 @@ func newTray(app *application.App, window, sessions, notice *application.Webview
 	})
 	tray.SetMenu(menu)
 
-	tray.AttachWindow(window).WindowOffset(5).WindowDebounce(200 * time.Millisecond)
+	// The popover, not the status window: see newDesktopsWindow.
+	tray.AttachWindow(desktops).WindowOffset(5).WindowDebounce(200 * time.Millisecond)
 
 	// Amber until the first poll answers — better an honest "unknown" than a
 	// green icon we have not earned.

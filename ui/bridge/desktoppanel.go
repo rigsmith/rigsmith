@@ -1,0 +1,140 @@
+package bridge
+
+import (
+	"context"
+
+	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
+)
+
+// profileRow is one saved profile, flattened out of the store.
+//
+// A type of this bridge's own rather than desktop.Profile, because a Profile
+// keeps its directory unexported and can only be made by a real store on disk —
+// which would put "does the popover list what the store holds" beyond the reach
+// of a test, and that is most of what the popover does.
+type profileRow struct {
+	Name    string
+	Email   string
+	DataDir string
+}
+
+// PanelProfile is one Claude Desktop profile as the tray's popover lists it.
+type PanelProfile struct {
+	Name  string `json:"name"`
+	Email string `json:"email,omitempty"`
+	// Open is whether this profile has a window up right now. It decides what
+	// one click does — focus what is there, or start what is not — which is why
+	// the popover is worth a live read rather than a cached list.
+	Open bool `json:"open"`
+	// PID is that window's main process, and it is what makes the two halves of
+	// this UI behave identically: the tray menu raises a pid, so the popover
+	// raises the same pid rather than asking the CLI to work out which window
+	// was meant. Zero when the profile is closed, which is the other path.
+	PID int `json:"pid,omitempty"`
+}
+
+// PanelView is everything the popover draws: the profiles, the machine-wide
+// app, and one line of sync health.
+//
+// One call rather than three. The popover is opened from a menu bar click and
+// has to be complete before it is on screen; three round trips would draw it in
+// stages, which reads as a window still making its mind up.
+type PanelView struct {
+	Profiles []PanelProfile `json:"profiles"`
+	// MainOpen reports the machine-wide install — the one with no profile. It
+	// is listed apart from the profiles because it is not one: no account is
+	// bound to it, and clauderig cannot name it.
+	MainOpen bool `json:"mainOpen"`
+	// MainPID is that window's process, for the same reason every profile row
+	// carries one: an open window is raised in-process, by pid, the way the
+	// tray menu raises it. Only a window that does not exist needs the CLI.
+	MainPID int `json:"mainPid,omitempty"`
+	// Installed is false when Claude Desktop is not on this machine at all, so
+	// the popover can say that rather than showing an empty list that looks
+	// like a failure.
+	Installed bool `json:"installed"`
+	// Level and Summary are the tray icon's own colour and sentence, repeated
+	// here so the popover can carry the status it replaced as the first click.
+	Level   string `json:"level"`
+	Summary string `json:"summary"`
+	// Error is a process scan that failed. The profiles are still listed — the
+	// store knows them — but whether they are open is unknown, and saying
+	// "closed" would send a click to launch a second window.
+	Error string `json:"error,omitempty"`
+	// StoreError is a profile store that could not be read: a different state
+	// with a different sentence, which the notice already separates. Sharing
+	// one field made the popover say "could not read the process list" about a
+	// store it had not managed to open.
+	StoreError string `json:"storeError,omitempty"`
+	// CanRaise is whether this platform can bring one named window forward.
+	// Where it cannot, an open row goes through the CLI like a closed one
+	// rather than calling a raise that returns "unsupported" into a page with
+	// nowhere to print it.
+	CanRaise bool `json:"canRaise"`
+}
+
+// Panel reads everything the popover needs.
+func (d *Desktop) Panel(ctx context.Context) (PanelView, error) {
+	var v PanelView
+	_, v.Installed = d.app.Installed()
+
+	if rep, err := NewStatus().Health(ctx); err == nil {
+		v.Level, v.Summary = rep.Level.String(), rep.Summary
+	} else {
+		// A status we cannot read is amber, the same answer the tray gives.
+		v.Level, v.Summary = "amber", "status unavailable"
+	}
+
+	v.CanRaise = desktop.RaiseSupported()
+
+	// A store that will not open is not a reason to skip the process scan: the
+	// machine-wide app is found by scanning, has nothing to do with the store,
+	// and returning here reported it as closed while it was on screen.
+	profiles, lerr := d.profiles()
+	if lerr != nil {
+		v.StoreError = lerr.Error()
+	}
+
+	// One scan for every profile, rather than one per profile: the popover is
+	// on the click path, and a process scan per profile is the difference
+	// between a window that appears and a window that arrives.
+	// Instances, not one Running() per profile: Running matches the profile flag
+	// anywhere in a command line and every Electron helper inherits it, so it
+	// answers with a dozen processes that have no windows. The pid recorded here
+	// has to be one that can actually be raised.
+	instances, ierr := d.app.Instances()
+	if ierr != nil {
+		v.Error = ierr.Error()
+	}
+	type window struct {
+		pid     int
+		command string
+		dir     string
+	}
+	var windows []window
+	for _, inst := range instances {
+		// Whether this is the machine-wide app is asked of the COMMAND, not of
+		// the parsed DataDir. That field is best-effort — a path it cannot
+		// split out of a flattened command line comes back empty — and an empty
+		// one here would list somebody's work profile as "the main app", under
+		// a row that says no account is bound to it.
+		if !desktop.HasDataDir(inst.Command) {
+			v.MainOpen, v.MainPID = true, inst.PID
+			continue
+		}
+		windows = append(windows, window{pid: inst.PID, command: inst.Command, dir: inst.DataDir})
+	}
+
+	for _, p := range profiles {
+		row := PanelProfile{Name: p.Name, Email: p.Email}
+		for _, w := range windows {
+			if desktop.CommandHasDataDir(w.command, p.DataDir) ||
+				(w.dir != "" && desktop.CanonicalDir(w.dir) == desktop.CanonicalDir(p.DataDir)) {
+				row.Open, row.PID = true, w.pid
+				break
+			}
+		}
+		v.Profiles = append(v.Profiles, row)
+	}
+	return v, nil
+}

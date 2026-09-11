@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
@@ -31,7 +32,21 @@ func (f fakeDesktop) Installed() (string, bool)              { return "/Applicat
 func (f fakeDesktop) OpenURL(string) error                   { return nil }
 
 func newTestDesktop(app desktop.App, dirs map[string]string, dirsErr error) *Desktop {
-	return &Desktop{app: app, dirs: func() (map[string]string, error) { return dirs, dirsErr }}
+	return &Desktop{
+		app:  app,
+		dirs: func() (map[string]string, error) { return dirs, dirsErr },
+		profiles: func() ([]profileRow, error) {
+			if dirsErr != nil {
+				return nil, dirsErr
+			}
+			rows := make([]profileRow, 0, len(dirs))
+			for name, dir := range dirs {
+				rows = append(rows, profileRow{Name: name, DataDir: dir})
+			}
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+			return rows, nil
+		},
+	}
 }
 
 // The machine-wide install is the window with no --user-data-dir at all, and

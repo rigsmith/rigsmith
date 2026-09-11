@@ -66,6 +66,8 @@ type Desktop struct {
 	// dirs is Store.CandidateDataDirs behind a seam, so the watch can be tested
 	// without a profile store on disk.
 	dirs func() (map[string]string, error)
+	// profiles is Store.List behind the same kind of seam, for the popover.
+	profiles func() ([]profileRow, error)
 	// state holds the one preference this feature has: whether the notice is
 	// wanted at all.
 	state *uiState
@@ -85,6 +87,24 @@ func NewDesktop() *Desktop {
 			// parse still has a data directory an instance can be running
 			// against, and the notice is about which windows exist.
 			return st.CandidateDataDirs()
+		},
+		profiles: func() ([]profileRow, error) {
+			st, err := desktop.DefaultStore()
+			if err != nil {
+				return nil, err
+			}
+			saved, lerr := st.List()
+			if lerr != nil {
+				return nil, lerr
+			}
+			// List, not CandidateDataDirs: this one is a menu of profiles to
+			// open by name, and a directory whose profile.json will not parse
+			// has no name to offer.
+			rows := make([]profileRow, 0, len(saved))
+			for _, p := range saved {
+				rows = append(rows, profileRow{Name: p.Name, Email: p.Email, DataDir: p.DataDir()})
+			}
+			return rows, nil
 		},
 	}
 }

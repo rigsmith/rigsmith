@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>claudeRig</title>
+<style>
+  /* Tokens lifted from design/RigSmith Brand.html — the brand page is the source. */
+  :root{
+    --ink:#0E0E12; --ink-2:#15151b; --ink-3:#1c1c24;
+    --line:#26262f; --line-soft:#1d1d25;
+    --paper:#ECECEE; --muted:#7b7b87; --muted-2:#52525c;
+    --ok:#4CB86A; --warn:#E4B750; --err:#EF6661;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,
+      'Cascadia Mono','Cascadia Code',Consolas,
+      'DejaVu Sans Mono','Liberation Mono',monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:var(--ink);color:var(--paper);
+    font-family:var(--mono);font-weight:400;line-height:1.5;font-size:12px;
+    -webkit-font-smoothing:antialiased;font-feature-settings:"liga" 0;
+    user-select:none;height:100vh;overflow:hidden;display:flex;flex-direction:column;
+  }
+  /* No traffic lights to clear: this window is frameless on every platform.
+     It hangs off the menu bar icon and is dismissed by clicking away, which is
+     what a popover is — a title bar on it would be a window pretending to be
+     somewhere you could leave open. */
+  .head{flex:none;padding:14px 14px 8px;--wails-draggable:no-drag;}
+  .eyebrow{
+    font-size:10px;letter-spacing:0.22em;text-transform:uppercase;
+    color:var(--muted);font-weight:500;display:flex;align-items:center;gap:10px;
+  }
+  .eyebrow .rule{flex:1;height:1px;background:var(--line);}
+  .list{flex:1;min-height:0;overflow-y:auto;padding:0 8px;}
+
+  /* One row per profile, and the whole row is the button: a click target the
+     width of the popover is the difference between this and the menu it
+     replaces. */
+  .row{
+    display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+    background:transparent;border:1px solid transparent;border-radius:7px;
+    padding:7px 6px;cursor:pointer;color:var(--paper);font:inherit;
+  }
+  .row:hover{background:var(--ink-2);border-color:var(--line);}
+  .row:focus-visible{outline:1px solid var(--muted);outline-offset:1px;}
+  .row .mono{
+    flex:none;width:22px;height:22px;border-radius:6px;display:grid;
+    place-items:center;font-size:10px;font-weight:700;letter-spacing:0.02em;
+  }
+  .row .who{flex:1;min-width:0;}
+  .row .name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .row .sub{display:block;font-size:10px;color:var(--muted-2);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  /* The state is a word, not only a dot: "open" and "closed" decide whether the
+     click focuses or launches, and that is worth saying rather than encoding. */
+  .row .state{flex:none;font-size:10px;color:var(--muted-2);display:flex;
+    align-items:center;gap:5px;}
+  .row .state[data-open] {color:var(--ok);}
+  .dot{width:6px;height:6px;border-radius:50%;background:currentColor;}
+  .row svg{flex:none;color:var(--muted-2);}
+  .row:hover svg{color:var(--muted);}
+
+  /* The machine-wide app. Dimmed and below a rule because it is NOT a profile:
+     no account is bound to it, and a session opened there lands under whichever
+     login that install happens to hold. Reachable, never the default. */
+  .secondary{margin-top:4px;padding-top:6px;border-top:1px solid var(--line-soft);}
+  .secondary .row{color:var(--muted);}
+  .secondary .row .name{font-size:11px;}
+
+  .empty{padding:10px 8px;color:var(--muted-2);font-size:11px;}
+  .err{padding:6px 8px;color:var(--err);font-size:10px;}
+
+  /* The status line the first click used to open a whole window for. One line,
+     the same colour the tray icon is wearing, and a way through to the rest. */
+  .foot{
+    flex:none;display:flex;align-items:center;gap:10px;
+    padding:9px 12px;border-top:1px solid var(--line);background:var(--ink-2);
+  }
+  .foot .lvl{flex:none;width:7px;height:7px;border-radius:50%;background:var(--muted);}
+  .foot .lvl[data-level="green"]{background:var(--ok);}
+  .foot .lvl[data-level="amber"]{background:var(--warn);}
+  .foot .lvl[data-level="red"]{background:var(--err);}
+  .foot .sum{flex:1;min-width:0;font-size:11px;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .foot button{
+    flex:none;background:var(--ink-3);color:var(--paper);border:1px solid var(--line);
+    border-radius:5px;padding:4px 9px;cursor:pointer;font-family:var(--mono);
+    font-size:9px;letter-spacing:0.12em;text-transform:uppercase;
+  }
+  .foot button:hover{border-color:var(--muted-2);}
+  .foot button:focus-visible{outline:1px solid var(--muted);outline-offset:2px;}
+</style>
+</head>
+<body>
+<div class="head">
+  <div class="eyebrow"><span>Claude Desktop</span><span class="rule"></span></div>
+</div>
+<div class="list" id="list"><div id="rows"></div></div>
+<div class="foot">
+  <span class="lvl" id="lvl"></span>
+  <span class="sum" id="sum">checking…</span>
+  <button id="status" title="Open the full status window">Status</button>
+</div>
+
+<script type="module">
+import { Call, Events } from '/wails/runtime.js';
+import { monogramFor, paintMono } from './monogram.js';
+
+const $ = id => document.getElementById(id);
+
+// Wails keys bound methods by "<go import path>.<type>.<method>". Spelled out
+// because we call the runtime directly rather than running `wails3 generate
+// bindings` — that would add a Node step to a Go-only CI. Keep in sync with
+// ui/bridge; ui/bridge/binding_test.go fails if this drifts.
+const DESKTOP_PANEL = 'github.com/rigsmith/rigsmith/ui/bridge.Desktop.Panel';
+const DESKTOP_RAISE = 'github.com/rigsmith/rigsmith/ui/bridge.Desktop.Raise';
+const DESKTOP_MAIN = 'github.com/rigsmith/rigsmith/ui/bridge.Desktop.OpenMain';
+const ACCOUNTS_DESKTOP = 'github.com/rigsmith/rigsmith/ui/bridge.Accounts.OpenDesktop';
+const WINDOWS_OPEN = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Open';
+const WINDOWS_HIDE = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Hide';
+const WINDOWS_FIT = 'github.com/rigsmith/rigsmith/ui/bridge.Windows.Fit';
+
+// The same glyphs the rest of the UI draws: a window for Desktop, so the
+// popover and the accounts pane teach one vocabulary rather than two.
+const SVG_ATTRS = 'viewBox="0 0 16 16" width="12" height="12" fill="none" ' +
+  'stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"';
+const ICON_DESKTOP = `<svg ${SVG_ATTRS}><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75"/>` +
+  '<path d="M1.75 5.75h12.5"/></svg>';
+
+const el = (tag, cls, text) => {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  return n;
+};
+
+// row builds one clickable line. `run` is what the click does; the popover
+// closes on its own afterwards, because a menu bar popover that lingers over
+// the window it just raised is in the way of the thing you asked for.
+function row(opts) {
+  const b = el('button', 'row');
+  b.title = opts.title;
+  if (opts.mono !== undefined) {
+    b.append(paintMono(el('span', 'mono', opts.mono), opts.mono));
+  } else {
+    const icon = el('span', 'mono');
+    icon.innerHTML = ICON_DESKTOP;
+    b.append(icon);
+  }
+  const who = el('div', 'who');
+  who.append(el('span', 'name', opts.name));
+  if (opts.sub) who.append(el('span', 'sub', opts.sub));
+  b.append(who);
+
+  const state = el('span', 'state');
+  if (opts.unknown) {
+    state.append(el('span', null, '?'));
+  } else {
+    state.append(el('span', 'dot'));
+    state.append(el('span', null, opts.open ? 'open' : 'closed'));
+    if (opts.open) state.dataset.open = '';
+  }
+  b.append(state);
+
+  b.addEventListener('click', async () => {
+    try {
+      await opts.run();
+    } catch (e) {
+      // The popover is about to close, so there is nowhere to print. The
+      // window this could not reach is the report.
+      console.error(e);
+    }
+    await Call.ByName(WINDOWS_HIDE, 'desktops');
+  });
+  return b;
+}
+
+function render(v) {
+  const list = $('rows');
+  list.replaceChildren();
+
+  if (!v.installed) {
+    list.append(el('div', 'empty', 'Claude Desktop is not installed on this machine.'));
+  } else if ((!v.profiles || v.profiles.length === 0) && !v.storeError) {
+    list.append(el('div', 'empty',
+      'No profiles yet — `clauderig desktop add <name>` makes one per account.'));
+  } else if (v.profiles) {
+    for (const p of v.profiles) {
+      const mono = monogramFor(p.email || p.name);
+      list.append(row({
+        mono,
+        name: p.name,
+        sub: p.email,
+        open: p.open,
+        unknown: !!v.error,
+        title: p.open ? `Bring ${p.name} to the front` : `Open ${p.name}`,
+        // Open: raise that pid, the same call the tray menu's rows make, so one
+        // window cannot behave two ways depending on which surface asked for
+        // it. Closed, or a platform that cannot name one window of several:
+        // the CLI, which launches a profile properly and — where raising is
+        // unsupported — activates the application, the best that platform
+        // allows. Calling raise anyway would return "unsupported" into a page
+        // with nowhere to print it, so every row would look inert.
+        run: () => (p.open && v.canRaise)
+          ? Call.ByName(DESKTOP_RAISE, p.pid)
+          : Call.ByName(ACCOUNTS_DESKTOP, p.name),
+      }));
+    }
+  }
+
+  // Always offered, installed or not — `desktop main` starts it when it is not
+  // running and raises it when it is, so one row covers both.
+  if (v.installed) {
+    const sec = el('div', 'secondary');
+    sec.append(row({
+      name: 'the main app',
+      sub: 'no profile · unmanaged',
+      open: v.mainOpen,
+      unknown: !!v.error,
+      title: v.mainOpen
+        ? 'Bring the main Claude Desktop forward'
+        : 'Open the Claude Desktop with no profile behind it',
+      // The same rule as every row above, and it was missing here: an open
+      // window is raised by pid in-process; only a closed one needs the CLI.
+      // Shelling out for a window that already exists also meant relying on
+      // whichever clauderig is INSTALLED — which on this machine was three
+      // releases behind the verb it was being asked for, so the click did
+      // nothing at all.
+      run: () => (v.mainOpen && v.canRaise)
+        ? Call.ByName(DESKTOP_RAISE, v.mainPid)
+        : Call.ByName(DESKTOP_MAIN),
+    }));
+    list.append(sec);
+  }
+
+  // Two different failures, two different sentences. They were one field once,
+  // and the popover told people their process list was unreadable when what had
+  // actually failed was opening the profile store.
+  if (v.error) {
+    list.append(el('div', 'err', 'could not read the process list — open/closed is unknown'));
+  }
+  if (v.storeError) {
+    list.append(el('div', 'err', 'could not read the profile store — profiles are missing from this list'));
+  }
+
+  $('lvl').dataset.level = v.level || '';
+  $('sum').textContent = v.summary || '';
+  fit();
+}
+
+// fit asks the window to be as tall as what was just drawn. A popover listing
+// two profiles should not be a panel sized for six, and only the page knows
+// which it ended up being.
+//
+// Measured from #rows, which is content-sized, and NOT from the scrolling box
+// around it: that box is flex:1, so it has already been stretched to whatever
+// the window is and measuring it asks the window how tall the window is. The
+// first attempt did exactly that and asked for 521px to show four rows.
+function fit() {
+  const head = document.querySelector('.head').getBoundingClientRect().height;
+  const foot = document.querySelector('.foot').getBoundingClientRect().height;
+  const rows = $('rows').getBoundingClientRect().height;
+  Call.ByName(WINDOWS_FIT, 'desktops', Math.ceil(head + foot + rows + 10)).catch(() => {});
+}
+
+async function refresh() {
+  try {
+    render(await Call.ByName(DESKTOP_PANEL));
+  } catch (e) {
+    $('sum').textContent = String(e);
+  }
+}
+
+$('status').addEventListener('click', async () => {
+  await Call.ByName(WINDOWS_OPEN, 'main');
+  await Call.ByName(WINDOWS_HIDE, 'desktops');
+});
+
+// Re-read every time the popover is shown. It is opened from a menu bar click,
+// and the profile that was open ten minutes ago may not be now — a stale list
+// would send a click to launch a window that already exists.
+Events.On('clauderig:shown', refresh);
+refresh();
+</script>
+</body>
+</html>

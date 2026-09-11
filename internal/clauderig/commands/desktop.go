@@ -107,7 +107,12 @@ func raiseOrFocus(app desktop.App, p desktop.Profile) error {
 	// through to Focus here would activate the application with no idea which
 	// window that brings forward — and with two profiles open, reporting
 	// success over the wrong one is worse than saying the scan failed.
-	pids, err := app.Running(p.DataDir())
+	// MainPIDs, not Running: Running matches the profile flag anywhere in a
+	// command line and every Electron helper carries it, so this was as likely
+	// to be handed a renderer as a window. A helper cannot be raised, which is
+	// why the tray menu — which has always listed main processes — worked
+	// better than the same action through this path.
+	pids, err := desktop.MainPIDs(app, p.DataDir())
 	if err != nil {
 		return fmt.Errorf("could not tell which window belongs to %s: %w", p.Name, err)
 	}
