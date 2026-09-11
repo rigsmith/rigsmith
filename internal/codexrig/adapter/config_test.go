@@ -293,7 +293,7 @@ func TestCaptureConfigAppliesPathPolicyToBaseAndProfiles(t *testing.T) {
 	// Refusal in the last profile must discard even the already captured base.
 	putConfig(t, root, "z.config.toml", "unknown = 'C:\\source\\work'")
 	result, err = CaptureConfig(t.Context(), Root{CodexHome, root})
-	if !errors.Is(err, configcodec.ErrPath) || result.Files != nil {
+	if !errors.Is(err, configcodec.ErrUnclassifiedLocalReference) || result.Files != nil {
 		t.Fatalf("path refusal returned a partial batch: %#v %v", result, err)
 	}
 }

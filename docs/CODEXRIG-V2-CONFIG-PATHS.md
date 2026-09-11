@@ -30,16 +30,19 @@ checked September 11, 2026. They do not describe restrictions imposed by Codex.
 ## Unclassified references
 
 Outside omitted fields, decoded TOML keys and string values are checked for
-explicit local references. A match refuses the entire capture with `ErrPath` and
-no partial output. The diagnostic contains no key, source path, or value.
+explicit local references. A match refuses the entire capture with
+`ErrUnclassifiedLocalReference` and no partial output. The diagnostic contains no key, source path, or value.
 
 The same platform-independent checks run on every OS. They recognize rooted
 POSIX and Windows paths, drive-relative Windows paths, UNC/device paths, explicit
 `./` and `../` references, tilde paths, file URIs and shell environment references
 such as `$HOME`, `${ROOT}`, `$env:USERPROFILE` and `%USERPROFILE%`. Path syntax at
 recognized token boundaries in prose is checked too. TOML Unicode escapes are
-decoded first. Normal URL paths are allowed after the existing credential check;
-URL userinfo, queries and fragments still refuse capture.
+decoded first. Normal URL paths, including literal environment-variable text,
+are allowed after the existing credential check. Adjacent local suffixes such as
+`https://example.com,/source/path` remain subject to path refusal. Ambiguous
+URL punctuation followed by local syntax is treated conservatively as a local
+suffix. URL userinfo, queries, fragments and malformed escapes still refuse capture.
 
 This is a conservative tripwire, not a parser for arbitrary prose or new Codex
 schemas. It intentionally leaves ambiguous bare relative strings such as
@@ -53,7 +56,8 @@ remain required; successful capture alone does not authorize publication.
 ## Restore and validation
 
 Incoming local-only settings are rejected with `ErrUnsafeBackup`; unclassified
-references are rejected with `ErrPath`. Destination local values remain intact.
+references are rejected with `ErrUnclassifiedLocalReference`. Destination local
+values remain intact.
 An MCP server, model provider or named agent with protected local descendants
 stays whole, so public backup values cannot rebind a destination command, role
 file or credential. Local arrays containing protected values likewise remain

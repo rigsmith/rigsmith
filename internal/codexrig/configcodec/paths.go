@@ -44,18 +44,29 @@ func localPathField(path []string, key string) bool {
 // move between all supported operating systems. They recognize explicit local
 // references, including in prose, without guessing a meaning for every slash
 // (model IDs, tool names, and repository-relative labels can also contain one).
-var localReference = regexp.MustCompile(`(?i)(^|[\s"'` + "`" + `=(:,;\[<{])(?:[/\\]|[a-z]:|\.\.?[/\\]|~(?:[a-z0-9_.-]+)?(?:[/\\]|$)|file:)`)
-var environmentReference = regexp.MustCompile(`\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}\r\n]+\}|%[A-Za-z_][A-Za-z0-9_]*%`)
+const localReferenceStart = `(?:[/\\]|[a-z]:|\.\.?[/\\]|~(?:[a-z0-9_.-]+)?(?:[/\\]|$)|file:)`
+const environmentReferencePattern = `\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}\r\n]+\}|%[A-Za-z_][A-Za-z0-9_]*%`
+
+var localReference = regexp.MustCompile(`(?i)(^|[\s"'` + "`" + `=(:,;\[<{])` + localReferenceStart)
+var environmentReference = regexp.MustCompile(environmentReferencePattern)
+var urlLocalSuffix = regexp.MustCompile(`(?i)\\|[,;` + "`" + `=(\[{](?:` + localReferenceStart + `|` + environmentReferencePattern + `)`)
 
 func hasLocalReference(value string) bool {
-	// A normal URL's path is remote. File URIs remain local, including opaque
-	// file:relative and single-slash file:/ forms. Credential checks run separately
-	// before this check, so this exemption cannot bypass the secret tripwire.
+	// A normal URL's path is remote, including literal environment syntax in
+	// that path. File URIs remain local. Credential checks run separately before
+	// this check, so this exemption cannot bypass the secret tripwire.
 	withoutURLs := urlInText.ReplaceAllStringFunc(value, func(raw string) string {
 		if strings.HasPrefix(strings.ToLower(raw), "file:") {
 			return raw
 		}
+		// The credential scanner deliberately accepts broad URL-shaped tokens.
+		// For path classification, keep an adjacent local suffix instead of
+		// erasing it with the URL. Ambiguous comma/semicolon-delimited URL paths
+		// are conservatively treated as local when the suffix has local syntax.
+		if suffix := urlLocalSuffix.FindStringIndex(raw); suffix != nil {
+			return " " + raw[suffix[0]:]
+		}
 		return " "
 	})
-	return localReference.MatchString(withoutURLs) || environmentReference.MatchString(value)
+	return localReference.MatchString(withoutURLs) || environmentReference.MatchString(withoutURLs)
 }

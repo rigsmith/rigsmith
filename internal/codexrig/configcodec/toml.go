@@ -17,13 +17,13 @@ const MaxBytes = 1 << 20
 const maxDepth = 64
 
 var (
-	ErrSize         = errors.New("Codex TOML exceeds the configuration size limit")
-	ErrSyntax       = errors.New("invalid Codex TOML configuration")
-	ErrDepth        = errors.New("Codex TOML exceeds the nesting limit")
-	ErrSecret       = errors.New("Codex TOML contains a possible credential outside protected fields")
-	ErrUnsafeBackup = errors.New("Codex TOML backup contains local-only fields")
-	ErrPath         = errors.New("Codex TOML contains an unclassified local path or environment reference")
-	ErrEncode       = errors.New("cannot encode Codex TOML configuration")
+	ErrSize                       = errors.New("Codex TOML exceeds the configuration size limit")
+	ErrSyntax                     = errors.New("invalid Codex TOML configuration")
+	ErrDepth                      = errors.New("Codex TOML exceeds the nesting limit")
+	ErrSecret                     = errors.New("Codex TOML contains a possible credential outside protected fields")
+	ErrUnsafeBackup               = errors.New("Codex TOML backup contains local-only fields")
+	ErrUnclassifiedLocalReference = errors.New("Codex TOML contains an unclassified local path or environment reference")
+	ErrEncode                     = errors.New("cannot encode Codex TOML configuration")
 )
 
 // Capture parses TOML, omits local-only fields, and refuses recognizable secrets
@@ -120,7 +120,7 @@ func sanitize(node any, path []string, depth int) (any, bool, error) {
 				return nil, false, ErrSecret
 			}
 			if hasLocalReference(key) {
-				return nil, false, ErrPath
+				return nil, false, ErrUnclassifiedLocalReference
 			}
 			if referenceHeaders(path) {
 				name, ok := child.(string)
@@ -160,7 +160,7 @@ func sanitize(node any, path []string, depth int) (any, bool, error) {
 			return nil, false, ErrSecret
 		}
 		if hasLocalReference(value) {
-			return nil, false, ErrPath
+			return nil, false, ErrUnclassifiedLocalReference
 		}
 	}
 	return node, false, nil

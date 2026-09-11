@@ -75,10 +75,10 @@ func TestUnclassifiedLocalReferencesRefuseCaptureAndRestore(t *testing.T) {
 				}
 				for _, operation := range []func([]byte) ([]byte, error){Capture, func(b []byte) ([]byte, error) { return Restore(b, nil) }} {
 					got, err := operation(source)
-					if !errors.Is(err, ErrPath) || got != nil {
+					if !errors.Is(err, ErrUnclassifiedLocalReference) || got != nil {
 						t.Fatalf("unclassified path accepted: %s %v", got, err)
 					}
-					if err.Error() != ErrPath.Error() {
+					if err.Error() != ErrUnclassifiedLocalReference.Error() {
 						t.Fatalf("source text in diagnostic: %v", err)
 					}
 				}
@@ -87,7 +87,7 @@ func TestUnclassifiedLocalReferencesRefuseCaptureAndRestore(t *testing.T) {
 	}
 	// TOML escaping is decoded before policy is applied.
 	for _, source := range []string{`unknown = "\u002fsource/path"`, `"\u002fsource/path" = true`, `unknown = "\u0024HOME"`} {
-		if got, err := Capture([]byte(source)); !errors.Is(err, ErrPath) || got != nil {
+		if got, err := Capture([]byte(source)); !errors.Is(err, ErrUnclassifiedLocalReference) || got != nil {
 			t.Fatalf("escaped path accepted: %s %v", got, err)
 		}
 	}
@@ -198,5 +198,54 @@ enabled = true
 	want := map[string]any{"model": "portable", "skills": map[string]any{"max_context_tokens": int64(1000)}, "desktop": map[string]any{}}
 	if !reflect.DeepEqual(document(t, backup), want) {
 		t.Fatalf("partial machine policy or artifact copied: %s", backup)
+	}
+}
+
+func TestURLExemptionKeepsAdjacentLocalReferences(t *testing.T) {
+	for _, suffix := range []string{
+		",/source/path", ";/source/path", ",C:/source/path", `,C:\source\path`,
+		`,\\server\share`, `\source\path`, ",~/config", ",../config", ",file:///tmp/config",
+		",$HOME/config", ";${ROOT}/config", ",%USERPROFILE%/config", "(/source/path)",
+		"[/source/path]", "=/source/path", "`/source/path`",
+	} {
+		t.Run(suffix, func(t *testing.T) {
+			value := "https://example.com/v1" + suffix
+			wantErr := ErrUnclassifiedLocalReference
+			if strings.Contains(suffix, "%USERPROFILE%") {
+				// The existing credential guard rejects malformed URL escapes first.
+				wantErr = ErrSecret
+			}
+			source, err := toml.Marshal(map[string]any{"unknown": value})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, operation := range []func([]byte) ([]byte, error){Capture, func(b []byte) ([]byte, error) { return Restore(b, nil) }} {
+				got, err := operation(source)
+				if got != nil || !errors.Is(err, wantErr) {
+					t.Fatalf("URL swallowed local suffix: %s %v", got, err)
+				}
+			}
+			got, err := Restore([]byte("unknown = 'changed'"), source)
+			if err != nil || !reflect.DeepEqual(document(t, got), document(t, source)) {
+				t.Fatalf("local URL/path value erased: %s %v", got, err)
+			}
+		})
+	}
+}
+
+func TestURLPathsAllowLiteralEnvironmentText(t *testing.T) {
+	for _, value := range []string{
+		"https://example.com/$HOME", "https://example.com/${ROOT}/config", "https://example.com/$env:USERPROFILE",
+		"https://example.com/%25USERPROFILE%25", "https://[::1]:8443/$HOME", "See https://example.com/$HOME for help.",
+		"https://example.com/a,https://example.com/b", "https://example.com/a;b",
+	} {
+		source, err := toml.Marshal(map[string]any{"unknown": value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := Capture(source)
+		if err != nil || !reflect.DeepEqual(document(t, got), document(t, source)) {
+			t.Fatalf("public URL changed: %s %v", got, err)
+		}
 	}
 }
