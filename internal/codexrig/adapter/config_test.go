@@ -268,3 +268,32 @@ func TestCaptureUsesOneSourceChangeSentinel(t *testing.T) {
 		t.Fatalf("content change has wrong identity: %v", err)
 	}
 }
+
+func TestCaptureConfigAppliesPathPolicyToBaseAndProfiles(t *testing.T) {
+	root := t.TempDir()
+	base := "model = 'base'\nmodel_instructions_file = '../local.md'"
+	profile := "model = 'profile'\n[permissions.work.workspace_roots]\n'/source/work' = true"
+	putConfig(t, root, "config.toml", base)
+	putConfig(t, root, "work.config.toml", profile)
+	result, err := CaptureConfig(t.Context(), Root{CodexHome, root})
+	if err != nil || len(result.Files) != 2 {
+		t.Fatalf("capture: %#v %v", result, err)
+	}
+	for _, file := range result.Files {
+		if bytes.Contains(file.Data, []byte("local.md")) || bytes.Contains(file.Data, []byte("/source/work")) {
+			t.Fatalf("source path returned in %s", file.Path)
+		}
+	}
+	for name, want := range map[string]string{"config.toml": base, "work.config.toml": profile} {
+		got, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil || string(got) != want {
+			t.Fatalf("source changed: %v", err)
+		}
+	}
+	// Refusal in the last profile must discard even the already captured base.
+	putConfig(t, root, "z.config.toml", "unknown = 'C:\\source\\work'")
+	result, err = CaptureConfig(t.Context(), Root{CodexHome, root})
+	if !errors.Is(err, configcodec.ErrUnclassifiedLocalReference) || result.Files != nil {
+		t.Fatalf("path refusal returned a partial batch: %#v %v", result, err)
+	}
+}

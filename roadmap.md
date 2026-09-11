@@ -29,8 +29,9 @@ Durable hook admission and recovery merged in [#387](https://github.com/rigsmith
 Opt-in queued Claude hooks and guarded rollback merged in [#388](https://github.com/rigsmith/rigsmith/pull/388).
 The separate Codex source inventory preview merged in [#389](https://github.com/rigsmith/rigsmith/pull/389).
 The TOML codec and secret-preserving restore (8b.1) merged in [#390](https://github.com/rigsmith/rigsmith/pull/390).
-Current work connects that codec to bounded source-file capture (8b.2). Path/restore
-integration, hooks/customizations, independent state and sync wiring still follow.
+Bounded source-file capture (8b.2) merged in [#391](https://github.com/rigsmith/rigsmith/pull/391).
+Current work applies machine-local TOML path policy (8b.3). Guarded restore and
+usable-config validation, hooks/customizations, independent state and sync wiring still follow.
 Actual OS restart/hibernation remains a release gate. Claude sync remains
 synchronous by default; SessionStart pull stays synchronous.
 
@@ -77,7 +78,7 @@ synchronous by default; SessionStart pull stays synchronous.
 | Durable hook producer and recovery (7c.2b.2b.1) | Merged: [#387](https://github.com/rigsmith/rigsmith/pull/387). Save hook requests before admission, recover original attribution/events, and remove only confirmed producer records. |
 | Opt-in hook installation and rollback (7c.2b.2b.2) | Merged: [#388](https://github.com/rigsmith/rigsmith/pull/388). Local hook opt-in, pinned inbox recovery, queue-aware manual sync and checked rollback/re-enable, including retries and destination changes. |
 | Codex foundation (8a) | Merged: [#389](https://github.com/rigsmith/rigsmith/pull/389); separate `codexrig inspect`, source/file policy and synthetic fixtures using the shared allowlist. [Contract](docs/CODEXRIG-V2-FOUNDATION.md). |
-| Codex config portability (8b) | In progress: TOML codec (8b.1) merged in [#390](https://github.com/rigsmith/rigsmith/pull/390); bounded config file capture (8b.2) is in review in [#391](https://github.com/rigsmith/rigsmith/pull/391). Remaining: content path policy, guarded restore, hooks/customizations, independent state/repository and sync/restore commands. [Capture contract](docs/CODEXRIG-V2-CONFIG-CAPTURE.md). |
+| Codex config portability (8b) | In progress: TOML codec (8b.1) merged in [#390](https://github.com/rigsmith/rigsmith/pull/390); bounded config file capture (8b.2) merged in [#391](https://github.com/rigsmith/rigsmith/pull/391). Current: machine-local TOML path policy (8b.3). Remaining: guarded restore/usable-config validation, hooks/customizations, independent state/repository and sync/restore commands. [Path policy](docs/CODEXRIG-V2-CONFIG-PATHS.md). |
 | Codex session portability (8c) | Planned: native artifacts, metadata/search and isolated discovery/resume proof; preserve divergent sessions. |
 | Codex queued sync (8d) | Planned: use shared capture/commit/publication and queue phases through the Codex adapter, then explicit hook opt-in and rollback. |
 | V2 release validation (8e) | Planned: packaging, native platform round trips, actual OS restart/hibernation evidence and supported-version documentation. |

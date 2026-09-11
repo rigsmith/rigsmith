@@ -17,18 +17,20 @@ const MaxBytes = 1 << 20
 const maxDepth = 64
 
 var (
-	ErrSize         = errors.New("Codex TOML exceeds the configuration size limit")
-	ErrSyntax       = errors.New("invalid Codex TOML configuration")
-	ErrDepth        = errors.New("Codex TOML exceeds the nesting limit")
-	ErrSecret       = errors.New("Codex TOML contains a possible credential outside protected fields")
-	ErrUnsafeBackup = errors.New("Codex TOML backup contains local-only fields")
-	ErrEncode       = errors.New("cannot encode Codex TOML configuration")
+	ErrSize                       = errors.New("Codex TOML exceeds the configuration size limit")
+	ErrSyntax                     = errors.New("invalid Codex TOML configuration")
+	ErrDepth                      = errors.New("Codex TOML exceeds the nesting limit")
+	ErrSecret                     = errors.New("Codex TOML contains a possible credential outside protected fields")
+	ErrUnsafeBackup               = errors.New("Codex TOML backup contains local-only fields")
+	ErrUnclassifiedLocalReference = errors.New("Codex TOML contains an unclassified local path or environment reference")
+	ErrEncode                     = errors.New("cannot encode Codex TOML configuration")
 )
 
 // Capture parses TOML, omits local-only fields, and refuses recognizable secrets
 // in remaining keys or values. Comments and formatting are not copied. Unknown
-// non-secret fields and native TOML scalar types are preserved. Arrays containing
-// any omitted field are omitted as a unit; secrets are never matched by index.
+// non-secret fields without explicit local references and native TOML scalar
+// types are preserved. Arrays containing any omitted field are omitted as a unit;
+// secrets are never matched by index.
 // Errors deliberately contain no source text, field names, or parser excerpts.
 func Capture(source []byte) ([]byte, error) {
 	doc, err := parse(source)
@@ -44,12 +46,12 @@ func Capture(source []byte) ([]byte, error) {
 
 // Restore overlays a sanitized backup on local TOML, keeping local-only fields
 // and unknown local additions. It rejects unsanitized backups rather than
-// importing credentials. A local MCP server or model-provider entry containing
-// protected values is kept whole: changing its destination while retaining its
-// credentials is unsafe. A local array with protected descendants is likewise
-// kept whole. A nil local document denotes a fresh machine; omitted fields stay
+// importing credentials. A local MCP server, model-provider, or agent entry
+// containing protected values is kept whole: changing its identity while retaining
+// local credentials or file references is unsafe. A local array with protected
+// descendants is likewise kept whole. A nil local document denotes a fresh machine; omitted fields stay
 // absent and no placeholder is ever written. Output still requires the caller's
-// path policy, config validation, and guarded file replacement before use.
+// config validation and guarded file replacement before use.
 func Restore(backup, local []byte) ([]byte, error) {
 	remote, err := parse(backup)
 	if err != nil {
@@ -117,6 +119,9 @@ func sanitize(node any, path []string, depth int) (any, bool, error) {
 			if suspect(key) {
 				return nil, false, ErrSecret
 			}
+			if hasLocalReference(key) {
+				return nil, false, ErrUnclassifiedLocalReference
+			}
 			if referenceHeaders(path) {
 				name, ok := child.(string)
 				if !ok || !envName.MatchString(name) {
@@ -154,6 +159,9 @@ func sanitize(node any, path []string, depth int) (any, bool, error) {
 		if suspect(value) {
 			return nil, false, ErrSecret
 		}
+		if hasLocalReference(value) {
+			return nil, false, ErrUnclassifiedLocalReference
+		}
 	}
 	return node, false, nil
 }
@@ -190,7 +198,7 @@ func hasProtected(node any, path []string) bool {
 	switch value := node.(type) {
 	case map[string]any:
 		for key, child := range value {
-			if protected(path, key) || suspect(key) || hasProtected(child, descend(path, key)) {
+			if protected(path, key) || suspect(key) || hasLocalReference(key) || hasProtected(child, descend(path, key)) {
 				return true
 			}
 		}
@@ -201,15 +209,16 @@ func hasProtected(node any, path []string) bool {
 			}
 		}
 	case string:
-		return suspect(value)
+		return suspect(value) || hasLocalReference(value)
 	}
 	return false
 }
 
 func merge(remote, local any, path []string) any {
-	// Keyed integration entries have identity; array positions do not. Neither is
-	// a safe place to graft local credentials onto changed remote configuration.
-	integration := len(path) == 2 && (path[0] == "mcp_servers" || path[0] == "model_providers")
+	// Keyed integration and agent entries have identity; array positions do not.
+	// Neither is a safe place to graft local credentials or file references onto
+	// changed remote configuration.
+	integration := len(path) == 2 && (path[0] == "mcp_servers" || path[0] == "model_providers" || path[0] == "agents")
 	_, localArray := local.([]any)
 	if (integration || localArray) && hasProtected(local, path) {
 		return local
@@ -251,6 +260,9 @@ func protected(path []string, key string) bool {
 	// Documented header maps here contain environment variable names, not values.
 	if referenceHeaders(path) {
 		return false
+	}
+	if localPathField(path, key) {
+		return true
 	}
 	k := keyNormalizer.Replace(strings.ToLower(key))
 	switch k {

@@ -10,7 +10,7 @@ The codec handles both base config and named profile TOML without combining them
 
 A structured parse precedes every transform. There is no raw-file fallback.
 TOML scalar types, quoted keys, nested tables, arrays and unknown non-secret
-fields survive re-encoding. Comments and original formatting do not. Each input
+fields without unclassified local references survive re-encoding. Comments and original formatting do not. Each input
 and output is limited to 1 MiB; traversed documents have a 64-level nesting limit.
 Parser/encoder errors are replaced with fixed diagnostics so source excerpts,
 credential-bearing keys and values cannot enter logs.
@@ -43,7 +43,8 @@ payloads are refused, including URLs in prose: these can carry short credentials
 This intentionally also refuses some harmless query parameters. Unknown short
 secrets under innocuous names cannot be identified reliably; this codec is not a
 proof that arbitrary configuration is secret-free. Publication still requires
-adapter path policy and the final backup audit.
+the final backup audit. The [path policy](CODEXRIG-V2-CONFIG-PATHS.md) also
+omits machine-local settings and rejects explicit unclassified local references.
 
 An array with any protected descendant is omitted as a whole. Retaining its
 public elements would lose the identity needed to restore private elements.
@@ -60,7 +61,7 @@ source credential or fabricated null is written on a fresh machine. Arrays with
 local protected descendants stay intact; credentials are never matched by array
 index. A type change cannot erase a protected local subtree.
 
-A local named MCP server or model-provider entry containing any protected value
+A local named MCP server, model-provider or agent entry containing any protected value
 stays intact as a whole, even if the backup changes its public settings. This
 prevents restoring a different endpoint/command alongside existing credentials.
 It also means public changes to such an entry require manual reconciliation.
@@ -69,8 +70,8 @@ conservative merge contract, not an attempt to infer integration identity.
 
 The resulting bytes are not automatically a runnable Codex config. In particular,
 a new machine may still need a command, helper or credentials supplied locally.
-The future file adapter must validate usable configuration, apply path policy,
-and perform coordinated, guarded file replacement. It must never publish the
+The future file adapter must validate usable configuration and perform
+coordinated, guarded file replacement. It must never publish the
 local merged output, which contains destination secrets.
 
 ## Shared mechanics and Claude compatibility
@@ -91,7 +92,8 @@ malformed local input and fuzzed capture/restore idempotence.
 ## Remaining 8b gates
 
 [Bounded source-file capture](CODEXRIG-V2-CONFIG-CAPTURE.md) connects this codec to
-base/profile files in 8b.2. Safe file replacement, complete path policy, structured hook
+base/profile files in 8b.2. [Content path policy](CODEXRIG-V2-CONFIG-PATHS.md)
+applies in 8b.3. Safe file replacement, runnable-config validation, structured hook
 and customization processing, independent CodexRig config/state and backup repo,
 and user-facing sync/restore integration remain to be delivered. This codec does
 not complete milestone 8b or enable sync in the preview.
