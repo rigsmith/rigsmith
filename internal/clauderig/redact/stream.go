@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/internal/agentrig/secrets"
 )
 
 // ScanReader examines the complete text stream with bounded memory. Overlap
@@ -90,7 +92,7 @@ func scanText(rel string, data []byte) *Finding {
 	if HasPrivateKey(normalized) {
 		return &Finding{Path: rel, Kind: "private-key"}
 	}
-	for _, loc := range textSecretRe.FindAllIndex(normalized, -1) {
+	for _, loc := range secrets.TextMatches(normalized) {
 		token := string(normalized[loc[0]:loc[1]])
 		if IsCredentialMatch(token) {
 			return &Finding{Path: rel, Kind: kindOf(token)}

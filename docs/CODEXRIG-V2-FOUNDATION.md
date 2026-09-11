@@ -76,7 +76,9 @@ configuration values or transcript contents were inspected. The earlier
 [assessment](CODEXRIG-ASSESSMENT.md) records version-specific session observations,
 not a public export contract.
 
-Next: structured config capture and secret-preserving restore (8b), then native
+The internal [TOML codec](CODEXRIG-V2-CONFIG-CODEC.md) starts config portability
+(8b.1); it does not change this command or enable file capture. Remaining config
+capture/restore integration (8b) is followed by native
 session preservation and discovery/resume validation (8c), Codex queue/hook
 integration (8d), and packaging/platform release validation (8e). Until those
 land, do not advertise sync, native session recovery or account/Desktop parity.
