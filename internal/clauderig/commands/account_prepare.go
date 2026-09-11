@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -147,16 +148,25 @@ func runPrepare(cmd *cobra.Command, ref string, share, asJSON bool) error {
 	default:
 		return refuse(a, prepareFailed, fmt.Errorf("unexpected session status %q", session))
 	}
-	// The profile is keyed by this account, but its credential may not be —
+	// The profile is keyed by this account, but its identity may not be —
 	// `/login` as someone else inside the session leaves the first account's
 	// name on the directory and the second account's token in it. EnsureSession
 	// (rightly) never clobbers a live profile's token, so it cannot catch this;
-	// a launcher recording "this ran as X" must, before it spawns. The
-	// credential carries no email, so the organization is the comparable half
-	// (the same check `doctor` makes on the machine-wide login).
-	if org, err := st.SessionOrganization(a.ID); err != nil {
+	// a launcher recording "this ran as X" must, before it spawns. Both places
+	// Claude Code records identity are compared where present (see
+	// SessionIdentity for why either can be absent); an absent field is "not
+	// recorded", never "matches", and a present one that disagrees is a refusal.
+	email, org, err := st.SessionIdentity(a.ID)
+	if err != nil {
 		return refuse(a, prepareSessionUnknown, fmt.Errorf("%w: %v", account.ErrSessionUnreadable, err))
-	} else if org != "" && a.OrganizationUUID != "" && org != a.OrganizationUUID {
+	}
+	switch {
+	case email != "" && !strings.EqualFold(email, a.Email):
+		return refuse(a, prepareProfileDesync, fmt.Errorf(
+			"the profile for %s is logged in as %s — someone ran /login as another account inside it; "+
+				"re-run `clauderig account add` for %s while it is your live login, or `account remove` and re-add it",
+			a.Email, email, a.Email))
+	case org != "" && a.OrganizationUUID != "" && org != a.OrganizationUUID:
 		return refuse(a, prepareProfileDesync, fmt.Errorf(
 			"the profile for %s authenticates as organization %s, not %s — someone logged in as another account inside it; "+
 				"re-run `clauderig account add` for %s while it is your live login, or `account remove` and re-add it",

@@ -170,23 +170,46 @@ func (s *Store) SessionStatus(id string) string {
 	}
 }
 
-// SessionOrganization reports which organization the profile's CURRENT
-// credential belongs to — "" when the profile has no usable credential or the
-// blob carries no org. A profile is keyed by account, but nothing stops a user
-// running `/login` as someone else inside it; after that the directory still
-// carries the first account's name and the second account's token. A launcher
-// that records "this ran as X" needs to know before it spawns, so this is
-// exposed for `prepare` to compare against the account it was asked for.
-func (s *Store) SessionOrganization(id string) (string, error) {
-	raw, found, err := readSessionCredential(s.ConfigDir(id))
-	if err != nil || !found {
-		return "", err
+// SessionIdentity is who the profile CURRENTLY authenticates as, from the two
+// places Claude Code records it, each best-effort:
+//
+//   - the credential's organizationUuid — the server-truth half, but the
+//     per-profile Keychain entry Claude Code migrates a profile to carries only
+//     claudeAiOauth (verified on macOS: both real profiles' entries have no
+//     organizationUuid), so on a migrated profile this half is simply absent;
+//   - the profile's own .claude.json → oauthAccount (email + org) — what
+//     Claude Code shows the user, and what `/login` rewrites inside the profile.
+//
+// A profile is keyed by account, but nothing stops a user running `/login` as
+// someone else inside it; after that the directory still carries the first
+// account's name and the second account's identity. A launcher that records
+// "this ran as X" needs to know before it spawns, so this is exposed for
+// `prepare` to compare against the account it was asked for. "" in any field
+// means "not recorded here", never "matches".
+func (s *Store) SessionIdentity(id string) (email, org string, err error) {
+	dir := s.ConfigDir(id)
+	raw, found, err := readSessionCredential(dir)
+	if err != nil {
+		return "", "", err
 	}
-	var b blob
-	if json.Unmarshal(raw, &b) != nil {
-		return "", nil
+	if found {
+		var b blob
+		if json.Unmarshal(raw, &b) == nil {
+			org = b.OrganizationUUID
+		}
 	}
-	return b.OrganizationUUID, nil
+	block, err := readOAuthAccountFrom(filepath.Join(dir, ".claude.json"))
+	if err != nil {
+		return "", "", err
+	}
+	if len(block) > 0 {
+		m := parseOAuthMeta(block)
+		email = m.EmailAddress
+		if org == "" {
+			org = m.OrganizationUUID
+		}
+	}
+	return email, org, nil
 }
 
 // Sentinels EnsureSession wraps, so a caller reporting to a script can name the

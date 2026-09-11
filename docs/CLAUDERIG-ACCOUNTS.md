@@ -176,9 +176,11 @@ clauderig account prepare work --json                        # {"prepared":true,
 (be more specific), `unmapped-directory`, `no-tokens` (the stored credential has
 nothing to seed the profile with; re-run `account add` for it while it is your
 live login), `session-unknown` (the profile's credential could not be read), `profile-desync`
-(the profile authenticates as a different organization than the account named —
-someone ran `/login` as another account inside it; re-`add` the account while it
-is your live login), or `failed` (anything else, including a directory mapping that names an account
+(the profile is logged in as a different account than the one named — someone
+ran `/login` as another account inside it; re-`add` the account while it is your
+live login. Checked from both the credential's organization and the profile's
+own `.claude.json` identity block, each where present: on macOS the per-profile
+Keychain entry carries no organization, so the block is the half that catches it), or `failed` (anything else, including a directory mapping that names an account
 which no longer exists) — and set a non-zero exit code. A refusal never includes
 a `configDir`, and a success always reports `session: ok` — a profile that reads
 back as anything else after preparation is refused with the matching reason.

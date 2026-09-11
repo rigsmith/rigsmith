@@ -322,6 +322,49 @@ func TestPrepareRefusesAProfileReLoggedAsAnotherAccount(t *testing.T) {
 	}
 }
 
+// On macOS the per-profile Keychain entry carries no organization, so the
+// credential half of the identity check is absent on every migrated profile.
+// The profile's own .claude.json → oauthAccount is the half that IS there, and
+// it is what `/login` rewrites — so it must catch the re-login on its own.
+func TestPrepareRefusesWhenTheProfileIdentityBlockNamesAnotherAccount(t *testing.T) {
+	st := prepareFixture(t)
+	dir := st.ConfigDir("w-x-com")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The credential says nothing about who it is (the Keychain shape).
+	cred, _ := json.Marshal(map[string]any{"claudeAiOauth": map[string]any{"accessToken": "acc-w", "refreshToken": "ref-w"}})
+	if err := os.WriteFile(filepath.Join(dir, ".credentials.json"), cred, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	block := `{"numStartups":3,"oauthAccount":{"emailAddress":"someone@else.com","organizationUuid":"org-else"}}`
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := runPrepareCmd(t, "w@x.com", "--json")
+	if err == nil {
+		t.Fatal("a profile whose identity block names another account was handed to the launcher")
+	}
+	got := decodePrepare(t, out)
+	if got.Reason != prepareProfileDesync {
+		t.Errorf("reason = %q, want %q", got.Reason, prepareProfileDesync)
+	}
+	if !strings.Contains(got.Message, "someone@else.com") {
+		t.Errorf("message should name who the profile is logged in as, got %q", got.Message)
+	}
+
+	// And a block that AGREES is not a refusal — the check must not fire on
+	// the normal case where the credential carries no org at all.
+	agree := `{"oauthAccount":{"emailAddress":"w@x.com","organizationUuid":"org-w"}}`
+	if err := os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(agree), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, err := runPrepareCmd(t, "w@x.com", "--json"); err != nil {
+		t.Fatalf("an agreeing identity block was refused: %v\nstderr: %s", err, errOut)
+	}
+}
+
 // A credential file that exists but cannot be read is "unknown", not "no
 // tokens": treating it as absent would let EnsureSession seed over a credential
 // it never saw.
