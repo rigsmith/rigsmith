@@ -65,9 +65,21 @@ func Scan(dir string) (Report, error) {
 			}
 			return nil
 		}
+		// A part is the inside of the rollout whose index sits beside it, and
+		// that index is counted at the conversation's size — so the part
+		// itself counts for nothing, or the session would be counted twice
+		// and the index would be counted as a few hundred bytes.
+		if rolloutstore.IsPartPath(rel) {
+			return nil
+		}
 		info, ierr := d.Info()
 		if ierr != nil {
 			return nil
+		}
+		if _, rest, ok := strings.Cut(rel, "/"); ok && rollout.IsRolloutRel(rest) {
+			if logical, serr := rolloutstore.Stat(p); serr == nil {
+				info = logical
+			}
 		}
 		name, detail := classify(rel)
 		g := byName[name]

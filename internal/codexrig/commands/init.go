@@ -37,6 +37,12 @@ func NewInitCmd() *cobra.Command {
 				name = config.ResolveName(cfg)
 			}
 			me := config.Detect(name)
+			// Detect knows the host, not the config: the entry it is about to
+			// replace may carry custom folder tokens, which nothing else in
+			// the tool writes and a re-run of init would otherwise erase.
+			if known, ok := cfg.Machines[me.Name]; ok && len(known.Tokens) > 0 {
+				me.Tokens = known.Tokens
+			}
 
 			asked := false
 			if !yes && interactive() && remote == "" {

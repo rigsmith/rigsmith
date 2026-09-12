@@ -48,3 +48,51 @@ func TestDefaultHasNoOpinionOnChunking(t *testing.T) {
 		t.Fatal("Default() sets chunkRollouts explicitly, so a new machine can never follow what the repo already does")
 	}
 }
+
+// Machine.Tokens exists solely to be configured — nothing else writes it — and
+// DetectFor used to rebuild the machine from the host with the name alone, so
+// the tokens never reached Folders() and every command portablized against
+// HOME only.
+func TestDetectForCarriesTheConfiguredMachinesTokens(t *testing.T) {
+	cfg := Default()
+	me := Detect("")
+	me.Name = "here"
+	me.Tokens = map[string]string{"PROJECTS": "/srv/projects"}
+	cfg.Machines["here"] = me
+	got := DetectFor(cfg)
+	if got.Name != "here" {
+		t.Skipf("this host did not resolve to the configured machine (%q); the token overlay is keyed on that", got.Name)
+	}
+	if got.Folders()["PROJECTS"] != "/srv/projects" {
+		t.Errorf("Folders() = %v, the configured token is missing", got.Folders())
+	}
+}
+
+// The tokens DetectFor hands out are a copy: a caller that edits them must not
+// be editing the config they came from.
+func TestDetectForHandsOutACopyOfTheTokens(t *testing.T) {
+	cfg := Default()
+	me := Detect("")
+	me.Name = "here"
+	me.Tokens = map[string]string{"PROJECTS": "/srv/projects"}
+	cfg.Machines["here"] = me
+	got := DetectFor(cfg)
+	if got.Name != "here" {
+		t.Skipf("this host did not resolve to the configured machine (%q)", got.Name)
+	}
+	got.Tokens["PROJECTS"] = "/elsewhere"
+	if cfg.Machines["here"].Tokens["PROJECTS"] != "/srv/projects" {
+		t.Error("editing the detected machine's tokens edited the config")
+	}
+}
+
+// HOME is detected, never configured. A token by that name would redirect
+// every $HOME template — the default root, and so the restore target — to
+// wherever config.json said.
+func TestATokenNamedHomeCannotRedirectTheDetectedHome(t *testing.T) {
+	m := Machine{Name: "x", OS: "macos", Home: "/Users/real", Tokens: map[string]string{"home": "/other", "HOME": "/elsewhere", "PROJECTS": "/srv"}}
+	f := m.Folders()
+	if f["HOME"] != "/Users/real" || f["PROJECTS"] != "/srv" {
+		t.Errorf("Folders() = %v", f)
+	}
+}

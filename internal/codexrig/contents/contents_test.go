@@ -1,9 +1,12 @@
 package contents
 
 import (
+	"bytes"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func file(t *testing.T, root, rel string, size int) {
@@ -105,5 +108,40 @@ func TestAnEmptyRepoScansCleanly(t *testing.T) {
 	}
 	if len(rep.Fold().Groups) != 0 {
 		t.Error("folding an empty report invented a group")
+	}
+}
+
+// A chunked rollout is one conversation. Counting its parts as files and its
+// index at a few hundred bytes reported a 172 MB session as a handful of 4 MiB
+// config files and one tiny session.
+func TestScanCountsAChunkedRolloutOnceAtItsLogicalSize(t *testing.T) {
+	dir := t.TempDir()
+	rel := "cli/sessions/2026/09/05/rollout-2026-09-05T11-22-59-01a0722a-7356-7592-922a-336289bdc101.jsonl"
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.Repeat([]byte(`{"type":"response_item","payload":{"text":"yyyyyyyy"}}`+"\n"), 200000)
+	if err := rolloutstore.Write(p, bytes.NewReader(body), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Scan(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sessions *Group
+	for i := range rep.Groups {
+		if rep.Groups[i].Name == "sessions" {
+			sessions = &rep.Groups[i]
+		}
+	}
+	if sessions == nil {
+		t.Fatalf("no sessions group: %+v", rep.Groups)
+	}
+	if sessions.Files != 1 || sessions.Bytes != int64(len(body)) {
+		t.Errorf("sessions = %d files, %d bytes; want 1 file of %d", sessions.Files, sessions.Bytes, len(body))
+	}
+	if rep.Files != 1 || rep.Bytes != int64(len(body)) {
+		t.Errorf("total = %d files, %d bytes; want the conversation counted once", rep.Files, rep.Bytes)
 	}
 }

@@ -38,6 +38,11 @@ type Client struct {
 	out  *bufio.Reader
 	mu   sync.Mutex
 	next int
+	// dead is set once a reply missed its deadline. The reader goroutine may
+	// still deliver that reply later, into a buffer nobody drains, and every
+	// later exchange would be reading one message behind — so a client that
+	// has timed out once refuses further calls rather than answer wrongly.
+	dead error
 }
 
 // Available reports whether the Codex CLI is on PATH at all.
@@ -118,6 +123,9 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	// for an answer that has already gone by.
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.dead != nil {
+		return nil, fmt.Errorf("codex app-server client is out of step after an earlier timeout (%v); close it and start another", c.dead)
+	}
 	c.next++
 	id := c.next
 
@@ -134,10 +142,26 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
 		deadline = dl
 	}
+	res, err := c.await(id, method, deadline)
+	var refused *serverError
+	if errors.As(err, &refused) {
+		return nil, err
+	}
+	if err != nil {
+		// Whichever way the wait failed — the server closed, a line never
+		// finished, or lines kept coming and none was the answer — the answer
+		// may yet arrive after this caller has gone, into a buffer nobody
+		// drains, and the next exchange would read it as its own. One place
+		// retires the client for all of them.
+		c.dead = err
+		return nil, err
+	}
+	return res, nil
+}
+
+// await reads replies until the one for id, or the deadline.
+func (c *Client) await(id int, method string, deadline time.Time) (json.RawMessage, error) {
 	for time.Now().Before(deadline) {
-		// ReadString has no deadline of its own, and a server that stops
-		// mid-line would hold this forever — the clock is only consulted
-		// between complete lines. Read on a goroutine and race the clock.
 		line, err := c.readLine(time.Until(deadline))
 		if err != nil {
 			return nil, fmt.Errorf("codex app-server closed: %w", err)
@@ -160,12 +184,17 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 			continue
 		}
 		if msg.Error != nil {
-			return nil, fmt.Errorf("%s: %s", method, msg.Error.Message)
+			return nil, &serverError{fmt.Errorf("%s: %s", method, msg.Error.Message)}
 		}
 		return msg.Result, nil
 	}
-	return nil, fmt.Errorf("%s: no answer from codex app-server", method)
+	return nil, fmt.Errorf("%s: no answer from codex app-server before the deadline", method)
 }
+
+// serverError is an answer — the server said no — and leaves the client in step.
+type serverError struct{ error }
+
+var errDeadline = errors.New("no reply before the deadline")
 
 // readLine is c.out.ReadString with a deadline. A line that arrives after the
 // deadline is dropped by the buffered channel; the client is then out of step
@@ -184,7 +213,7 @@ func (c *Client) readLine(within time.Duration) (string, error) {
 	case r := <-ch:
 		return r.line, r.err
 	case <-time.After(within):
-		return "", errors.New("no reply before the deadline")
+		return "", errDeadline
 	}
 }
 

@@ -259,3 +259,12 @@ func TestUnresolvedNameIsTheHistoricalGhost(t *testing.T) {
 		t.Fatalf("UnresolvedName = %q; the June 2026 ghost was named %q", UnresolvedName, "this")
 	}
 }
+
+// HOME is detected, never configured — a token by that name would redirect
+// every $HOME template, including the restore target.
+func TestATokenNamedHomeCannotRedirectTheDetectedHome(t *testing.T) {
+	m := Machine{Name: "x", OS: "macos", Home: "/Users/real", Tokens: map[string]string{"HOME": "/elsewhere", "PROJECTS": "/srv"}}
+	if f := m.Folders(); f["HOME"] != "/Users/real" || f["PROJECTS"] != "/srv" {
+		t.Errorf("Folders() = %v", f)
+	}
+}

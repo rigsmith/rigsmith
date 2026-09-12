@@ -110,6 +110,15 @@ func TestAnUnterminatedReplyStillHonoursTheDeadline(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Call did not return after its deadline")
 	}
+	// The client is now one message behind its server. A later call must
+	// refuse immediately rather than read the stale reply as its own.
+	start := time.Now()
+	if _, err := c.Call(context.Background(), "again", nil); err == nil || !strings.Contains(err.Error(), "out of step") {
+		t.Errorf("a timed-out client accepted another call: %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Error("the refusal waited instead of answering at once")
+	}
 }
 
 func itoa(n int) string {
@@ -119,4 +128,24 @@ func itoa(n int) string {
 func intToString(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
+}
+
+// Complete lines that are never the answer — notifications, other ids — run
+// the loop to its deadline. That leaves the client out of step exactly as a
+// half line does: the answer may yet arrive, and the next call would take it.
+func TestATimeoutOnWrongIdLinesAlsoRetiresTheClient(t *testing.T) {
+	c := fakeServer(t, func(id int, method string, w io.Writer) {
+		for i := 0; i < 50; i++ {
+			_, _ = io.WriteString(w, `{"id":999,"result":{}}`+"\n")
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	if _, err := c.Call(ctx, "noise", nil); err == nil {
+		t.Fatal("a stream of somebody else's replies was accepted as an answer")
+	}
+	if _, err := c.Call(context.Background(), "again", nil); err == nil || !strings.Contains(err.Error(), "out of step") {
+		t.Errorf("the client was reused after timing out on complete lines: %v", err)
+	}
 }

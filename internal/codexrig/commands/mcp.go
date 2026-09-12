@@ -92,10 +92,12 @@ func newMCPListCmd() *cobra.Command {
 }
 
 func newMCPGetCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "get <name>",
-		Short: "Show one server in full",
-		Args:  cobra.ExactArgs(1),
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:          "get <name>",
+		Short:        "Show one server in full",
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true, // stdout may carry exactly one JSON object; a usage block after it is not an object
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			entries, err := loadServers()
@@ -105,6 +107,9 @@ func newMCPGetCmd() *cobra.Command {
 			for _, e := range entries {
 				if e.Name != args[0] {
 					continue
+				}
+				if asJSON {
+					return writeJSON(out, forDisplay([]mcp.Entry{e})[0])
 				}
 				fmt.Fprintf(out, "%s\n", HeaderStyle.Render(e.Name))
 				fmt.Fprintf(out, "  %-10s %s\n", "transport", e.Transport())
@@ -124,9 +129,19 @@ func newMCPGetCmd() *cobra.Command {
 				printNeeds(cmd, e)
 				return nil
 			}
+			if asJSON {
+				// One object on stdout even in refusal, so a launcher never has
+				// to parse an error message to learn there is nothing to parse.
+				if err := writeJSON(out, map[string]any{"found": false, "name": args[0], "message": fmt.Sprintf("no MCP server named %q", args[0])}); err != nil {
+					return err
+				}
+				return errCheckFailed
+			}
 			return fmt.Errorf("no MCP server named %q", args[0])
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the server as JSON, the same object `list --json` uses")
+	return cmd
 }
 
 func printNeeds(cmd *cobra.Command, e mcp.Entry) {

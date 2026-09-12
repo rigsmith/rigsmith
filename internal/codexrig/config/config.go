@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/confkit"
@@ -59,6 +60,12 @@ type Machine struct {
 func (m Machine) Folders() pathmap.MapFolders {
 	f := pathmap.MapFolders{"HOME": m.Home}
 	for k, v := range m.Tokens {
+		// HOME is detected, never configured: a token by that name would
+		// redirect every $HOME template — the default root, and so the
+		// restore target — to wherever config.json said.
+		if strings.EqualFold(k, "HOME") {
+			continue
+		}
 		f[k] = v
 	}
 	return f
@@ -241,8 +248,28 @@ func Detect(name string) Machine {
 	return Machine{Name: name, OS: OSToken(), Home: home}
 }
 
-// DetectFor builds a Machine for this host, named by ResolveName.
-func DetectFor(cfg *Config) Machine { return Detect(ResolveName(cfg)) }
+// DetectFor is Detect for a machine this config may already know about: the
+// live OS and home, plus the custom folder tokens the config entry records.
+//
+// It used to be Detect(ResolveName(cfg)), which took only the NAME from the
+// config and rebuilt everything else from the host — so Machine.Tokens, the one
+// field that exists solely to be configured, never reached Folders(), and
+// every command portablized against HOME alone. clauderig had the same hole.
+func DetectFor(cfg *Config) Machine {
+	name := ResolveName(cfg)
+	m := Detect(name)
+	if cfg != nil {
+		if known, ok := cfg.Machines[name]; ok && len(known.Tokens) > 0 {
+			// A copy: the caller may edit what it was handed, and sharing the
+			// map would edit the config it came from.
+			m.Tokens = make(map[string]string, len(known.Tokens))
+			for k, v := range known.Tokens {
+				m.Tokens[k] = v
+			}
+		}
+	}
+	return m
+}
 
 // UnresolvedName is the placeholder used when this machine has no stable
 // identity — no matching config entry and no usable hostname. Anything that

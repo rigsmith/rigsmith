@@ -155,3 +155,24 @@ func TestRunRefusesExtraArgumentsBeforeTheDash(t *testing.T) {
 	}
 	_ = account.ErrNoAccounts
 }
+
+// `switch --json` is the third contract launchers read. --dry-run keeps it off
+// the live credential, so the shape can be pinned without a codex install.
+func TestSwitchJSONHasTheStableShape(t *testing.T) {
+	s, _ := twoAccounts(t)
+	alice, err := s.Resolve("alice@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := run(t, "switch", "--json", "--dry-run", alice.ID)
+	if err != nil {
+		t.Fatalf("switch --dry-run: %v\n%s", err, stdout)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v\n%q", err, stdout)
+	}
+	if doc["to"] != alice.ID || doc["dryRun"] != true || doc["switched"] != false {
+		t.Errorf("object = %v, want to=%s dryRun=true switched=false", doc, alice.ID)
+	}
+}
