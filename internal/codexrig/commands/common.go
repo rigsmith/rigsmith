@@ -48,3 +48,7 @@ func runInteractive(argv []string) error {
 	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return c.Run()
 }
+
+// homeDir is os.UserHomeDir, held behind a name so display helpers do not each
+// import os for one call.
+func homeDir() (string, error) { return os.UserHomeDir() }

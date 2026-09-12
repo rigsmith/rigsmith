@@ -21,7 +21,21 @@ func NewRootCmd(version string) *cobra.Command {
 	}
 
 	root.AddCommand(
+		NewInitCmd(),
+		NewSyncCmd(),
+		NewPullCmd(),
+		NewRestoreCmd(),
+		NewStatusCmd(),
+		NewSearchCmd(),
+		NewRecentCmd(),
+		NewGuardCmd(),
+		NewGuideCmd(),
+		NewDoctorCmd(version),
+		NewConfigCmd(),
+		NewMCPCmd(),
 		NewAccountCmd(),
+		NewUICmd(),
 	)
+	root.AddCommand(ScopeCommands()...)
 	return root
 }
