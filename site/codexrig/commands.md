@@ -32,6 +32,13 @@ prompts and rules that were deleted elsewhere.
 | `codexrig account disable <ref>` | Hold it out of automatic selection. |
 | `codexrig account doctor` | Check the live login and codexrig's record agree. |
 | `codexrig account sessions` | Which Codex processes are running. |
+| `codexrig account map [ref] [dir]` | Bind a directory to an account. |
+| `codexrig account unmap [dir]` | Remove that binding. |
+
+A bound directory answers a bare reference, and the nearest binding wins — so one
+binding on a repository covers every worktree under it. With several accounts and
+no binding, the refusal is `unmapped-directory`, which is something a launcher can
+act on rather than a generic failure.
 
 `prepare` is the machine-readable half of `run`: stdout carries the directory and
 nothing else, so it can be captured directly.
@@ -65,10 +72,19 @@ keeps its own formatting.
 |---|---|
 | `codexrig recent [text]` | What you were working on lately. |
 | `codexrig search <text>` | Find a session by what was said in it. |
+| `codexrig ledger` | What is remembered, including sessions that have aged out. |
+| `codexrig peek list` | Sessions in the repo, whichever machine put them there. |
+| `codexrig peek show <id>` | Print one, straight from the git object store. |
+| `codexrig peek get <id>` | Copy one onto this machine so `codex resume` can open it. |
 
-Both take `--since`, `--until`, `--cwd`, `--limit`, `--live`, `--repo` and
-`--json`. A session found only in the backup says so: `codex resume` reads your
-own Codex home, so it has to be restored first.
+`recent` and `search` take `--since`, `--until`, `--cwd`, `--limit`, `--live`,
+`--repo` and `--json`. A session found only in the backup says so: `codex resume`
+reads your own Codex home, so it has to be restored first — `peek get` is the
+quick way to bring one across without restoring anything else.
+
+A session whose rollout has aged out of the retention window is still listed,
+marked as remembered rather than resumable, with the `git log` command that
+recovers its body from history.
 
 ## Configuration
 
@@ -77,6 +93,7 @@ own Codex home, so it has to be restored first.
 | `remote` | The private git repo this machine syncs to. |
 | `syncSessions` | Carry session rollouts as well as configuration. |
 | `redactTranscripts` | Scrub credential-shaped tokens out of staged rollouts. |
+| `chunkRollouts` | Store a large rollout as parts, so an append costs a chunk not a copy. |
 | `autoRestore` | Restore automatically on a machine with no Codex setup. |
 | `alwaysPrune` | Make `restore` prune by default. |
 | `hookIntervalMinutes` | How long a hook-driven sync waits before working again. |
@@ -91,6 +108,10 @@ codexrig config edit
 
 | Command | What it does |
 |---|---|
+| `codexrig repo status` | What the backup holds, by category and size. |
+| `codexrig repo gc` | Repack the history. Loses nothing, usually reclaims a lot. |
+| `codexrig device list` | The machines syncing into this repo. |
+| `codexrig device forget <name>` | Drop a machine's entry. Its files stay. |
 | `codexrig guide install` | Write codexrig's blocks into `AGENTS.md`. |
 | `codexrig mcp list` | Which MCP servers survive a restore, and what each needs. |
 | `codexrig ui` | The interactive dashboard, which a bare `codexrig` opens. |

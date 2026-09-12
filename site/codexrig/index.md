@@ -45,6 +45,12 @@ carrying them is a backup rather than portability, and that is a choice worth
 making deliberately. A rollout is never rewritten: it is a conversation, not a
 config file, so it travels byte for byte.
 
+Large ones are stored as content-addressed parts, which matters more than it
+sounds. The biggest rollout on the machine this was built against is 172 MB — over
+the default per-file cap, so without that it is the one conversation never backed
+up at all. Chunked, it becomes 44 parts and a 4 KB index, and one more turn
+rewrites one of them.
+
 ## Getting set up
 
 ```sh

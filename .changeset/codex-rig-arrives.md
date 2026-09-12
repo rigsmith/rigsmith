@@ -24,4 +24,10 @@ Your login is never in the backup. `auth.json` is excluded, and a value that loo
 
 Three things differ from claudeRig because Codex differs, and each would have failed quietly if ported straight across. Codex writes absolute paths as TOML table *keys* (`[projects."/Users/you/Git/thing"]`), so a rewriter that walks only values leaves a restored config trusting a directory that does not exist. Codex's configuration is TOML, so it goes through a real codec rather than a second suffix test — a raw-file path would carry `config.toml` past field-level redaction entirely. And a rollout records its working directory *inside* the conversation, so codexRig never rewrites one: `codex resume --cd` is the answer when a directory moved.
 
+**Large conversations.** A rollout past 8 MiB is stored in the repo as content-addressed parts rather than as one blob, so adding a turn costs a chunk instead of a copy. This matters more than it sounds: the biggest rollout on the machine this was built against is 172 MB, which is over the default per-file cap — so without it, the longest conversation you have is the one thing never backed up. Chunked, it becomes 44 parts and a 4 KB index, and one more turn rewrites one of them.
+
+`codexrig peek` reads another machine's session straight out of the repo without restoring anything, and `peek get` copies just that one session onto this machine. `codexrig ledger` remembers a session after its body ages out of the retention window, so a search for an old conversation says "this existed, and here is the command that recovers it" rather than nothing. `codexrig repo status` says what the backup holds by category, because a byte total on its own points at the wrong lever.
+
+`codexrig account map <account>` binds a directory, so a bare `account run` anywhere under it picks that login.
+
 `codexrig doctor` is where the quiet failures become sentences, and `docs/CODEXRIG-PARITY.md` lists, feature by feature, what is built and what is not.

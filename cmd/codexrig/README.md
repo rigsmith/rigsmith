@@ -30,13 +30,16 @@ Full docs: <https://rigsmith.dev/codexrig/>
 | `internal/codexrig/codec` | The JSON and TOML codecs the engine dispatches on. |
 | `internal/codexrig/engine` | Capture and restore. |
 | `internal/codexrig/rollout` | Reading Codex's session files, always bounded. |
+| `internal/codexrig/rolloutstore` | How a large rollout is stored in the REPO: content-addressed parts. |
+| `internal/codexrig/ledger` | Remembering a session after its body ages out. |
+| `internal/codexrig/peek` | Reading another machine's session from the git object store. |
 | `internal/codexrig/account` | Several logins, each in its own `CODEX_HOME`. |
 | `internal/codexrig/hooks` | Installing into Codex's lifecycle, and getting trusted. |
 | `internal/codexrig/appserver` | A small JSON-RPC client, for the few things Codex should be asked. |
 | `internal/codexrig/guard` | The PreToolUse hook. |
 | `internal/agentrig/*` | Shared with clauderig: the secret scanner, the allowlist matcher, the private-remote gate. |
 
-## Five things worth knowing before changing any of it
+## Six things worth knowing before changing any of it
 
 Each of these was established by asking Codex or by a test failing, not by
 reading documentation, and each is the kind of thing that fails silently.
@@ -69,6 +72,15 @@ of that file is a working login. It is excluded from the allowlist, excluded
 again by name in the tests, and never copied anywhere but an account's own
 directory.
 
+**One conversation can be most of the backup.** On the machine this was built
+against, 59 rollouts total 215 MB and a single session is 172 MB of it, against a
+median of 0.05 MB. Two consequences run through the engine: a rollout past 8 MiB
+is stored as content-addressed parts so an append costs a chunk rather than a
+copy, and such a rollout is exempt from the per-file size cap — without the
+exemption the biggest conversation on a machine is the one thing never backed up.
+Every reader goes through `rolloutstore.Open`, so nothing else knows which
+representation it has.
+
 ## Tests
 
 ```sh
@@ -78,11 +90,21 @@ go test ./internal/codexrig/... ./internal/agentrig/...
 Two suites are gated, because they need things a CI runner does not have:
 
 ```sh
-CODEXRIG_LIVE_CODEX=1 go test ./internal/codexrig/hooks/    # needs the codex binary
-CODEXRIG_REAL_DATA=1  go test ./internal/codexrig/rollout/  # reads this machine's own sessions
+CODEXRIG_LIVE_CODEX=1 go test ./internal/codexrig/hooks/        # needs the codex binary
+CODEXRIG_REAL_DATA=1  go test ./internal/codexrig/rollout/...   # reads this machine's own sessions
+CODEXRIG_E2E=1        go test ./internal/codexrig/e2e/          # pushes and clones a local bare remote
 ```
 
 The live hook test is the one that matters most: it installs hooks into a
 temporary `CODEX_HOME`, asks a real `codex app-server` whether it can see them,
 trusts them, and asks again. Nothing but a running Codex can notice when one of
 the facts above changes.
+
+The end-to-end suite carries the other two that cannot be faked: byte
+preservation through a real push and clone under a hostile global
+`.gitattributes`, and reconstructing a chunked rollout from that clone — which
+cannot pass if a single byte moved.
+
+Two of these tests were written twice, and both times the first version passed
+against the bug it was meant to catch. If you add one here, break the code on
+purpose and check that it notices.
