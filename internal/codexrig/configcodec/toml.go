@@ -50,8 +50,9 @@ func Capture(source []byte) ([]byte, error) {
 // containing protected values is kept whole: changing its identity while retaining
 // local credentials or file references is unsafe. A local array with protected
 // descendants is likewise kept whole. A nil local document denotes a fresh machine; omitted fields stay
-// absent and no placeholder is ever written. Output still requires the caller's
-// config validation and guarded file replacement before use.
+// absent and no placeholder is ever written. Output still requires guarded restore
+// preparation and file application before use; additional caller validation is
+// optional. This codec does not validate Codex runtime semantics.
 func Restore(backup, local []byte) ([]byte, error) {
 	remote, err := parse(backup)
 	if err != nil {
