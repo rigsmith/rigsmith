@@ -30,53 +30,59 @@ func readWindowsMarkerWithRead(path string, timeout time.Duration, read func(str
 	}
 }
 
-func TestWindowsMarkerSharingViolation(t *testing.T) {
+func TestWindowsMarkerTransientReads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "marker")
 	if err := os.WriteFile(path, []byte("123"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	name, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handle, err := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if handle != windows.InvalidHandle {
-			windows.CloseHandle(handle)
-		}
-	}()
-	// An actual incompatible handle must remain an error if it outlives readiness.
-	if _, err := readWindowsMarker(path, 25*time.Millisecond); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
-		t.Fatal("held marker was accepted", err)
-	}
-	// Observe a real failed read before releasing the handle. Keeping this in
-	// the read callback removes goroutine/timer scheduling from the proof.
+	sharing := &os.PathError{Op: "open", Path: path, Err: windows.ERROR_SHARING_VIOLATION}
 	attempts := 0
 	data, err := readWindowsMarkerWithRead(path, time.Second, func(path string) ([]byte, error) {
 		attempts++
+		if attempts == 1 {
+			return nil, sharing
+		}
+		return os.ReadFile(path)
+	})
+	if err != nil || string(data) != "123" || attempts < 2 {
+		t.Fatal("marker was not retried after sharing violation", attempts, err)
+	}
+	// A persistent transient error must survive the readiness deadline.
+	if _, err := readWindowsMarkerWithRead(path, 25*time.Millisecond, func(string) ([]byte, error) {
+		return nil, sharing
+	}); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+		t.Fatal("persistent sharing violation was accepted", err)
+	}
+	// Other failures must return immediately rather than exhaust the deadline.
+	attempts = 0
+	denied := &os.PathError{Op: "open", Path: path, Err: windows.ERROR_ACCESS_DENIED}
+	if _, err := readWindowsMarkerWithRead(path, time.Second, func(string) ([]byte, error) {
+		attempts++
+		return nil, denied
+	}); !errors.Is(err, windows.ERROR_ACCESS_DENIED) || attempts != 1 {
+		t.Fatal("non-transient failure was retried or lost", attempts, err)
+	}
+	// Exercise missing-file recovery with real reads and publication. Publish
+	// only after the first failed read, so no goroutine scheduling is involved.
+	missing := path + ".missing"
+	attempts = 0
+	data, err = readWindowsMarkerWithRead(missing, time.Second, func(path string) ([]byte, error) {
+		attempts++
 		data, err := os.ReadFile(path)
 		if attempts == 1 {
-			if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
-				t.Fatal("first read did not observe incompatible handle", err)
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("first read did not observe missing marker", err)
 			}
-			if closeErr := windows.CloseHandle(handle); closeErr != nil {
-				t.Fatal(closeErr)
+			if writeErr := os.WriteFile(path, []byte("456"), 0600); writeErr != nil {
+				t.Fatal(writeErr)
 			}
-			handle = windows.InvalidHandle
 		}
 		return data, err
 	})
-	if err != nil || string(data) != "123" || attempts < 2 {
-		t.Fatal("marker was not retried after handle closed", attempts, err)
+	if err != nil || string(data) != "456" || attempts < 2 {
+		t.Fatal("newly published marker was not read", attempts, err)
 	}
-	// A non-transient error must remain identifiable, and missing markers time out.
-	if _, err := readWindowsMarker("\x00", time.Second); err == nil || errors.Is(err, os.ErrNotExist) || errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
-		t.Fatal("invalid name error changed", err)
-	}
-	if _, err := readWindowsMarker(path+".missing", 25*time.Millisecond); !errors.Is(err, os.ErrNotExist) {
+	if _, err := readWindowsMarker(path+".absent", 25*time.Millisecond); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("missing marker was accepted", err)
 	}
 }
