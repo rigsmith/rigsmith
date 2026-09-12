@@ -26,6 +26,18 @@ func have(bin string) bool { _, err := exec.LookPath(bin); return err == nil }
 
 // parseRemote extracts the host and owner/repo path from a git remote URL
 // (ssh, https, or ssh://). The slug may contain GitLab subgroups (a/b/c).
+// stripUserinfo removes any user[:password]@ from a URL authority. A git remote
+// may legitimately carry a token that way, and leaving it attached broke two
+// things at once: the host no longer equalled "github.com", so a perfectly
+// ordinary tokenised remote was refused as an unsupported host; and the token
+// then travelled into the refusal text.
+func stripUserinfo(authority string) string {
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		return authority[at+1:]
+	}
+	return authority
+}
+
 func parseRemote(remote string) (host, slug string, ok bool) {
 	s := strings.TrimSpace(remote)
 	var rest string
@@ -43,7 +55,7 @@ func parseRemote(remote string) (host, slug string, ok bool) {
 		if i < 0 {
 			return "", "", false
 		}
-		host, rest = s[:i], s[i+1:]
+		host, rest = stripUserinfo(s[:i]), s[i+1:]
 	case strings.HasPrefix(s, "ssh://git@"):
 		s = strings.TrimPrefix(s, "ssh://git@")
 		i := strings.IndexByte(s, '/')
@@ -103,13 +115,30 @@ func CreatePrivate(ctx context.Context, name string) (httpsURL string, err error
 	return strings.TrimSpace(url), nil
 }
 
+// safeRemote strips any user:password@ from a remote before it is rendered.
+// A git remote may legitimately carry a token that way, and both messages below
+// quote the remote back — into a terminal, a journal entry, and whatever CI log
+// is capturing them. The host and path are what make the message useful; the
+// userinfo never is.
+func safeRemote(remote string) string {
+	trimmed := strings.TrimSpace(remote)
+	scheme, rest, ok := strings.Cut(trimmed, "://")
+	if !ok {
+		return trimmed // scp-style (git@host:path) carries no password
+	}
+	if at := strings.LastIndex(rest, "@"); at >= 0 {
+		rest = "***@" + rest[at+1:]
+	}
+	return scheme + "://" + rest
+}
+
 // EnsurePrivate is the enforcement gate: remote must be a GitHub or GitLab repo
 // that the matching CLI confirms is private. gh/glab absent, unsupported host, or
 // a public/unverifiable repo are all errors — no path to a non-private remote.
 func EnsurePrivate(ctx context.Context, remote string) error {
 	host, slug, ok := parseRemote(remote)
 	if !ok {
-		return fmt.Errorf("cannot parse %q as a github.com or gitlab.com repo URL", remote)
+		return fmt.Errorf("cannot parse %q as a github.com or gitlab.com repo URL", safeRemote(remote))
 	}
 	switch host {
 	case "github.com":
@@ -129,7 +158,7 @@ func EnsurePrivate(ctx context.Context, remote string) error {
 		}
 		return fmt.Errorf("verifying %s needs the glab CLI or a GITLAB_TOKEN env var", slug)
 	default:
-		return fmt.Errorf("private repos are verified on github.com and gitlab.com only; %q (%s) is unsupported", remote, host)
+		return fmt.Errorf("private repos are verified on github.com and gitlab.com only; %q (%s) is unsupported", safeRemote(remote), host)
 	}
 }
 

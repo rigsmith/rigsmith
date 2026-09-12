@@ -139,6 +139,14 @@ func listStagedFiles(staging string) ([]string, error) {
 			}
 			return nil
 		}
+		// A symlink is not content. The staging tree is written by this
+		// process, but a RESTORE reads a tree cloned from a remote — so an
+		// entry pointing at /etc/passwd or at the target's own live config
+		// would be followed by os.ReadFile and its bytes restored as though
+		// they were the backup's. Only regular files travel.
+		if !d.Type().IsRegular() {
+			return nil
+		}
 		// A part is bytes from inside a rollout the index already covers.
 		// Scanning it as well doubles the work and reports a finding twice,
 		// naming a path nobody can act on.

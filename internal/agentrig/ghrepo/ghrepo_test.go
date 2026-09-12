@@ -1,6 +1,9 @@
 package ghrepo
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseSlug(t *testing.T) {
 	ok := map[string][2]string{
@@ -49,6 +52,46 @@ func TestParseRemote_HostDispatch(t *testing.T) {
 	for _, in := range []string{"/local/path", "git@host", "https://bitbucket.org/a"} {
 		if _, _, ok := parseRemote(in); ok {
 			t.Errorf("parseRemote(%q) should be rejected", in)
+		}
+	}
+}
+
+// A git remote may carry a token as user:password@, and both refusals quote the
+// remote back — into the terminal, the journal, and any CI log capturing them.
+func TestARefusalNeverQuotesACredentialBearingRemote(t *testing.T) {
+	const token = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	for _, remote := range []string{
+		"https://john:" + token + "@git.example.com/me/backup.git",
+		"https://" + token + "@bitbucket.org/me/backup.git",
+		"https://john:" + token + "@example.com/not-a-repo",
+	} {
+		err := EnsurePrivate(t.Context(), remote)
+		if err == nil {
+			t.Fatalf("EnsurePrivate(%q) accepted an unsupported host", remote)
+		}
+		if strings.Contains(err.Error(), token) {
+			t.Errorf("the token reached the error text: %v", err)
+		}
+	}
+	// The useful part still survives, or the redaction has gone too far.
+	err := EnsurePrivate(t.Context(), "https://john:"+token+"@git.example.com/me/backup.git")
+	if !strings.Contains(err.Error(), "git.example.com") {
+		t.Errorf("the host was redacted away too: %v", err)
+	}
+}
+
+// A tokenised HTTPS remote is an ordinary thing to have, and the userinfo is
+// part of the authority — so leaving it attached made the host "tok@github.com",
+// which matched neither case and refused a supported host as unsupported.
+func TestATokenisedRemoteStillResolvesToItsHost(t *testing.T) {
+	for _, remote := range []string{
+		"https://john:ghp_tok@github.com/me/backup.git",
+		"https://ghp_tok@github.com/me/backup",
+		"https://github.com/me/backup.git",
+	} {
+		host, slug, ok := parseRemote(remote)
+		if !ok || host != "github.com" || slug != "me/backup" {
+			t.Errorf("parseRemote(%q) = %q %q %v, want github.com me/backup true", remote, host, slug, ok)
 		}
 	}
 }

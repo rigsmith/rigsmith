@@ -145,7 +145,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			}
 
 			if c, ok := codec.For(rel); ok {
-				merged, lostComments, err := restoreStructured(c, src, dst, resolver)
+				merged, lostComments, err := restoreStructured(c, target, src, dst, resolver)
 				if err != nil {
 					rr.Skipped++
 					continue
@@ -174,7 +174,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 				rr.Written++
 				continue
 			}
-			if err := copyOut(src, dst, mode); err != nil {
+			if err := copyOut(target, src, dst, mode); err != nil {
 				rr.Skipped++
 				continue
 			}
@@ -203,7 +203,7 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 // value this machine already had. A field that was redacted and has no local
 // counterpart is dropped entirely rather than written as the literal sentinel,
 // because Codex would then send the sentinel as a credential.
-func restoreStructured(c codec.Codec, src, dst string, resolver *pathmap.Resolver) (merged, lostComments bool, err error) {
+func restoreStructured(c codec.Codec, root, src, dst string, resolver *pathmap.Resolver) (merged, lostComments bool, err error) {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return false, false, err
@@ -247,7 +247,7 @@ func restoreStructured(c codec.Codec, src, dst string, resolver *pathmap.Resolve
 			lostComments = true
 		}
 	}
-	if err := writeFileMode(dst, out, 0o600); err != nil {
+	if err := writeFileMode(root, dst, out, 0o600); err != nil {
 		return merged, lostComments, err
 	}
 	return merged, lostComments, nil
@@ -341,26 +341,49 @@ func pruneMissing(target string, written map[string]bool) (int, error) {
 	return pruned, nil
 }
 
-func copyOut(src, dst string, mode os.FileMode) error {
+func copyOut(root, src, dst string, mode os.FileMode) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return writeFileMode(dst, data, mode)
+	return writeFileMode(root, dst, data, mode)
 }
 
-func writeFileMode(path string, data []byte, mode os.FileMode) error {
+func writeFileMode(root, path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	// Write THROUGH a symlink rather than replacing it: a path somebody pointed
-	// elsewhere was pointed there deliberately.
+	// elsewhere was pointed there deliberately — but only while "elsewhere" is
+	// still inside the directory the caller named. `restore --dir /tmp/x` means
+	// /tmp/x, and a link under it resolving to ~/.codex/config.toml would have
+	// this overwrite the live config while reporting a clean restore.
 	target := path
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		if !underRoot(root, resolved) {
+			return fmt.Errorf("refusing to restore %s: it resolves to %s, outside %s", path, resolved, root)
+		}
 		target = resolved
 	}
 	if err := os.WriteFile(target, data, mode); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
+}
+
+// underRoot reports whether p is root or lives beneath it, with both sides
+// fully resolved so a root that itself sits behind a symlink (/var ->
+// /private/var on macOS) compares equal. Spelled the way the four containment
+// checks in clauderig are: ".." alone or ".." + a separator, never a bare
+// prefix, which would also catch a real directory named "..shared".
+func underRoot(root, p string) bool {
+	rootReal, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		rootReal = root
+	}
+	rel, err := filepath.Rel(rootReal, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
 }

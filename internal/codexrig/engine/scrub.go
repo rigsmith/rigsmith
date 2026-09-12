@@ -33,6 +33,13 @@ var (
 	// caller falls back to a verbatim copy so nothing is corrupted, and the
 	// whole-tree audit still reads it.
 	errBinary = errors.New("binary content")
+	// errOversizeLine means one line is bigger than a JSON record has any
+	// business being. It used to be reported as io.EOF, which the scrub loop
+	// reads as "the file ended" — so the rest of that line AND every line after
+	// it were dropped, and the staged rollout was a silent truncation of the
+	// conversation. Losing a backup's content is worse than not redacting it,
+	// and the caller copies verbatim instead; the audit still reads the bytes.
+	errOversizeLine = errors.New("rollout line exceeds the scrub cap")
 )
 
 // scrubLineBytes caps a single line. A rollout line is one JSON record and is
@@ -134,8 +141,10 @@ func readBoundedLine(r *bufio.Reader) ([]byte, error) {
 		if errors.Is(err, bufio.ErrBufferFull) {
 			if len(out) > scrubLineBytes {
 				// Past the cap the line is not a JSON record any more. Stop
-				// reading it rather than growing without bound.
-				return out, io.EOF
+				// reading it rather than growing without bound — but say WHY,
+				// because io.EOF here reads as "the file ended" and truncates
+				// everything after this point.
+				return out, errOversizeLine
 			}
 			continue
 		}

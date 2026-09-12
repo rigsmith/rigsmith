@@ -357,6 +357,11 @@ func Sync(opts Options) (*Report, error) {
 				case errors.Is(err, errPrivateKey):
 					rep.Findings = append(rep.Findings, redact.Finding{Path: stagedRel, Kind: "private-key", File: true})
 					continue
+				case errors.Is(err, errOversizeLine):
+					// A line too big to be a JSON record cannot be scrubbed
+					// line by line, but dropping the rest of the file is not
+					// the alternative: copy it whole, exactly as for binary.
+					scrub = false
 				case errors.Is(err, errBinary):
 					// Binary after a text-looking head. Fall through to the
 					// verbatim copy, which carries it byte for byte — the audit
