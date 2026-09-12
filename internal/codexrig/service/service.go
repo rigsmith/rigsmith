@@ -283,7 +283,7 @@ func (s Service) Publish(ctx context.Context, req PublishRequest) (PublishResult
 	// under older rules: Git reuses a cached blob for a file whose stat data has
 	// not moved, so writing the attribute file alone would leave the old bytes
 	// committed.
-	if err := backupgit.Prepare(ctx, req.StagingDir); err != nil {
+	if err := backupgit.Prepare(ctx, req.StagingDir, "CodexRig"); err != nil {
 		return out, err
 	}
 	// The tripwire, over the tree as it stands. The scan that ran during

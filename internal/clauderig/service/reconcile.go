@@ -76,7 +76,7 @@ func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
 		return err
 	}
 	if merging {
-		if err := backupgit.Prepare(ctx, root); err != nil {
+		if err := backupgit.Prepare(ctx, root, "ClaudeRig"); err != nil {
 			return err
 		}
 	}

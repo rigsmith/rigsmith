@@ -44,7 +44,7 @@ func TestPrepareRefreshesLegacyIndexWithoutChangingWorkingBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".gitattributes"), []byte("*.md diff=markdown\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := Prepare(t.Context(), root); err != nil {
+	if err := Prepare(t.Context(), root, "ClaudeRig"); err != nil {
 		t.Fatal(err)
 	}
 	staged, err := git(t.Context(), root, nil, "show", ":s.jsonl")
@@ -65,7 +65,7 @@ func TestPrepareRefreshesLegacyIndexWithoutChangingWorkingBytes(t *testing.T) {
 	if err != nil || !strings.HasPrefix(string(attrs), "*.md diff=markdown\n") {
 		t.Fatal("unrelated rules lost")
 	}
-	if err := Ensure(root); err != nil {
+	if err := Ensure(root, "ClaudeRig"); err != nil {
 		t.Fatal(err)
 	}
 	again, err := os.ReadFile(filepath.Join(root, ".gitattributes"))
@@ -90,7 +90,7 @@ func TestPrepareRefusesOverridingConversion(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, location), []byte("*.jsonl filter=transform\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			err := Prepare(t.Context(), root)
+			err := Prepare(t.Context(), root, "ClaudeRig")
 			if err == nil || !strings.Contains(err.Error(), "filter on cli/s.jsonl") {
 				t.Fatalf("overriding filter accepted: %v", err)
 			}
@@ -111,7 +111,7 @@ func TestEnsureRejectsSymlink(t *testing.T) {
 	if err := os.Symlink(target, filepath.Join(root, ".gitattributes")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := Ensure(root); err == nil {
+	if err := Ensure(root, "ClaudeRig"); err == nil {
 		t.Fatal("followed symlink")
 	}
 	b, _ := os.ReadFile(target)
@@ -134,7 +134,7 @@ func TestPrepareStagesRequiredAttributesDespiteExcludes(t *testing.T) {
 			if err := os.WriteFile(p, []byte(".gitattributes\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if err := Prepare(t.Context(), root); err != nil {
+			if err := Prepare(t.Context(), root, "ClaudeRig"); err != nil {
 				t.Fatal(err)
 			}
 			attrs, err := git(t.Context(), root, nil, "show", ":.gitattributes")
@@ -173,7 +173,31 @@ func TestPrepareForgetsDeletedNestedAttributes(t *testing.T) {
 	if err := os.Remove(nested); err != nil {
 		t.Fatal(err)
 	}
-	if err := Prepare(t.Context(), root); err != nil {
+	if err := Prepare(t.Context(), root, "ClaudeRig"); err != nil {
 		t.Fatalf("prepare still refuses after the file is gone: %v", err)
+	}
+}
+
+// The comment goes into the user's own backup repository, so it has to name the
+// rig that wrote it — a codexrig backup explaining itself as clauderig is the
+// same mistake as the fallback commit identity that said "clauderig" for both.
+// Pinning clauderig's exact wording is also what keeps its compatibility
+// baseline green: an existing backup is not rewritten and a new one matches.
+func TestTheAttributeCommentNamesTheRigThatWroteIt(t *testing.T) {
+	for tool, want := range map[string]string{
+		"ClaudeRig": "# ClaudeRig backups must preserve their serialized bytes.",
+		"CodexRig":  "# CodexRig backups must preserve their serialized bytes.",
+	} {
+		dir := t.TempDir()
+		if err := Ensure(dir, tool); err != nil {
+			t.Fatal(err)
+		}
+		b, err := os.ReadFile(filepath.Join(dir, ".gitattributes"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), want) {
+			t.Errorf("%s wrote:\n%s\nwant a line %q", tool, b, want)
+		}
 	}
 }

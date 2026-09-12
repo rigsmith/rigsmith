@@ -139,7 +139,7 @@ trust_level = "trusted"
 
 	repo, err := gitrepo.Init(ctx, stage)
 	must(t, err)
-	must(t, backupgit.Prepare(ctx, stage))
+	must(t, backupgit.Prepare(ctx, stage, "CodexRig"))
 	if _, err := repo.Commit(ctx, "codexrig sync: one"); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +235,7 @@ func TestE2E_GitBytePreservation(t *testing.T) {
 
 			repo, err := gitrepo.Init(ctx, stage)
 			must(t, err)
-			must(t, backupgit.Prepare(ctx, stage))
+			must(t, backupgit.Prepare(ctx, stage, "CodexRig"))
 			if _, err := repo.Commit(ctx, "initial"); err != nil {
 				t.Fatal(err)
 			}
@@ -382,7 +382,7 @@ func TestE2E_PeekReadsAnotherMachinesSessionWithoutRestoring(t *testing.T) {
 	}
 	repo, err := gitrepo.Init(ctx, stage)
 	must(t, err)
-	must(t, backupgit.Prepare(ctx, stage))
+	must(t, backupgit.Prepare(ctx, stage, "CodexRig"))
 	if _, err := repo.Commit(ctx, "codexrig sync: one"); err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func TestE2E_AChunkedRolloutSurvivesAPushAndAClone(t *testing.T) {
 
 	repo, err := gitrepo.Init(ctx, stage)
 	must(t, err)
-	must(t, backupgit.Prepare(ctx, stage))
+	must(t, backupgit.Prepare(ctx, stage, "CodexRig"))
 	if _, err := repo.Commit(ctx, "codexrig sync: one"); err != nil {
 		t.Fatal(err)
 	}

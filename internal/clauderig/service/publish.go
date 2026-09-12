@@ -43,7 +43,7 @@ func (s Service) Publish(ctx context.Context, req PublishRequest) (result Publis
 			return result, err
 		}
 	}
-	if err := backupgit.Prepare(ctx, req.StagingDir); err != nil {
+	if err := backupgit.Prepare(ctx, req.StagingDir, "ClaudeRig"); err != nil {
 		return result, err
 	}
 	if err := engine.CheckPublish(req.StagingDir); err != nil {

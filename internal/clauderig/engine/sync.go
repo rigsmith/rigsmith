@@ -753,7 +753,7 @@ func Sync(opts Options) (*Report, error) {
 		rep.OrphansScrubbed = swept
 	}
 
-	if err := backupgit.Ensure(opts.StagingDir); err != nil {
+	if err := backupgit.Ensure(opts.StagingDir, "ClaudeRig"); err != nil {
 		return rep, err
 	}
 	if audit, err := Audit(opts.StagingDir); err != nil {

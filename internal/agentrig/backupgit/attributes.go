@@ -25,8 +25,16 @@ const rule = "* -text -eol -filter -ident -working-tree-encoding"
 
 // Ensure writes portable attributes into the backup itself, so they also apply
 // during another machine's first clone — before any local config can be
-// consulted, which is exactly when a hostile global rule would otherwise win. It preserves unrelated attribute rules.
-func Ensure(root string) error {
+// consulted, which is exactly when a hostile global rule would otherwise win.
+// It preserves unrelated attribute rules.
+//
+// tool names the rig in the comment line. Not cosmetic: this file is written
+// into the user's own backup repository, and a codexrig backup explaining
+// itself in clauderig's name is the same class of mistake as the fallback
+// commit identity that said "clauderig" for both. Keeping clauderig's existing
+// wording byte for byte also means an existing backup is not rewritten, and the
+// compatibility baseline stays green for the tool that has shipped.
+func Ensure(root, tool string) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
@@ -49,7 +57,7 @@ func Ensure(root string) error {
 	if len(b) > 0 && b[len(b)-1] != '\n' {
 		b = append(b, '\n')
 	}
-	b = append(b, []byte("# A rigsmith backup must preserve its serialized bytes.\n"+rule+"\n")...)
+	b = append(b, []byte("# "+tool+" backups must preserve their serialized bytes.\n"+rule+"\n")...)
 	f, err := os.CreateTemp(root, ".rigsmith-attributes-*")
 	if err != nil {
 		return err
@@ -71,8 +79,8 @@ func Ensure(root string) error {
 // Prepare upgrades an existing index as well as its working attributes. Git
 // otherwise reuses cached normalized blobs for files whose stat data is unchanged.
 // The caller must audit the working bytes before committing the resulting index.
-func Prepare(ctx context.Context, root string) error {
-	if err := Ensure(root); err != nil {
+func Prepare(ctx context.Context, root, tool string) error {
+	if err := Ensure(root, tool); err != nil {
 		return err
 	}
 	if err := dropDeletedAttributes(ctx, root); err != nil {
