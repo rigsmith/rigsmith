@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/dirmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
-	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
 )
 
 // prepareFixture points HOME at a temp dir (so DefaultStore and ClaudeHome both

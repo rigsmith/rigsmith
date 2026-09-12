@@ -15,6 +15,7 @@ import (
 // message can be reworded without breaking anything.
 const (
 	reasonNoSuchAccount = "no-such-account"
+	reasonUnmapped      = "unmapped-directory"
 	reasonAmbiguous     = "ambiguous-account"
 	reasonNoTokens      = "no-tokens"
 	reasonHomeUnknown   = "session-unknown"
@@ -136,6 +137,8 @@ func NewAccountPrepareCmd() *cobra.Command {
 // silently change what a script sees.
 func classifyResolve(err error) string {
 	switch {
+	case errors.Is(err, account.ErrUnmapped):
+		return reasonUnmapped
 	case errors.Is(err, account.ErrAmbiguousRef):
 		return reasonAmbiguous
 	case errors.Is(err, account.ErrNoSuchAccount), errors.Is(err, account.ErrNoAccounts):

@@ -50,6 +50,8 @@ func NewAccountCmd() *cobra.Command {
 		newAccountAliasCmd(),
 		newAccountDisableCmd(),
 		newAccountEnableCmd(),
+		newAccountMapCmd(),
+		newAccountUnmapCmd(),
 	)
 	return cmd
 }
@@ -302,12 +304,22 @@ func newAccountRunCmd() *cobra.Command {
 	return cmd
 }
 
-// resolveAccountRef picks the account a command should act on: the one named, or
-// the single enabled account when nothing was named. It refuses to guess between
-// several — running the wrong login is worse than being asked which.
+// resolveAccountRef picks the account a command should act on: the one named,
+// the one bound to this directory, or the single enabled account. It refuses to
+// guess between several — running the wrong login is worse than being asked
+// which.
 func resolveAccountRef(s *account.Store, ref string) (account.Account, error) {
 	if ref != "" {
 		return s.Resolve(ref)
+	}
+	// A directory binding is an answer the user already gave, so it outranks
+	// "there happens to be only one".
+	if cwd, err := os.Getwd(); err == nil {
+		if id := mappedAccount(cwd); id != "" {
+			if a, rerr := s.Resolve(id); rerr == nil {
+				return a, nil
+			}
+		}
 	}
 	enabled, err := s.Enabled()
 	if err != nil {
@@ -324,7 +336,7 @@ func resolveAccountRef(s *account.Store, ref string) (account.Account, error) {
 			names = append(names, a.ID)
 		}
 		sort.Strings(names)
-		return account.Account{}, fmt.Errorf("which account? %s", strings.Join(names, ", "))
+		return account.Account{}, fmt.Errorf("%w: %s — name one, or bind this directory with `codexrig account map <account>`", account.ErrUnmapped, strings.Join(names, ", "))
 	}
 }
 
@@ -405,6 +417,11 @@ func newAccountRemoveCmd() *cobra.Command {
 			}
 			if err := s.Remove(a.ID); err != nil {
 				return err
+			}
+			// A binding to an account that no longer exists would silently
+			// resolve to nothing, which reads as "no account mapped here".
+			if dm, derr := dirMap(); derr == nil {
+				_ = dm.PruneAccount(a.ID)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", OkStyle.Render("Removed"), a.Title())
 			return nil

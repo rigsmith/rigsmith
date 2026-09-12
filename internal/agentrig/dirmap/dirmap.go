@@ -1,18 +1,14 @@
-// Package dirmap binds a directory to the accounts that should be used in it.
+// Package dirmap binds a directory to the account a rig should use there, so a
+// bare `account run` inside a project picks the right login without being told.
 //
-// One table serves both surfaces — the Claude Code CLI login (`clauderig
-// account`) and the Claude Desktop profile (`clauderig desktop`) — because they
-// answer the same question about the same directory: "which of my identities is
-// this work under?" A repo mapped to the work account almost always wants the
-// work Desktop window too, and keeping one file means `map` in either command
-// shows you the whole picture rather than half of it.
+// It is shared by every rig, and the reason is the path comparison rather than
+// the file format. "Is this directory covered by that mapping" is a question
+// with four ways to get it wrong — a missing separator check matching /a/foobar
+// against /a/foo, case folding that is right on Windows and wrong on macOS, a
+// symlinked ancestor, and a leaf that does not exist yet — and each of them was
+// found the hard way once. One copy.
 //
-// The two fields stay independent: mapping one never invents the other, since a
-// machine may track CLI accounts and no Desktop profiles, or the reverse.
-//
-// Mappings are per-machine and deliberately NOT synced. They name absolute paths
-// that mean nothing on another machine, and they live under ~/.clauderig, which
-// is outside every sync root.
+// The file is per-machine and is NEVER synced: it maps this computer's paths.
 package dirmap
 
 import (

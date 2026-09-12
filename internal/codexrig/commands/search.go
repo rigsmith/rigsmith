@@ -317,13 +317,32 @@ func clip(s string, max int) string {
 
 // tildeHome shortens a path under the user's home, so a listing's last column
 // stays readable.
+//
+// The home is symlink-resolved before comparing, because the paths this is given
+// have been: a directory binding is stored resolved, so on a machine whose home
+// sits behind a link the raw $HOME would never be a prefix of it and every path
+// would print in full.
 func tildeHome(p string) string {
 	if p == "" {
 		return ""
 	}
 	home, err := homeDir()
-	if err != nil || home == "" || !strings.HasPrefix(p, home) {
+	if err != nil || home == "" {
 		return p
 	}
-	return "~" + p[len(home):]
+	for _, h := range []string{home, resolved(home)} {
+		if h != "" && strings.HasPrefix(p, h) {
+			return "~" + p[len(h):]
+		}
+	}
+	return p
+}
+
+// resolved is filepath.EvalSymlinks, or "" when the path cannot be resolved.
+func resolved(p string) string {
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return ""
+	}
+	return r
 }

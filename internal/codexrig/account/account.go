@@ -99,6 +99,10 @@ var (
 	ErrHomeUnreadable = errors.New("could not read the account's credential")
 	ErrCodexBusy      = errors.New("Codex is running")
 	ErrProcessScan    = errors.New("could not scan for running Codex processes")
+	// ErrUnmapped means there are several accounts and nothing said which.
+	// Its own error rather than a generic failure, because a caller can act
+	// on it: name an account, or bind the directory to one.
+	ErrUnmapped = errors.New("several accounts, and this directory is not bound to one")
 )
 
 // SharedEntries is what an account's isolated home links back to the machine's

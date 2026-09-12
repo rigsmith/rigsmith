@@ -143,6 +143,8 @@ func classifySwitch(err error) string {
 		return reasonProcessScan
 	case errors.Is(err, account.ErrStoredNoTokens):
 		return reasonNoTokens
+	case errors.Is(err, account.ErrUnmapped):
+		return reasonUnmapped
 	case errors.Is(err, account.ErrAmbiguousRef):
 		return reasonAmbiguous
 	case errors.Is(err, account.ErrNoSuchAccount), errors.Is(err, account.ErrNoAccounts):
