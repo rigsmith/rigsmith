@@ -26,13 +26,13 @@ rows are rounded up.
 | `restore` | `restore` | ✅ | `--dir`, `--force`, `--prune`. Also names the config files whose comments a rewrite cost, which clauderig has no need to do. |
 | `status` | `status` | ✅ | Same `--json` shape idea: the gathered struct plus a level, a stable reason token and an action. |
 | `doctor` | `doctor` | ✅ | `--fix` and the same non-zero exit. Extra check clauderig cannot have: whether Codex will actually run the hooks. |
-| `config` | `config` | ✅ | `show`/`get`/`set`/`path`/`edit`. Keys differ where the tools differ; `syncSessions` is new, `chunkTranscripts` is absent. |
+| `config` | `config` | ✅ | `show`/`get`/`set`/`path`/`edit`. Keys differ where the tools differ: `syncSessions` is new, and `chunkTranscripts` is `chunkRollouts`. |
 | `guard` | `guard` | 🟡 | Base-branch and hidden-worktree protection, and a patch is judged whole. No session-relocation refusals: Codex has no such tools. No commit inspection — the write is refused before the commit, which is the better moment. |
 | `guide` | `guide` | ✅ | `AGENTS.md` instead of `CLAUDE.md`. `install`/`uninstall`/`status`/`show`, same managed-block mechanics. |
-| `search` | `search` | 🟡 | Grouped by session, with `--since`/`--until`/`--cwd`/`--live`/`--repo`/`--json`. No `--raw`/`--all` grep mode, and no ledger rows for sessions whose bodies aged out. |
+| `search` | `search` | 🟡 | Grouped by session, with `--since`/`--until`/`--cwd`/`--live`/`--repo`/`--json`, and ledger rows for sessions whose bodies have aged out. No `--raw`/`--all` grep mode — the one thing still missing. |
 | `recent` | `recent` | ✅ | Plus `--json`, which clauderig's lacks. |
 | `mcp` | `mcp` | 🟡 | Read-only, by choice: `codex mcp` already adds and removes, and a second writer for one TOML table is a way for the two to disagree. What this adds instead is a portability verdict per server. |
-| `account` | `account` | 🟡 | `add`, `list`, `run`, `prepare`, `switch`, `sessions`, `remove`, `purge`, `doctor`, `alias`, `disable`/`enable`. Missing `watch` and `map`/`unmap` (see below). |
+| `account` | `account` | 🟡 | `add`, `list`, `run`, `prepare`, `switch`, `sessions`, `remove`, `purge`, `doctor`, `alias`, `disable`/`enable`, `map`/`unmap`. Only `watch` is missing (see below). |
 | `global` / `hooks` | `global` / `hooks` | ✅ | Plus `trust`, which Codex requires and Claude Code does not. |
 | `project` | `project` | ✅ | The guard hooks, in the repository's `.codex/`. |
 | `local` | — | ➖ | Claude Code has `settings.local.json`, gitignored per checkout. Codex has no counterpart; a third scope would mean writing a file Codex does not read. |
@@ -89,7 +89,7 @@ rows are rounded up.
 | Credential lock cooperation | 🟡 | 🟡 | Claude Code takes a refresh lock that clauderig cooperates with. Codex takes none, so codexrig locks against ITSELF and protects against Codex by refusing while it is running, writing atomically, and keeping a backup. |
 | Live-process detection | `account/live.go` | ✅ | Process table plus Codex's writer locks, with a process's home resolved against its own `HOME`. |
 | Transcript/session reading | `rollout` | ✅ | A different format, read the same way: header from the front, activity from the tail, never the middle. Validated against every rollout on a real machine. |
-| Session listing / search | `sessions` | 🟡 | Live and repo stores, date-shard pruning. No ledger rows, no duplicate/split detection, no Desktop sidecars. |
+| Session listing / search | `sessions` | ✅ | Live store, repo store and ledger rows, with one-sided date-shard pruning. No Desktop sidecars, because there are none. |
 | Split-session health | — | ➖ | clauderig detects one session filed in two places and can consolidate, because Claude Code files by a slug derived from the working directory and a session that moves gets a second file. **Measured against 60 real rollouts: Codex never does this.** It APPENDS to the original rollout on resume, which keeps its original shard — one here spans eight calendar days with a single `session_meta`. The live-versus-repo case is handled by preferring the live copy, and the repo-versus-repo case by the merge policy. |
 | `dirmap` | shared | ✅ | Moved to `internal/agentrig`. The path comparison is what is worth sharing, not the file format. |
 | `peek` | `peek` | ✅ | See the command row. |
