@@ -201,7 +201,11 @@ func resolveInRoot(root, p string) (string, bool) {
 		return "", false
 	}
 	rel, err := filepath.Rel(rootReal, target)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+	// Only ".." itself, or a path below it, is outside the root. A bare prefix
+	// test also catches a real directory named "..shared" — Rel returns that
+	// name unchanged — and drops a link this is supposed to record. The same
+	// spelling is used by engine.underSymlink, engine.conflictAt and the guard.
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", false
 	}
 	return filepath.ToSlash(rel), true

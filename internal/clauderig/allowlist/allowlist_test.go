@@ -283,4 +283,18 @@ func TestResolveInRoot_RefusesATargetOutsideTheRoot(t *testing.T) {
 	if got, ok := resolveInRoot(root, inside); !ok || got != "projects/-other" {
 		t.Errorf("resolveInRoot(in-root) = %q %v, want projects/-other true", got, ok)
 	}
+
+	// The boundary: a real directory whose NAME starts with "..". Rel returns
+	// it unchanged, so a bare HasPrefix(rel, "..") reads it as an escape and
+	// silently drops a link that belongs in the backup.
+	if err := os.MkdirAll(filepath.Join(root, "..shared"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dotted := filepath.Join(root, "projects", "-main", "dotted")
+	if err := os.Symlink(filepath.Join(root, "..shared"), dotted); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := resolveInRoot(root, dotted); !ok || got != "..shared" {
+		t.Errorf("resolveInRoot(..shared) = %q %v, want ..shared true", got, ok)
+	}
 }

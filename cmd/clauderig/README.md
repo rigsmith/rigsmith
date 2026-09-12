@@ -152,7 +152,7 @@ To sweep for these rather than wait to be bitten, mutate and re-run:
 
 ```sh
 # flip one operator or boolean in a non-test source, run that package, restore
-go test -count=1 ./internal/clauderig/<pkg>/
+go test -count=1 ./internal/clauderig/allowlist/   # one package at a time
 ```
 
 A surviving mutant is not automatically a bad test — many are equivalent
