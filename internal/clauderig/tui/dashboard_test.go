@@ -189,3 +189,50 @@ func TestNextStep_UnpushedOutranksUpToDate(t *testing.T) {
 		t.Errorf("diverged nextStep = %q, want it to name the terminal reconcile", step)
 	}
 }
+
+// The legend was written out by hand and drifted: `d` for Desktop profiles was
+// added to the menu and never to the legend, so the shortcut worked and nothing
+// told anybody. Deriving it from the actions is what stops that recurring, and
+// this is the test that notices if it goes back to being a literal.
+func TestDashboardLegendNamesEveryShortcutOnScreen(t *testing.T) {
+	info := status.Info{
+		Machine:    config.Machine{Name: "mbp", OS: "macos"},
+		Remote:     "git@example.test:me/backup.git",
+		HasStaging: true,
+		LastSync:   "abc123 2 minutes ago — clauderig sync: mbp",
+	}
+	m := New(info)
+	view := m.View()
+
+	for _, a := range m.items {
+		if a.hotkey == "" {
+			continue
+		}
+		if !strings.Contains(view, a.hotkey+"/") && !strings.Contains(view, "/"+a.hotkey+" shortcut") {
+			t.Errorf("the %q action has shortcut %q, which the legend does not mention:\n%s",
+				a.label, a.hotkey, view)
+		}
+	}
+}
+
+// And the other direction: a legend must not advertise a key for something this
+// machine cannot do. The action list is already filtered to what is available.
+func TestDashboardLegendOmitsShortcutsForUnavailableActions(t *testing.T) {
+	// Nothing configured: no remote, nothing synced, so Sync and Restore are
+	// not offered.
+	m := New(status.Info{Machine: config.Machine{Name: "mbp", OS: "macos"}})
+	offered := map[string]bool{}
+	for _, a := range m.items {
+		offered[a.hotkey] = true
+	}
+	if offered["s"] || offered["r"] {
+		t.Skip("sync/restore are offered on an unconfigured machine; this test assumes they are not")
+	}
+	legend := m.View()
+	legend = legend[strings.LastIndex(legend, "↑/↓"):]
+	for _, key := range []string{"s", "r"} {
+		if strings.Contains(legend, key+"/") || strings.Contains(legend, "/"+key+" ") {
+			t.Errorf("the legend offers %q, but there is no such action on this machine:\n%s", key, legend)
+		}
+	}
+}
