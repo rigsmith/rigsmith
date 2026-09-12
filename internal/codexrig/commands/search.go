@@ -160,8 +160,10 @@ func listOptions(live, repo bool, since, until, cwd string, limit int) (sessions
 	if err != nil {
 		return opts, err
 	}
-	cfg, err := config.LoadOrDefault()
-	if err != nil {
+	// Loaded for its side effect only: it rejects a corrupt config.json, which
+	// is a failure the caller should see before a search reports nothing found.
+	// Nothing here selects a target from it.
+	if _, err := config.LoadOrDefault(); err != nil {
 		return opts, err
 	}
 	staging, err := config.StagingDir()
@@ -180,7 +182,6 @@ func listOptions(live, repo bool, since, until, cwd string, limit int) (sessions
 		// is asking what is on this machine, and a remembered session is not.
 		opts.Ledger = ledger.LoadAll(staging)
 	}
-	_ = cfg
 	return opts, nil
 }
 
