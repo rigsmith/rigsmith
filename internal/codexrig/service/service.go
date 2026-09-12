@@ -18,6 +18,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/codexrig/codexhome"
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
 	"github.com/rigsmith/rigsmith/internal/codexrig/devices"
@@ -261,7 +262,17 @@ func (s Service) Publish(ctx context.Context, req PublishRequest) (PublishResult
 			return out, err
 		}
 	}
-	// The tripwire again, over the tree as it stands. The scan that ran during
+	// Byte preservation BEFORE the tripwire, and before the commit. Git decides
+	// what bytes a file contributes when it is added to the index, so a
+	// conversion rule that survives to this point would change the content
+	// AFTER the scan that cleared it. Prepare also renormalises an index built
+	// under older rules: Git reuses a cached blob for a file whose stat data has
+	// not moved, so writing the attribute file alone would leave the old bytes
+	// committed.
+	if err := backupgit.Prepare(ctx, req.StagingDir); err != nil {
+		return out, err
+	}
+	// The tripwire, over the tree as it stands. The scan that ran during
 	// capture saw what capture staged; this one sees what a merge may have
 	// brought in since.
 	if err := engine.CheckPublish(req.StagingDir); err != nil {
@@ -278,6 +289,12 @@ func (s Service) Publish(ctx context.Context, req PublishRequest) (PublishResult
 		return out, nil
 	}
 	for attempt := 1; ; attempt++ {
+		// Both checks run again on every attempt: a reconcile between tries
+		// merges another machine's work, which can bring in both a credential
+		// and a .gitattributes that permits conversion.
+		if err := backupgit.Validate(ctx, req.StagingDir); err != nil {
+			return out, err
+		}
 		if err := engine.CheckPublish(req.StagingDir); err != nil {
 			return out, err
 		}
@@ -327,6 +344,9 @@ func (s Service) finishMerge(ctx context.Context, repo *gitrepo.Repo) error {
 	}
 	top, err := repo.Toplevel(ctx)
 	if err != nil {
+		return err
+	}
+	if err := backupgit.Validate(ctx, top); err != nil {
 		return err
 	}
 	if err := engine.CheckPublish(top); err != nil {

@@ -1,5 +1,13 @@
-// Package backupgit protects the serialized bytes in a ClaudeRig backup from
-// Git's text, encoding, keyword and clean/smudge conversions.
+// Package backupgit protects the serialized bytes in a rig's backup from Git's
+// text, encoding, keyword and clean/smudge conversions.
+//
+// It is shared by every rig that commits an agent's files, and sharing it is not
+// a tidiness argument. This is the only thing standing between a machine with an
+// aggressive global .gitattributes — `* text=auto eol=crlf`, a clean/smudge
+// filter, an encoding rule — and a backup whose bytes no longer match what was
+// scanned. The failure is silent on the machine that publishes and only shows up
+// on the one that restores, so a second copy of these rules that fell behind
+// would be a second way to corrupt somebody's data.
 package backupgit
 
 import (
@@ -16,7 +24,8 @@ import (
 const rule = "* -text -eol -filter -ident -working-tree-encoding"
 
 // Ensure writes portable attributes into the backup itself, so they also apply
-// during another machine's first clone. It preserves unrelated attribute rules.
+// during another machine's first clone — before any local config can be
+// consulted, which is exactly when a hostile global rule would otherwise win. It preserves unrelated attribute rules.
 func Ensure(root string) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
@@ -40,8 +49,8 @@ func Ensure(root string) error {
 	if len(b) > 0 && b[len(b)-1] != '\n' {
 		b = append(b, '\n')
 	}
-	b = append(b, []byte("# ClaudeRig backups must preserve their serialized bytes.\n"+rule+"\n")...)
-	f, err := os.CreateTemp(root, ".clauderig-attributes-*")
+	b = append(b, []byte("# A rigsmith backup must preserve its serialized bytes.\n"+rule+"\n")...)
+	f, err := os.CreateTemp(root, ".rigsmith-attributes-*")
 	if err != nil {
 		return err
 	}
