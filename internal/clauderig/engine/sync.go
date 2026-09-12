@@ -299,6 +299,11 @@ func Sync(opts Options) (*Report, error) {
 	// is NOT in here after every root has run is a staged file with no live
 	// source behind it any more — see sweepOrphanedTranscripts.
 	visited := map[string]bool{}
+	// What this run actually COPIED IN, keyed the way a finding names it
+	// (<root>/<rel>). The audit below runs over the whole tree and can condemn a
+	// file this run staged; this is what lets that copy be taken back out again,
+	// without touching one an older clauderig left behind.
+	stagedThisRun := map[string]bool{}
 	// What the last audit read and found clean, so the unchanged path below can
 	// skip re-reading bytes nothing has touched since. Never written here.
 	audited := newAuditCache(opts.StagingDir)
@@ -509,6 +514,7 @@ func Sync(opts Options) (*Report, error) {
 							})
 						}
 						rr.Files++
+						stagedThisRun[r.ID+"/"+rel] = true
 						continue
 					}
 				}
@@ -541,6 +547,7 @@ func Sync(opts Options) (*Report, error) {
 					return nil, err
 				}
 				rr.Files++
+				stagedThisRun[r.ID+"/"+rel] = true
 				continue
 			}
 
@@ -574,10 +581,19 @@ func Sync(opts Options) (*Report, error) {
 				continue
 			}
 			out = append(out, '\n')
+			condemned := false
 			for _, f := range redact.Scan(v) {
 				rep.Findings = append(rep.Findings, redact.Finding{
 					Path: r.ID + "/" + rel + ":" + f.Path, Kind: f.Kind,
 				})
+				condemned = true
+			}
+			// Refused, so not staged. The sync fails either way, but writing it
+			// first replaces a staged copy that may have been clean with one
+			// that is not — and leaves that copy in the tree for every later run
+			// to find, long after the live file has been dealt with.
+			if condemned {
+				continue
 			}
 			// Compare before writing. A JSON file is regenerated on every sync —
 			// read, redacted, portablized, re-marshalled — so without this every
@@ -767,6 +783,25 @@ func Sync(opts Options) (*Report, error) {
 			if !seen[f] {
 				rep.Findings = append(rep.Findings, f)
 				seen[f] = true
+			}
+			// A file THIS run copied in, which the audit then condemned, is
+			// taken back out.
+			//
+			// The two scans are deliberately different: the inbound one is
+			// narrow and name-led, because a false positive there refuses every
+			// future sync; the audit is the full credential-signature scan over
+			// the bytes about to be published. So a token pasted into a
+			// transcript is caught only AFTER the copy — and leaving that copy
+			// behind means a blob holding a credential sits in the working tree,
+			// one permissive run away from being committed.
+			//
+			// Only files this run wrote. A finding in something an older
+			// clauderig staged is the user's to deal with, and deleting it would
+			// hide the problem rather than report it.
+			if stagedThisRun[f.Path] {
+				if err := removeStaged(opts.StagingDir, f.Path); err == nil {
+					delete(stagedThisRun, f.Path)
+				}
 			}
 		}
 	}
@@ -1222,4 +1257,15 @@ func copyTranscriptSnapshot(src, dst string, mtime time.Time, chunked bool) erro
 	}
 	defer in.Close()
 	return transcript.Write(dst, in, mtime)
+}
+
+// removeStaged deletes a staged file and, for a chunked transcript, the parts
+// that belong to it. Removing the index alone would leave a directory of
+// orphaned chunks that nothing references and nothing later cleans up.
+func removeStaged(staging, rel string) error {
+	p := filepath.Join(staging, filepath.FromSlash(rel))
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.RemoveAll(p + transcript.Suffix)
 }
