@@ -21,7 +21,6 @@ type PublishRequest struct {
 	StagingDir, Remote, MachineName string
 	Retention                       config.Retention
 	AllowMergeTool                  bool
-	RecordCommit                    bool
 }
 
 type PublishResult = publication.PublishResult
@@ -41,8 +40,7 @@ func (s Service) Publish(ctx context.Context, req PublishRequest) (result Publis
 	defer func() { rerr = canonicalResult(ctx, rerr) }()
 	return s.publication().Publish(ctx, publication.PublishRequest{
 		StagingDir: req.StagingDir, Remote: req.Remote, AllowMergeTool: req.AllowMergeTool,
-		RecordCommit: req.RecordCommit,
-		Plan:         adapter.PublicationPlan(req.MachineName, req.Retention),
+		Plan: adapter.PublicationPlan(req.MachineName, req.Retention),
 	})
 }
 

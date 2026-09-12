@@ -22,6 +22,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/storelock"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
+	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 )
 
 const runtimeLimit = 1 << 20
@@ -549,7 +550,7 @@ func checkQueueDesktopProfilePaths(req SyncRequest, candidate string) (err error
 }
 
 // discoverQueueDesktopProfiles shares strict native directory/link discovery
-// between path isolation and complete-coverage validation. Metadata validation
+// between path isolation and manual-sync validation. Metadata validation
 // and overlap policy remain with their callers. Ordinary display discovery is
 // deliberately unaffected.
 func discoverQueueDesktopProfiles(req SyncRequest) (*desktop.Store, []string, error) {
@@ -630,26 +631,61 @@ func queueIsolationPath(path string) (resolved string, err error) {
 	}
 }
 
-// SyncWithCoverage coordinates a manual sync with this runtime without exposing
-// its queue or allowing callers to substitute a lifecycle binding. Like ordinary
-// Sync, it discovers all local Desktop profiles and observes live identity once;
-// that actual capture policy must match this runtime's saved policy. Callers must
-// verify remote privacy and supply canonical command supervision. It installs no
-// hook and does not change ordinary Sync. Dry runs never acknowledge queued work.
-// Profile membership, source/link identities and runtime association must remain
-// stable throughout the call; validation points do not fence external edits.
-func (r *QueueRuntime) SyncWithCoverage(ctx context.Context, s Service, req SyncRequest) (CoverageSyncResult, error) {
-	if r == nil {
-		return CoverageSyncResult{}, queue.ErrBinding
+// Sync performs ordinary manual sync while preserving runtime isolation. It never
+// completes queue requests: callers drain those through Run before invoking Sync.
+// Dry runs use this method directly and leave queued phases and receipts unchanged.
+func (r *QueueRuntime) Sync(ctx context.Context, s Service, req SyncRequest) (result SyncResult, err error) {
+	if err := requireCanonicalRunner(ctx, req.AllowMergeTool); err != nil {
+		return result, err
 	}
-	return s.syncWithCoverage(ctx, req, r.q, r)
+	if r == nil || req.Config == nil {
+		return result, queue.ErrBinding
+	}
+	if req.AllowMergeTool {
+		return result, fmt.Errorf("manual queue sync does not support external merge tools")
+	}
+	// Capture must use detached settings throughout its operation.
+	data, err := json.Marshal(req.Config)
+	if err != nil {
+		return result, err
+	}
+	req.Config = nil
+	if err = json.Unmarshal(data, &req.Config); err != nil {
+		return result, err
+	}
+	data, err = json.Marshal(req.Machine)
+	if err != nil {
+		return result, err
+	}
+	req.Machine.Tokens = nil
+	if err = json.Unmarshal(data, &req.Machine); err != nil {
+		return result, err
+	}
+	req.Flush.Paths = slices.Clone(req.Flush.Paths)
+	req.checkCapture = func(profiles []string) error {
+		_, err := r.validateManualBinding(ctx, req, profiles)
+		return err
+	}
+	if err = req.checkCapture(engine.LocalProfileNames()); err != nil {
+		return result, err
+	}
+	worker, err := r.q.Worker(ctx)
+	if err != nil {
+		return result, err
+	}
+	defer worker.Close()
+	result, err = s.Sync(ctx, req)
+	if err == nil {
+		err = req.checkCapture(engine.LocalProfileNames())
+	}
+	return result, err
 }
 
-// validateCoverageBinding validates fresh capture inputs and persisted association before
+// validateManualBinding validates fresh capture inputs and persisted association before
 // translating the policy binding. Never hold runtime ownership while acquiring
 // worker/staging ownership: producers remain able to enqueue during manual sync.
-func (r *QueueRuntime) validateCoverageBinding(ctx context.Context, req SyncRequest, profiles []string) (queue.Binding, error) {
-	if err := validateQueueCoverageProfiles(req, profiles); err != nil {
+func (r *QueueRuntime) validateManualBinding(ctx context.Context, req SyncRequest, profiles []string) (queue.Binding, error) {
+	if err := validateQueueManualProfiles(req, profiles); err != nil {
 		return queue.Binding{}, err
 	}
 	bindingReq := req
@@ -669,10 +705,10 @@ func (r *QueueRuntime) validateCoverageBinding(ctx context.Context, req SyncRequ
 	return r.binding, nil
 }
 
-// validateQueueCoverageProfiles rejects the omissions tolerated by display-oriented
+// validateQueueManualProfiles rejects the omissions tolerated by display-oriented
 // discovery. Inspect native directory entries, including Windows junctions, and
 // require every profile to load and appear in the actual manual capture selection.
-func validateQueueCoverageProfiles(req SyncRequest, profiles []string) (err error) {
+func validateQueueManualProfiles(req SyncRequest, profiles []string) (err error) {
 	defer func() {
 		if err != nil {
 			err = fmt.Errorf("cannot verify complete Desktop profile coverage; repair profile metadata, paths or permissions before retrying: %w", errors.Join(queue.ErrBinding, err))
@@ -712,7 +748,7 @@ func (r *QueueRuntime) CheckHookRouting(ctx context.Context) error {
 	if roots["cli"] == "" {
 		return fmt.Errorf("queued hooks require an enabled CLI root")
 	}
-	_, err = r.validateCoverageBinding(ctx, r.request, r.profiles)
+	_, err = r.validateManualBinding(ctx, r.request, r.profiles)
 	return err
 }
 

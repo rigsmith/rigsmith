@@ -29,7 +29,7 @@ type QueueInputs struct {
 // must return current inputs, not derive new destinations from old queue work.
 // Fresh capture and publication finish audited staged merges and resume sealed
 // supported unresolved repairs. A completed merge remains after later failure. This
-// adapter does not install hooks, run a daemon or acknowledge manual sync coverage. Classified temporary failures use bounded
+// adapter does not install hooks, run a daemon or infer completion from manual sync. Classified temporary failures use bounded
 // backoff; other failures block for deliberate recovery.
 type QueueAdapter struct {
 	Service Service

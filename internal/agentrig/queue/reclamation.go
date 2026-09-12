@@ -45,7 +45,7 @@ func (m *Maintenance) HasPending() (bool, error) {
 	return m.pending != 0, nil
 }
 
-// Maintain excludes workers, manual coverage and producers while fn performs
+// Maintain excludes workers, manual sync and producers while fn performs
 // explicit maintenance using an independent operation context. Binding/state
 // validation and a successful durable reflush happen BEFORE the callback: an
 // uncertain acknowledgement must not let cleanup delete output still needed by

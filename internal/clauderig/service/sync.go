@@ -38,7 +38,9 @@ type SyncRequest struct {
 	DryRun, AllowMergeTool bool
 	Flush                  FlushIntent
 	ResolveFlush           func() FlushIntent
-	coverage               *manualCoverage
+	// checkCapture keeps queue-runtime paths isolated during manual capture.
+	// It never supplies evidence or completes queue requests.
+	checkCapture func([]string) error
 }
 
 // SyncResult preserves the capture report and completed publication phases even
@@ -68,8 +70,8 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, 
 	if rerr != nil || req.DryRun {
 		return result, rerr
 	}
-	if req.coverage != nil {
-		if rerr = req.coverage.captured(req, result.Capture); rerr != nil {
+	if req.checkCapture != nil {
+		if rerr = req.checkCapture(engine.LocalProfileNames()); rerr != nil {
 			return result, rerr
 		}
 	}
@@ -83,7 +85,6 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (result SyncResult, 
 	result.Publication, rerr = s.Publish(ctx, PublishRequest{
 		StagingDir: req.StagingDir, Remote: req.Config.Remote, MachineName: req.Machine.Name,
 		Retention: req.Config.Retention, AllowMergeTool: req.AllowMergeTool,
-		RecordCommit: req.coverage != nil,
 	})
 	return result, rerr
 }

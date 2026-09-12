@@ -8,20 +8,27 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/artifact"
 	"github.com/rigsmith/rigsmith/internal/agentrig/commitartifact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/adapter"
 	"github.com/rigsmith/rigsmith/internal/clauderig/journal"
+	"github.com/rigsmith/rigsmith/internal/clauderig/ledger"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 
 // ResolveRetained adds conservative append recovery to the metadata policy.
 // The publisher supplies bounded blobs and audits the complete resulting tree.
-// Text needs an existing base preserved verbatim by both sides; per-machine
+// Session indexes keep both raw row sets for native ledger reconciliation.
+// Other text needs an existing base preserved verbatim by both sides; per-machine
 // journals also allow independently created files. Edits, truncation, other
 // add/add text and chunk indexes remain conflicts. Synchronous policy is unchanged.
 func ResolveRetained(ctx context.Context, path string, base, ours, theirs []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	root, rel, _ := strings.Cut(path, "/")
+	if root == ledger.DirName && !strings.ContainsAny(rel, "/\\") && !strings.HasPrefix(rel, ".") && len(rel) > len(".jsonl") && strings.HasSuffix(rel, ".jsonl") {
+		return unionLedgerRows(ctx, ours, theirs)
 	}
 	rule := adapter.ClassifyMerge(path)
 	if rule.Strategy != adapter.UnionText {
@@ -30,7 +37,6 @@ func ResolveRetained(ctx context.Context, path string, base, ours, theirs []byte
 	// Retained recovery is narrower than synchronous extension-based union:
 	// Native CLI transcripts, memory text and per-machine journals have explicit
 	// append contracts. Journals can also start independently from an absent base.
-	root, rel, _ := strings.Cut(path, "/")
 	file := adapter.Classify(root, rel)
 	isJournal := root == journal.DirName && !strings.ContainsAny(rel, "/\\") && strings.HasSuffix(rel, ".jsonl") && len(rel) > len(".jsonl")
 	if !isJournal && (root != "cli" || transcript.IsPartPath(rel) ||
@@ -239,4 +245,30 @@ func uniqueJournalFields(raw []byte) bool {
 	}
 	_, err = d.Token()
 	return err == io.EOF
+}
+
+// Ledgers are rewritten snapshots, not append-only transcripts. Keep both sets
+// of raw rows; the native ledger readers reconcile duplicate IDs and attribution.
+// This shares the native reader's merge semantics without reimplementing them.
+func unionLedgerRows(ctx context.Context, ours, theirs []byte) ([]byte, error) {
+	if ours == nil || theirs == nil {
+		return nil, commitartifact.ErrConflict
+	}
+	if len(ours) > retainedTranscriptLimit-len(theirs) {
+		return nil, artifact.ErrTooLarge
+	}
+	for _, side := range [][]byte{ours, theirs} {
+		for len(side) > 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			line, rest, terminated := bytes.Cut(side, []byte{'\n'})
+			line = bytes.TrimSpace(line)
+			if !terminated || len(line) == 0 || line[0] != '{' || !utf8.Valid(line) || !json.Valid(line) {
+				return nil, commitartifact.ErrConflict
+			}
+			side = rest
+		}
+	}
+	return append(bytes.Clone(ours), theirs...), ctx.Err()
 }

@@ -13,8 +13,7 @@ connects these services to RunOne, including confirmed retained publication.
 init, prepare/enqueue, status, retry, supervised run and drain (7b).
 The v2 queue has end-user changesets for its planned release behavior, including
 completion of staged merges before retrying committed batches. Shipped
-synchronous commands remain unchanged. Explicit `queue sync` provides manual
-coverage in 7c.2a. Hook/ordinary-sync routing and rollback remain 7c.2b work;
+synchronous commands remain unchanged. Explicit `queue sync` drains saved work before manual sync. Hook/ordinary-sync routing and rollback remain 7c.2b work;
 no background service is installed.
 
 ## Identity and generations
@@ -37,7 +36,7 @@ looks at a current login or stamps old events with a new account.
 Only never-claimed, pending batches with the same provenance coalesce. Selected
 flushes union their path sets; all-flush supersedes selected/normal intent while
 the individual events remain recorded. Different provenance stays separate.
-The first claim or manual-coverage preparation seals a batch's event membership permanently. Input arriving
+The first claim seals a batch's event membership permanently. Legacy manual-sync seals also remain binding. Input arriving
 during capture or retry creates later work, even if the old batch has not reached
 its captured phase. Acknowledgement removes that batch alone; `Through` is a
 batch high-water mark, not permission to delete every lower global generation.
@@ -137,9 +136,9 @@ simple and bounded; measure it with the integrated worker before choosing a
 journal or database. Unknown versions fail closed.
 
 New queues still use schema 2. Ordinary operations preserve older schema-1 queues;
-coverage preparation upgrades schema 1 to 2 under both ownership locks. Receipt
+Schema 2 retains the legacy manual-sync seal field. Receipt
 compaction explicitly upgrades schema 1 or 2 to 3 under the same locks, adding the
-producer cutoff and retired-generation count. Coverage never downgrades schema 3.
+producer cutoff and retired-generation count. Worker execution never downgrades schema 3.
 Unfinished events, phases, seals and retry metadata survive upgrades. Older
 binaries reject schema 3; there is no downgrade operation. Use a compatible build
 to drain an upgraded queue.
@@ -183,7 +182,7 @@ Under exclusive worker ownership and the queue transaction lock, compaction:
   synchronized. Existing receipts still deduplicate first, even for older pending
   work. An old request must not be given a fresh timestamp to force acceptance.
 
-Maintenance cannot run while a worker or manual-coverage operation owns the queue.
+Maintenance cannot run while a worker or manual-sync operation owns the queue.
 Concurrent producer transactions serialize before or after the compaction write.
 A missing/corrupt queue is not repaired or initialized. Save failure preserves the
 old snapshot or reports `ErrUncertain`; retry the same cutoff to reflush, including
@@ -195,7 +194,7 @@ cutoff, never a compacted set without the replay guard.
 This is an internal shared API. It does not compact artifact stores, remove scratch
 folders, install hooks or alter ordinary synchronous Claude behavior. Synthetic
 native tests cover a receipt-full drained queue accepting work again, all saved
-phases, mixed-age receipt batches, schema 1/2 upgrades and subsequent coverage,
+phases, mixed-age receipt batches, schema 1/2 upgrades and subsequent worker completion,
 malformed state, failed/uncertain saves, process exit, canonical directory aliases,
 and both transaction orderings for old producer input. The directory-alias test
 skips where creating directory symlinks is unavailable. The compatibility group
@@ -266,10 +265,8 @@ remains the gate for synchronous behavior.
   capacity/reclamation APIs are implemented. Cleanup commands remain deferred.
 - Hook routing must preserve requested sources until capture and handle missing
   sources/attribution without acknowledging missing data.
-- Shared coverage checkpoints and Claude evidence/confirmation services are
-  implemented. Explicit `queue sync` uses the runtime bridge in 7c.2a;
-  connecting ordinary sync automatically remains 7c.2b work;
-  a queue high-water mark alone cannot establish coverage.
+- `queue sync` reuses the worker drain before ordinary manual sync. There is one
+  queue-completion path; later requests remain pending for that worker.
 - Keep worker-before-staging lock order and short queue transactions. Pass the
   independent cancellation context, not a borrowed staging-store capability.
 - Foreground workers select the audited Unix/Windows process supervision and
@@ -321,9 +318,7 @@ writer locks. The execution keeps a staging context solely for borrowing that
 lease; archive builders, seed/commit stores, private capture trees and queue
 transactions receive independent operation contexts. This avoids borrowing one
 store's capability to access another and prevents a capture-store/staging lock
-inversion. Manual sync cannot run between execution phases. The separate
-[coverage service](#claude-manual-sync-evidence-milestone-6b5b) now establishes
-manual-sync event coverage while owning both worker and staging. Capture and publication can finish audited staged merges or resume supported unresolved conflicts through [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
+inversion. Manual sync cannot run between execution phases. Manual sync does not infer completion of queued work. Capture and publication can finish audited staged merges or resume supported unresolved conflicts through [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md).
 
 RunOne persists each successful reference, resumes only unfinished phases, and
 acknowledges only its sealed batch after fresh remote confirmation. A retry after
@@ -341,7 +336,7 @@ and phase persistence, absent saved artifacts, changed bindings/provenance,
 conflict blocking, detached inputs, and staging ownership across phase gaps and
 manual-sync attempts. Existing artifact, queue and fixed-baseline compatibility
 tests remain required. Foreground startup, supervised execution and status are
-now wired in 7b, with explicit `queue sync` coverage in 7c.2a;
+now wired in 7b, with explicit drain-then-sync;
 hook/ordinary-sync routing and rollback remain 7c.2b.
 Artifact/receipt cleanup command exposure and actual OS restart validation remain separate gates.
 
@@ -403,7 +398,7 @@ keep both machines' additions through [bounded append recovery](CLAUDERIG-V2-RET
 Canonical version-1 chunked transcripts now use verified saved parts through
 [bounded chunk recovery](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-chunk-recovery), keeping the chunked format and on/auto defaults.
 Eligible ordinary files now use [saved snapshot ordering](CLAUDERIG-V2-RETAINED-PUBLICATION.md#retained-ordinary-file-snapshots). Both ordinary-file conflict sides pass the secret tripwire before selection, including the losing snapshot. Equal/unknown times and novel merge bytes remain blocked.
-The complete resolved tree is audited before pushing. Mixed native/chunked indexes, ordinary
+Session indexes reuse [native ledger reconciliation](CLAUDERIG-V2-RETAINED-PUBLICATION.md#session-index-merges). The complete resolved tree is audited before pushing. Mixed native/chunked indexes, unrelated
 JSONL files, edited transcript/memory history, structural conflicts and invalid metadata still return a conflict
 and remain blocked. Existing blocked batches require explicit Unblock; recovery
 does not clear queue state on its own. See the [retained publication contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#bounded-retained-metadata-recovery).
@@ -411,131 +406,18 @@ does not clear queue state on its own. See the [retained publication contract](C
 Already-staged canonical merges can be completed before retrying committed work; see the [completion contract](CLAUDERIG-V2-RETAINED-PUBLICATION.md#already-staged-canonical-merge-completion). The retained artifact is verified before any HEAD change. Secret rejection leaves the batch committed and blocked, and transport failure after completion reuses the same retained batch. Supported unresolved canonical conflicts now use [sealed recovery](CLAUDERIG-V2-MERGE-RECOVERY.md) before capture and publication.
 
 
-## Manual-sync coverage checkpoint (milestone 6b.5a)
+## One completion path
 
-The shared queue now exposes `Worker.PrepareCoverage` and a session-bound
-`Coverage` ticket. This is an internal integration boundary: Claude's synchronous
-commands do not call it yet, and queued hooks remain disabled. The Claude service
-now supplies per-request evidence and publication wiring through
-[milestone 6b.5b](#claude-manual-sync-evidence-milestone-6b5b); aggregate capture
-counts alone cannot establish coverage of individual requests.
+Only the worker advances captured/committed/pushed phases and acknowledges saved
+requests. `queue sync` drains through that worker, then performs ordinary manual
+sync. It no longer infers completion by matching a fresh manual capture against
+queued requests. Later requests remain queued, including when their files appear
+in the manual snapshot. See [commands](CLAUDERIG-V2-QUEUE-COMMANDS.md#manual-queue-sync).
 
-The caller acquires worker ownership, validates its actual binding and source
-provenance, and prepares candidates **before reading sources**, with worker
-ownership held through capture, publication and acknowledgement. It acquires
-staging after worker ownership and uses an independent context for queue
-transactions. Preparation refuses an active execution and seals the unattempted,
-pending prefix for that provenance. Previously attempted, delayed, blocked or
-retained work stops the prefix, preserving its recovery path. Other provenance
-is not selected. Preparation does not increment attempts, claim execution or
-create an artifact reference.
-
-Producers can still enqueue. New events get later batches, even when they name
-the same source and flush intent. `Coverage.Batches` returns detached snapshots
-of the candidates. The vendor must prove that each reported generation's native
-sources and requested flush were included in the published result, respecting
-identity, source availability and retention. A success return, a global generation
-watermark or a local-only commit is insufficient. The shared queue trusts this
-vendor evidence just as it trusts the retained execution adapter's phase results;
-it does not inspect native files or contact a remote.
-
-After confirmed remote publication, `Coverage.Acknowledge` accepts explicit
-covered generations from that ticket. It rejects foreign generations and changed
-candidate state, and records only batches whose **every** event is covered.
-Partially covered batches remain pending in full; already-covered events in those
-batches may be captured again. The method returns only acknowledged generations,
-never a global watermark. Completed producer receipts remain available for
-idempotent event retries. It neither manufactures captured/committed/pushed
-references nor acknowledges saved artifacts using unrelated live input.
-
-Abandoning a ticket leaves sealed work pending. A replacement worker can execute
-it normally with its retry budget intact, or prepare a new ticket before a new
-capture. The old ticket cannot write after its worker closes or loses ownership.
-A failed or uncertain preparation returns no usable ticket. Retry preparation
-before reading sources; a repeated preparation may include newly accepted work.
-An uncertain acknowledgement returns no confirmed generations; retry the same
-ticket and generation list under the same owner to reflush receipts. Process
-death before a durable acknowledgement leaves work to replay, including when
-publication had already happened. Process death after the receipt write preserves
-completion and producer deduplication. Exactly-once publication is not promised.
-
-Tests cover selected/all intent, noncontiguous generations and other provenance,
-partial coverage, later arrivals, detached inputs, recovery barriers, stale owners,
-failed/uncertain persistence, cancellation, real process death and acknowledgement
-crash boundaries. Schema-1 fixtures retain completed receipts, committed artifacts
-and retry metadata through the additive schema-2 upgrade.
-
-
-## Claude manual-sync evidence (milestone 6b.5b)
-
-`Service.SyncWithCoverage` composes synchronous capture/publication with an
-explicit, existing queue. It acquires worker ownership before staging, verifies
-that queue storage is outside all resolved source and staging roots, and checks
-the current configuration binding. Live identity is read once at the ordinary
-capture point, before resolving manual flush intent. Identity errors or invalid
-provenance never become unknown-account acknowledgements. Queue transactions use
-an independent operation context; both leases remain held until confirmation and
-acknowledgement finish. Producers may enqueue later generations throughout.
-
-Before capture, the service seals candidates and resolves each requested CLI
-session to one native transcript. Coverage includes its subagents, any selected
-flush groups, and all allowlisted CLI transcripts for an all-flush request.
-Missing or ambiguous sessions and unavailable selected paths remain pending.
-Requested sources are freshly read even when size and modification time match
-staging; changed-file throttling, retention, size limits and secret policy still
-apply. Evidence requires a regular source with stable file identity, size and
-modification time across the read. Native source paths remain in memory and are
-excluded from serialized reports and journals.
-
-After capture and pruning, a second group walk detects newly appearing members.
-Every required member must have fresh capture evidence and a readable retained
-snapshot. The session ledger must exist and match the account when provenance
-has a known account UUID. A successful identity read with no UUID supports
-explicit unknown provenance; failed or invalid reads cannot acknowledge it. The service
-hashes logical transcript bytes, validating chunk indexes and parts, and keeps
-only completely covered batches. Deferred, skipped, missing, pruned, oversized
-or partially covered groups remain pending with their retry budget unchanged.
-Chunking and redaction are verified in their resulting backup representation.
-
-Coverage publication refreshes tracked Git contents even when the index stat
-cache matches; ordinary sync retains its existing incremental staging.
-Publication records the original snapshot commit before reconciliation or
-history maintenance. `commitartifact.ConfirmSnapshot` freshly fetches the bound
-remote using existing system Git/`gh` configuration into a temporary private
-repository. It requires the snapshot in the fetched history, validates and audits
-its raw committed tree, and compares its logical transcript hashes and account
-ledger with capture evidence. It does not trust cached remote refs or reread live
-sources after publication. A concurrent remote append or successful reconciliation
-can preserve this proof. Rewritten or squashed-away snapshot history cannot, even
-when an earlier push succeeded; the queue remains pending for a later capture.
-Temporary confirmation data is removed when the operation returns.
-
-Only confirmed complete batches reach `Coverage.Acknowledge`. Local-only and dry
-runs do not prepare or acknowledge candidates. Capture, scan, publication,
-confirmation or cancellation failures cannot acknowledge work. The result retains
-ordinary sync progress when a later confirmation or acknowledgement fails.
-External merge tools are rejected at this boundary until their process lifetime
-can be covered by worker lifecycle controls. Configured transport validation runs
-before capture; the existing HTTPS/Git authentication path and absolute local
-fixture paths are reused without adding credentials or transport mechanisms.
-
-The 7c.1 [runtime bridge](CLAUDERIG-V2-QUEUE-RUNTIME.md#manual-sync-coverage-bridge-7c1)
-validates the persisted lifecycle before using this manual-sync coverage service.
-The explicit `queue sync` command uses it in 7c.2a; automatic hook routing remains
-pending.
-Ordinary `Sync` keeps its existing behavior. Explicit foreground queue commands
-are wired in 7b, with explicit manual coverage in 7c.2a; ordinary-sync/hook
-routing and rollback remain 7c.2b. Cleanup command
-exposure and actual OS restart validation remain separate gates;
-Desktop request routing and the separate Codex adapter remain future work.
-
-Synthetic tests cover later arrivals, worker/staging exclusion, identity/flush
-ordering, same-metadata source changes, selected subagents and all-flush batches,
-retention/size/scan failures, native and chunked/redacted snapshots, late group
-members, local/dry runs, cancellation, remote rewrites and push reconciliation.
-Shared confirmation tests cover SHA-1/SHA-256 repositories, exact raw snapshot
-bytes, false fetched refs, policy rejection, size bounds and scratch cleanup.
-
+The retired coverage-ticket API and its remote/file proof machinery are removed.
+Existing schema-2 seals and schema-3 receipts remain readable and are respected by
+worker execution and receipt compaction; old pending work is never discarded or
+silently coalesced into a new batch.
 
 ## Worker loop and controlled shutdown (milestone 6b.6a)
 
@@ -543,7 +425,7 @@ bytes, false fetched refs, policy rejection, size bounds and scratch cleanup.
 in-process boundary; it does not install a daemon, service, producer or hook.
 A separate runner lease excludes duplicate loops for the same queue. Each batch
 acquires its existing worker/staging leases and releases them after execution
-cleanup. Idle and backoff waits hold neither lease, allowing manual sync/coverage
+cleanup. Idle and backoff waits hold neither lease, allowing manual sync
 and foreground recovery. A competing foreground owner makes the loop wait;
 explicit drain mode reports that contention instead of replacing the owner.
 All queue operations use the independent operation context.
@@ -678,7 +560,7 @@ reclamation. It holds worker and transaction leases and durably reflushes valida
 state before invoking a sequential callback. It changes no logical queue state and
 a failed/uncertain reflush cannot authorize deletion. The callback-scoped proof
 reports unfinished work and accepted-generation history; it expires on return.
-Producers, workers and manual coverage stay excluded until cleanup finishes.
+Producers, workers and manual sync stay excluded until cleanup finishes.
 Callbacks must not reenter queue operations. See [queue-aware artifact
 reclamation](CLAUDERIG-V2-CAPTURE-ARTIFACTS.md#queue-aware-archive-reclamation-6b7b2b)
 for the idle-only sealed-archive policy and queue-parent confirmation cleanup.

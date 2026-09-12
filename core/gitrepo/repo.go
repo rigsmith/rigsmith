@@ -109,18 +109,6 @@ func (r *Repo) StageAll(ctx context.Context) error {
 	return err
 }
 
-// StageAllFresh stages additions/deletions, then rereads all tracked working
-// files even when their size and time match Git's cached index. Attributes and
-// clean filters still apply; callers requiring byte preservation must validate
-// their attributes first.
-func (r *Repo) StageAllFresh(ctx context.Context) error {
-	if err := r.StageAll(ctx); err != nil {
-		return err
-	}
-	_, err := runGit(ctx, r.Dir, "add", "--renormalize", "--", ".")
-	return err
-}
-
 // Dirty reports whether the working tree differs from HEAD (staged or not).
 func (r *Repo) Dirty(ctx context.Context) (bool, error) {
 	return r.DirtyExcluding(ctx)

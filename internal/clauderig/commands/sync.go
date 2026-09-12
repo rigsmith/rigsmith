@@ -113,7 +113,7 @@ func newSyncCmd(deps queueCommandDeps) *cobra.Command {
 		Long: "Walks the sync roots, redacts secret-bearing fields, rewrites machine\n" +
 			"paths into a portable form, commits, and pushes.\n\n" +
 			"With queue enable-hooks, Stop/SessionEnd hooks save queued requests locally;\n" +
-			"manual sync uses queue sync and its supervision/coverage checks. --dry-run\n" +
+			"manual sync uses queue sync and its worker drain and supervision checks. --dry-run\n" +
 			"never admits hooks or acknowledges requests. SessionStart pull is unchanged.\n\n" +
 			"Coordinates with other staging operations: ordinary hooks skip a busy store;\n" +
 			"manual sync and --flush wait up to 15 seconds before asking you to retry.\n\n" +

@@ -157,7 +157,7 @@ maintenance ownership when revalidating an existing lifecycle.
 
 1. Explicit queue commands are wired in 7b: initialization, saved producer
    requests, acceptance, supervised worker startup/status, retry and draining.
-2. Opt-in hook routing, bounded producer input, synchronous coverage and rollback.
+2. Opt-in hook routing, bounded producer input, manual sync and rollback.
 3. Reclamation exposure only through the retained runtime association, plus actual
    OS restart/hibernation validation before general release.
 
@@ -168,56 +168,26 @@ queues, source overlap, moved roots, linked stores, changed config and an offlin
 committed-phase restart that publishes the original producer's bytes/attribution.
 The pinned v1 compatibility baseline remains unchanged.
 
-## Manual-sync coverage bridge (7c.1)
+## Manual-sync boundary
 
-`QueueRuntime.SyncWithCoverage` uses the existing manual coverage workflow with
-this runtime's private queue. It validates fresh configuration, path isolation,
-and persisted lifecycle metadata before capture, then checks the actual capture
-policy again before engine capture, even on dry runs or failed/invalid identity
-observations. Those cases never prepare or acknowledge coverage. Only an exact
-policy match is translated
-to the lifecycle binding; the underlying queue remains private. Revalidation
-also runs after the source walk (including dry-run previews) before publication,
-and after remote confirmation
-before acknowledgement. Profile/lifecycle changes leave pending work intact; a
-snapshot already published before a later validation failure is not rolled back.
+`QueueRuntime.Sync` wraps ordinary manual sync with runtime isolation checks and
+worker ownership. It never acknowledges queued work. The command drains through
+`QueueRuntime.Run` first; dry runs skip that drain. Configuration is detached,
+all local Desktop profiles must match the runtime, and source/profile paths and
+persisted runtime association are checked before capture, after capture and on
+completion. These observations do not fence arbitrary external filesystem edits.
+Keep those inputs stable while syncing. A snapshot published before a later check
+fails is not rolled back.
 
-Manual capture discovers Desktop profiles from the process home, as ordinary
-sync does. That actual selection must match the complete profile set under
-`SyncRequest.Machine.Home` and the initialized runtime. Alternate-home requests
-with a different profile set are refused; this bridge does not change ordinary
-capture discovery or provide a cross-machine capture mode. Missing, malformed or
-unreadable profile metadata refuses coverage; discovery cannot silently omit
-profiles. Directory links and Windows junctions must appear in the actual capture
-selection too. Changed configuration, invalid runtime metadata or a changed
-lifecycle association refuses coverage; repair the original inputs rather than
-resetting queue state. Worker ownership spans capture, remote confirmation and
-acknowledgement, while producers may continue accepting later generations.
+Later producers can enqueue during manual sync. Their requests remain pending;
+the next worker handles them using their saved identity. Live identity is read
+once for ordinary capture only. No file-evidence maps, coverage tickets or second
+remote-confirmation path are needed.
 
-The live identity is observed once at the ordinary capture point. Only complete
-batches matching that identity and proven in the confirmed remote snapshot are
-acknowledged. Later arrivals, other identities, missing evidence, dry runs and
-failed publication retain their pending work. The explicit `queue sync` command
-uses this bridge in 7c.2a. Ordinary sync and hooks are unchanged; opt-in routing
-and rollback follow in 7c.2b.
-
-The validation checks are observations at specific points, not an atomic
-filesystem snapshot or a transaction joining Desktop metadata to queue
-acknowledgement. Keep configuration, profile membership, source directories,
-resolved link targets and the runtime/store association stable throughout the
-operation. Profile creation/removal, same-name replacement and link retargeting
-must wait until it finishes. An external change between checks, including the
-interval after final validation and before acknowledgement, is not guaranteed to
-be detected. The runtime lease is deliberately released before acknowledgement;
-worker ownership excludes other queue workers, not external filesystem writers.
-
-Coverage proves the captured CLI session groups in the confirmed remote snapshot;
-it does not prove a continuously current snapshot of every Desktop profile or
-freeze `profile.json` bytes. Ordinary `Store.Touch` only updates `LastOpened` and
-does not change profile directory identity. Such valid metadata updates and
-runtime identity-map additions by cooperating producers need not invalidate
-coverage. Corrupt metadata observed at a validation point still refuses the
-operation. Stronger fencing of arbitrary external profile edits is outside 7c.1.
+Older queue schemas and sealed batches remain readable. Worker execution resumes
+them normally, preserving completed receipts, saved artifacts and retry counts.
+The legacy seal field remains solely to prevent new events being appended to an
+already sealed batch. New manual syncs do not create seals.
 
 ## Hook producer path validation (7c.2b.1)
 

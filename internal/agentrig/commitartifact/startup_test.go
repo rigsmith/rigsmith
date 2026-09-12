@@ -108,3 +108,16 @@ func (s startupShallowTransport) Fetch(ctx context.Context, dir, ref string) (st
 	}
 	return tip, err
 }
+
+type confirmationTransport struct {
+	Transport
+	override func(string) string
+}
+
+func (t confirmationTransport) Fetch(ctx context.Context, dir, ref string) (string, error) {
+	tip, err := t.Transport.Fetch(ctx, dir, ref)
+	if err == nil && t.override != nil {
+		tip = t.override(tip)
+	}
+	return tip, err
+}

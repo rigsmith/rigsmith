@@ -93,7 +93,7 @@ type CompactionResult struct {
 // longer submitted. Unknown events older than the durable cutoff get ErrExpired,
 // never a success acknowledgement. No automatic age policy is implied.
 //
-// The cutoff can only advance. This method excludes workers/coverage operations
+// The cutoff can only advance. This method excludes workers/manual sync operations
 // and holds the queue transaction lock across compaction and schema-3 upgrade.
 // Producers serialize on that transaction lock; all unfinished work is retained.
 // Artifacts, staging, retry state and monotonic generation IDs remain untouched.

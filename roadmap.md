@@ -14,7 +14,7 @@ secret/path preservation and queue behavior remain.
 
 | Outcome | Status | Done when |
 |---|---|---|
-| Reduce scope and duplication | Current PR | Remove native-semantic validators and exact-version pin; keep one restore preparation path and explicit file-safety checks. |
+| Reduce scope and duplication | Validator removal merged (#411); queue simplification in review next | Keep one restore preparation path and one worker completion path; remove manual-sync proof machinery. |
 | Usable Codex config workflow | Next | Enforce the Codex CLI 0.154.0 minimum at the command boundary; separate settings/repository; capture, sync through existing Git/`gh`, preview and restore work together. Interrupted restores have a clear recovery path. |
 | Validate and release the config workflow | Planned | Synthetic round trips on Linux/macOS/Windows, local secrets preserved, stale plans refused, recovery tested, install/help docs complete, Claude compatibility green. |
 | Extend the working product | Later, separately scoped | Customizations, native session artifacts/resume, and opt-in Codex queued sync reuse the existing layers when their user workflows are ready. |
@@ -37,6 +37,13 @@ concrete data-loss, security or user-workflow reason to expand release scope.
 
 [Delivery plan and retained architecture](docs/CLAUDERIG-SHARED-LAYERS-ROADMAP.md)
 · [Restore safety contract](docs/CODEXRIG-V2-CONFIG-VALIDATION.md)
+
+Queue simplification is now in progress: `queue sync` reuses worker drain, then
+ordinary sync. Remove manual coverage tickets, per-file completion evidence and
+the duplicate remote-confirmation helper. Keep durable snapshots, retries,
+recovery and legacy queue files. TOML handling stays unchanged. Larger changes to
+snapshot storage require demonstrated benefit and preservation of saved work;
+they are not another prerequisite stage for the config workflow.
 
 ## Ideas
 

@@ -212,49 +212,40 @@ admission limits, not total/peak disk reservations; scratch and recovery substor
 are excluded. Raising a limit can allow retained work to proceed after an explicit
 retry. This slice exposes no archive deletion or receipt compaction command.
 
-## Manual sync with queue coverage (7c.2a)
+## Manual queue sync
 
-`clauderig queue sync` runs one supervised manual sync with the current account
-and acknowledges complete pending requests whose captured CLI session groups
-are proven in the confirmed remote snapshot. It does not create a producer
-request or drain the queue. Other accounts, later arrivals, incomplete evidence
-and work already attempted by the worker remain queued. Inspect `queue status`
-afterward; use retry/run/drain for blocked or retained work.
+`clauderig queue sync` drains saved work through the same worker used by `run`
+and `drain`, then performs an ordinary manual sync. Every queued batch keeps its
+saved attribution, artifacts and retry progress. A blocked or delayed backlog
+stops the command before manual capture; inspect `queue status`, repair/retry the
+batch or wait for its retry time. It does not wait through backoff.
 
 ```sh
-clauderig queue sync --dry-run  # stage/scan a preview; acknowledge nothing
-clauderig queue sync --flush    # publish all changed transcript tails and confirm coverage
+clauderig queue sync --dry-run  # stage/scan only; do not drain or publish
+clauderig queue sync --flush    # drain saved work, then sync all changed tails
 ```
 
-Use the same `--dir` and repeated `--profile` flags as initialization. Manual sync
-uses ordinary sync's complete local Desktop profile selection, so every such
-profile must belong to the runtime. A runtime initialized for a subset can still
-use its worker/run/drain workflow; adding flags does not migrate its binding.
-Missing, malformed or unreadable profile metadata refuses the command. Keep
-profile membership, source directories, link targets and the runtime association
-stable throughout the operation. Validation checks are observations at defined
-points, not fencing of external edits; see the [runtime contract](CLAUDERIG-V2-QUEUE-RUNTIME.md#manual-sync-coverage-bridge-7c1).
+Stop producers before draining for a complete backlog drain. Requests arriving
+after the drain remain queued even if manual sync copies their files. Only the
+worker completes queue requests after confirming publication; manual sync does
+not infer completion from matching files or account identity.
 
-On Windows, provision the runtime and its files under a private user directory
-before using this command. Inherited ACLs are a caller prerequisite: runtime
-validation does not inspect or repair them and does not make shared or
-other-user-writable state safe to use. See [runtime permissions](CLAUDERIG-V2-QUEUE-RUNTIME.md).
+Use the same `--dir` and `--profile` selection as init, including every local
+Desktop profile. Missing or unreadable profile metadata refuses manual sync.
+Keep source/profile locations and private runtime state stable. On Windows,
+private inherited ACLs remain a caller prerequisite. See the
+[runtime contract](CLAUDERIG-V2-QUEUE-RUNTIME.md#manual-sync-boundary).
 
-The command checks configured remote privacy and initialized shared staging/remote
-history before capture, including for dry runs. It reads live identity once at
-capture; failed or invalid identity suppresses acknowledgement. It never replaces
-saved producer attribution with that current identity. `--flush` includes all
-changed transcript tails; it does not read hook payloads from stdin. There is no
-hook debounce, local-only mode, external merge tool or archive-limit flag here.
-Dry runs stage and scan without publishing or preparing/acknowledging coverage.
+Private remote and initialized shared-history checks still run, including for
+previews. Queued work uses its saved producer identity; final manual capture reads
+the current identity once. `--flush` affects that final capture. No hook payload,
+debounce or external merge tool is used. The first interrupt stops after the
+current batch or manual sync; a second cancels and waits for supervised cleanup.
 
-Worker ownership spans capture, publication confirmation and acknowledgement.
-An active batch can report busy; retry after it finishes. The first interrupt
-lets the single sync finish; a second cancels and waits for supervised cleanup.
-Failure can occur after a snapshot was published; inspect status before retrying.
-A successful manual sync reports the number of acknowledged requests, without
-claiming that the queue is empty. Without local opt-in, ordinary `clauderig sync` and installed hooks
-retain their existing synchronous behavior and do not acknowledge queue work.
+The result reports batches completed by the worker. If final manual sync fails,
+those completed batches remain completed. A repeat may copy files again but does
+not substitute fresh source bytes for a retained batch. Without hook opt-in,
+ordinary sync and installed hooks keep their existing synchronous behavior.
 
 ## Prepare a request from hook input (7c.2b.1)
 
@@ -288,7 +279,7 @@ and refuses missing or ambiguous captures. Keep source and runtime paths stable.
 
 `Stop` records normal flush intent. `SessionEnd` records selected flush for its
 single transcript. These saved intents determine the evidence required for
-manual-sync coverage. Workers always capture each requested session and its
+manual queue sync. Workers always capture each requested session and its
 subagents completely, including for normal requests. Selected flush also captures
 the named paths and their subagents. Unrelated plain transcripts retain normal
 large-file throttling; any all-flush request in a batch flushes every changed

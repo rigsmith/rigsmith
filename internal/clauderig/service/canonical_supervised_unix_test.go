@@ -23,8 +23,8 @@ func TestCanonicalSupervisorLossStopsCaptureAndLaterJournal(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("RIG_TEST_CANONICAL_SUPERVISOR_FAILURE", "0")
-			req, q, request, _ := coverageFixture(t)
-			enqueueCoverage(t, q, request)
+			req, q, request, _ := queueSyncFixture(t)
+			enqueueSyncRequest(t, q, request)
 			if _, err := gitrepo.Init(t.Context(), req.StagingDir); err != nil {
 				t.Fatal(err)
 			}
@@ -36,18 +36,18 @@ func TestCanonicalSupervisorLossStopsCaptureAndLaterJournal(t *testing.T) {
 				if !afterCapture {
 					t.Fatal("capture followed lost supervisor")
 				}
-				return coverageIdentity, nil
+				return queueSyncIdentity, nil
 			}, Observe: func(e service.Event) {
 				if _, ok := e.(service.Captured); ok {
 					captured = true
 					t.Setenv("RIG_TEST_CANONICAL_SUPERVISOR_FAILURE", "1")
 				}
 			}}
-			result, err := svc.SyncWithCoverage(canonicalSupervisor(t.Context()), req, q)
-			if err == nil || captured != afterCapture || result.Sync.Publication.Committed {
+			result, err := svc.Sync(canonicalSupervisor(t.Context()), req)
+			if err == nil || captured != afterCapture || result.Publication.Committed {
 				t.Fatalf("loss did not stop workflow: %+v %v", result, err)
 			}
-			pendingCoverage(t, q, 1)
+			pendingSyncRequests(t, q, 1)
 			rows, err := journal.Read(req.StagingDir, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -73,18 +73,18 @@ func TestCanonicalSupervisorLossStopsCaptureAndLaterJournal(t *testing.T) {
 			if recovered, err := process.RecoverStore(t.Context(), req.StagingDir); err != nil || !recovered {
 				t.Fatalf("prelaunch recovery: %v %v", recovered, err)
 			}
-			pendingCoverage(t, q, 1) // Recovery itself cannot acknowledge work.
+			pendingSyncRequests(t, q, 1) // Recovery itself cannot acknowledge work.
 			rows, err = journal.Read(req.StagingDir, 0)
 			if err != nil || len(rows) != want {
 				t.Fatalf("recovery changed journal: %v %v", rows, err)
 			}
 			t.Setenv("RIG_TEST_CANONICAL_SUPERVISOR_FAILURE", "0")
-			retry := service.Service{ReadIdentity: func() (service.Identity, error) { return coverageIdentity, nil }}
-			completed, err := retry.SyncWithCoverage(canonicalSupervisor(t.Context()), req, q)
-			if err != nil || !completed.Sync.Publication.Pushed || len(completed.Acknowledged) != 1 {
+			retry := service.Service{ReadIdentity: func() (service.Identity, error) { return queueSyncIdentity, nil }}
+			completed, err := retry.Sync(canonicalSupervisor(t.Context()), req)
+			if err != nil || !completed.Publication.Pushed {
 				t.Fatalf("recovered workflow failed confirmation: %+v %v", completed, err)
 			}
-			pendingCoverage(t, q, 0)
+			pendingSyncRequests(t, q, 1)
 		})
 	}
 }

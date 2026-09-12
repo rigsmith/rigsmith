@@ -289,8 +289,10 @@ archives, `.durable-*` files and recovery substores remain untouched. In
 particular, cleanup does not traverse merge intents or scan the OS temporary
 directory for relocated merge workspaces: the private stores' leases do not
 identify ownership of those external paths. Those paths remain retained.
-`SyncWithCoverage` also places `.confirmation-*` workspaces under the queue
-directory, not the commit store. This API never scans that queue parent; the queue-aware operation below adds queue-worker ownership to reclaim them.
+Older v2 builds placed `.confirmation-*` workspaces under the queue directory.
+New manual syncs no longer create them. Legacy cleanup remains supported: this
+API does not scan the queue parent; the queue-aware operation below adds worker
+ownership to reclaim those old workspaces.
 
 Existing root aliases are canonicalized, overlaps are rejected, and the `seeds`
 substore cannot be a link. Missing artifact stores are skipped without creation;

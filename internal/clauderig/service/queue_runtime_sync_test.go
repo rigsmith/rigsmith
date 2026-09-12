@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -19,14 +18,14 @@ import (
 	"github.com/rigsmith/rigsmith/internal/clauderig/service"
 )
 
-func TestQueueRuntimeManualCoveragePreservesLaterArrivalsAndOtherLifecycles(t *testing.T) {
-	req, _, event, svc := coverageFixture(t)
+func TestQueueRuntimeManualSyncPreservesLaterArrivalsAndOtherLifecycles(t *testing.T) {
+	req, _, event, svc := queueSyncFixture(t)
 	dir := filepath.Join(t.TempDir(), "runtime")
 	r, err := service.CreateQueueRuntime(t.Context(), dir, req, engine.LocalProfileNames())
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now())
+	original, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,11 +33,11 @@ func TestQueueRuntimeManualCoveragePreservesLaterArrivalsAndOtherLifecycles(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := other.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+	if _, err := other.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	reads := 0
-	svc.ReadIdentity = func() (service.Identity, error) { reads++; return coverageIdentity, nil }
+	svc.ReadIdentity = func() (service.Identity, error) { reads++; return queueSyncIdentity, nil }
 	var late queue.Event
 	svc.Observe = func(e service.Event) {
 		if _, ok := e.(service.Captured); !ok {
@@ -53,13 +52,13 @@ func TestQueueRuntimeManualCoveragePreservesLaterArrivalsAndOtherLifecycles(t *t
 		}
 		next := event
 		next.EventID = "later"
-		late, err = r.Enqueue(t.Context(), coverageIdentity, next, time.Now())
+		late, err = r.Enqueue(t.Context(), queueSyncIdentity, next, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	result, err := r.SyncWithCoverage(t.Context(), svc, req)
-	if err != nil || !reflect.DeepEqual(result.Acknowledged, []uint64{original.Generation}) || reads != 1 {
+	result, err := r.Sync(t.Context(), svc, req)
+	if err != nil || reads != 1 {
 		t.Fatalf("result=%+v err=%v reads=%d", result, err, reads)
 	}
 	reopened, err := service.OpenQueueRuntime(t.Context(), dir, req, engine.LocalProfileNames())
@@ -67,7 +66,7 @@ func TestQueueRuntimeManualCoveragePreservesLaterArrivalsAndOtherLifecycles(t *t
 		t.Fatal(err)
 	}
 	pending, err := reopened.Snapshot(t.Context())
-	if err != nil || len(pending) != 1 || pending[0].ID != late.BatchID {
+	if err != nil || len(pending) != 1 || pending[0].ID != late.BatchID || len(pending[0].Events) != 2 {
 		t.Fatalf("later arrival: %+v %v", pending, err)
 	}
 	pending, err = other.Snapshot(t.Context())
@@ -76,10 +75,10 @@ func TestQueueRuntimeManualCoveragePreservesLaterArrivalsAndOtherLifecycles(t *t
 	}
 }
 
-func TestQueueRuntimeManualCoverageRefusesInvalidBindingBeforeCapture(t *testing.T) {
+func TestQueueRuntimeManualSyncRefusesInvalidBindingBeforeCapture(t *testing.T) {
 	for _, mode := range []string{"configuration", "metadata", "remote", "profiles"} {
 		t.Run(mode, func(t *testing.T) {
-			req, _, event, svc := coverageFixture(t)
+			req, _, event, svc := queueSyncFixture(t)
 			dir := filepath.Join(t.TempDir(), "runtime")
 			profiles := engine.LocalProfileNames()
 			if mode == "profiles" {
@@ -89,7 +88,7 @@ func TestQueueRuntimeManualCoverageRefusesInvalidBindingBeforeCapture(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+			if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			switch mode {
@@ -106,8 +105,8 @@ func TestQueueRuntimeManualCoverageRefusesInvalidBindingBeforeCapture(t *testing
 				t.Fatal("invalid runtime reached capture")
 				return service.Identity{}, nil
 			}
-			result, err := r.SyncWithCoverage(t.Context(), svc, req)
-			if err == nil || len(result.Acknowledged) != 0 {
+			result, err := r.Sync(t.Context(), svc, req)
+			if err == nil {
 				t.Fatalf("invalid runtime accepted: %+v %v", result, err)
 			}
 			pending, err := r.Snapshot(t.Context())
@@ -118,15 +117,15 @@ func TestQueueRuntimeManualCoverageRefusesInvalidBindingBeforeCapture(t *testing
 	}
 }
 
-func TestQueueRuntimeManualCoverageKeepsUnprovenWork(t *testing.T) {
+func TestQueueRuntimeManualSyncNeverAcknowledgesWork(t *testing.T) {
 	for _, mode := range []string{"dry-run", "other-identity", "identity-error", "missing-source"} {
 		t.Run(mode, func(t *testing.T) {
-			req, _, event, svc := coverageFixture(t)
+			req, _, event, svc := queueSyncFixture(t)
 			r, err := service.CreateQueueRuntime(t.Context(), filepath.Join(t.TempDir(), "runtime"), req, engine.LocalProfileNames())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+			if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			switch mode {
@@ -141,8 +140,8 @@ func TestQueueRuntimeManualCoverageKeepsUnprovenWork(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			result, err := r.SyncWithCoverage(t.Context(), svc, req)
-			if err != nil || len(result.Acknowledged) != 0 {
+			result, err := r.Sync(t.Context(), svc, req)
+			if err != nil {
 				t.Fatalf("unproven work: %+v %v", result, err)
 			}
 			pending, err := r.Snapshot(t.Context())
@@ -153,24 +152,24 @@ func TestQueueRuntimeManualCoverageKeepsUnprovenWork(t *testing.T) {
 	}
 }
 
-func TestQueueRuntimeManualCoverageRevalidatesBeforePreparing(t *testing.T) {
-	req, _, event, svc := coverageFixture(t)
+func TestQueueRuntimeManualSyncRevalidatesBeforePreparing(t *testing.T) {
+	req, _, event, svc := queueSyncFixture(t)
 	dir := filepath.Join(t.TempDir(), "runtime")
 	r, err := service.CreateQueueRuntime(t.Context(), dir, req, engine.LocalProfileNames())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+	if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	svc.ReadIdentity = func() (service.Identity, error) {
 		if err := os.WriteFile(filepath.Join(dir, "runtime.json"), []byte("changed after preflight"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		return coverageIdentity, nil
+		return queueSyncIdentity, nil
 	}
-	result, err := r.SyncWithCoverage(t.Context(), svc, req)
-	if err == nil || len(result.Acknowledged) != 0 {
+	result, err := r.Sync(t.Context(), svc, req)
+	if err == nil {
 		t.Fatalf("changed metadata accepted: %+v %v", result, err)
 	}
 	pending, err := r.Snapshot(t.Context())
@@ -179,10 +178,10 @@ func TestQueueRuntimeManualCoverageRevalidatesBeforePreparing(t *testing.T) {
 	}
 }
 
-func TestQueueRuntimeManualCoverageRequiresCompleteProfileDiscovery(t *testing.T) {
+func TestQueueRuntimeManualSyncRequiresCompleteProfileDiscovery(t *testing.T) {
 	for _, mode := range []string{"missing", "malformed", "unreadable", "appears-during-capture"} {
 		t.Run(mode, func(t *testing.T) {
-			req, _, event, svc := coverageFixture(t)
+			req, _, event, svc := queueSyncFixture(t)
 			store := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
 			if _, err := store.Create("readable", "", ""); err != nil {
 				t.Fatal(err)
@@ -195,7 +194,7 @@ func TestQueueRuntimeManualCoverageRequiresCompleteProfileDiscovery(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+			if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			broken := filepath.Join(store.Root, "omitted")
@@ -223,10 +222,10 @@ func TestQueueRuntimeManualCoverageRequiresCompleteProfileDiscovery(t *testing.T
 				if mode == "appears-during-capture" {
 					createBroken()
 				}
-				return coverageIdentity, nil
+				return queueSyncIdentity, nil
 			}
-			result, err := r.SyncWithCoverage(t.Context(), svc, req)
-			if !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "complete Desktop profile coverage") || len(result.Acknowledged) != 0 {
+			result, err := r.Sync(t.Context(), svc, req)
+			if !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "complete Desktop profile coverage") {
 				t.Fatalf("omitted profile accepted: %+v %v", result, err)
 			}
 			if mode != "appears-during-capture" && reads != 0 {
@@ -240,22 +239,22 @@ func TestQueueRuntimeManualCoverageRequiresCompleteProfileDiscovery(t *testing.T
 			if err := os.RemoveAll(broken); err != nil {
 				t.Fatal(err)
 			}
-			svc.ReadIdentity = func() (service.Identity, error) { return coverageIdentity, nil }
-			result, err = r.SyncWithCoverage(t.Context(), svc, req)
-			if err != nil || len(result.Acknowledged) != 1 {
+			svc.ReadIdentity = func() (service.Identity, error) { return queueSyncIdentity, nil }
+			result, err = r.Sync(t.Context(), svc, req)
+			if err != nil {
 				t.Fatalf("repaired profile retry: %+v %v", result, err)
 			}
 		})
 	}
 }
 
-func TestQueueRuntimeManualCoverageChecksLinkedProfileMetadata(t *testing.T) {
-	req, _, event, svc := coverageFixture(t)
+func TestQueueRuntimeManualSyncChecksLinkedProfileMetadata(t *testing.T) {
+	req, _, event, svc := queueSyncFixture(t)
 	r, err := service.CreateQueueRuntime(t.Context(), filepath.Join(t.TempDir(), "runtime"), req, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+	if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	target := t.TempDir()
@@ -275,17 +274,17 @@ func TestQueueRuntimeManualCoverageChecksLinkedProfileMetadata(t *testing.T) {
 		t.Fatal("incomplete linked profile reached capture")
 		return service.Identity{}, nil
 	}
-	_, err = r.SyncWithCoverage(t.Context(), svc, req)
+	_, err = r.Sync(t.Context(), svc, req)
 	if !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "complete Desktop profile coverage") {
 		t.Fatalf("linked profile metadata ignored: %v", err)
 	}
 	// Windows display discovery skips ModeIrregular junctions, even with valid
-	// metadata. The bridge must reject that omitted profile before acknowledging.
+	// metadata. Manual sync must reject that omitted profile before capture.
 	if runtime.GOOS == "windows" {
 		if err := os.WriteFile(filepath.Join(target, "profile.json"), []byte("{}"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		_, err = r.SyncWithCoverage(t.Context(), svc, req)
+		_, err = r.Sync(t.Context(), svc, req)
 		if !errors.Is(err, queue.ErrBinding) || !strings.Contains(err.Error(), "manual capture omitted or changed") {
 			t.Fatalf("junction omitted: %v", err)
 		}
@@ -296,18 +295,18 @@ func TestQueueRuntimeManualCoverageChecksLinkedProfileMetadata(t *testing.T) {
 	}
 }
 
-func TestQueueRuntimeManualCoverageRevalidationSurvivesIdentityFailureAndDryRun(t *testing.T) {
+func TestQueueRuntimeManualSyncRevalidationSurvivesIdentityFailureAndDryRun(t *testing.T) {
 	for _, dry := range []bool{false, true} {
 		for _, identityMode := range []string{"error", "invalid", "valid"} {
 			for _, change := range []string{"runtime", "profile"} {
 				t.Run(fmt.Sprintf("dry=%v/%s/%s", dry, identityMode, change), func(t *testing.T) {
-					req, _, event, svc := coverageFixture(t)
+					req, _, event, svc := queueSyncFixture(t)
 					dir := filepath.Join(t.TempDir(), "runtime")
 					r, err := service.CreateQueueRuntime(t.Context(), dir, req, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
-					if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+					if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 						t.Fatal(err)
 					}
 					req.DryRun = dry
@@ -327,7 +326,7 @@ func TestQueueRuntimeManualCoverageRevalidationSurvivesIdentityFailureAndDryRun(
 						case "invalid":
 							return service.Identity{AccountUUID: "invalid"}, nil
 						default:
-							return coverageIdentity, nil
+							return queueSyncIdentity, nil
 						}
 					}
 					svc.Observe = func(e service.Event) {
@@ -335,8 +334,8 @@ func TestQueueRuntimeManualCoverageRevalidationSurvivesIdentityFailureAndDryRun(
 							t.Fatal("changed runtime reached captured state")
 						}
 					}
-					result, err := r.SyncWithCoverage(t.Context(), svc, req)
-					if !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 || result.Sync.Publication.Pushed {
+					result, err := r.Sync(t.Context(), svc, req)
+					if !errors.Is(err, queue.ErrBinding) || result.Publication.Pushed {
 						t.Fatalf("validation bypassed: %+v %v", result, err)
 					}
 					pending, err := r.Snapshot(t.Context())
@@ -349,17 +348,17 @@ func TestQueueRuntimeManualCoverageRevalidationSurvivesIdentityFailureAndDryRun(
 	}
 }
 
-func TestQueueRuntimeManualCoverageRevalidatesAfterCaptureAndPublication(t *testing.T) {
+func TestQueueRuntimeManualSyncRevalidatesAfterCaptureAndPublication(t *testing.T) {
 	for _, phase := range []string{"capture", "publication"} {
 		for _, change := range []string{"profile", "runtime"} {
 			t.Run(phase+"/"+change, func(t *testing.T) {
-				req, _, event, svc := coverageFixture(t)
+				req, _, event, svc := queueSyncFixture(t)
 				dir := filepath.Join(t.TempDir(), "runtime")
 				r, err := service.CreateQueueRuntime(t.Context(), dir, req, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+				if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 					t.Fatal(err)
 				}
 				changed := false
@@ -381,14 +380,14 @@ func TestQueueRuntimeManualCoverageRevalidatesAfterCaptureAndPublication(t *test
 						}
 					}
 				}
-				result, err := r.SyncWithCoverage(t.Context(), svc, req)
-				if !changed || !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 {
-					t.Fatalf("stale capture acknowledged: %+v %v changed=%v", result, err, changed)
+				result, err := r.Sync(t.Context(), svc, req)
+				if !changed || !errors.Is(err, queue.ErrBinding) {
+					t.Fatalf("stale capture accepted: %+v %v changed=%v", result, err, changed)
 				}
-				if phase == "capture" && result.Sync.Publication.Pushed {
+				if phase == "capture" && result.Publication.Pushed {
 					t.Fatal("published after changed capture policy")
 				}
-				if phase == "publication" && !result.Sync.Publication.Pushed {
+				if phase == "publication" && !result.Publication.Pushed {
 					t.Fatal("test did not exercise published snapshot")
 				}
 				pending, err := r.Snapshot(t.Context())
@@ -400,16 +399,16 @@ func TestQueueRuntimeManualCoverageRevalidatesAfterCaptureAndPublication(t *test
 	}
 }
 
-func TestQueueRuntimeManualCoverageRevalidatesAfterDryRunWalk(t *testing.T) {
+func TestQueueRuntimeManualSyncRevalidatesAfterDryRunWalk(t *testing.T) {
 	for _, change := range []string{"profile", "runtime"} {
 		t.Run(change, func(t *testing.T) {
-			req, _, event, svc := coverageFixture(t)
+			req, _, event, svc := queueSyncFixture(t)
 			dir := filepath.Join(t.TempDir(), "runtime")
 			r, err := service.CreateQueueRuntime(t.Context(), dir, req, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+			if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 			req.DryRun = true
@@ -429,8 +428,8 @@ func TestQueueRuntimeManualCoverageRevalidatesAfterDryRunWalk(t *testing.T) {
 					}
 				}
 			}
-			result, err := r.SyncWithCoverage(t.Context(), svc, req)
-			if !changed || !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 || result.Sync.Publication.Pushed {
+			result, err := r.Sync(t.Context(), svc, req)
+			if !changed || !errors.Is(err, queue.ErrBinding) || result.Publication.Pushed {
 				t.Fatalf("dry-run validation bypassed: %+v %v changed=%v", result, err, changed)
 			}
 			pending, err := r.Snapshot(t.Context())
@@ -441,8 +440,8 @@ func TestQueueRuntimeManualCoverageRevalidatesAfterDryRunWalk(t *testing.T) {
 	}
 }
 
-func TestQueueRuntimeManualCoverageRefusesDivergentProcessHomeProfiles(t *testing.T) {
-	req, _, event, svc := coverageFixture(t)
+func TestQueueRuntimeManualSyncRefusesDivergentProcessHomeProfiles(t *testing.T) {
+	req, _, event, svc := queueSyncFixture(t)
 	store := desktop.NewStore(filepath.Join(req.Machine.Home, ".clauderig", "desktop"))
 	if _, err := store.Create("source-profile", "", ""); err != nil {
 		t.Fatal(err)
@@ -451,7 +450,7 @@ func TestQueueRuntimeManualCoverageRefusesDivergentProcessHomeProfiles(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+	if _, err := r.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	otherHome := t.TempDir()
@@ -461,8 +460,8 @@ func TestQueueRuntimeManualCoverageRefusesDivergentProcessHomeProfiles(t *testin
 		t.Fatal("divergent home reached capture")
 		return service.Identity{}, nil
 	}
-	result, err := r.SyncWithCoverage(t.Context(), svc, req)
-	if !errors.Is(err, queue.ErrBinding) || len(result.Acknowledged) != 0 {
+	result, err := r.Sync(t.Context(), svc, req)
+	if !errors.Is(err, queue.ErrBinding) {
 		t.Fatalf("changed actual profile selection accepted: %+v %v", result, err)
 	}
 	pending, err := r.Snapshot(t.Context())

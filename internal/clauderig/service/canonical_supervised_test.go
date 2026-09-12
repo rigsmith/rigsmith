@@ -54,16 +54,16 @@ func canonicalSupervisor(ctx context.Context) context.Context {
 }
 
 func TestCanonicalSupervisedWorkflows(t *testing.T) {
-	req, q, request, svc := coverageFixture(t)
-	enqueueCoverage(t, q, request)
+	req, q, request, svc := queueSyncFixture(t)
+	enqueueSyncRequest(t, q, request)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
 	ctx = canonicalSupervisor(ctx)
-	result, err := svc.SyncWithCoverage(ctx, req, q)
-	if err != nil || !result.Sync.Publication.Pushed || len(result.Acknowledged) != 1 {
-		t.Fatalf("supervised coverage: %+v %v", result, err)
+	result, err := svc.Sync(ctx, req)
+	if err != nil || !result.Publication.Pushed {
+		t.Fatalf("supervised sync: %+v %v", result, err)
 	}
-	pendingCoverage(t, q, 0)
+	pendingSyncRequests(t, q, 1)
 	repo, err := gitrepo.Open(t.Context(), req.StagingDir)
 	if err != nil {
 		t.Fatal(err)
@@ -152,9 +152,8 @@ func TestCanonicalSupervisionRejectsInteractiveBeforeEffects(t *testing.T) {
 	repo := &gitrepo.Repo{Dir: req.StagingDir}
 	ctx := canonicalSupervisor(t.Context())
 	cases := map[string]func() error{
-		"sync":     func() error { _, err := svc.Sync(ctx, req); return err },
-		"capture":  func() error { _, err := svc.Capture(ctx, req); return err },
-		"coverage": func() error { _, err := svc.SyncWithCoverage(ctx, req, nil); return err },
+		"sync":    func() error { _, err := svc.Sync(ctx, req); return err },
+		"capture": func() error { _, err := svc.Capture(ctx, req); return err },
 		"publish": func() error {
 			_, err := svc.Publish(ctx, service.PublishRequest{StagingDir: req.StagingDir, AllowMergeTool: true})
 			return err
@@ -174,23 +173,23 @@ func TestCanonicalSupervisionRejectsInteractiveBeforeEffects(t *testing.T) {
 	}
 }
 
-func TestCanonicalSupervisedRuntimeCoverage(t *testing.T) {
-	req, _, event, svc := coverageFixture(t)
+func TestCanonicalSupervisedRuntimeSync(t *testing.T) {
+	req, _, event, svc := queueSyncFixture(t)
 	runtime, err := service.CreateQueueRuntime(t.Context(), filepath.Join(t.TempDir(), "runtime"), req, engine.LocalProfileNames())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Enqueue(t.Context(), coverageIdentity, event, time.Now()); err != nil {
+	if _, err := runtime.Enqueue(t.Context(), queueSyncIdentity, event, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
-	result, err := runtime.SyncWithCoverage(canonicalSupervisor(ctx), svc, req)
-	if err != nil || !result.Sync.Publication.Pushed || len(result.Acknowledged) != 1 {
-		t.Fatalf("supervised runtime coverage: %+v %v", result, err)
+	result, err := runtime.Sync(canonicalSupervisor(ctx), svc, req)
+	if err != nil || !result.Publication.Pushed {
+		t.Fatalf("supervised runtime sync: %+v %v", result, err)
 	}
 	pending, err := runtime.Snapshot(t.Context())
-	if err != nil || len(pending) != 0 {
+	if err != nil || len(pending) != 1 {
 		t.Fatalf("pending: %+v %v", pending, err)
 	}
 }

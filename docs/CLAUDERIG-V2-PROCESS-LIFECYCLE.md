@@ -223,7 +223,7 @@ under a staging lease, verifying exact binary bytes and cleared command fences.
 
 ## Canonical workflow supervision (6b.6b.2d.2)
 
-An explicitly supervised `Capture`, `Sync`, `SyncWithCoverage`, `Publish`, `Pull`,
+An explicitly supervised `Capture`, `Sync`, `QueueRuntime.Sync`, `Publish`, `Pull`,
 `Reconcile`, `RepairMerge`, or `FinishMerge` now acquires/borrows staging and installs
 its own `process.Run` selection. Nested services retain the same operation failure
 state. An external command-runner override is refused before acquisition. An

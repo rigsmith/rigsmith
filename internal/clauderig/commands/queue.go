@@ -95,7 +95,7 @@ func defaultQueueCommandDeps() queueCommandDeps {
 func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	var dir string
 	var profiles []string
-	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request (--session or --hook), enqueue it, then run a worker.\nUse queue sync for manual sync that acknowledges fully covered queued requests.\nUse enable-hooks to opt this machine into queued hooks and queue-aware sync.\nUse hook-status to inspect routing and disable-hooks after recovery/drain.\nUse the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nUse hook to save and admit hook input; recover-hooks retries its saved inbox.\nStop producers and recover the inbox before draining. No background service is installed.", Args: cobra.NoArgs}
+	cmd := &cobra.Command{Use: "queue", Short: "Explicitly enqueue and run recoverable Claude syncs", Long: "Explicit queued sync workflow (v2 preview). Initialize after an ordinary sync,\nprepare a saved request (--session or --hook), enqueue it, then run a worker.\nUse queue sync to drain saved work, then run a manual sync.\nUse enable-hooks to opt this machine into queued hooks and queue-aware sync.\nUse hook-status to inspect routing and disable-hooks after recovery/drain.\nUse the same --dir and --profile\nselection for every command; keep runtime and request files private.\nWorkers use Git credentials for private HTTPS GitHub/GitLab remotes.\nPrivacy checks use gh/glab or the matching provider token.\nUse hook to save and admit hook input; recover-hooks retries its saved inbox.\nStop producers and recover the inbox before draining. No background service is installed.", Args: cobra.NoArgs}
 	cmd.PersistentFlags().StringVar(&dir, "dir", "", "private runtime directory (default ~/.clauderig/queue-runtime)")
 	_ = cmd.MarkPersistentFlagDirname("dir")
 	cmd.PersistentFlags().StringArrayVar(&profiles, "profile", nil, "explicit Desktop profile to include (repeatable; default none)")
@@ -276,22 +276,20 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 	}})
 	var syncDryRun, syncFlush bool
 	syncCmd := &cobra.Command{
-		Use: "sync", Short: "Run a manual sync and acknowledge fully covered queued requests", Args: cobra.NoArgs,
-		Long: "Run one supervised manual sync with the current account, then confirm the\n" +
-			"published snapshot before acknowledging fully covered queued requests.\n" +
-			"Other accounts, later requests and work without complete evidence stay queued.\n" +
-			"Already-attempted or blocked work remains for the queue worker.\n" +
-			"Use the same --dir and --profile selection as init; that selection must include\n" +
-			"every local Desktop profile discovered by ordinary sync. Repair unreadable\n" +
-			"profiles before retrying. Keep profile locations and runtime paths stable.\n\n" +
-			"On Windows, provision a private runtime directory; inherited ACLs are not\n" +
-			"validated or repaired. Do not use shared or other-user-writable runtime state.\n\n" +
-			"Requires initialized shared staging/remote history and the existing private\n" +
-			"remote checks, including for --dry-run. --flush includes all changed transcript\n" +
-			"tails; this manual command does not read hook payloads from stdin or debounce.\n" +
-			"An active queue batch can report busy; retry after it finishes. External merge\n" +
-			"tools are disabled. The first interrupt lets this sync finish; a second cancels\n" +
-			"and waits for supervised cleanup. This command does not drain the queue.",
+		Use: "sync", Short: "Drain saved work, then run a manual sync", Args: cobra.NoArgs,
+		Long: "Drain queued requests through the existing supervised worker, preserving each\n" +
+			"request's saved account and retry progress, then run an ordinary manual sync.\n" +
+			"Blocked or delayed batches stop the command; repair or retry them first.\n" +
+			"Stop producers before draining. Requests arriving later stay queued even if\n" +
+			"the manual sync copies their files. No separate completion inference is used.\n\n" +
+			"Use the same --dir and --profile selection as init, including all local Desktop\n" +
+			"profiles. Keep profile locations and private runtime paths stable.\n" +
+			"Requires initialized staging/remote history and private remote checks.\n" +
+			"--dry-run stages and scans only; it neither drains nor publishes. --flush\n" +
+			"includes all changed transcript tails in the final manual sync.\n" +
+			"No hook input or debounce is used. External merge tools are disabled.\n" +
+			"The first interrupt stops after the current batch or manual sync; a second\n" +
+			"cancels and waits for supervised cleanup.",
 		RunE: func(c *cobra.Command, _ []string) error {
 			r, err := open(c.Context(), false)
 			if err != nil {
@@ -309,7 +307,7 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, _, finish := queueSignalContext(ctx)
+			ctx, stop, finish := queueSignalContext(ctx)
 			defer finish()
 			svc := applicationService(c.OutOrStdout())
 			svc.ReadIdentity = deps.identity
@@ -321,14 +319,31 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 			if syncFlush {
 				req.Flush.Mode = service.FlushAll
 			}
-			result, err := r.SyncWithCoverage(ctx, svc, req)
-			if err != nil {
-				return fmt.Errorf("manual sync did not confirm queue completion; inspect queue status before retrying: %w", err)
+			var completed uint64
+			if !syncDryRun {
+				result, err := deps.runQueue(ctx, r, svc, profiles, queue.RunOptions{Drain: true, Stop: stop,
+					Observe: func(result queue.ExecutionResult, err error) {
+						if err != nil {
+							fmt.Fprintf(c.ErrOrStderr(), "Batch %d: %v\n", result.BatchID, err)
+						}
+					}}, 0, 0)
+				if err != nil {
+					return fmt.Errorf("queue drain incomplete; inspect queue status before retrying: %w", err)
+				}
+				completed = result.CompletedBatches
+				select {
+				case <-stop:
+					return fmt.Errorf("queue sync interrupted before manual sync")
+				default:
+				}
+			}
+			if _, err = r.Sync(ctx, svc, req); err != nil {
+				return fmt.Errorf("manual sync failed after %d queued batches completed: %w", completed, err)
 			}
 			if syncDryRun {
 				_, err = fmt.Fprintln(c.OutOrStdout(), "Dry run finished; queued requests were not acknowledged.")
 			} else {
-				_, err = fmt.Fprintf(c.OutOrStdout(), "Manual sync finished; %d queued requests acknowledged. Use queue status to inspect remaining work.\n", len(result.Acknowledged))
+				_, err = fmt.Fprintf(c.OutOrStdout(), "Manual sync finished; %d queued batches completed by the worker. Later requests remain queued.\n", completed)
 			}
 			return err
 		},
@@ -356,30 +371,13 @@ func newQueueCmd(deps queueCommandDeps) *cobra.Command {
 			}
 			ctx, stop, finish := queueSignalContext(ctx)
 			defer finish()
-			resolve := func(ctx context.Context) (service.QueueRuntimeInputs, error) {
-				req, err := deps.resolve()
-				if err != nil {
-					return service.QueueRuntimeInputs{}, err
-				}
-				remote, err := deps.remote(ctx, req)
-				if err != nil {
-					return service.QueueRuntimeInputs{}, err
-				}
-
-				return service.QueueRuntimeInputs{Sync: req, Profiles: profiles, Remote: remote, MaxBytes: maxBytes, MaxStoredBytes: maxStored}, nil
-			}
 			svc := applicationService(c.ErrOrStderr())
-			result, err := r.Run(ctx, r.Adapter(svc, resolve), queue.RunOptions{Drain: drain, Stop: stop, CheckStartup: func(ctx context.Context, _ queue.Binding) error {
-				in, err := resolve(ctx)
-				if err != nil {
-					return err
-				}
-				return r.CheckStartup(ctx, svc, in)
-			}, Observe: func(result queue.ExecutionResult, err error) {
-				if err != nil {
-					fmt.Fprintf(c.ErrOrStderr(), "Batch %d: %v\n", result.BatchID, err)
-				}
-			}})
+			result, err := deps.runQueue(ctx, r, svc, profiles, queue.RunOptions{Drain: drain, Stop: stop,
+				Observe: func(result queue.ExecutionResult, err error) {
+					if err != nil {
+						fmt.Fprintf(c.ErrOrStderr(), "Batch %d: %v\n", result.BatchID, err)
+					}
+				}}, maxBytes, maxStored)
 			if err != nil {
 				return err
 			}
@@ -714,4 +712,28 @@ func validateQueueSessionID(id string) error {
 		return fmt.Errorf("session must name one transcript, without separators or patterns")
 	}
 	return nil
+}
+
+// All foreground entry points use the same worker, configuration resolution and
+// startup checks. Queue sync adds an ordinary manual sync only after this drain.
+func (deps queueCommandDeps) runQueue(ctx context.Context, r *service.QueueRuntime, svc service.Service, profiles []string, opts queue.RunOptions, maxBytes, maxStored int64) (queue.RunResult, error) {
+	resolve := func(ctx context.Context) (service.QueueRuntimeInputs, error) {
+		req, err := deps.resolve()
+		if err != nil {
+			return service.QueueRuntimeInputs{}, err
+		}
+		remote, err := deps.remote(ctx, req)
+		if err != nil {
+			return service.QueueRuntimeInputs{}, err
+		}
+		return service.QueueRuntimeInputs{Sync: req, Profiles: profiles, Remote: remote, MaxBytes: maxBytes, MaxStoredBytes: maxStored}, nil
+	}
+	opts.CheckStartup = func(ctx context.Context, _ queue.Binding) error {
+		in, err := resolve(ctx)
+		if err != nil {
+			return err
+		}
+		return r.CheckStartup(ctx, svc, in)
+	}
+	return r.Run(ctx, r.Adapter(svc, resolve), opts)
 }

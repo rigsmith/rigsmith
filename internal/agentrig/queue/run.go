@@ -59,7 +59,7 @@ type RunResult struct{ CompletedBatches uint64 }
 
 // Run owns a separate runner lease to exclude duplicate loops while releasing
 // worker/staging ownership between batches and throughout idle/backoff waits.
-// RunOne and manual coverage remain available while the loop is idle. Persisted
+// RunOne and manual sync remain available while the loop is idle. Persisted
 // execution phases survive cancellation, failure and restart. Unknown errors and
 // failed/uncertain queue writes stop the loop instead of consuming retry attempts.
 // Classified, durably recorded failures allow other provenance to continue.

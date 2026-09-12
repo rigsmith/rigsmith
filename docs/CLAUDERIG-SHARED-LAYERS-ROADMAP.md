@@ -30,6 +30,14 @@ must reuse it directly; new abstractions or duplicate orchestration need evidenc
 from that workflow. Do not delete recovery/concurrency tests merely to reduce a
 line count, or broadly rewrite working Claude behavior as part of this cut.
 
+Queue simplification is now in progress: `queue sync` reuses worker drain, then
+ordinary sync. Remove manual coverage tickets, per-file completion evidence and
+the duplicate remote-confirmation helper. Session-index conflicts reuse native
+ledger reconciliation. Keep durable snapshots, retries,
+recovery and legacy queue files. TOML handling stays unchanged. Larger changes to
+snapshot storage require demonstrated benefit and preservation of saved work;
+they are not another prerequisite stage for the config workflow.
+
 ## Remaining delivery sequence
 
 | Outcome | Work | Acceptance |
@@ -40,7 +48,8 @@ line count, or broadly rewrite working Claude behavior as part of this cut.
 | 4. Extend separately | Portable instructions/rules/skills, session artifacts/resume, then optional Codex queue/hooks. | Each extension has a complete user workflow and reuses existing storage/queue mechanics. It does not block the first config workflow. |
 
 Current public capability is `codexrig inspect`. Config capture/merge/restore APIs
-are internal. Outcome 1 is the current change; outcome 2 is next. The original
+are internal. Outcome 1 removed runtime validators in #411; queue completion simplification is
+the follow-up. Outcome 2 is next. The original
 stages 1–7 and 8a/8b.1–8b.5 established the retained infrastructure. Detailed commit
 history remains in Git instead of being repeated as release prerequisites here.
 

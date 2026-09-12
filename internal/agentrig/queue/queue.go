@@ -103,12 +103,12 @@ type batch struct {
 	Attempts              uint64
 	NotBefore             time.Time
 	FailureCode           string
-	// CoverageSealed freezes membership before an external synchronous capture.
-	// It does not consume a worker attempt or change the saved execution phase.
+	// CoverageSealed preserves membership of batches sealed by older v2 builds.
+	// New work is sealed by the first worker attempt; retain this field for replay.
 	CoverageSealed bool `json:",omitempty"`
 }
 type state struct {
-	// version preserves an older schema until coverage or maintenance upgrades it under both
+	// version preserves an older schema until maintenance upgrades it under both
 	// worker ownership and the queue transaction lock. It is not payload data.
 	version    int
 	Binding    Binding

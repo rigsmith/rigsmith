@@ -4,4 +4,4 @@ scope: clauderig
 "github.com/rigsmith/rigsmith"
 ---
 
-Add `clauderig queue sync` to complete pending requests covered by a manual sync, with dry-run and transcript-flush options.
+Make `clauderig queue sync` finish saved queued work before syncing current files. Blocked or delayed work stays queued for retry; `--dry-run` leaves the queue untouched.

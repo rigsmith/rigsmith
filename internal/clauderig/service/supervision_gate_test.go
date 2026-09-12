@@ -23,9 +23,8 @@ func TestCanonicalGitBoundariesRejectForeignRunner(t *testing.T) {
 	ctx := commandrun.WithRunner(t.Context(), nil)
 	repo := &gitrepo.Repo{Dir: staging}
 	cases := map[string]func(context.Context) error{
-		"capture":  func(ctx context.Context) error { _, err := svc.Capture(ctx, req); return err },
-		"sync":     func(ctx context.Context) error { _, err := svc.Sync(ctx, req); return err },
-		"coverage": func(ctx context.Context) error { _, err := svc.SyncWithCoverage(ctx, req, nil); return err },
+		"capture": func(ctx context.Context) error { _, err := svc.Capture(ctx, req); return err },
+		"sync":    func(ctx context.Context) error { _, err := svc.Sync(ctx, req); return err },
 		"publish": func(ctx context.Context) error {
 			_, err := svc.Publish(ctx, service.PublishRequest{StagingDir: staging})
 			return err

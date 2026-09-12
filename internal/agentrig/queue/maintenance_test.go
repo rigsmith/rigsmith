@@ -197,7 +197,7 @@ func TestReceiptCompactionPersistenceAndExclusion(t *testing.T) {
 	}
 }
 
-func TestReceiptCompactionSchemaUpgradeAndCoverage(t *testing.T) {
+func TestReceiptCompactionPreservesLegacySeals(t *testing.T) {
 	for _, version := range []int{1, 2} {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			q := fixture(t)
@@ -207,9 +207,14 @@ func TestReceiptCompactionSchemaUpgradeAndCoverage(t *testing.T) {
 			w.Close()
 			pending := enqueue(t, q, request("pending"))
 			if version == 2 {
-				w = worker(t, q)
-				prepareCoverage(t, w)
-				w.Close()
+				// Simulate a pending batch sealed by an older build.
+				if err := q.transact(t.Context(), func(s *state) (bool, error) {
+					s.version = 2
+					s.Batches[0].CoverageSealed = true
+					return true, nil
+				}); err != nil {
+					t.Fatal(err)
+				}
 			}
 			s, err := q.load()
 			if err != nil {
@@ -234,14 +239,11 @@ func TestReceiptCompactionSchemaUpgradeAndCoverage(t *testing.T) {
 				t.Fatal("compaction lost coverage seal", err)
 			}
 			w = worker(t, q)
-			c := prepareCoverage(t, w)
-			if _, err := c.Acknowledge(t.Context(), []uint64{pending.Generation}); err != nil {
-				t.Fatal(err)
-			}
+			finish(t, w, next(t, w))
 			w.Close()
 			s, err = q.load()
 			if err != nil || s.version != 3 || s.Compaction == nil || s.Compaction.Retired != 1 || !s.Done[pending.BatchID] {
-				t.Fatal("coverage downgraded compaction", s, err)
+				t.Fatal("worker downgraded compaction", s, err)
 			}
 			if _, err := q.CompactReceipts(t.Context(), fixtureTime.Add(time.Minute)); err != nil {
 				t.Fatal(err)

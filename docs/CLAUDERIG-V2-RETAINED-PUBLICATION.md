@@ -468,3 +468,15 @@ and candidate audit failures, and corrupted retained artifacts. Gated synthetic
 queue tests remove live inputs and capture archives before recovery, verify exact
 batch acknowledgement and replay, and retain a blocked batch on a losing-parent
 secret. Synchronous v1 behavior and queued-hook activation are unchanged.
+
+## Session index merges
+
+Queued batches can regenerate the same `index/<device>.jsonl` from different
+saved captures. These files are rewritten session indexes, not append-only chat
+transcripts. Retained publication keeps both complete JSON row sets within the
+existing merge-size bound. Native ledger readers reconcile duplicate session IDs
+using their existing session-time and account-attribution rules. Opening a device
+ledger for its next save uses the same rules as reading the combined index.
+Unknown row fields remain in the retained bytes; the complete tree still passes
+the publication secret scan. Missing sides, incomplete rows and unrelated JSONL
+paths do not gain this policy.

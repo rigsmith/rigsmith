@@ -210,6 +210,9 @@ func Open(dir, device string) (*Ledger, error) {
 		return nil, err
 	}
 	for _, e := range rows {
+		if prev, ok := l.rows[e.ID]; ok {
+			e = mergeRows(prev, e)
+		}
 		l.rows[e.ID] = e
 	}
 	return l, nil
@@ -420,20 +423,22 @@ func LoadAll(dir string) map[string]Entry {
 				out[r.ID] = r
 				continue
 			}
-			winner, loser := prev, r
-			if newerRow(r, prev) {
-				winner, loser = r, prev
-			}
-			// Attribution follows RANK across devices, not recency. Note()
-			// enforces that within one device's file, but the union is where two
-			// files meet: without this, a machine that later re-saw the same
-			// transcript with no sidecar would replace another machine's Desktop
-			// ground truth with its own inference purely by having synced last.
-			winner.Account, winner.AccountSource, winner.AccountSince = bestAccount(winner, loser)
-			out[r.ID] = winner
+			out[r.ID] = mergeRows(prev, r)
 		}
 	}
 	return out
+}
+
+// mergeRows gives both readers the same duplicate-ID and attribution policy.
+// Git unions may leave multiple rows in a single device file as well as across
+// devices. Opening that file for its next save must not simply take its last row.
+func mergeRows(a, b Entry) Entry {
+	winner, loser := a, b
+	if newerRow(b, a) {
+		winner, loser = b, a
+	}
+	winner.Account, winner.AccountSource, winner.AccountSince = bestAccount(winner, loser)
+	return winner
 }
 
 // newerRow reports whether a is the better row for a session two devices both

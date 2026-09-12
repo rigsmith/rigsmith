@@ -501,19 +501,19 @@ restart/hibernation validation.
 
 ### Manual queue sync
 
-Run `clauderig queue sync` for a manual sync that confirms and completes fully
-covered pending requests. `--flush` includes all changed transcript tails;
-`--dry-run` stages and scans without publication or acknowledgement. Neither
-flag reads a hook payload from stdin. The current account must match a request's
-saved attribution for that request to be acknowledged; other or incomplete work
-stays queued. Use `queue status` to see what remains.
+Run `clauderig queue sync` to drain saved requests through the worker, then run
+an ordinary manual sync. Queued work keeps its saved account and retry progress.
+Blocked or delayed batches stop the command before manual capture; inspect
+`queue status` and repair/retry them first. Stop producers for a complete drain.
+Requests arriving later stay queued even if manual sync copies their files.
 
-Use the same runtime/profile flags as init, including every Desktop profile that
-ordinary sync discovers. A subset runtime can continue using run/drain instead.
-The command requires private remote checks and shared history, even for previews.
-It does not debounce or launch merge tools. The first interrupt lets this sync
-finish; a second cancels and waits for cleanup. Without local opt-in, ordinary sync/hooks keep their
-existing behavior. Keep profile and runtime locations stable during the operation.
+`--flush` includes all changed transcript tails in the final sync. `--dry-run`
+stages and scans without draining or publishing. Neither reads hook input.
+Use the same runtime/profile flags as init, including every Desktop profile.
+Private remote and shared-history checks apply even to previews. The first
+interrupt stops after the current batch or manual sync; a second cancels and
+waits for cleanup. Without local opt-in, ordinary sync/hooks keep their behavior.
+Keep profile and private runtime locations stable during the operation.
 
 ### Prepare from a hook payload
 
@@ -529,7 +529,7 @@ fully capture requested sessions and their subagents. Unrelated plain transcript
 keep normal large-file throttling unless a batch includes an all-flush request;
 chunked transcripts always capture changed tails. Previously backed-up subagents
 remain retained if removed from the source. Saved intent also governs
-manual-sync coverage. Empty or bad
+manual queue sync. Empty or bad
 input fails without falling back to flushing everything. `--hook` conflicts with
 `--session` and `--flush`. Success goes to stderr; stdout stays empty. No message
 text from the payload is saved. Installed hooks remain synchronous unless opted in locally.

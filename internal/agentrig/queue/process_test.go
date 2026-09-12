@@ -49,27 +49,6 @@ func TestQueueProcessHelper(t *testing.T) {
 		if _, err := q.Run(t.Context(), f, RunOptions{}); err != nil {
 			t.Fatal(err)
 		}
-	case "coverage":
-		prepareCoverage(t, worker(t, q))
-		fmt.Println("coverage-owned")
-		_, _ = bufio.NewReader(os.Stdin).ReadByte()
-	case "coverage-ack-before", "coverage-ack-after":
-		c := prepareCoverage(t, worker(t, q))
-		// This synthetic boundary represents publication already confirmed by
-		// the vendor, followed by process death around the queue receipt write.
-		q.save = func(dir string, data []byte) error {
-			if mode == "coverage-ack-after" {
-				if err := saveFile(dir, data); err != nil {
-					t.Fatal(err)
-				}
-			}
-			fmt.Println("coverage-interrupted")
-			os.Exit(0)
-			return nil
-		}
-		if _, err := c.Acknowledge(t.Context(), []uint64{1}); err != nil {
-			t.Fatal(err)
-		}
 	case "owner":
 		w := worker(t, q)
 		b := next(t, w)
