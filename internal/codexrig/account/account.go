@@ -595,15 +595,30 @@ func (s *Store) CaptureFromHome(a Account) error {
 	if !HasTokens(cred) {
 		return fmt.Errorf("%s's home holds no usable credential — run `codexrig account run %s` and log in first", a.Title(), a.ID)
 	}
-	// Refuse to file one login's credential under another's name.
+	// Refuse to file one login's credential under another's name. Email alone
+	// is not identity: one address can hold several ChatGPT accounts, and
+	// filing B's credential under A overwrites the only stored copy of A's.
+	// The account id is what distinguishes them, when both sides have one.
 	got := IdentityOf(cred)
 	if a.Email != "" && got.Email != "" && !strings.EqualFold(a.Email, got.Email) {
 		return fmt.Errorf("%s's home now authenticates as %s — capture it as its own account instead of overwriting this one", a.Title(), got.Email)
 	}
+	if a.AccountID != "" && got.AccountID != "" && a.AccountID != got.AccountID {
+		return fmt.Errorf("%s's home authenticates as the same email but a different account (%s, not %s) — capture it as its own account instead of overwriting this one", a.Title(), got.AccountID, a.AccountID)
+	}
 	if err := s.SaveCredential(a.ID, cred); err != nil {
 		return err
 	}
-	return os.Remove(s.stalePath(a.ID))
+	// Defensive, not a fix for an observed failure: SaveCredential above goes
+	// through save(), which recreates this marker whenever the home exists —
+	// and CaptureFromHome read the credential OUT of that home, so it does.
+	// The ENOENT this guards against is unreachable today. It is here because
+	// the ordering that makes it unreachable is two calls away and silent, and
+	// every other removal of this marker already ignores a missing file.
+	if err := os.Remove(s.stalePath(a.ID)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // CredentialHealthy reports whether a switch would accept the stored credential.

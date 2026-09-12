@@ -649,3 +649,36 @@ func TestCaptureRefusesWhenItCannotSeeWhatIsAlreadyThere(t *testing.T) {
 		t.Error("the existing account's credential was overwritten")
 	}
 }
+
+// One email address can hold several ChatGPT accounts, so email alone is not
+// identity: filing B's credential under A overwrites the only stored copy of A's.
+func TestCaptureFromHomeRefusesADifferentAccountOnTheSameEmail(t *testing.T) {
+	s, _ := sandbox(t)
+	a, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := s.EnsureHome(a, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.Credential(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same person, second account.
+	if err := writeAuthAt(home, fakeCred(t, "alice@example.com", "A", "acct-2", "pro")); err != nil {
+		t.Fatal(err)
+	}
+	err = s.CaptureFromHome(a)
+	if err == nil {
+		t.Fatal("a different account's credential was filed under this one")
+	}
+	if !strings.Contains(err.Error(), "acct-2") {
+		t.Errorf("the refusal does not name what it found: %v", err)
+	}
+	after, _ := s.Credential(a.ID)
+	if string(after) != string(before) {
+		t.Error("the stored credential was overwritten anyway")
+	}
+}

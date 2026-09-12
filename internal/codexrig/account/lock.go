@@ -78,6 +78,10 @@ func tryLock(path string) (*SwapLock, error) {
 		return nil, err
 	}
 	if err := f.Close(); err != nil {
+		// The file is already on disk carrying THIS process's pid, and the
+		// caller gets no lock to Release — so lockIsStale sees a live pid and
+		// refuses every swap until the two-minute hold expires.
+		_ = os.Remove(path)
 		return nil, err
 	}
 	return &SwapLock{path: path, token: token}, nil

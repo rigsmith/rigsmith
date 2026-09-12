@@ -57,6 +57,11 @@ func acquireSyncLock(staging string, wait time.Duration) (*syncLock, bool, error
 				return nil, false, werr
 			}
 			if cerr := f.Close(); cerr != nil {
+				// Same reason as the write-error path above: the token is on
+				// disk with this process's live pid and no lock comes back to
+				// release it, so every later attempt waits out the full stale
+				// timeout for a lock nobody holds.
+				_ = os.Remove(path)
 				return nil, false, cerr
 			}
 			return &syncLock{path: path, token: token}, true, nil
