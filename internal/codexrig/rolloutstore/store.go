@@ -79,6 +79,77 @@ type Index struct {
 	Parts   []Part `json:"parts"`
 }
 
+// isIndexFile is IsIndex against a path, reading only the marker's length.
+func isIndexFile(p string) (bool, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	head := make([]byte, len(marker))
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	return IsIndex(head[:n]), nil
+}
+
+// Assemble rebuilds a rollout's bytes from its index, fetching each part by
+// hash from wherever the caller keeps them, with the same size and hash checks
+// the filesystem reader applies. It exists so a reader that is not the working
+// tree — git at a ref, for `peek` — does not hand back the index JSON as if it
+// were the conversation.
+func Assemble(idx *Index, fetch func(hash string) ([]byte, error)) ([]byte, error) {
+	out := make([]byte, 0, idx.Size)
+	for _, p := range idx.Parts {
+		body, err := fetch(p.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("rollout part %s: %w", p.Hash[:8], err)
+		}
+		if len(body) != p.Size {
+			return nil, fmt.Errorf("rollout part %s is %d bytes, index says %d", p.Hash[:8], len(body), p.Size)
+		}
+		sum := sha256.Sum256(body)
+		if hex.EncodeToString(sum[:]) != p.Hash {
+			return nil, fmt.Errorf("rollout part %s does not match its hash", p.Hash[:8])
+		}
+		out = append(out, body...)
+	}
+	if int64(len(out)) != idx.Size {
+		return nil, fmt.Errorf("rollout assembled to %d bytes, index says %d", len(out), idx.Size)
+	}
+	return out, nil
+}
+
+// SplitPartPath is PartPath in reverse: the rollout a part belongs to, and its
+// hash. ok is false for anything that is not the exact part shape.
+func SplitPartPath(partPath string) (rolloutPath, hash string, ok bool) {
+	if !IsPartPath(partPath) {
+		return "", "", false
+	}
+	dir, base := path.Split(partPath)
+	return strings.TrimSuffix(strings.TrimSuffix(dir, "/"), Suffix), strings.TrimSuffix(base, ".part"), true
+}
+
+// References reports whether the index names a part by hash.
+func (idx *Index) References(hash string) bool {
+	for _, p := range idx.Parts {
+		if p.Hash == hash {
+			return true
+		}
+	}
+	return false
+}
+
+// HashOf is the hash a part with these bytes is named by.
+func HashOf(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// PartPath is where a part lives relative to its rollout: <rollout>.chunks/<hash>.part.
+func PartPath(rolloutPath, hash string) string { return rolloutPath + Suffix + "/" + hash + ".part" }
+
 // IsIndex reports whether these bytes START with the index marker.
 //
 // A prefix test, and the length check is >= rather than >: Open sniffs by
@@ -130,12 +201,26 @@ func Decode(b []byte) (*Index, error) {
 // rollout's parts, so the allowlist reconcile and the contents scan can tell a
 // part from a stray file.
 func IsPartPath(rel string) bool {
-	for _, seg := range strings.Split(path.Dir(rel), "/") {
-		if strings.HasSuffix(seg, ".jsonl"+Suffix) {
-			return strings.HasSuffix(rel, ".part")
+	// The exact shape a chunk has — <rollout>.jsonl.chunks/<sha256>.part, one
+	// level down, hex name — and nothing looser. This answer exempts a file
+	// from the allowlist and from the audit, on the grounds that its bytes are
+	// covered by the index that references it; a .part nested deeper, or named
+	// anything but a hash, is covered by nothing and must not ride the
+	// exemption.
+	dir, base := path.Split(rel)
+	if !strings.HasSuffix(strings.TrimSuffix(dir, "/"), ".jsonl"+Suffix) {
+		return false
+	}
+	name, ok := strings.CutSuffix(base, ".part")
+	if !ok || len(name) != 64 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // File is what a reader gets, whichever representation is on disk.
@@ -368,19 +453,20 @@ func Remove(p string) error {
 // Convert brings a staged rollout to the representation `chunked` asks for,
 // reporting whether it changed anything.
 func Convert(p string, chunked bool) (bool, error) {
-	raw, err := os.ReadFile(p)
-	if err != nil {
-		return false, err
-	}
+	// Sniff the head, never the whole file: this is asked of every rollout on
+	// every sync, and the rollout that made chunking necessary is 172 MB.
 	info, err := os.Stat(p)
 	if err != nil {
 		return false, err
 	}
-	isIdx := IsIndex(raw)
+	isIdx, err := isIndexFile(p)
+	if err != nil {
+		return false, err
+	}
 	switch {
 	case chunked && !isIdx:
 		if info.Size() <= Threshold {
-			return false, nil
+			return false, dropStaleSidecar(p)
 		}
 		f, err := os.Open(p)
 		if err != nil {
@@ -398,7 +484,24 @@ func Convert(p string, chunked bool) (bool, error) {
 		}
 		return true, os.RemoveAll(p + Suffix)
 	}
-	return false, nil
+	// Already chunked and staying chunked: the sidecar is live, leave it.
+	if isIdx {
+		return false, nil
+	}
+	return false, dropStaleSidecar(p)
+}
+
+// dropStaleSidecar removes a .chunks directory beside a rollout that is plain
+// and staying plain. The scrub rewrites a rollout as plain bytes over whatever
+// representation was there, and a chunked one left its parts behind — files
+// the audit skips (their index vouched for them, except it no longer exists)
+// and `git add -A` then publishes. Convert sees every staged rollout, so this is
+// the one place that reliably catches it however it happened.
+func dropStaleSidecar(p string) error {
+	if _, err := os.Lstat(p + Suffix); err != nil {
+		return nil
+	}
+	return os.RemoveAll(p + Suffix)
 }
 
 // --- the chunked reader ---------------------------------------------------
@@ -448,6 +551,12 @@ func (c *chunked) Read(p []byte) (int, error) {
 }
 
 func (c *chunked) ReadAt(p []byte, off int64) (int, error) {
+	// io.ReaderAt: a negative offset is an error, not a panic three lines
+	// down in a slice expression; and a read that runs off the end returns
+	// what it got WITH io.EOF, never a short count and nil.
+	if off < 0 {
+		return 0, errors.New("rolloutstore: negative offset")
+	}
 	if off >= c.idx.Size {
 		return 0, io.EOF
 	}
@@ -462,8 +571,8 @@ func (c *chunked) ReadAt(p []byte, off int64) (int, error) {
 		read += n
 		off += int64(n)
 	}
-	if read == 0 {
-		return 0, io.EOF
+	if read < len(p) {
+		return read, io.EOF
 	}
 	return read, nil
 }

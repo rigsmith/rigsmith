@@ -645,6 +645,19 @@ func runGitShown(ctx context.Context, dir, stdin string, env []string, shown []s
 // modified files included — the caller has already decided the directory
 // goes. A path that is not tracked is not an error: the point is that it is
 // gone.
+// RemovePath drops one file from the index and the working tree. Used to
+// settle a conflicted path as "gone" — git rm is what tells the merge the
+// conflict is resolved, and the file goes so the next add does not bring it back.
+func (r *Repo) RemovePath(ctx context.Context, path string) error {
+	if _, err := runGit(ctx, r.Dir, "rm", "-qf", "--ignore-unmatch", "--", path); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(r.Dir, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
 	// Only ever a directory inside this repository — checked before git rm
 	// runs, not after: "." would empty the index, and ".git" would take the

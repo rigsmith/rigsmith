@@ -24,7 +24,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -38,10 +41,11 @@ import (
 type Policy string
 
 const (
-	PolicyUnion  Policy = "union"  // both sides' entries kept
-	PolicyNewest Policy = "newest" // the later commit won
-	PolicyAppend Policy = "append" // one side was a prefix of the other
-	PolicyKeep   Policy = "kept"   // identical on both sides
+	PolicyUnion  Policy = "union"   // both sides' entries kept
+	PolicyNewest Policy = "newest"  // the later commit won
+	PolicyAppend Policy = "append"  // one side was a prefix of the other
+	PolicyKeep   Policy = "kept"    // identical on both sides
+	PolicyDrop   Policy = "dropped" // a chunk part no kept index references
 )
 
 // Resolution is one settled file.
@@ -49,6 +53,10 @@ type Resolution struct {
 	Path   string
 	Policy Policy
 	Note   string
+
+	// index is the chunk index this resolution kept, when the file was one.
+	// Its parts are settled against it in Resolve's second pass.
+	index *rolloutstore.Index
 }
 
 // Report is the outcome of a reconcile.
@@ -67,8 +75,35 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	// Rollouts first, their parts second. A chunked rollout's parts conflict
+	// alongside its index — git's rename detection reads "old last part gone,
+	// new last part added" as two competing renames — and which parts survive
+	// is decided by which INDEX survives, so the index has to be settled
+	// before its parts can be.
+	kept := map[string]*rolloutstore.Index{}
+	unresolved := map[string]bool{}
+	var parts []string
 	for _, p := range paths {
+		if rolloutstore.IsPartPath(p) {
+			parts = append(parts, p)
+			continue
+		}
 		res, ok, err := resolveOne(ctx, repo, p)
+		if err != nil {
+			return rep, err
+		}
+		if !ok {
+			rep.Unresolved = append(rep.Unresolved, p)
+			unresolved[p] = true
+			continue
+		}
+		rep.Resolved = append(rep.Resolved, res)
+		if res.index != nil {
+			kept[p] = res.index
+		}
+	}
+	for _, p := range parts {
+		res, ok, err := resolvePart(ctx, repo, p, kept, unresolved)
 		if err != nil {
 			return rep, err
 		}
@@ -79,6 +114,66 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 		rep.Resolved = append(rep.Resolved, res)
 	}
 	return rep, nil
+}
+
+// resolvePart settles one conflicted chunk part against the index that owns it.
+// Parts are content-addressed and never edited, so there is only one question:
+// does the index this merge is keeping reference it. Yes: keep the bytes, hash-
+// checked, from wherever the merge left them intact. No: it is a leftover of
+// the side that lost, and leaving it would publish bytes no index vouches for.
+func resolvePart(ctx context.Context, repo *gitrepo.Repo, p string, kept map[string]*rolloutstore.Index, unresolved map[string]bool) (Resolution, bool, error) {
+	owner, hash, ok := rolloutstore.SplitPartPath(p)
+	if !ok {
+		return Resolution{}, false, nil
+	}
+	if unresolved[owner] {
+		return Resolution{}, false, nil // the index is a human's problem, so its parts are too
+	}
+	idx := kept[owner]
+	if idx == nil {
+		// The index did not conflict, or was settled before this merge: read
+		// what the working tree holds.
+		raw, err := os.ReadFile(filepath.Join(repo.Dir, filepath.FromSlash(owner)))
+		if err != nil || !rolloutstore.IsIndex(raw) {
+			return Resolution{}, false, nil //nolint:nilerr // no index to judge by
+		}
+		if idx, err = rolloutstore.Decode(raw); err != nil {
+			return Resolution{}, false, nil //nolint:nilerr
+		}
+	}
+	if !idx.References(hash) {
+		if err := repo.RemovePath(ctx, p); err != nil {
+			return Resolution{}, false, err
+		}
+		return Resolution{Path: p, Policy: PolicyDrop, Note: "a part of the side that had less"}, true, nil
+	}
+	body, found := partBytes(ctx, repo, p, hash)
+	if !found {
+		return Resolution{}, false, nil
+	}
+	if err := repo.ResolveWith(ctx, p, body); err != nil {
+		return Resolution{}, false, err
+	}
+	return Resolution{Path: p, Policy: PolicyKeep, Note: "a part the kept rollout references"}, true, nil
+}
+
+// partBytes finds a part's content wherever the merge left it intact, verifying
+// the hash: a part is named by its content, so a mismatch is not this part.
+//
+// The working tree first, then the two COMMITS being merged — not the index
+// stages. For a rename/rename conflict git writes the merged, marker-laden
+// content to the destination paths and records that same content in the
+// stages, so neither holds either side's real bytes. HEAD and MERGE_HEAD do.
+func partBytes(ctx context.Context, repo *gitrepo.Repo, p, hash string) ([]byte, bool) {
+	if b, err := os.ReadFile(filepath.Join(repo.Dir, filepath.FromSlash(p))); err == nil && rolloutstore.HashOf(b) == hash {
+		return b, true
+	}
+	for _, ref := range []string{"HEAD", "MERGE_HEAD"} {
+		if b, err := repo.ShowFile(ctx, ref, p); err == nil && rolloutstore.HashOf(b) == hash {
+			return b, true
+		}
+	}
+	return nil, false
 }
 
 func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, bool, error) {
@@ -121,12 +216,30 @@ func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, 
 		return Resolution{Path: p, Policy: PolicyUnion, Note: "the newer record per machine"}, true, nil
 
 	case isRollout(p):
-		// Append-only, so a prefix relationship is the only safe merge.
-		if longer, ok := appendOnly(ours, theirs); ok {
-			if err := repo.ResolveWith(ctx, p, longer); err != nil {
+		// Append-only, so a prefix relationship is the only safe merge — of
+		// what the rollout SAYS. Past the chunking threshold each side is an
+		// index over hashed parts, and two indexes are never a byte-prefix of
+		// each other even when one conversation is exactly the other plus a
+		// turn: the last part was partial and got replaced. So compare the
+		// logical bytes, and keep the index of whichever side is longer.
+		oursLogical, oerr := logical(ctx, repo, p, ours)
+		theirsLogical, terr := logical(ctx, repo, p, theirs)
+		if oerr != nil || terr != nil {
+			return Resolution{}, false, nil //nolint:nilerr // an index whose parts cannot be read is a human's problem
+		}
+		if longer, ok := appendOnly(oursLogical, theirsLogical); ok {
+			keep := ours
+			if bytes.Equal(longer, theirsLogical) {
+				keep = theirs
+			}
+			if err := repo.ResolveWith(ctx, p, keep); err != nil {
 				return Resolution{}, false, err
 			}
-			return Resolution{Path: p, Policy: PolicyAppend, Note: "one side had more of the same session"}, true, nil
+			res := Resolution{Path: p, Policy: PolicyAppend, Note: "one side had more of the same session"}
+			if rolloutstore.IsIndex(keep) {
+				res.index, _ = rolloutstore.Decode(keep)
+			}
+			return res, true, nil
 		}
 		// Diverged. Line-unioning two tool-call histories produces a transcript
 		// that never happened, so this goes to a person.
@@ -152,6 +265,26 @@ func isRollout(p string) bool {
 		return rollout.IsRolloutRel(rest)
 	}
 	return false
+}
+
+// logical is the rollout's own bytes: the file itself when plain, the parts
+// assembled when it is a chunk index. Parts come through partBytes, which
+// knows where a merge leaves them intact.
+func logical(ctx context.Context, repo *gitrepo.Repo, p string, side []byte) ([]byte, error) {
+	if !rolloutstore.IsIndex(side) {
+		return side, nil
+	}
+	idx, err := rolloutstore.Decode(side)
+	if err != nil {
+		return nil, err
+	}
+	return rolloutstore.Assemble(idx, func(hash string) ([]byte, error) {
+		b, ok := partBytes(ctx, repo, rolloutstore.PartPath(p, hash), hash)
+		if !ok {
+			return nil, fmt.Errorf("no copy matching its hash in the working tree or either merged commit")
+		}
+		return b, nil
+	})
 }
 
 // appendOnly returns the longer side when the shorter is its exact prefix.

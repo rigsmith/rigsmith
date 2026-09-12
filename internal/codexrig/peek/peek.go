@@ -24,6 +24,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 )
 
 // DefaultRef is what a peek reads: the remote's tip, not this machine's, because
@@ -155,10 +156,40 @@ func Titles(ctx context.Context, repo *gitrepo.Repo, ref string, sessions []Sess
 		if err != nil {
 			continue
 		}
+		// A chunked rollout's head is its index, which names no title and no
+		// cwd. The first part holds the header record, so fetch just that one
+		// rather than the whole conversation for a listing.
+		if rolloutstore.IsIndex(head) {
+			head, err = chunkedHead(ctx, repo, ref, sessions[i].Path)
+			if err != nil {
+				continue
+			}
+		}
 		sessions[i].Title = rollout.FirstPromptFrom(bytes.NewReader(head))
 		sessions[i].Cwd = cwdFrom(head)
 	}
 	return sessions
+}
+
+// chunkedHead returns the first headBytes of a chunked rollout at ref: the
+// whole index is small, and the header record is inside the first part.
+func chunkedHead(ctx context.Context, repo *gitrepo.Repo, ref, p string) ([]byte, error) {
+	raw, err := repo.ShowFile(ctx, ref, p)
+	if err != nil {
+		return nil, err
+	}
+	idx, err := rolloutstore.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	if len(idx.Parts) == 0 {
+		return nil, nil
+	}
+	first, err := repo.ShowPrefix(ctx, ref, rolloutstore.PartPath(p, idx.Parts[0].Hash), headBytes)
+	if err != nil {
+		return nil, err
+	}
+	return first, nil
 }
 
 // cwdFrom reads the working directory out of a rollout's header record.
@@ -238,7 +269,25 @@ func Read(ctx context.Context, repo *gitrepo.Repo, ref string, s Session) ([]byt
 	if ref == "" {
 		ref = DefaultRef
 	}
-	return repo.ShowFile(ctx, ref, s.Path)
+	raw, err := repo.ShowFile(ctx, ref, s.Path)
+	if err != nil {
+		return nil, err
+	}
+	// Past the chunking threshold the path holds an INDEX, and the conversation
+	// is in the parts it names. Handing the index back as the rollout gave
+	// `peek show` a one-line JSON document, `peek list` no title, and `peek
+	// get` a file Codex could not resume. Rebuild it from the same ref, with
+	// the same hash and size checks the working-tree reader applies.
+	if !rolloutstore.IsIndex(raw) {
+		return raw, nil
+	}
+	idx, err := rolloutstore.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	return rolloutstore.Assemble(idx, func(hash string) ([]byte, error) {
+		return repo.ShowFile(ctx, ref, rolloutstore.PartPath(s.Path, hash))
+	})
 }
 
 // ErrExists means this machine already has that session.
@@ -269,7 +318,7 @@ func Get(ctx context.Context, repo *gitrepo.Repo, ref string, s Session, codexHo
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return Got{}, err
 	}
-	f, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) // the whole conversation, including whatever was pasted into it
 	if err != nil {
 		if os.IsExist(err) {
 			return Got{}, fmt.Errorf("%w: %s", ErrExists, dst)

@@ -342,3 +342,65 @@ func contains(list []string, v string) bool {
 	}
 	return false
 }
+
+// This answer exempts a file from the allowlist and the audit, so it has to be
+// exactly the shape a chunk has and nothing looser.
+func TestIsPartPathRequiresTheExactShape(t *testing.T) {
+	h := strings.Repeat("ab", 32)
+	for p, want := range map[string]bool{
+		"cli/sessions/2026/x.jsonl.chunks/" + h + ".part":                  true,
+		"cli/sessions/2026/x.jsonl.chunks/nested/" + h + ".part":           false,
+		"cli/sessions/2026/x.jsonl.chunks/secret.part":                     false,
+		"cli/sessions/2026/x.jsonl.chunks/" + strings.ToUpper(h) + ".part": false,
+		"cli/sessions/2026/x.jsonl.chunks/" + h + ".txt":                   false,
+		"cli/x.jsonl/" + h + ".part":                                       false,
+	} {
+		if got := IsPartPath(p); got != want {
+			t.Errorf("IsPartPath(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+func TestReadAtHonoursTheReaderAtContract(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "r.jsonl")
+	body := bytes.Repeat([]byte("z"), 3*ChunkSize/2+7)
+	if err := Write(p, bytes.NewReader(body), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	ra := f.(io.ReaderAt)
+	if _, err := ra.ReadAt(make([]byte, 4), -1); err == nil {
+		t.Error("a negative offset was accepted")
+	}
+	buf := make([]byte, 100)
+	n, err := ra.ReadAt(buf, int64(len(body))-10)
+	if n != 10 || err != io.EOF {
+		t.Errorf("read past the end returned n=%d err=%v, want 10 and io.EOF", n, err)
+	}
+}
+
+// The scrub rewrites a rollout as plain bytes over whatever was there; a chunked
+// one left its .chunks directory behind, holding parts the audit skips and
+// `git add -A` publishes. Convert sees every staged rollout, so it cleans up.
+func TestConvertRemovesAStaleSidecarBesideAPlainRollout(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "r.jsonl")
+	if err := Write(p, bytes.NewReader(bytes.Repeat([]byte("z"), ChunkSize+1)), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Now something (the scrub) replaces the index with plain bytes.
+	if err := os.WriteFile(p, []byte("plain\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Convert(p, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(p + Suffix); !os.IsNotExist(err) {
+		t.Error("the orphaned .chunks directory survived")
+	}
+}
