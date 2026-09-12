@@ -421,7 +421,7 @@ func travelsText(p mcp.Portability) string {
 		return OkStyle.Render("yes")
 	case p.BackedUp:
 		return WarnStyle.Render("with work")
-	case p.Carrier != "" && hasNote(p, mcp.NoteCarriageUnknown):
+	case hasNote(p, mcp.NoteCarriageUnknown):
 		return WarnStyle.Render("unchecked")
 	case p.Carrier != "":
 		return DimStyle.Render("your repo")
@@ -446,38 +446,48 @@ func judgeEnv(ctx context.Context) mcp.Env {
 		cfg = config.Default()
 	}
 	me := config.DetectFor(cfg)
-	return mcp.Env{Folders: me.Folders(), OS: me.OS, ProjectFile: projectFileCarriage(ctx, repoRootBestEffort(ctx))}
+	carriage, committed := projectFileCarriage(ctx, repoRootBestEffort(ctx))
+	return mcp.Env{Folders: me.Folders(), OS: me.OS, ProjectFile: carriage, CommittedServers: committed}
 }
 
-// projectFileCarriage asks git whether <repo>/.mcp.json is committed. Every
-// failure answers CarriageUnknown, which prints as an unconfirmed verdict
-// rather than a confident wrong one: "it travels with your repo" is a claim
-// about git, and a tool that cannot reach git has not checked it.
-func projectFileCarriage(ctx context.Context, repoRoot string) mcp.Carriage {
+// projectFileCarriage asks git what a CLONE would get. Every failure answers
+// CarriageUnknown, which prints as an unconfirmed verdict rather than a
+// confident wrong one: "it travels with your repo" is a claim about git, and a
+// tool that could not reach git has not checked it.
+//
+// HEAD, not the index. `git ls-files` answers "is it staged", and a file added
+// but never committed is not in a clone — so the index would have said "your
+// repo" about something no one else can see.
+func projectFileCarriage(ctx context.Context, repoRoot string) (mcp.Carriage, map[string]bool) {
 	if repoRoot == "" {
-		return mcp.CarriageUnknown
+		return mcp.CarriageUnknown, nil
 	}
 	repo, err := gitrepo.Open(ctx, repoRoot)
 	if err != nil {
-		return mcp.CarriageUnknown
+		return mcp.CarriageUnknown, nil
 	}
-	tracked, err := repo.PathInIndex(ctx, ".mcp.json")
-	if err != nil {
-		return mcp.CarriageUnknown
+	committed, err := repo.ShowFile(ctx, "HEAD", ".mcp.json")
+	if err == nil {
+		// The file is committed. Which SERVERS are committed is a second
+		// question: a tracked file can hold one that exists only in the
+		// working tree, and a clone gets the commit.
+		names, nerr := mcp.ServerNamesIn(committed)
+		if nerr != nil {
+			return mcp.CarriageTracked, nil // committed but unreadable there
+		}
+		return mcp.CarriageTracked, names
 	}
-	if tracked {
-		return mcp.CarriageTracked
-	}
-	// Not in the index: ignored and merely-never-added are different messages,
-	// because one of them is a setting the user chose.
-	ignored, err := repo.IgnoredPaths(ctx, ".mcp.json")
-	if err != nil {
-		return mcp.CarriageUntracked
+	// Not in HEAD. Ignored and merely-never-added are different messages,
+	// because one of them is a setting the user chose — but an error asking is
+	// neither, and must not be reported as either.
+	ignored, ierr := repo.IgnoredPaths(ctx, ".mcp.json")
+	if ierr != nil {
+		return mcp.CarriageUnknown, nil
 	}
 	if len(ignored) > 0 {
-		return mcp.CarriageIgnored
+		return mcp.CarriageIgnored, nil
 	}
-	return mcp.CarriageUntracked
+	return mcp.CarriageUntracked, nil
 }
 
 func stateText(s mcp.State) string {

@@ -207,6 +207,14 @@ func TestAProjectServerSaysSoWhenGitCouldNotBeAsked(t *testing.T) {
 	if !has(p, NoteCarriageUnknown) {
 		t.Errorf("notes = %v, want carriage-unknown", kinds(p))
 	}
+	if p.Carrier != "" {
+		t.Errorf("Carrier = %q — the JSON claimed a carrier for something nobody checked", p.Carrier)
+	}
+	// A Carriage value nobody has decided the meaning of must land here too,
+	// not in the repository case by falling through a default.
+	if q := Judge(e, Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: Carriage(99)}); q.Carrier != "" || !has(q, NoteCarriageUnknown) {
+		t.Errorf("an unknown Carriage reported %q %v", q.Carrier, kinds(q))
+	}
 	if has(p, NoteInYourRepository) {
 		t.Error("an unchecked verdict claimed the repository carries it")
 	}
@@ -244,5 +252,57 @@ func TestUNCPathsCountAsAbsolute(t *testing.T) {
 		Server: Server{Command: `\\fileserver\tools\mcp.exe`}}
 	if !has(Judge(e, env()), NoteMachinePath) {
 		t.Error("a UNC path was not recognised as absolute")
+	}
+}
+
+// A committed .mcp.json can still hold a server that exists only in the working
+// tree, and a clone gets the commit — so the file travelling is necessary and
+// not sufficient.
+func TestAServerOnlyInTheWorkingCopyDoesNotTravel(t *testing.T) {
+	e := Entry{Scope: settings.Project, Name: "brand-new", Server: Server{Command: "npx"}}
+	env := Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: CarriageTracked,
+		CommittedServers: map[string]bool{"already-there": true}}
+	p := Judge(e, env)
+	if p.Carrier != "" {
+		t.Errorf("Carrier = %q for a server no clone would receive", p.Carrier)
+	}
+	if !has(p, NoteNotCommitted) {
+		t.Errorf("notes = %v, want not-committed", kinds(p))
+	}
+	// Its committed neighbour is unaffected.
+	e.Name = "already-there"
+	if q := Judge(e, env); q.Carrier != "your repository" {
+		t.Errorf("a committed server reported Carrier %q", q.Carrier)
+	}
+	// And with no committed set established, the file-level answer stands.
+	env.CommittedServers = nil
+	e.Name = "brand-new"
+	if q := Judge(e, env); q.Carrier != "your repository" {
+		t.Errorf("with carriage unestablished, Carrier = %q", q.Carrier)
+	}
+}
+
+// env and headers are secret containers; arguments are not, so most of them are
+// ordinary and only the ones that LOOK like a credential can be named. A token
+// in argv is committed just the same when the server is project-scope.
+func TestACredentialInAnArgumentIsNamed(t *testing.T) {
+	e := Entry{Scope: settings.Project, Name: "x", Server: Server{
+		Command: "npx",
+		Args:    []string{"-y", "@acme/mcp", "--token=ghp_" + strings.Repeat("a", 40), "--verbose"},
+	}}
+	var fields []string
+	for _, n := range Judge(e, env()).Notes {
+		if n.Kind == NoteSecretsCommitted {
+			fields = n.Fields
+		}
+	}
+	if len(fields) != 1 || fields[0] != "args[2]" {
+		t.Fatalf("fields = %v, want [args[2]]", fields)
+	}
+	// The ordinary ones stay quiet, or the note is noise rather than a signal.
+	plain := Entry{Scope: settings.Project, Name: "y", Server: Server{
+		Command: "npx", Args: []string{"-y", "@acme/tidy-mcp", "--verbose"}}}
+	if has(Judge(plain, env()), NoteSecretsCommitted) {
+		t.Error("an ordinary argument list was reported as carrying a credential")
 	}
 }

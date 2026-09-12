@@ -416,7 +416,8 @@ gate on them.
 
 Two notes are worth reading whatever the verdict says.
 
-**Every `env` and `header` value in a committed server is named** — not the ones
+**Every `env` and `header` value in a committed server is named**, and any
+argument that looks like a credential with it — not the ones
 that look like secrets. clauderig treats those two maps as secret *containers*
 rather than guessing per value, which is the right default for what it syncs and
 means the note does not depend on a heuristic. What it cannot do is redact a file
@@ -429,10 +430,11 @@ carries, and it does not carry this one — git moves `.mcp.json` byte for byte,
 `/Users/you/bin/server` is exactly as broken on a machine with a different home
 as `/opt/homebrew/bin/server` is. The server arrives defined and fails to start.
 
-One more thing the column checks: **whether `.mcp.json` is actually committed.**
-A file that is gitignored or was never added reads `no`, because a clone does not
-get it — and if git cannot be asked, the column says `unchecked` rather than
-guessing.
+One more thing the column checks: **whether this server is actually committed.**
+Not just the file — a `.mcp.json` that is gitignored or was never added reads
+`no`, and so does a server you have added to a committed file but not committed
+yet, because a clone gets the commit rather than your working copy. If git cannot
+be asked, the column says `unchecked` rather than guessing.
 
 ## Settings Claude Code ignores
 

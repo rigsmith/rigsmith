@@ -381,7 +381,12 @@ func compare(t *testing.T, a, b map[string]string) {
 		av, aok := a[k]
 		bv, bok := b[k]
 		if av != bv || aok != bok {
-			if why, ok := intendedDifferences[k]; ok {
+			// aok && !bok, not merely "differs here". The entry below says a
+			// condemned copy is REMOVED, so present-then-absent is the whole
+			// claim; without the transition the allowance also forgives the
+			// candidate leaving the file staged with different content, which
+			// is the regression it exists to permit the fix for.
+			if why, ok := intendedDifferences[k]; ok && aok && !bok {
 				usedIntended[k] = true
 				t.Logf("intended difference at %s: %s", k, why)
 				continue

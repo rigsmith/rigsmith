@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
 )
 
@@ -62,6 +63,11 @@ type Env struct {
 	OS      string
 	// ProjectFile is the carriage of <repo>/.mcp.json. Ignored for other scopes.
 	ProjectFile Carriage
+	// CommittedServers names the servers present in the COMMITTED .mcp.json.
+	// A tracked file can still hold a server that exists only in the working
+	// tree, and a clone would not get that one. nil means "not established",
+	// which leaves the file-level answer to stand on its own.
+	CommittedServers map[string]bool
 }
 
 // Note is one thing to know, as a token and a sentence.
@@ -125,17 +131,31 @@ func Judge(e Entry, env Env) Portability {
 				Text: "defined in this repo's .mcp.json, which " + what + " — so a clone does not get it and neither does clauderig. This server works in this checkout only.",
 			})
 			return p
-		case CarriageUnknown:
-			p.Carrier = "your repository"
-			p.Notes = append(p.Notes, Note{
-				Kind: NoteCarriageUnknown,
-				Text: "defined in this repo's .mcp.json — but git could not be asked whether that file is committed, so whether it travels is unconfirmed.",
-			})
-		default:
+		case CarriageTracked:
+			// A committed FILE can still hold a server that only exists in the
+			// working tree, and a clone gets the commit — so the file being
+			// carried is necessary and not sufficient.
+			if env.CommittedServers != nil && !env.CommittedServers[e.Name] {
+				p.Notes = append(p.Notes, Note{
+					Kind: NoteNotCommitted,
+					Text: "this repo's .mcp.json is committed, but this server is only in your working copy — commit it, or a clone will not have it.",
+				})
+				return p
+			}
 			p.Carrier = "your repository"
 			p.Notes = append(p.Notes, Note{
 				Kind: NoteInYourRepository,
 				Text: "defined in this repo's .mcp.json, so it travels when the repo does. clauderig is not involved.",
+			})
+		default:
+			// CarriageUnknown, and any value a later change adds without
+			// deciding what it means. No Carrier: the JSON would otherwise
+			// claim the repository carries this while the note beside it says
+			// carriage is unconfirmed, and a caller reading one field would be
+			// told something nobody checked.
+			p.Notes = append(p.Notes, Note{
+				Kind: NoteCarriageUnknown,
+				Text: "defined in this repo's .mcp.json — but git could not be asked what it carries, so whether this server travels is unconfirmed.",
 			})
 		}
 		// Approval is recorded in .claude/settings.local.json, which is
@@ -152,6 +172,17 @@ func Judge(e Entry, env Env) Portability {
 
 	// Only project scope reaches here: the other two return above. So the
 	// secret note is always the committed-in-your-repo one.
+	// Arguments are not a secret CONTAINER the way env and headers are, so they
+	// cannot be reported wholesale — but a token passed as --token=… sits in
+	// argv, and in a project server argv is committed. Judged by shape, which
+	// is the same backstop the publication scan uses.
+	if fields := secretArgs(e.Server); len(fields) > 0 {
+		p.Notes = append(p.Notes, Note{
+			Kind: NoteSecretsCommitted, Fields: fields,
+			Text: "this looks like a credential and it is committed to your repository in plain text — clauderig redacts what it syncs, and it does not sync this file.",
+		})
+	}
+
 	if fields := secretFields(e.Server); len(fields) > 0 {
 		p.Notes = append(p.Notes, Note{
 			Kind: NoteSecretsCommitted, Fields: fields,
@@ -188,6 +219,25 @@ func secretFields(s Server) []string {
 		out = append(out, "headers."+k)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// secretArgs names the arguments whose VALUE looks like a credential. Unlike
+// env and headers, most arguments are ordinary, so this asks the scanner rather
+// than treating the whole list as secret.
+func secretArgs(s Server) []string {
+	var out []string
+	for i, a := range s.Args {
+		v := a
+		// --token=VALUE carries the secret after the '='; the flag name in
+		// front of it is enough to stop the value looking like what it is.
+		if eq := strings.IndexByte(a, '='); eq > 0 && strings.HasPrefix(a, "-") {
+			v = a[eq+1:]
+		}
+		if _, ok := redact.LooksSecret(v); ok {
+			out = append(out, "args["+strconv.Itoa(i)+"]")
+		}
+	}
 	return out
 }
 

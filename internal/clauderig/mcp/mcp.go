@@ -393,6 +393,24 @@ func removeFromList(list []string, name string) []string {
 }
 
 // load reads a JSON object file, treating absent/empty as an empty object.
+// ServerNamesIn returns the server names defined in a raw .mcp.json document.
+// Used to ask what a CLONE would get: the committed blob, not the working tree.
+func ServerNamesIn(b []byte) (map[string]bool, error) {
+	if len(strings.TrimSpace(string(b))) == 0 {
+		return map[string]bool{}, nil
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	servers, _ := doc["mcpServers"].(map[string]any)
+	for name := range servers {
+		out[name] = true
+	}
+	return out, nil
+}
+
 func load(path string) (map[string]any, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {

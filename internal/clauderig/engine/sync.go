@@ -614,6 +614,15 @@ func Sync(opts Options) (*Report, error) {
 			if err := writeFile(dstPath, out); err != nil {
 				return nil, err
 			}
+			// Registered like the other two write sites, for symmetry rather
+			// than for an observed failure: three known-prefix, JWT and
+			// high-entropy fixtures all get refused by the inbound scan above
+			// and never written, so nothing reaches the post-write audit by
+			// this route today. The two scans are deliberately different
+			// though, and the audit is the broader one — so the day they
+			// diverge, this branch would have been the one that silently left
+			// a condemned file behind.
+			stagedThisRun[r.ID+"/"+rel] = true
 			rr.Files++
 			rr.Redactions += len(paths)
 			if len(paths) > 0 {
