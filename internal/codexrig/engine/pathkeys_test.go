@@ -101,3 +101,28 @@ func TestAnOrdinaryKeyIsNeverMistakenForAPath(t *testing.T) {
 		t.Errorf("ordinary keys were altered: %+v", out)
 	}
 }
+
+// Two source keys can rename to one. "The existing value wins" is only a rule
+// if the order they are visited in is fixed; ranging the map made the winner
+// change between runs, and the staged bytes with it — so every sync rewrote
+// the config and committed it again.
+func TestAKeyCollisionResolvesTheSameWayEveryRun(t *testing.T) {
+	folders := pathmap.MapFolders{"HOME": "/Users/one"}
+	in := map[string]any{
+		"/Users/one/Git/thing": map[string]any{"trust_level": "native"},
+		"$HOME/Git/thing":      map[string]any{"trust_level": "portable"},
+	}
+	first, _ := PortablizeKeys(in, folders, pathmap.OSMacOS)
+	for i := 0; i < 64; i++ {
+		again, _ := PortablizeKeys(in, folders, pathmap.OSMacOS)
+		if !reflect.DeepEqual(again, first) {
+			t.Fatalf("run %d differed:\n%+v\n%+v", i, again, first)
+		}
+	}
+	// Sorted order puts "$HOME/…" before "/Users/…", so its value is the one
+	// that is already present when the rename collides.
+	got := first.(map[string]any)["$HOME/Git/thing"].(map[string]any)["trust_level"]
+	if got != "portable" {
+		t.Errorf("winner = %v, want the value of the key sorted first", got)
+	}
+}

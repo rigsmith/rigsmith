@@ -11,6 +11,7 @@
 package contents
 
 import (
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"io/fs"
 	"os"
 	"path"
@@ -110,7 +111,7 @@ func classify(rel string) (name, detail string) {
 	}
 
 	switch {
-	case rollout.IsRolloutRel(rest):
+	case rollout.IsRolloutRel(rest), rolloutstore.IsPartPath(rest):
 		return "sessions", "the conversations themselves"
 	case strings.HasPrefix(rest, "skills/"):
 		return "skills", "what you have taught Codex"

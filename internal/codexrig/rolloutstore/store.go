@@ -79,8 +79,8 @@ type Index struct {
 	Parts   []Part `json:"parts"`
 }
 
-// isIndexFile is IsIndex against a path, reading only the marker's length.
-func isIndexFile(p string) (bool, error) {
+// IsIndexFile is IsIndex against a path, reading only the marker's length.
+func IsIndexFile(p string) (bool, error) {
 	f, err := os.Open(p)
 	if err != nil {
 		return false, err
@@ -459,7 +459,7 @@ func Convert(p string, chunked bool) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	isIdx, err := isIndexFile(p)
+	isIdx, err := IsIndexFile(p)
 	if err != nil {
 		return false, err
 	}

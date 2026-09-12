@@ -97,7 +97,7 @@ func Run(ctx context.Context, env Env) []Section {
 func environment(ctx context.Context, env Env) []Result {
 	var out []Result
 	out = append(out, binary("git", "git", "install git"))
-	out = append(out, codexCheck())
+	out = append(out, codexCheck(ctx))
 	// The hooks call a BARE `codexrig`, so that it keeps working when the same
 	// hooks file is restored onto another machine. A binary that does not
 	// resolve turns every hook into a silent no-op.
@@ -124,7 +124,7 @@ func binary(id, name, hint string) Result {
 	return Result{ID: id, Name: name, Status: OK, Detail: "found"}
 }
 
-func codexCheck() Result {
+func codexCheck(ctx context.Context) Result {
 	bin, err := exec.LookPath("codex")
 	if err != nil {
 		return Result{
@@ -132,7 +132,11 @@ func codexCheck() Result {
 			Hint: "codexrig can still back up a Codex home it can see, but it cannot ask Codex anything — including whether your hooks are trusted",
 		}
 	}
-	out, err := exec.Command(bin, "--version").Output()
+	// Bounded like ghCheck: doctor is what a person runs when things are
+	// already broken, and a codex that hangs must not take doctor with it.
+	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(probe, bin, "--version").Output()
 	if err != nil {
 		return Result{ID: "codex", Name: "codex", Status: Warn, Detail: "found, but would not report a version"}
 	}
@@ -338,6 +342,19 @@ func hookChecks(ctx context.Context, env Env) []Result {
 		return append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: err.Error()})
 	}
 	want := hooks.SyncPlans()
+	// By event name, not by count. Status lists every event with a codexrig
+	// command, and a stale one offsetting a missing one made len(present) >=
+	// len(want) read as OK with a sync hook absent.
+	have := map[string]bool{}
+	for _, ev := range present {
+		have[ev] = true
+	}
+	var missing []string
+	for _, pl := range want {
+		if !have[string(pl.Event)] {
+			missing = append(missing, string(pl.Event))
+		}
+	}
 	switch {
 	case len(present) == 0:
 		out = append(out, Result{
@@ -348,10 +365,10 @@ func hookChecks(ctx context.Context, env Env) []Result {
 				return err
 			},
 		})
-	case len(present) < len(want):
+	case len(missing) > 0:
 		out = append(out, Result{
 			ID: "user-hooks", Name: "sync hooks", Status: Warn,
-			Detail:   "partial: " + strings.Join(present, ", "),
+			Detail:   "missing: " + strings.Join(missing, ", "),
 			FixLabel: "install the missing sync hooks",
 			Fix: func(context.Context) error {
 				_, _, err := hooks.Install(env.HooksPath, want)

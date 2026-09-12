@@ -13,7 +13,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -24,7 +29,6 @@ import (
 	"github.com/rigsmith/rigsmith/internal/codexrig/devices"
 	"github.com/rigsmith/rigsmith/internal/codexrig/engine"
 	"github.com/rigsmith/rigsmith/internal/codexrig/journal"
-	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
 	"github.com/rigsmith/rigsmith/internal/codexrig/mergepolicy"
 )
 
@@ -152,7 +156,7 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) 
 		CodexVersion:   req.CodexVersion,
 		RetentionDays:  req.Config.Retention.HistoryDays,
 		RedactRollouts: req.Config.RedactTranscripts,
-		ChunkRollouts:  chunkRollouts(req.Config),
+		ChunkRollouts:  chunkRollouts(req.Config, req.StagingDir),
 		MaxFileBytes:   req.Config.Retention.MaxFileBytes,
 		LargeFileBytes: req.Config.Retention.LargeFileBytes,
 		Flush:          req.Flush,
@@ -164,12 +168,18 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) 
 	// describes rather than waiting for the next one. That includes the record
 	// of a refusal, which is the whole reason the journal exists: a hook-driven
 	// sync that refuses has nowhere else to say so.
-	rec := recordFor(req.Machine.Name, rep, serr)
+	rec := recordFor(s.now(), req.Machine.Name, rep, serr)
 	if jerr := journal.Append(req.StagingDir, rec); jerr != nil {
 		// A journal that cannot be written must never cost anyone a backup.
 		_ = jerr
 	}
 	if serr != nil {
+		// The refusal is the one record the journal exists for, and returning
+		// here left it in the staging tree only — a fresh clone could not see
+		// that this machine had been refusing for a month. Publish the journal
+		// ALONE: it is counts and outcomes, never content, so it can cross the
+		// gate the rest of the tree just failed. Best effort, like the write.
+		s.publishJournalOnly(ctx, req)
 		return out, serr
 	}
 
@@ -208,15 +218,80 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) 
 // differ from "off" — and the default has to be on, because the case it exists
 // for is a conversation big enough that nobody notices the problem until the
 // repo is already enormous.
-func chunkRollouts(cfg *config.Config) bool {
-	if cfg.ChunkRollouts == nil {
-		return true
+func chunkRollouts(cfg *config.Config, staging string) bool {
+	if cfg.ChunkRollouts != nil {
+		return *cfg.ChunkRollouts
 	}
-	return *cfg.ChunkRollouts
+	// Not configured: follow what the repo already does, because the engine
+	// converts EVERY staged rollout to the chosen representation, and a new
+	// machine with no opinion rewriting a whole-file repository into parts —
+	// or back — is a rewrite nobody asked for. Only a repo with no large
+	// rollout at all gets the default.
+	return repoChunks(staging)
 }
 
-func recordFor(machine string, rep *engine.Report, err error) journal.Record {
-	rec := journal.Record{At: time.Now().UTC(), Machine: machine, Op: journal.OpSync, Outcome: journal.OutcomeOK}
+// repoChunks reports the representation the staged repository already uses
+// for large rollouts: true if any is a chunk index, false if any is a plain
+// file past the threshold, true if there is nothing to go on.
+func repoChunks(staging string) bool {
+	sawPlain := false
+	werr := filepath.WalkDir(staging, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		rel, rerr := filepath.Rel(staging, p)
+		if rerr != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if _, rest, ok := strings.Cut(rel, "/"); !ok || !rollout.IsRolloutRel(rest) {
+			return nil
+		}
+		if isIdx, ierr := rolloutstore.IsIndexFile(p); ierr == nil && isIdx {
+			return errFoundChunked
+		}
+		if info, ierr := d.Info(); ierr == nil && info.Size() > rolloutstore.Threshold {
+			sawPlain = true
+		}
+		return nil
+	})
+	if errors.Is(werr, errFoundChunked) {
+		return true
+	}
+	return !sawPlain
+}
+
+// errFoundChunked stops the walk: one index is enough.
+var errFoundChunked = errors.New("found a chunked rollout")
+
+// publishJournalOnly commits and pushes the journal file and nothing else,
+// after a refusal. Every error is swallowed: a refusal that cannot be recorded
+// remotely is still a refusal, and this must never mask the real error.
+func (s Service) publishJournalOnly(ctx context.Context, req SyncRequest) {
+	repo, err := gitrepo.Init(ctx, req.StagingDir)
+	if err != nil {
+		return
+	}
+	if _, err := repo.CommitPaths(ctx, "codexrig sync: "+req.Machine.Name+" (refused)", journal.DirName); err != nil {
+		return
+	}
+	if req.Config.Remote == "" {
+		return
+	}
+	if err := repo.EnsureRemote(ctx, Remote, req.Config.Remote); err != nil {
+		return
+	}
+	_ = repo.Push(ctx, Remote, Branch)
+}
+
+func recordFor(now time.Time, machine string, rep *engine.Report, err error) journal.Record {
+	rec := journal.Record{At: now.UTC(), Machine: machine, Op: journal.OpSync, Outcome: journal.OutcomeOK}
 	if rep != nil {
 		for _, rr := range rep.Roots {
 			rec.Files += rr.Files
@@ -271,8 +346,11 @@ func (s Service) Publish(ctx context.Context, req PublishRequest) (PublishResult
 	if err != nil {
 		return out, err
 	}
-	if req.Remote != "" && !repo.HasRemote(ctx, Remote) {
-		if err := repo.SetRemote(ctx, Remote, req.Remote); err != nil {
+	// The config is the source of truth for where this pushes — init gated
+	// it through ghrepo.EnsurePrivate. Setting origin only when absent meant a
+	// remote changed in config.json kept pushing to the old one, forever.
+	if req.Remote != "" {
+		if err := repo.EnsureRemote(ctx, Remote, req.Remote); err != nil {
 			return out, err
 		}
 	}
@@ -452,12 +530,8 @@ func (s Service) Pull(ctx context.Context, req PullRequest) PullResult {
 	}
 
 	if req.Config.AutoRestore && freshMachine(req) {
-		man, merr := manifest.Load(req.StagingDir)
-		if merr != nil {
-			return out
-		}
 		rep, rerr := engine.Restore(engine.RestoreOptions{
-			StagingDir: req.StagingDir, Config: req.Config, Machine: req.Machine, Manifest: man,
+			StagingDir: req.StagingDir, Config: req.Config, Machine: req.Machine,
 		})
 		out.Restore, out.RestoreErr = rep, rerr
 		if rerr == nil {

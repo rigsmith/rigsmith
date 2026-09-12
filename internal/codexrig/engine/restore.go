@@ -14,7 +14,6 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/codexrig/codec"
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
-	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 )
@@ -24,7 +23,6 @@ type RestoreOptions struct {
 	StagingDir string
 	Config     *config.Config
 	Machine    config.Machine
-	Manifest   *manifest.Manifest
 
 	// Prune removes local files under the pruneable directories that are no
 	// longer in the repo — a skill or a prompt deleted on another machine.

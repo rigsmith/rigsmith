@@ -131,7 +131,7 @@ func TestDescend_AnyDepthPruneBeatsAnIncludeInsideIt(t *testing.T) {
 		Exc(AnyDepth + "node_modules"),
 		Inc("projects/p/node_modules/left-pad"), // longer, and would otherwise win
 	}}
-	if l.descend("projects/p/node_modules") {
+	if l.Descend("projects/p/node_modules") {
 		t.Error("descended a banned tree because an include named something inside it")
 	}
 	// decide() is deliberately NOT consulted here: by longest-match-wins the

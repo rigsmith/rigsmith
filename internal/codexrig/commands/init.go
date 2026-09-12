@@ -38,12 +38,14 @@ func NewInitCmd() *cobra.Command {
 			}
 			me := config.Detect(name)
 
+			asked := false
 			if !yes && interactive() && remote == "" {
 				chosen, sess, hk, ferr := initForm(cmd, cfg)
 				if ferr != nil {
 					return ferr
 				}
 				remote, sessions, installHooks = chosen, sess, hk
+				asked = true
 			}
 
 			if remote != "" {
@@ -54,7 +56,13 @@ func NewInitCmd() *cobra.Command {
 				}
 				cfg.Remote = remote
 			}
-			cfg.SyncSessions = sessions
+			// Only when the user actually answered — the form, or the flag
+			// spelled out. `init --yes` and `init --remote` skip the form, and
+			// assigning the flag's false default there turned session syncing
+			// OFF on every re-run for anyone who had it on.
+			if asked || cmd.Flags().Changed("sessions") {
+				cfg.SyncSessions = sessions
+			}
 			if cfg.Machines == nil {
 				cfg.Machines = map[string]config.Machine{}
 			}
@@ -124,18 +132,18 @@ func NewInitCmd() *cobra.Command {
 func initForm(cmd *cobra.Command, cfg *config.Config) (remote string, sessions, installHooks bool, err error) {
 	installHooks = true
 	chooseRemote := "existing"
-	if !ghrepo.Available() {
-		chooseRemote = "existing"
+	// An option that can only fail is not an option. Without gh, "create" used
+	// to be offered and then fail the whole form on selection.
+	options := []huh.Option[string]{huh.NewOption("I have a repo already", "existing")}
+	if ghrepo.Available() {
+		options = append(options, huh.NewOption("Create one with the gh CLI", "create"))
 	}
+	options = append(options, huh.NewOption("Nowhere yet — keep it local", "none"))
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().Title("Where should your setup be backed up?").
 				Description("It has to be a private repo. codexrig checks, and refuses a public one.").
-				Options(
-					huh.NewOption("I have a repo already", "existing"),
-					huh.NewOption("Create one with the gh CLI", "create"),
-					huh.NewOption("Nowhere yet — keep it local", "none"),
-				).Value(&chooseRemote),
+				Options(options...).Value(&chooseRemote),
 		),
 		huh.NewGroup(
 			huh.NewConfirm().Title("Carry session rollouts too?").

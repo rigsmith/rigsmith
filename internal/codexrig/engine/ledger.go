@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -58,7 +59,10 @@ func recordLedger(staging, device string) (added, total int, err error) {
 			if id == "" {
 				return nil
 			}
-			info, ierr := d.Info()
+			// rolloutstore.Stat, not d.Info(): past the chunking threshold the
+			// file on disk is a small index, and the ledger would record — and
+			// fingerprint freshness by — the index's size, not the conversation's.
+			info, ierr := rolloutstore.Stat(p)
 			if ierr != nil {
 				return nil
 			}
@@ -72,7 +76,7 @@ func recordLedger(staging, device string) (added, total int, err error) {
 				return nil
 			}
 
-			e := ledger.Entry{ID: id, Bytes: info.Size(), Shard: path(rel)}
+			e := ledger.Entry{ID: id, Bytes: info.Size(), Shard: shardOf(rel)}
 			if haveAct {
 				e.End = act.At
 			}
@@ -95,8 +99,10 @@ func recordLedger(staging, device string) (added, total int, err error) {
 	return added, l.Count(), nil
 }
 
-// path is the rollout's directory, which is where to look in git history.
-func path(rel string) string {
+// shardOf is the rollout's directory, which is where to look in git history.
+// Not named `path`: a package-level identifier with an imported package's name
+// blocks that import for every file in the package.
+func shardOf(rel string) string {
 	if i := strings.LastIndex(rel, "/"); i > 0 {
 		return rel[:i]
 	}

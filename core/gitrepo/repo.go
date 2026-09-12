@@ -84,6 +84,17 @@ func (r *Repo) SetRemote(ctx context.Context, name, url string) error {
 }
 
 // HasRemote reports whether a named remote exists.
+// EnsureRemote makes name point at url, adding it or repointing it. SetRemote
+// only adds, so a caller that wanted "the remote IS this" had to check first
+// and, in practice, skipped the repoint.
+func (r *Repo) EnsureRemote(ctx context.Context, name, url string) error {
+	if r.HasRemote(ctx, name) {
+		_, err := runGit(ctx, r.Dir, "remote", "set-url", name, url)
+		return err
+	}
+	return r.SetRemote(ctx, name, url)
+}
+
 func (r *Repo) HasRemote(ctx context.Context, name string) bool {
 	_, err := runGit(ctx, r.Dir, "remote", "get-url", name)
 	return err == nil

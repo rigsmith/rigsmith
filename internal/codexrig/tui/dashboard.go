@@ -157,15 +157,19 @@ func (m Model) View() string {
 	for i, it := range m.items {
 		cursor := "  "
 		label := it.label
+		// Pad the plain text, then style it: %-10s counts the ANSI bytes the
+		// style adds, so a styled label came out unpadded and the description
+		// column jumped whenever the selection moved.
+		label = fmt.Sprintf("%-10s", label)
 		if i == m.cursor {
 			cursor = cursorC.Render("› ")
-			label = selected.Render(it.label)
+			label = selected.Render(label)
 		}
 		tag := ""
 		if it.recommended {
 			tag = " " + nextC.Render("next")
 		}
-		fmt.Fprintf(&b, "%s%-10s %s%s\n", cursor, label, dim.Render(it.desc), tag)
+		fmt.Fprintf(&b, "%s%s %s%s\n", cursor, label, dim.Render(it.desc), tag)
 	}
 	b.WriteString("\n")
 	b.WriteString(dim.Render("  ↑/↓ move · enter select · " + strings.Join(hotkeys(m.items), "/") + " shortcut · q quit"))

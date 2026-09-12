@@ -55,7 +55,7 @@ func NewRestoreCmd() *cobra.Command {
 			}
 
 			opts := engine.RestoreOptions{
-				StagingDir: staging, Config: cfg, Machine: me, Manifest: man,
+				StagingDir: staging, Config: cfg, Machine: me,
 				Prune: prune || cfg.AlwaysPrune,
 			}
 			target, _ := cfg.RootLocation(config.RootCLI, me)

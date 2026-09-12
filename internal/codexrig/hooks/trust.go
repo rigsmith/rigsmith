@@ -70,7 +70,11 @@ func Trust(ctx context.Context, home, cwd string) (TrustResult, error) {
 		// The key is Codex's own, quoted as a single TOML key: it contains
 		// slashes, dots and colons, none of which may be read as path
 		// separators in the dotted keyPath.
-		keyPath := `hooks.state."` + h.Key + `".trusted_hash`
+		// Escaped as a TOML basic string: Codex closes the quoted segment on an
+		// unescaped quote and consumes the next character after an unescaped
+		// backslash, so a key holding either would address a different key —
+		// or fail — and the hook would stay untrusted. Backslash first.
+		keyPath := trustKeyPath(h.Key)
 		if err := client.WriteConfig(ctx, keyPath, h.CurrentHash); err != nil {
 			return out, fmt.Errorf("recording trust for the %s hook: %w", h.EventName, err)
 		}
@@ -98,4 +102,14 @@ func Check(ctx context.Context, home, cwd string) ([]appserver.HookInfo, error) 
 		}
 	}
 	return ours, nil
+}
+
+// trustKeyPath addresses a hook's trusted_hash in Codex's config. The key is
+// Codex's own, quoted as one TOML basic-string segment: it holds slashes, dots
+// and colons that must not read as path separators, and a backslash or quote
+// inside it has to be escaped or Codex closes the segment early — addressing a
+// different key, or failing, and leaving the hook untrusted. Backslash first.
+func trustKeyPath(key string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(key)
+	return `hooks.state."` + escaped + `".trusted_hash`
 }

@@ -1,8 +1,10 @@
 package sessions
 
 import (
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -168,5 +170,49 @@ func TestCwdFilter(t *testing.T) {
 	rows, _ := List(Options{Targets: []Target{{Label: Live, Dir: root}}, Cwd: "THING"})
 	if len(rows) != 1 || rows[0].ID != uuidOld {
 		t.Fatalf("got %+v, want the one whose directory matches, case-insensitively", rows)
+	}
+}
+
+// The snippet window used the byte offset of the hit in the RAW text, then
+// collapsed whitespace and cut the window there — so any message with a run of
+// spaces or a newline before the hit centred the window on the wrong place,
+// and the snippet could omit the very match it reported.
+func TestTheSnippetContainsTheMatchItReports(t *testing.T) {
+	root := t.TempDir()
+	at := time.Now().Format(time.RFC3339)
+	shard := time.Now().Format("2006/01/02")
+	padding := strings.Repeat("filler word ", 40) + strings.Repeat("        ", 30) // runs of spaces: valid inside the JSON, gone after Fields
+	rolloutFile(t, root, shard, uuidOld, meta(uuidOld, at, "/repo"), userMsg(at, padding+"the NEEDLE sits here"+strings.Repeat(" tail", 60)))
+	rows, _ := List(Options{Targets: []Target{{Label: Live, Dir: root}}, Content: "needle"})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if !strings.Contains(strings.ToLower(rows[0].Snippet), "needle") {
+		t.Errorf("snippet does not contain the match: %q", rows[0].Snippet)
+	}
+}
+
+// Past the chunking threshold a repo-side rollout is an index, and the words
+// are in its parts. os.Open read the index, so a body-only match in a large
+// conversation was silently missed.
+func TestContentSearchReadsAChunkedRolloutsBody(t *testing.T) {
+	repo := t.TempDir()
+	at := time.Now().Format(time.RFC3339)
+	shard := time.Now().Format("2006/01/02")
+	path := rolloutFile(t, repo, shard, uuidOld, meta(uuidOld, at, "/repo"), userMsg(at, "an ordinary start"))
+	var b strings.Builder
+	b.WriteString(meta(uuidOld, at, "/repo") + "\n")
+	b.WriteString(userMsg(at, "an ordinary start") + "\n")
+	filler := strings.Repeat("y", 900)
+	for i := 0; i < 10000; i++ {
+		b.WriteString(userMsg(at, filler) + "\n")
+	}
+	b.WriteString(userMsg(at, "the xylophone appears only at the end") + "\n")
+	if err := rolloutstore.Write(path, strings.NewReader(b.String()), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := List(Options{Targets: []Target{{Label: Repo, Dir: repo}}, Content: "xylophone"})
+	if len(rows) != 1 || rows[0].ID != uuidOld {
+		t.Fatalf("got %+v, want the chunked session whose body holds the word", rows)
 	}
 }

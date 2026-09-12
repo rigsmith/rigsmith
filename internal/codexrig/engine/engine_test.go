@@ -339,12 +339,8 @@ func TestARestoreOntoASecondMachineResolvesPathsAndKeepsItsOwnSecret(t *testing.
 	two.write(t, "config.toml", "model = \"older\"\n\n[mcp_servers.railway.env]\nRAILWAY_TOKEN = \"two-own-real-value\"\n")
 
 	cfg, mc := two.cfg(true)
-	man, err := manifest.Load(staging)
-	if err != nil {
-		t.Fatal(err)
-	}
 	rep, err := Restore(RestoreOptions{
-		StagingDir: staging, Config: cfg, Machine: mc, Manifest: man,
+		StagingDir: staging, Config: cfg, Machine: mc,
 		TargetOverride: map[string]string{config.RootCLI: two.codex},
 	})
 	if err != nil {

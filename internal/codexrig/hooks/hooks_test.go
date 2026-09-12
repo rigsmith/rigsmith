@@ -227,3 +227,22 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// Codex closes a quoted keyPath segment on an unescaped quote and consumes the
+// character after an unescaped backslash. A key holding either — a Windows path
+// does — addressed a different key or failed, and the hook stayed untrusted.
+func TestTrustKeyPathEscapesWhatCodexWouldMisread(t *testing.T) {
+	got := trustKeyPath(`C:\Users\x\.codex\hooks.json:pre_tool_use:0:0`)
+	want := `hooks.state."C:\\Users\\x\\.codex\\hooks.json:pre_tool_use:0:0".trusted_hash`
+	if got != want {
+		t.Errorf("backslashes:\n got %s\nwant %s", got, want)
+	}
+	if got := trustKeyPath(`a"b`); got != `hooks.state."a\"b".trusted_hash` {
+		t.Errorf("quote: got %s", got)
+	}
+	// An ordinary key is untouched, or every existing trust record would move.
+	plain := `/Users/x/.codex/hooks.json:pre_tool_use:0:0`
+	if got := trustKeyPath(plain); got != `hooks.state."`+plain+`".trusted_hash` {
+		t.Errorf("plain key altered: %s", got)
+	}
+}

@@ -347,5 +347,25 @@ func save(path string, doc map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	// Temp file and rename: an interrupted in-place write leaves a hooks.json
+	// that load() refuses, and from then on every install, uninstall, status
+	// and drift fails until a person repairs it by hand — the class of damage
+	// the package comment on load() calls unrecoverable.
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	if _, err := tmp.Write(append(b, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(name, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
 }

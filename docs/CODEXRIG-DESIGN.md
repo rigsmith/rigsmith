@@ -49,10 +49,13 @@ So a rollout travels byte for byte. `codex resume --cd` exists for the case wher
 a directory moved, and the manifest carries a portable spelling of each working
 directory so a listing can still show something meaningful on another machine.
 
-The one exception is opt-in and explicit: `redactTranscripts` scrubs
-credential-shaped tokens out of the *staged* copy. The live file is never
-touched. It is off by default, because rewriting a conversation is a thing a
-backup tool should do only when asked.
+The one exception is `redactTranscripts`, which scrubs credential-shaped
+tokens out of the *staged* copy. The live file is never touched. It is on by
+default — but only once sessions themselves are on, which is the opt-in that
+matters: a person who has chosen to carry conversation text has chosen to carry
+it safely, and the publication gate refuses an unscrubbed credential anyway, so
+"off" would mean a pasted token simply stops the session syncing until they
+find the switch. Turning it off is the explicit act.
 
 ### Sessions are opt-in
 

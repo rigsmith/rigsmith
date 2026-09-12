@@ -9,6 +9,7 @@
 package sessions
 
 import (
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -319,7 +320,7 @@ const (
 // It reads the file, which is why it runs only after the cheap field match has
 // missed: a listing that opened every rollout would take seconds per screen.
 func scanFile(path, needle string, caseSensitive bool) (int, string) {
-	f, err := os.Open(path)
+	f, err := rolloutstore.Open(path)
 	if err != nil {
 		return 0, ""
 	}
@@ -328,6 +329,9 @@ func scanFile(path, needle string, caseSensitive bool) (int, string) {
 	count := 0
 	snippet := ""
 	sc := newScanner(f)
+	if !caseSensitive {
+		needle = strings.ToLower(needle)
+	}
 	for sc.Scan() {
 		line := sc.Text()
 		if !rollout.IsConversationLine(line) {
@@ -340,15 +344,13 @@ func scanFile(path, needle string, caseSensitive bool) (int, string) {
 		hay := text
 		if !caseSensitive {
 			hay = strings.ToLower(hay)
-			needle = strings.ToLower(needle)
 		}
-		i := strings.Index(hay, needle)
-		if i < 0 {
+		if !strings.Contains(hay, needle) {
 			continue
 		}
 		count++
 		if snippet == "" {
-			snippet = window(text, i, len(needle))
+			snippet = window(text, needle, caseSensitive)
 		}
 	}
 	return count, snippet
@@ -356,11 +358,23 @@ func scanFile(path, needle string, caseSensitive bool) (int, string) {
 
 // window cuts a readable piece around a hit, on rune boundaries so a multi-byte
 // character is never split in half.
-func window(text string, at, length int) string {
+func window(text, needle string, caseSensitive bool) string {
+	// Collapse first, THEN find the hit. An offset measured on the raw text
+	// shifts the moment whitespace is folded, so a window centred on it could
+	// miss the very match it was meant to show.
 	text = strings.Join(strings.Fields(text), " ")
 	if len(text) <= snippetMax {
 		return text
 	}
+	hay := text
+	if !caseSensitive {
+		hay = strings.ToLower(hay)
+	}
+	at := strings.Index(hay, needle)
+	if at < 0 {
+		at = 0
+	}
+	length := len(needle)
 	start := at - snippetPad
 	if start < 0 {
 		start = 0

@@ -195,13 +195,15 @@ type Config struct {
 // Default returns a config with the standard root and retention, no machines or
 // remote yet (init fills those).
 func Default() *Config {
-	chunked := true
 	return &Config{
-		ChunkRollouts: &chunked,
-		Schema:        schemaVersion,
-		Machines:      map[string]Machine{},
-		Roots:         DefaultRoots(),
-		Retention:     Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes, LargeFileBytes: DefaultLargeFileBytes},
+		// ChunkRollouts stays nil here on purpose. The field's contract is that
+		// absent differs from false — a machine with no opinion follows what
+		// the repo already does — and Default() is exactly the machine with no
+		// opinion. Setting true here made the tri-state unreachable.
+		Schema:    schemaVersion,
+		Machines:  map[string]Machine{},
+		Roots:     DefaultRoots(),
+		Retention: Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes, LargeFileBytes: DefaultLargeFileBytes},
 		// On by default, unlike the sessions themselves: once someone opts into
 		// carrying conversation text, scrubbing it is the behaviour they meant.
 		RedactTranscripts: true,
@@ -312,6 +314,21 @@ func Load(dir string) (*Config, error) {
 	var c Config
 	if err := jsonc.Unmarshal(b, &c); err != nil {
 		return nil, err
+	}
+	// Stamped on every write and, until now, never read. A config from a newer
+	// codexrig can rename or reinterpret a field; parsing it as this version
+	// silently reads the old meaning.
+	if c.Schema > schemaVersion {
+		return nil, fmt.Errorf("config.json is schema %d, and this codexrig understands up to %d — upgrade codexrig", c.Schema, schemaVersion)
+	}
+	// pathmap treats every OS token that is not "windows" as POSIX, so a typo
+	// here does not fail, it resolves paths for the wrong platform. Fail closed.
+	for name, m := range c.Machines {
+		switch m.OS {
+		case "macos", "windows", "linux", "":
+		default:
+			return nil, fmt.Errorf("machine %q has os %q; it must be macos, windows or linux", name, m.OS)
+		}
 	}
 	// A config written before the size cap existed has no maxFileBytes; absent
 	// must mean "the default", not "no cap", or the configs that most need the

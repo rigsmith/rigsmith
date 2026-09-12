@@ -23,7 +23,6 @@ import (
 	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
 	"github.com/rigsmith/rigsmith/internal/codexrig/engine"
-	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
 	"github.com/rigsmith/rigsmith/internal/codexrig/peek"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 )
@@ -152,11 +151,9 @@ trust_level = "trusted"
 	_, err = gitrepo.Clone(ctx, remote, cloned)
 	must(t, err)
 
-	man, err := manifest.Load(cloned)
-	must(t, err)
 	cfg2, mc2 := two.cfg(true)
 	rep, err := engine.Restore(engine.RestoreOptions{
-		StagingDir: cloned, Config: cfg2, Machine: mc2, Manifest: man,
+		StagingDir: cloned, Config: cfg2, Machine: mc2,
 		TargetOverride: map[string]string{config.RootCLI: two.codex},
 	})
 	must(t, err)

@@ -112,10 +112,14 @@ func (c *Client) Close() {
 
 // Call sends a request and returns its result.
 func (c *Client) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	// The lock covers the whole exchange, not just the id. The stream is one
+	// pipe: two callers writing and reading it at once each consume the
+	// other's reply and discard it as "not mine", and the other caller waits
+	// for an answer that has already gone by.
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.next++
 	id := c.next
-	c.mu.Unlock()
 
 	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}
 	b, err := json.Marshal(req)
@@ -131,7 +135,10 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		deadline = dl
 	}
 	for time.Now().Before(deadline) {
-		line, err := c.out.ReadString('\n')
+		// ReadString has no deadline of its own, and a server that stops
+		// mid-line would hold this forever — the clock is only consulted
+		// between complete lines. Read on a goroutine and race the clock.
+		line, err := c.readLine(time.Until(deadline))
 		if err != nil {
 			return nil, fmt.Errorf("codex app-server closed: %w", err)
 		}
@@ -160,7 +167,30 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	return nil, fmt.Errorf("%s: no answer from codex app-server", method)
 }
 
+// readLine is c.out.ReadString with a deadline. A line that arrives after the
+// deadline is dropped by the buffered channel; the client is then out of step
+// with the server and the caller should Close it.
+func (c *Client) readLine(within time.Duration) (string, error) {
+	type result struct {
+		line string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		l, e := c.out.ReadString('\n')
+		ch <- result{l, e}
+	}()
+	select {
+	case r := <-ch:
+		return r.line, r.err
+	case <-time.After(within):
+		return "", errors.New("no reply before the deadline")
+	}
+}
+
 func (c *Client) notify(method string, params any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	b, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 	if err != nil {
 		return err

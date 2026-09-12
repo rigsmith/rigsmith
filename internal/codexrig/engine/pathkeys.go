@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -118,7 +119,16 @@ func mapKeys(v any, fn func(string) string) any {
 	switch n := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(n))
-		for k, val := range n {
+		// Sorted: "the existing value wins" is only deterministic if the
+		// order keys are visited in is. Ranging the map directly made which
+		// key won change between runs, and the staged bytes with it.
+		keys := make([]string, 0, len(n))
+		for k := range n {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			val := n[k]
 			nk := fn(k)
 			child := mapKeys(val, fn)
 			if _, taken := out[nk]; taken {
