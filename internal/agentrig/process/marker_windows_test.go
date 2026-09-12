@@ -16,9 +16,13 @@ import (
 // deadline, retrying only missing files and sharing violations. Parse/contents
 // errors remain the caller's responsibility and are never retried.
 func readWindowsMarker(path string, timeout time.Duration) ([]byte, error) {
+	return readWindowsMarkerWithRead(path, timeout, os.ReadFile)
+}
+
+func readWindowsMarkerWithRead(path string, timeout time.Duration, read func(string) ([]byte, error)) ([]byte, error) {
 	deadline := time.Now().Add(timeout)
 	for {
-		data, err := os.ReadFile(path)
+		data, err := read(path)
 		if err == nil || (!errors.Is(err, os.ErrNotExist) && !errors.Is(err, windows.ERROR_SHARING_VIOLATION)) || !time.Now().Before(deadline) {
 			return data, err
 		}
@@ -48,28 +52,25 @@ func TestWindowsMarkerSharingViolation(t *testing.T) {
 	if _, err := readWindowsMarker(path, 25*time.Millisecond); !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
 		t.Fatal("held marker was accepted", err)
 	}
-	type result struct {
-		data []byte
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() { data, err := readWindowsMarker(path, time.Second); done <- result{data, err} }()
-	select {
-	case r := <-done:
-		t.Fatal("reader did not wait for sharing handle", r.err)
-	case <-time.After(25 * time.Millisecond):
-	}
-	if err := windows.CloseHandle(handle); err != nil {
-		t.Fatal(err)
-	}
-	handle = windows.InvalidHandle
-	select {
-	case r := <-done:
-		if r.err != nil || string(r.data) != "123" {
-			t.Fatal("marker not read after handle closed", r.err)
+	// Observe a real failed read before releasing the handle. Keeping this in
+	// the read callback removes goroutine/timer scheduling from the proof.
+	attempts := 0
+	data, err := readWindowsMarkerWithRead(path, time.Second, func(path string) ([]byte, error) {
+		attempts++
+		data, err := os.ReadFile(path)
+		if attempts == 1 {
+			if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+				t.Fatal("first read did not observe incompatible handle", err)
+			}
+			if closeErr := windows.CloseHandle(handle); closeErr != nil {
+				t.Fatal(closeErr)
+			}
+			handle = windows.InvalidHandle
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("reader did not finish")
+		return data, err
+	})
+	if err != nil || string(data) != "123" || attempts < 2 {
+		t.Fatal("marker was not retried after handle closed", attempts, err)
 	}
 	// A non-transient error must remain identifiable, and missing markers time out.
 	if _, err := readWindowsMarker("\x00", time.Second); err == nil || errors.Is(err, os.ErrNotExist) || errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
