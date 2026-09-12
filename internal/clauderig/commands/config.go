@@ -10,8 +10,8 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/core/editor"
+	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
-	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/spf13/cobra"
 )
 

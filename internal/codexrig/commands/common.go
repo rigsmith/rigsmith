@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 
 	"github.com/mattn/go-isatty"
 )
@@ -39,3 +40,11 @@ var errCheckFailed = &silentError{}
 type silentError struct{}
 
 func (e *silentError) Error() string { return "" }
+
+// runInteractive hands the terminal to another program — an editor, a pager —
+// and waits for it.
+func runInteractive(argv []string) error {
+	c := exec.Command(argv[0], argv[1:]...)
+	c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return c.Run()
+}

@@ -1,4 +1,5 @@
-// Package ghrepo is clauderig's private-repo enforcement gate. A sync remote is
+// Package ghrepo is the private-repo enforcement gate, shared by every rig that
+// syncs an agent's setup to a git remote. A sync remote is
 // accepted ONLY when a provider CLI can confirm it is private: GitHub via `gh`,
 // GitLab via `glab`. Any host we can't verify (or a public repo) is refused — the
 // synced data is your Claude Code state and must never land somewhere public or
@@ -108,7 +109,7 @@ func CreatePrivate(ctx context.Context, name string) (httpsURL string, err error
 func EnsurePrivate(ctx context.Context, remote string) error {
 	host, slug, ok := parseRemote(remote)
 	if !ok {
-		return fmt.Errorf("clauderig can't parse %q as a github.com or gitlab.com repo URL", remote)
+		return fmt.Errorf("cannot parse %q as a github.com or gitlab.com repo URL", remote)
 	}
 	switch host {
 	case "github.com":
@@ -128,7 +129,7 @@ func EnsurePrivate(ctx context.Context, remote string) error {
 		}
 		return fmt.Errorf("verifying %s needs the glab CLI or a GITLAB_TOKEN env var", slug)
 	default:
-		return fmt.Errorf("clauderig verifies private repos on github.com and gitlab.com only; %q (%s) is unsupported", remote, host)
+		return fmt.Errorf("private repos are verified on github.com and gitlab.com only; %q (%s) is unsupported", remote, host)
 	}
 }
 
@@ -201,7 +202,7 @@ func verify(ctx context.Context, slug string, check func(context.Context, string
 		return fmt.Errorf("could not verify %s is private (does it exist? are you logged in?): %w", slug, err)
 	}
 	if !priv {
-		return fmt.Errorf("%s is not private — clauderig requires a private repo, no exceptions", slug)
+		return fmt.Errorf("%s is not private — a sync remote must be a private repo, no exceptions", slug)
 	}
 	return nil
 }
