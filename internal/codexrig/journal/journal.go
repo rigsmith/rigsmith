@@ -167,6 +167,10 @@ func fileName(machine string) string {
 // Append adds one record to this machine's file. A single append write, which is
 // atomic at these sizes, and a symlink at the destination is refused before
 // anything is written.
+// RelPathFor is a machine's journal file relative to the staging root: the one
+// file a refusal may commit on its own, since it is the one thing Append wrote.
+func RelPathFor(machine string) string { return DirName + "/" + fileName(machine) }
+
 func Append(dir string, rec Record) error {
 	d := filepath.Join(dir, DirName)
 	if err := os.MkdirAll(d, 0o755); err != nil {

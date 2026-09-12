@@ -370,6 +370,9 @@ func window(text, needle string, caseSensitive bool) string {
 	if !caseSensitive {
 		hay = strings.ToLower(hay)
 	}
+	// The same collapse as the text, or a needle with two spaces in it counts
+	// as a match in scanFile and then cannot be found in the window.
+	needle = strings.Join(strings.Fields(needle), " ")
 	at := strings.Index(hay, needle)
 	if at < 0 {
 		at = 0

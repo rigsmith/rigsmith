@@ -1,8 +1,10 @@
 package commands
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
@@ -33,10 +35,15 @@ func TestInitDoesNotClobberASettingItNeverAskedAbout(t *testing.T) {
 
 	cmd := NewInitCmd()
 	cmd.SetArgs([]string{"--yes"})
-	cmd.SetOut(testWriter{t})
+	var summary bytes.Buffer
+	cmd.SetOut(&summary)
 	cmd.SetErr(testWriter{t})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
+	}
+	// And the summary reports what was saved, not the flag's default.
+	if strings.Contains(summary.String(), "not session rollouts") {
+		t.Errorf("summary says sessions are off while saving them on:\n%s", summary.String())
 	}
 	got, err := config.LoadOrDefault()
 	if err != nil {

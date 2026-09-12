@@ -215,7 +215,7 @@ func configValue(cfg *config.Config, key string) string {
 		return strconv.FormatBool(cfg.RedactTranscripts)
 	case "chunkRollouts":
 		if cfg.ChunkRollouts == nil {
-			return "true (default)"
+			return "not set — follows what the repository already holds (parts if it has chunked rollouts, whole files if it has large plain ones)"
 		}
 		return strconv.FormatBool(*cfg.ChunkRollouts)
 	case "autoRestore":

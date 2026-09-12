@@ -30,8 +30,6 @@ prompts and rules that were deleted elsewhere.
 | `codexrig account switch [ref]` | Change which login plain `codex` uses. |
 | `codexrig account alias <ref> <name>` | Give an account a short name. |
 | `codexrig account disable <ref>` / `enable <ref>` | Hold it out of automatic selection, and put it back. |
-| `codexrig account sessions [ref]` | The sessions that ran under one account's home. |
-| `codexrig account map <ref>` / `unmap` | Bind this directory to an account, so a bare `run` picks it. |
 | `codexrig account remove <ref>` | Forget an account and delete its isolated home. Does not log it out. |
 | `codexrig account purge` | Forget every account. Does not log any of them out. |
 | `codexrig account doctor` | Check the live login and codexrig's record agree. |

@@ -139,7 +139,7 @@
     },
     "chunkRollouts": {
       "type": "boolean",
-      "description": "Store a rollout over 8 MiB in the repo as content-addressed 4 MiB parts plus an index, so an append costs a chunk rather than a copy. Absent means yes, and follows what the repo is already doing. A chunked rollout is also exempt from maxFileBytes, since no blob it produces approaches a host's object limit."
+      "description": "Store a rollout over 8 MiB in the repo as content-addressed 4 MiB parts plus an index, so an append costs a chunk rather than a copy. Absent follows what the repository already holds: parts if it has chunked rollouts, whole files if it has large plain ones, parts when there is nothing large yet to go on. A chunked rollout is also exempt from maxFileBytes, since no blob it produces approaches a host's object limit."
     }
   }
 }

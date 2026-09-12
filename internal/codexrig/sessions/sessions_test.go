@@ -216,3 +216,21 @@ func TestContentSearchReadsAChunkedRolloutsBody(t *testing.T) {
 		t.Fatalf("got %+v, want the chunked session whose body holds the word", rows)
 	}
 }
+
+// A needle with repeated whitespace counts as a match against the raw text and
+// then, uncollapsed, cannot be found in the collapsed window — so the snippet
+// showed the start of the message instead of the hit.
+func TestAWhitespaceBearingNeedleStillLandsTheSnippet(t *testing.T) {
+	root := t.TempDir()
+	at := time.Now().Format(time.RFC3339)
+	shard := time.Now().Format("2006/01/02")
+	padding := strings.Repeat("filler word ", 60)
+	rolloutFile(t, root, shard, uuidOld, meta(uuidOld, at, "/repo"), userMsg(at, padding+"the  needle  sits here"+strings.Repeat(" tail", 60)))
+	rows, _ := List(Options{Targets: []Target{{Label: Live, Dir: root}}, Content: "needle  sits"})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if !strings.Contains(rows[0].Snippet, "needle sits") {
+		t.Errorf("snippet missed the hit: %q", rows[0].Snippet)
+	}
+}

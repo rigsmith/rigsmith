@@ -63,6 +63,9 @@ func NewInitCmd() *cobra.Command {
 			if asked || cmd.Flags().Changed("sessions") {
 				cfg.SyncSessions = sessions
 			}
+			// From here on, what the summary reports is what was saved — not
+			// the flag's default on a path that never asked.
+			sessions = cfg.SyncSessions
 			if cfg.Machines == nil {
 				cfg.Machines = map[string]config.Machine{}
 			}

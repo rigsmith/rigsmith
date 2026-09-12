@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"io/fs"
@@ -278,7 +279,22 @@ func (s Service) publishJournalOnly(ctx context.Context, req SyncRequest) {
 	if err != nil {
 		return
 	}
-	if _, err := repo.CommitPaths(ctx, "codexrig sync: "+req.Machine.Name+" (refused)", journal.DirName); err != nil {
+	// This machine's record file and nothing else — CommitPaths on the whole
+	// journal directory would stage anything a merge or an older run left
+	// there. And even that one file goes through the same scanner the gate
+	// uses: a record is counts and paths, but the gate does not take that on
+	// trust for anything else and should not here.
+	rel := journal.RelPathFor(req.Machine.Name)
+	f, err := os.Open(filepath.Join(req.StagingDir, filepath.FromSlash(rel)))
+	if err != nil {
+		return
+	}
+	finding, serr := redact.ScanReader(rel, f)
+	_ = f.Close()
+	if serr != nil || finding != nil {
+		return
+	}
+	if _, err := repo.CommitPaths(ctx, "codexrig sync: "+req.Machine.Name+" (refused)", rel); err != nil {
 		return
 	}
 	if req.Config.Remote == "" {
