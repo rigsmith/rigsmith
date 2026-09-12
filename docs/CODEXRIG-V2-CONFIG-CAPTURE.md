@@ -80,7 +80,7 @@ automatically omits machine-local settings and refuses explicit unclassified loc
 references in every selected file; arbitrary strings are not proven portable.
 
 [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) merges destination bytes
-and requires full-set validation without writing files. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
+and checks the complete file set without writing files. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
 now handles replacement. Supported-version validation, structured hooks/customizations, independent CodexRig state/repository
 and sync/restore commands remain in 8b. The internal codec/capture changesets are deferred until a user-facing workflow
 uses them; these prerequisites should not announce unavailable features.

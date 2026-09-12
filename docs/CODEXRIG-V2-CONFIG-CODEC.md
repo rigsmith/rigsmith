@@ -71,9 +71,9 @@ conservative merge contract, not an attempt to infer integration identity.
 The resulting bytes are not automatically a runnable Codex config. In particular,
 a new machine may still need a command, helper or credentials supplied locally.
 The [restore planner](CODEXRIG-V2-CONFIG-RESTORE.md) merges the full destination
-set and requires a caller-supplied validator. Supported-version usable-config
-validation remains an integration gate; [file application](CODEXRIG-V2-CONFIG-APPLY.md)
-now handles staged replacement and partial-outcome reporting. It must never publish the
+set and always checks file safety; a caller-supplied validator is optional.
+Codex owns runtime semantics. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
+handles staged replacement and partial-outcome reporting. It must never publish the
 local merged output, which contains destination secrets.
 
 ## Shared mechanics and Claude compatibility

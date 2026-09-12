@@ -71,7 +71,7 @@ these boundaries and verify that source bytes remain unchanged. No live user
 configuration, credentials, or referenced files are read in validation.
 
 [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) now checks the complete
-destination set around a required validation callback. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
+destination set, with an optional additional validation callback. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
 now handles replacement. Supported-version validation, structured hooks/customizations,
 independent CodexRig state/repository and sync/restore commands remain the next
 8b work. The shared path mapping engine and Claude adapter are unchanged; this

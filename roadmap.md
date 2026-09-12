@@ -5,121 +5,34 @@ Released work lives in the changelog; implementation contracts live in `docs/`.
 
 ## Active work
 
-### V2: separate `clauderig` and `codexrig` with shared infrastructure
+### V2: separate ClaudeRig and CodexRig
 
-**Current position (after #408):** stages 1–7 and the separate Codex executable
-foundation are merged into `codex/v2`. Codex config capture, sanitization, restore
-planning and guarded application are implemented. Stage 8b is still in progress:
-these are internal APIs; the public Codex command remains `codexrig inspect`.
+**Scope reset:** finish a useful config backup/restore workflow. Do not reproduce
+Codex's runtime, permission engine, schema or startup checks inside rigsmith.
+The first simplification removes that unfinished subsystem; existing file-safety,
+secret/path preservation and queue behavior remain.
 
-| Stage | Status | What it delivers |
-| --- | --- | --- |
-| 1–5. Shared foundations and Claude adapter | Merged | Compatibility fixtures, synchronous services, shared file/session/publication mechanics and vendor policy separation. |
-| 6. Durable queue and shared execution | Merged | Retained snapshots, retries, conflict recovery, process ownership, restart fencing, capacity and cleanup. |
-| 7. Opt-in Claude queue rollout | Merged through [#388](https://github.com/rigsmith/rigsmith/pull/388) | Queue commands, manual sync, durable hook requests and guarded enable/disable. |
-| 8a. Separate Codex executable | Merged in [#389](https://github.com/rigsmith/rigsmith/pull/389) | Source inventory through `codexrig inspect`. |
-| 8b. Codex config and customization portability | In progress | Config primitives are merged; validation and complete user workflows follow below. |
-| 8c. Codex session portability | Planned | Preserve native sessions, metadata/search and isolated resume behavior without copying live SQLite state. |
-| 8d. Codex queued sync and hooks | Planned | Connect the Codex adapter to the shared queue, with producer recovery and explicit hook opt-in/rollback. |
-| 8e. Release validation and packaging | Planned | Installers, supported-version documentation, native round trips and actual OS restart/hibernation evidence. |
+| Outcome | Status | Done when |
+|---|---|---|
+| Reduce scope and duplication | Current PR | Remove native-semantic validators and release pin; keep one restore preparation path and explicit file-safety checks. |
+| Usable Codex config workflow | Next | Separate settings/repository; capture, sync through existing Git/`gh`, preview and restore work together. Interrupted restores have a clear recovery path. |
+| Validate and release the config workflow | Planned | Synthetic round trips on Linux/macOS/Windows, local secrets preserved, stale plans refused, recovery tested, install/help docs complete, Claude compatibility green. |
+| Extend the working product | Later, separately scoped | Customizations, native session artifacts/resume, and opt-in Codex queued sync reuse the existing layers when their user workflows are ready. |
 
-#### Stage 8b: completed work and next steps
+`codexrig inspect` is the only public Codex command today. Capture, sanitization,
+restore planning and file application exist internally. Claude's shared-layer and
+opt-in queue work is already implemented; its synchronous default stays intact.
 
-| Step | Status | Acceptance scope |
-| --- | --- | --- |
-| 8b.1. TOML codec | Merged: [#390](https://github.com/rigsmith/rigsmith/pull/390) | Sanitize portable config and preserve destination secrets during merge. |
-| 8b.2. Bounded config capture | Merged: [#391](https://github.com/rigsmith/rigsmith/pull/391) | Read selected base/profile files with size, identity and change checks. |
-| 8b.3. Machine-local path policy | Merged: [#392](https://github.com/rigsmith/rigsmith/pull/392) | Exclude local paths and preserve destination-specific settings. |
-| 8b.4. Restore preparation | Merged: [#393](https://github.com/rigsmith/rigsmith/pull/393) | Validate the full proposed config set and detect stale destinations. |
-| 8b.5. Guarded file application | Merged: [#394](https://github.com/rigsmith/rigsmith/pull/394) | Stage changes under writer ownership, preserve local secrets and report partial/uncertain results; bounded lock/scratch capacity. |
-| 8b.6. Supported-version validation | In progress | 8b.6a merged in [#397](https://github.com/rigsmith/rigsmith/pull/397): pinned Codex 0.144.6 schema and profile overlays. Provider/MCP rules merged in [#400](https://github.com/rigsmith/rigsmith/pull/400). Layer composition, permission selection and source rechecks merged in [#403](https://github.com/rigsmith/rigsmith/pull/403). Network action definitions/references merged in [#406](https://github.com/rigsmith/rigsmith/pull/406). Selected hook header/source declarations merged in [#407](https://github.com/rigsmith/rigsmith/pull/407). Inherited matcher declarations/glob syntax merged in [#408](https://github.com/rigsmith/rigsmith/pull/408). Current 8b.6b: inherited network domain declarations. Remaining: production layer discovery/identity checks, permission compilation/other requirements, dependencies and credentials. [Contract](docs/CODEXRIG-V2-CONFIG-VALIDATION.md). |
-| 8b.7. Customization portability | Planned | Policies/codecs for instructions, rules, skills and portable hook definitions; machine-local bindings stay local. Hook activation belongs to 8d. |
-| 8b.8. Independent Codex state and repository | Planned | Separate settings, identity, state and backup repository using the existing Git/`gh` integration. |
-| 8b.9. Config sync/restore workflow | Planned | Wire capture, publication and restore into commands with dry-run, partial-result handling and interrupted-restore recovery policy. |
+Keep separate commands, settings, state and repositories. Keep existing Git/`gh`
+transport. Keep a single optional queue implementation. Do not add a generic
+transport framework, vendor runtime interpreter or full-startup-certification gate.
 
-These are acceptance milestones, not a commitment to one PR per row. Before
-user-facing restore ships, interrupted batches need an explicit recovery workflow;
-the internal apply API does not yet provide one. Codex and other editors must be
-idle during coordinated replacement. Actual OS restart/hibernation testing remains
-an 8e release gate even though the stage 6 implementation is merged.
+Use PRs sized around these outcomes, with one review/check cycle per coherent
+change. Report actual supported workflows and limitations. New edge cases need a
+concrete data-loss, security or user-workflow reason to expand release scope.
 
-Claude sync remains synchronous by default, including SessionStart pull. The two
-tools retain separate commands, settings, state and repositories.
-
-#### Merged implementation history
-
-| Milestone | Status |
-| --- | --- |
-| Secret scanning, transcript chunking, and byte preservation | Complete on the v1 foundation. |
-| Compatibility baseline and synchronous services | Merged into both `main` and `codex/v2` through [#299](https://github.com/rigsmith/rigsmith/pull/299) and [#301](https://github.com/rigsmith/rigsmith/pull/301). |
-| Claude root/file adapter and policy extraction | Merged into `codex/v2`: [#304](https://github.com/rigsmith/rigsmith/pull/304). |
-| Shared file processing and restore mechanics | Merged into `codex/v2`: [#306](https://github.com/rigsmith/rigsmith/pull/306), including the directory-link review fix. |
-| Shared session/metadata and publication boundaries | Merged into `codex/v2`: [#307](https://github.com/rigsmith/rigsmith/pull/307), including review fixes. |
-| Store locks and durable queue | Merged: #308/#309. |
-| Sealed capture, retained commits and publication | Merged: #310–#319; existing Git/`gh` integration and owned process cleanup through #327. |
-| Queue execution and retry/blocking policy | Merged: #332/#336. |
-| Retained metadata and native append recovery | Merged: #337/#341. |
-| Retained chunked-transcript recovery | Merged: [#342](https://github.com/rigsmith/rigsmith/pull/342): verify immutable parts, recover bounded append conflicts, preserve chunking. |
-| Ordinary file conflict policy | Merged: [#343](https://github.com/rigsmith/rigsmith/pull/343): choose the newer proven Git snapshot; equal/unknown origins remain blocked. Both conflict sides are scanned; malformed profile roots are excluded. |
-| Canonical staging merge recovery: staged resolutions | Merged: [#344](https://github.com/rigsmith/rigsmith/pull/344). Audit and finish an already-staged merge before retrying a committed batch; preserve the index and unstaged files. |
-| Canonical staging merge recovery: staged completion before capture | Merged: [#346](https://github.com/rigsmith/rigsmith/pull/346). Audit and finish an already-staged merge before retaining fresh capture ancestry. |
-| Unresolved merge recovery: private audited plan | Merged: [#347](https://github.com/rigsmith/rigsmith/pull/347). Recreate supported conflicts privately, validate index provenance, and export an audited candidate without changing staging. |
-| Unresolved merge recovery: safe application and restart | Merged: [#348](https://github.com/rigsmith/rigsmith/pull/348). Seal a repair intent, preserve later edits, durably install files/index, and resume interrupted staging. |
-| Unresolved merge recovery: queue integration | Merged: [#357](https://github.com/rigsmith/rigsmith/pull/357). Resume the exact sealed repair across staging, commit and cleanup before capture/publication. |
-| Windows CI parallelization | Merged: [#358](https://github.com/rigsmith/rigsmith/pull/358). Run the existing test groups concurrently while preserving coverage and the required aggregate check. |
-| Manual-sync queue coverage: shared checkpoint (6b.5a) | Merged: [#359](https://github.com/rigsmith/rigsmith/pull/359). Seal candidate membership before capture and acknowledge only fully covered batches; preserve later arrivals, partial coverage and saved recovery work. |
-| Manual-sync queue coverage: Claude integration (6b.5b) | Merged: [#363](https://github.com/rigsmith/rigsmith/pull/363). Capture fresh session/subagent evidence and verify the exact remote snapshot before acknowledging complete batches. Internal service; command/hook wiring remains in rollout. |
-| Worker loop, graceful stop and draining (6b.6a) | Merged: [#365](https://github.com/rigsmith/rigsmith/pull/365). Poll accepted work, honor durable retries, yield to foreground operations, and retain unfinished work on stop/restart. |
-| Startup shared-history validation (6b.6b.1) | Merged: [#367](https://github.com/rigsmith/rigsmith/pull/367). Check freshly fetched destination ancestry before claiming work; reject uninitialized/unrelated stores without changing queue attempts or staging. |
-| Windows child ownership at creation (6b.6b.2a) | Merged: [#368](https://github.com/rigsmith/rigsmith/pull/368). Close the suspended-child assignment gap and test abrupt owner death before/after command startup. |
-| Unix parent-death supervision (6b.6b.2b) | Merged: [#369](https://github.com/rigsmith/rigsmith/pull/369). Explicit supervisor entry point, inherited staging lease, queued phase/retry integration and forced worker-death tests at startup/running boundaries. |
-| OS restart fencing and lifecycle validation (6b.6b.2c) | Merged: [#370](https://github.com/rigsmith/rigsmith/pull/370). Persist command intent before process creation; clear only after verified cleanup. Block replacement writers after supervisor/owner failure, including asynchronous Windows termination. |
-| Canonical Git command-runner plumbing (6b.6b.2d.1) | Merged: [#371](https://github.com/rigsmith/rigsmith/pull/371). Shared runner selection for buffered Git and backup attribute commands, with supervised byte-preservation tests. Streaming/interactive calls reject selection; workflow adaptation follows below. |
-| Canonical workflow supervision (6b.6b.2d.2) | Merged: [#372](https://github.com/rigsmith/rigsmith/pull/372). Bind active staging leases across capture/sync/publication/pull/merge, retain cleanup failures across fallback helpers, and stop later commands/file writes. Supervised manual sync confirms publication before queue acknowledgement; interactive tools remain refused. |
-| Linux/macOS fenced-store recovery (6b.6b.2d.3a) | Merged: [#373](https://github.com/rigsmith/rigsmith/pull/373). Seal process-group ownership before Git starts; recover only after OS proof under the existing store lock. Preserve capture and queue state; no command/hook wiring. |
-| Windows fenced-store recovery (6b.6b.2d.3b) | Merged: [#374](https://github.com/rigsmith/rigsmith/pull/374). Recover durable prelaunch/cleanup phases; unconfirmed jobs require a verified kernel restart. Same-boot job disappearance and legacy records never authorize clearing. |
-| Queue capacity and receipt compaction (6b.7a) | Merged: [#375](https://github.com/rigsmith/rigsmith/pull/375). Report queue headroom and remedies; explicitly compact completed receipts under a durable producer replay cutoff. |
-| Artifact-store capacity and interrupted archive writes (6b.7b.1) | Merged: [#376](https://github.com/rigsmith/rigsmith/pull/376). Optional per-store sealed-byte limits, capacity reporting and exclusive cleanup of interrupted archive-write files. |
-| Writer-owned build/publication workspace cleanup (6b.7b.2a) | Merged: [#377](https://github.com/rigsmith/rigsmith/pull/377). Hold staging, capture, seed and commit leases; reclaim only reserved disposable workspaces. Preserve sealed artifacts, recovery stores, queue-parent confirmations and relocated OS-temp scratch. |
-| Queue-aware archive reclamation (6b.7b.2b) | Merged: [#378](https://github.com/rigsmith/rigsmith/pull/378). Reflush queue state under worker/transaction ownership; reclaim verified archives only after all work completes and no recovery/unknown private state remains. Clean queue-parent confirmation scratch under the same ownership. Reclamation wiring must first enforce exclusive queue/store lifecycle association. |
-| Persisted Claude queue runtime (7a) | Merged: [#379](https://github.com/rigsmith/rigsmith/pull/379). Fixed private stores, unique lifecycle binding and durable producer attribution; resume saved work after restart or staging-marker loss. [Contract](docs/CLAUDERIG-V2-QUEUE-RUNTIME.md). |
-| Explicit queued Claude commands (7b) | Merged: [#380](https://github.com/rigsmith/rigsmith/pull/380): init, saved producer requests, enqueue, supervised foreground worker, status/retry and drain with existing Git credentials and GitHub/GitLab privacy checks. [Contract](docs/CLAUDERIG-V2-QUEUE-COMMANDS.md). |
-| Runtime manual-sync coverage (7c.1) | Merged: [#381](https://github.com/rigsmith/rigsmith/pull/381). Validate the saved lifecycle before acknowledging fully covered requests; retain later arrivals and other identities. |
-| Manual queue sync command (7c.2a) | Merged: [#382](https://github.com/rigsmith/rigsmith/pull/382). Explicit supervised `queue sync`, dry-run and all-transcript flush; confirm only fully covered pending requests. |
-| Hook-request preparation (7c.2b.1) | Merged: [#384](https://github.com/rigsmith/rigsmith/pull/384). Decode bounded Stop/SessionEnd payloads into saved, retryable producer requests; require direct parent transcripts during capture. |
-| Queued worker capture/flush policy (7c.2b.2a) | Merged: [#385](https://github.com/rigsmith/rigsmith/pull/385). Fully capture requested sessions/subagents, honor all-flush and preserve normal throttling for unrelated plain transcripts; replay saved artifacts unchanged. |
-| Durable hook producer and recovery (7c.2b.2b.1) | Merged: [#387](https://github.com/rigsmith/rigsmith/pull/387). Save hook requests before admission, recover original attribution/events, and remove only confirmed producer records. |
-| Opt-in hook installation and rollback (7c.2b.2b.2) | Merged: [#388](https://github.com/rigsmith/rigsmith/pull/388). Local hook opt-in, pinned inbox recovery, queue-aware manual sync and checked rollback/re-enable, including retries and destination changes. |
-| Codex foundation (8a) | Merged: [#389](https://github.com/rigsmith/rigsmith/pull/389); separate `codexrig inspect`, source/file policy and synthetic fixtures using the shared allowlist. [Contract](docs/CODEXRIG-V2-FOUNDATION.md). |
-| Codex config portability (8b) | In progress: TOML codec (8b.1) merged in [#390](https://github.com/rigsmith/rigsmith/pull/390); bounded config file capture (8b.2) merged in [#391](https://github.com/rigsmith/rigsmith/pull/391). Machine-local path policy (8b.3) merged in [#392](https://github.com/rigsmith/rigsmith/pull/392). Restore preparation (8b.4) merged in [#393](https://github.com/rigsmith/rigsmith/pull/393). Guarded file application (8b.5) merged in [#394](https://github.com/rigsmith/rigsmith/pull/394). Pinned structural validation (8b.6a) merged in [#397](https://github.com/rigsmith/rigsmith/pull/397). Provider/MCP rules merged in [#400](https://github.com/rigsmith/rigsmith/pull/400). Layer composition, permission selection and source rechecks merged in [#403](https://github.com/rigsmith/rigsmith/pull/403). Network action definitions/references merged in [#406](https://github.com/rigsmith/rigsmith/pull/406). Selected hook header/source declarations merged in [#407](https://github.com/rigsmith/rigsmith/pull/407). Matcher declarations/glob syntax merged in [#408](https://github.com/rigsmith/rigsmith/pull/408). Current: inherited network domain declarations in 8b.6b; production source identity/trust, full permission enforcement and local readiness remain. Remaining steps 8b.7–8b.9 are listed above. [Apply contract](docs/CODEXRIG-V2-CONFIG-APPLY.md). |
-| Codex session portability (8c) | Planned: native artifacts, metadata/search and isolated discovery/resume proof; preserve divergent sessions. |
-| Codex queued sync (8d) | Planned: use shared capture/commit/publication and queue phases through the Codex adapter, then explicit hook opt-in and rollback. |
-| V2 release validation (8e) | Planned: packaging, native platform round trips, actual OS restart/hibernation evidence and supported-version documentation. |
-
-The v1/v2 foundation was aligned after v1.15.1; that alignment did not publish a
-new release. Subsequent adapter and queue work targets `codex/v2`. Preserve
-ClaudeRig's commands, hooks, state, and backup formats, and keep the two tools'
-configuration and backup repositories separate.
-
-Delivery order: reuse existing Git/`gh` authentication, finish queue execution and
-recovery, validate lifecycle/capacity and opt-in queued Claude sync, then connect
-the separate Codex adapter. SSH-agent discovery, generic credential providers and
-new keychain configuration are deferred; they do not block this sequence.
-
-See the [detailed roadmap](docs/CLAUDERIG-SHARED-LAYERS-ROADMAP.md) for milestones,
-PR links, compatibility gates, and queue rollout requirements. Update its status
-and this summary with each implementation PR and merge.
-
-Merged: [#339](https://github.com/rigsmith/rigsmith/pull/339) for v1 and
-[#340](https://github.com/rigsmith/rigsmith/pull/340) for v2 preserve concurrent destinations and missing-destination no-ops, report unexpected link-operation errors, and validate restored link
-paths in older/manually edited backups, with directory-confined creation and
-relative targets.
-
-Merged in [#341](https://github.com/rigsmith/rigsmith/pull/341): retained append recovery for native JSONL transcripts and memory files.
-It keeps both machines' additions when neither changed the shared history and
-blocks conflicting UUIDs. [#342](https://github.com/rigsmith/rigsmith/pull/342) added bounded recovery for canonical chunked
-transcripts, including the default chunking threshold. [#343](https://github.com/rigsmith/rigsmith/pull/343) adds ordinary-file snapshot ordering.
-Staged canonical merge completion merged in [#344](https://github.com/rigsmith/rigsmith/pull/344); staged completion before fresh capture merged in [#346](https://github.com/rigsmith/rigsmith/pull/346). Private unresolved-merge planning merged in [#347](https://github.com/rigsmith/rigsmith/pull/347). Recoverable file/index application merged in [#348](https://github.com/rigsmith/rigsmith/pull/348); queue recovery integration merged in [#357](https://github.com/rigsmith/rigsmith/pull/357). Queued hooks stay disabled unless explicitly enabled locally.
+[Delivery plan and retained architecture](docs/CLAUDERIG-SHARED-LAYERS-ROADMAP.md)
+· [Restore safety contract](docs/CODEXRIG-V2-CONFIG-VALIDATION.md)
 
 ## Ideas
 

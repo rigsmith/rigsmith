@@ -19,11 +19,11 @@ var (
 	ErrConfigPlanClosed   = errors.New("Codex configuration restore plan is closed")
 )
 
-// ConfigRestoreValidator must validate the complete proposed base/profile set
-// for the caller's supported Codex version and destination. It receives private
-// destination configuration, including credentials, in detached copies. It must
-// not publish it or execute configured helpers. Returning nil approves these
-// bytes only; it does not authorize file replacement. A validator is required.
+// ConfigRestoreValidator is an optional additional check of the complete proposed
+// base/profile set. File names, TOML syntax and portable-content rules are always
+// checked by preparation. The callback receives detached private bytes; it must
+// not publish them or execute configured helpers. It does not authorize writes
+// or certify that Codex can start. Nil requests only the built-in safety checks.
 type ConfigRestoreValidator func(context.Context, []ConfigFile) error
 
 // ConfigRestoreChange describes an incoming file without exposing its contents.
@@ -38,16 +38,14 @@ type ConfigRestoreChange struct {
 // in its formatted representation. Close every plan. Methods are sequential;
 // Check detects observed changes, not concurrent writers after the last check.
 // Preparation does not write files; Apply consumes the plan for replacement.
-// The caller supplies the supported-version validator.
 type ConfigRestorePlan struct {
-	source       configSource
-	closeSource  func() error
-	checkContext func(context.Context) error
-	closed       bool
-	original     map[string][32]byte
-	incoming     []string
-	proposed     []ConfigFile
-	changes      []ConfigRestoreChange
+	source      configSource
+	closeSource func() error
+	closed      bool
+	original    map[string][32]byte
+	incoming    []string
+	proposed    []ConfigFile
+	changes     []ConfigRestoreChange
 }
 
 func (p ConfigRestorePlan) String() string   { return "Codex configuration restore plan (private)" }
@@ -67,7 +65,6 @@ func (p *ConfigRestorePlan) Close() error {
 	}
 	p.closed = true
 	p.proposed, p.original, p.incoming, p.changes = nil, nil, nil, nil
-	p.checkContext = nil
 	closeSource := p.closeSource
 	p.source, p.closeSource = nil, nil
 	if closeSource != nil {
@@ -83,7 +80,7 @@ func (p *ConfigRestorePlan) Close() error {
 // returning a plan. It never creates a missing home or prunes omitted profiles.
 // Any error returns no plan. All input/validator buffers are detached from it.
 func PrepareConfigRestore(ctx context.Context, root Root, backup ConfigCapture, validate ConfigRestoreValidator) (*ConfigRestorePlan, error) {
-	if root.Kind != CodexHome || validate == nil {
+	if root.Kind != CodexHome {
 		return nil, ErrConfigRestoreInput
 	}
 	incoming, err := restoreInputs(ctx, backup)
@@ -217,16 +214,18 @@ func prepareConfigRestore(ctx context.Context, source configSource, incoming []C
 	if err := plan.Check(ctx); err != nil {
 		return nil, err
 	}
-	validationFiles := make([]ConfigFile, len(plan.proposed))
-	for i, file := range plan.proposed {
-		validationFiles[i] = ConfigFile{Path: file.Path, Data: bytes.Clone(file.Data)}
-	}
-	if err := validate(ctx, validationFiles); err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+	if validate != nil {
+		validationFiles := make([]ConfigFile, len(plan.proposed))
+		for i, file := range plan.proposed {
+			validationFiles[i] = ConfigFile{Path: file.Path, Data: bytes.Clone(file.Data)}
 		}
-		// Third-party validators can echo credentials or parser source excerpts.
-		return nil, ErrConfigValidation
+		if err := validate(ctx, validationFiles); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			// Third-party validators can echo credentials or parser source excerpts.
+			return nil, ErrConfigValidation
+		}
 	}
 	if err := plan.Check(ctx); err != nil {
 		return nil, err
@@ -272,8 +271,7 @@ func (p *ConfigRestorePlan) destinationNames(ctx context.Context) ([]string, err
 
 // Check re-reads the pinned destination and detects edits, profile arrivals or
 // removals since preparation, including same-size edits with restored mtimes.
-// Layered plans also reread their bound external context source. Apply checks
-// immediately before each replacement under writer ownership.
+// Apply checks immediately before each replacement under writer ownership.
 // This check is not an atomic filesystem compare-and-swap.
 func (p *ConfigRestorePlan) Check(ctx context.Context) error {
 	if p.closed || p.source == nil {
@@ -308,9 +306,6 @@ func (p *ConfigRestorePlan) Check(ctx context.Context) error {
 	}
 	if err := p.source.Check(ctx); err != nil {
 		return err
-	}
-	if p.checkContext != nil {
-		return p.checkContext(ctx)
 	}
 	return ctx.Err()
 }
