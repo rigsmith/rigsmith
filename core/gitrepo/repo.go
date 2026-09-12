@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -45,6 +46,15 @@ func Init(ctx context.Context, dir string) (*Repo, error) {
 		return nil, err
 	}
 	_, _ = runGit(ctx, dir, "config", "commit.gpgsign", "false")
+	// A chunked rollout's part sits at <sessions shard>/<long rollout name>.chunks/<64 hex>.part,
+	// which under a deep staging directory crosses Windows' 260-character
+	// MAX_PATH; git then refuses the add with "Filename too long". Git for
+	// Windows honours core.longpaths for exactly this. Windows only, so the
+	// repository's config — which the compatibility baseline observes — is
+	// unchanged everywhere else.
+	if runtime.GOOS == "windows" {
+		_, _ = runGit(ctx, dir, "config", "core.longpaths", "true")
+	}
 	// Set name and email independently so a partial global config (e.g. email set
 	// but not name) can't cause "Please tell me who you are" on commit.
 	//

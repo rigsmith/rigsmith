@@ -186,7 +186,15 @@ func displaySummary(s mcp.Server) string {
 		if u.User != nil {
 			shown += "***@"
 		}
-		shown += u.Host + u.Path
+		// A path segment can be a token too — /mcp/<key> is a common shape —
+		// so each segment goes past the same scanner the arguments do.
+		segs := strings.Split(u.Path, "/")
+		for i, seg := range segs {
+			if _, ok := redact.LooksSecret(seg); ok {
+				segs[i] = "<redacted>"
+			}
+		}
+		shown += u.Host + strings.Join(segs, "/")
 		if u.RawQuery != "" || u.Fragment != "" {
 			shown += "?…"
 		}

@@ -26,9 +26,10 @@ func TestMCPDisplayKeepsKeysAndDropsValues(t *testing.T) {
 		"https://user:tok@example.com/mcp",
 		"https://example.com/mcp?api_key=tok",
 		"https://example.com/mcp#access_token=tok",
+		"https://example.com/mcp/ghp_" + strings.Repeat("a", 40) + "/v1",
 	} {
 		u := mcp.Entry{Server: mcp.Server{Name: "h", URL: raw}}
-		if got := forDisplay([]mcp.Entry{u})[0].Target; strings.Contains(got, "tok") || !strings.Contains(got, "example.com/mcp") {
+		if got := forDisplay([]mcp.Entry{u})[0].Target; strings.Contains(got, "tok") || strings.Contains(got, "ghp_") || !strings.Contains(got, "example.com/mcp") {
 			t.Errorf("url %s shown as %s", raw, got)
 		}
 	}

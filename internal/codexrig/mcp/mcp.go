@@ -123,14 +123,15 @@ func List(home string, folders pathmap.MapFolders, osToken string) ([]Entry, err
 		if env, ok := m["env"].(map[string]any); ok {
 			s.Env = map[string]string{}
 			for k, val := range env {
-				// Every key, whatever its value's type: the whole map is a
-				// secret container, and dropping a non-string entry made
-				// SecretEnv say a value was not needed on arrival when it was.
-				if str, ok := val.(string); ok {
-					s.Env[k] = str
-				} else {
-					s.Env[k] = fmt.Sprint(val)
+				// An environment value is a string or it is a mistake. Dropping
+				// a non-string entry made SecretEnv say a value was not needed
+				// on arrival when it was; stringifying it would report
+				// portability for a server Codex cannot start. Name it instead.
+				str, ok := val.(string)
+				if !ok {
+					return nil, fmt.Errorf("server %q: env %s is %T, not a string", name, k, val)
 				}
+				s.Env[k] = str
 			}
 		}
 		out = append(out, Entry{Server: s, Portability: judge(s, folders, osToken)})
