@@ -21,6 +21,21 @@ The [codec/path policy](CODEXRIG-V2-CONFIG-PATHS.md),
 [application](CODEXRIG-V2-CONFIG-APPLY.md) contracts define these guarantees and
 limits. Interrupted-restore recovery remains required before a public write command.
 
+## Minimum supported Codex version
+
+The v2 config workflow targets **Codex CLI 0.154.0 or newer**, the latest stable
+release checked on September 11, 2026 ([official release](https://github.com/openai/codex/releases/tag/rust-v0.154.0)).
+This is a fixed minimum, not an exact-version pin or a moving `latest` requirement.
+Older releases are outside the support scope; newer stable releases are not
+rejected simply for being newer. The minimum does not certify future file layouts
+or runtime behavior.
+
+When the public config workflow is wired, check `codex --version` once at its
+command boundary and give an upgrade message for an older release. Keep the
+codec and file-safety APIs independent of a Codex executable. The current
+inventory-only `inspect` command does not run Codex or enforce this planned check.
+No bundled schema or per-version compatibility implementation is required.
+
 ## Runtime semantics belong to Codex
 
 Rigsmith does not compile permission policies or globs, resolve managed config

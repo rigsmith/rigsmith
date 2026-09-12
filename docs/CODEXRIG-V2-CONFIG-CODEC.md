@@ -97,7 +97,7 @@ malformed local input and fuzzed capture/restore idempotence.
 base/profile files in 8b.2. [Content path policy](CODEXRIG-V2-CONFIG-PATHS.md)
 applies in 8b.3. [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) follows in
 8b.4, with [file application](CODEXRIG-V2-CONFIG-APPLY.md) in 8b.5.
-Supported-version validation, structured hook
+The command-level minimum-version check, structured hook
 and customization processing, independent CodexRig config/state and backup repo,
 and user-facing sync/restore integration remain to be delivered. This codec does
 not complete milestone 8b or enable sync in the preview.

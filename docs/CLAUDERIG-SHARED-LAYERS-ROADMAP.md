@@ -9,7 +9,7 @@ These are diff additions, not net repository size or a reason to keep complexity
 
 The Codex validation work expanded into a partial copy of the vendor runtime
 without delivering a user-facing restore workflow. Remove it rather than finish
-it. The former 8b.6 sequence is cancelled: schema/version pinning, provider/MCP
+it. The former 8b.6 sequence is cancelled: vendored schemas/exact-version pinning, provider/MCP
 rules, managed-layer interpretation, permission inheritance and network/glob
 compilation are not v2 release requirements. PR #410's endpoint expansion is
 superseded. Its useful Windows test-harness repair is retained independently.
@@ -35,7 +35,7 @@ line count, or broadly rewrite working Claude behavior as part of this cut.
 | Outcome | Work | Acceptance |
 |---|---|---|
 | 1. Simplify | Delete the unfinished vendor interpreter, its schema/dependency and wrappers; make additional restore validation optional; shorten the contracts and roadmap. | Safety tests and Claude compatibility pass. No vendor rules or exact CLI version gate remain in the restore path. |
-| 2. Connect the config workflow | Add independent Codex settings/repository wiring and capture, sync, preview and restore commands using existing components. Finish bounded interrupted-restore reporting/recovery before exposing writes. | A synthetic two-home workflow captures on one side, syncs with Git, previews and restores on the other, preserving local credentials/paths. Repeat and interrupted runs have clear results. |
+| 2. Connect the config workflow | Enforce the Codex CLI 0.154.0 minimum once at the command boundary; add independent Codex settings/repository wiring and capture, sync, preview and restore commands using existing components. Finish bounded interrupted-restore reporting/recovery before exposing writes. | A synthetic two-home workflow captures on one side, syncs with Git, previews and restores on the other, preserving local credentials/paths. Repeat and interrupted runs have clear results. |
 | 3. Ship the config workflow | Native OS tests, installation/help docs and an isolated Codex smoke check where a supported interface exists. | Linux/macOS/Windows round trips, stale-plan refusal, recovery and Claude compatibility pass. Supported file layouts are documented; no claim of complete Codex startup validation. |
 | 4. Extend separately | Portable instructions/rules/skills, session artifacts/resume, then optional Codex queue/hooks. | Each extension has a complete user workflow and reuses existing storage/queue mechanics. It does not block the first config workflow. |
 
@@ -45,6 +45,11 @@ stages 1–7 and 8a/8b.1–8b.5 established the retained infrastructure. Detaile
 history remains in Git instead of being repeated as release prerequisites here.
 
 ## Release boundaries
+
+Target Codex CLI **0.154.0 or newer**, the latest stable release checked on
+September 11, 2026. The [minimum-version policy](CODEXRIG-V2-CONFIG-VALIDATION.md#minimum-supported-codex-version)
+is a simple floor for the upcoming config workflow, not an exact-version gate,
+moving latest requirement or older-version compatibility framework.
 
 A successful restore means accepted file content was installed with the documented
 safety checks. It does not mean configured providers, proxies, MCP servers or

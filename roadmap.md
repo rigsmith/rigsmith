@@ -14,10 +14,14 @@ secret/path preservation and queue behavior remain.
 
 | Outcome | Status | Done when |
 |---|---|---|
-| Reduce scope and duplication | Current PR | Remove native-semantic validators and release pin; keep one restore preparation path and explicit file-safety checks. |
-| Usable Codex config workflow | Next | Separate settings/repository; capture, sync through existing Git/`gh`, preview and restore work together. Interrupted restores have a clear recovery path. |
+| Reduce scope and duplication | Current PR | Remove native-semantic validators and exact-version pin; keep one restore preparation path and explicit file-safety checks. |
+| Usable Codex config workflow | Next | Enforce the Codex CLI 0.154.0 minimum at the command boundary; separate settings/repository; capture, sync through existing Git/`gh`, preview and restore work together. Interrupted restores have a clear recovery path. |
 | Validate and release the config workflow | Planned | Synthetic round trips on Linux/macOS/Windows, local secrets preserved, stale plans refused, recovery tested, install/help docs complete, Claude compatibility green. |
 | Extend the working product | Later, separately scoped | Customizations, native session artifacts/resume, and opt-in Codex queued sync reuse the existing layers when their user workflows are ready. |
+
+The config workflow targets **Codex CLI 0.154.0 or newer**; no older-version
+compatibility layer is planned. This minimum will be enforced when that workflow
+is exposed.
 
 `codexrig inspect` is the only public Codex command today. Capture, sanitization,
 restore planning and file application exist internally. Claude's shared-layer and
