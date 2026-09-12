@@ -109,6 +109,8 @@ and the nonblank guard in [`parse_host_port`](https://github.com/openai/codex/bl
 They validate exact-key inherited socket allows and explicit address nonblankness;
 they do not reproduce the full native URL parser/fallback or bind behavior.
 Unix-style absolute socket paths work on all platforms; additional absolute paths
-use host Go syntax. NUL refusal for allowed paths and checking selected disabled
+use the running validator host's Go syntax. There is no separate target-OS
+context; preparation must run on the intended destination OS, not cross-target.
+NUL refusal for allowed paths and checking selected disabled
 networks before managed enforcement are explicit restore policy. There is no
 socket connection, filesystem lookup or address resolution.

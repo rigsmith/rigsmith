@@ -45,8 +45,9 @@ func validateInheritedNetworkEndpoints(ctx context.Context, chain []map[string]a
 			continue
 		}
 		// Native allowlists accept Unix-style absolute paths on every platform,
-		// plus host-native absolute paths. Use destination Go path syntax as in
-		// header source validation. NUL refusal is an explicit restore policy.
+		// plus host-native absolute paths. Use validator-host Go syntax as in
+		// header source validation; cross-target preparation is unsupported.
+		// NUL refusal is an explicit restore policy.
 		if strings.ContainsRune(path, '\x00') || !strings.HasPrefix(path, "/") && !filepath.IsAbs(path) {
 			return ErrValidation
 		}

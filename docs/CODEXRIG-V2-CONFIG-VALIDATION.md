@@ -24,6 +24,18 @@ disabled, and validation never refreshes its schema from the network. A private
 parsed copy now fills five known permission-map gaps from the same release; see
 [layered validation](CODEXRIG-V2-LAYERED-VALIDATION.md).
 
+## Local destination boundary
+
+Versioned/layered preparation validates a local destination using the operating
+system running codexrig. The codec APIs have no target-OS parameter: Go path
+checks and glob platform defaults use the validator host. They cannot prepare or
+certify a Windows destination from Unix (or vice versa). Run preparation on the
+intended destination OS. A backup may originate on another OS; destination-local
+bindings are preserved and evaluated locally. Unix-style absolute socket paths
+remain the documented exception accepted on every platform. A Windows drive or
+UNC socket path is therefore refused by Unix validation, even if intended for a
+later Windows restore. Remote/cross-target preparation is not supported.
+
 ## Full-set validation
 
 1. The existing preparation pipeline validates backup names/bytes, pins the
@@ -38,7 +50,7 @@ parsed copy now fills five known permission-map gaps from the same release; see
    checks follow native normalization and glob syntax. Selected endpoint checks
    also reject blank explicit proxy/SOCKS addresses and invalid allowed Unix-socket
    path declarations after inheritance. Socket maps merge by exact key; only
-   effective allows require Unix-style or destination-native Go absolute paths,
+   effective allows require Unix-style or validator-host Go absolute paths,
    with NUL refusal as restore policy. These checks include selected disabled
    networks; inactive profiles remain uncompiled. Full policy compilation remains
    destination/runtime work.

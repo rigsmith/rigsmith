@@ -115,7 +115,7 @@ value lists are retained, as allowed by native header-constraint validation.
 Each referenced injected-header declaration must name exactly one secret source:
 a nonblank `secret_env_var` or a nonblank absolute `secret_file`. Omission of the
 header name defaults to empty and is rejected. Either source containing a NUL is
-refused by restore policy, including an environment-variable name. Absolute-path checks use the destination host's Go
+refused by restore policy, including an environment-variable name. Absolute-path checks use the running validator host's Go
 path syntax; they are lexical and do not expand `~`, resolve links, normalize
 paths, or inspect files. These entry points therefore validate a local restore,
 not the path syntax of an arbitrary other target OS. A missing absolute file and
@@ -223,7 +223,11 @@ A child `deny` can therefore disable an invalid ancestor allow entry. Dot segmen
 case and separators are not normalized for inheritance or key comparison.
 
 Allowed socket paths must start with `/` on every platform, or satisfy the
-destination host's Go absolute-path syntax. This mirrors the native acceptance
+running validator host's Go absolute-path syntax. Preparation targets a local
+destination on that OS; neither codec nor adapter accepts a separate target OS.
+Windows drive/UNC paths are refused when validating on Unix, and remote or
+cross-target preparation is unsupported. A backup from another OS can still be
+restored on the destination OS with its local bindings. This mirrors the native acceptance
 of Unix-style absolute paths even on Windows, with the same explicit Go path
 policy used for secret-file declarations. Paths are not trimmed or expanded, and
 no filesystem lookup or connection occurs. Nonexistent absolute paths and dot
