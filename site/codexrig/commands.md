@@ -116,5 +116,6 @@ codexrig config edit
 | `codexrig device forget <name>` | Drop a machine's entry. Its files stay. |
 | `codexrig guide install` | Write codexrig's blocks into `AGENTS.md`. |
 | `codexrig mcp list` | Which MCP servers survive a restore, and what each needs. |
+| `codexrig mcp get <name>` | One server in full. `--json` emits the same object `list --json` uses per server — `name`, `transport`, `enabled`, `target` (credentials redacted), `envKeys` (names only, never values), `portability` — and a missing name yields one `{"found":false,…}` object with a non-zero exit. |
 | `codexrig ui` | The interactive dashboard, which a bare `codexrig` opens. |
 | `codexrig guard` | The PreToolUse hook. Codex calls it; you do not. |

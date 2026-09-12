@@ -67,3 +67,21 @@ func TestDetectForCarriesTheConfiguredMachinesTokens(t *testing.T) {
 		t.Errorf("Folders() = %v, the configured token is missing", got.Folders())
 	}
 }
+
+// The tokens DetectFor hands out are a copy: a caller that edits them must not
+// be editing the config they came from.
+func TestDetectForHandsOutACopyOfTheTokens(t *testing.T) {
+	cfg := Default()
+	me := Detect("")
+	me.Name = "here"
+	me.Tokens = map[string]string{"PROJECTS": "/srv/projects"}
+	cfg.Machines["here"] = me
+	got := DetectFor(cfg)
+	if got.Name != "here" {
+		t.Skipf("this host did not resolve to the configured machine (%q)", got.Name)
+	}
+	got.Tokens["PROJECTS"] = "/elsewhere"
+	if cfg.Machines["here"].Tokens["PROJECTS"] != "/srv/projects" {
+		t.Error("editing the detected machine's tokens edited the config")
+	}
+}

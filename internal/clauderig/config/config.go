@@ -254,7 +254,12 @@ func DetectFor(cfg *Config) Machine {
 	m := Detect(name)
 	if cfg != nil {
 		if known, ok := cfg.Machines[name]; ok && len(known.Tokens) > 0 {
-			m.Tokens = known.Tokens
+			// A copy: the caller may edit what it was handed, and sharing the
+			// map would edit the config it came from.
+			m.Tokens = make(map[string]string, len(known.Tokens))
+			for k, v := range known.Tokens {
+				m.Tokens[k] = v
+			}
 		}
 	}
 	return m

@@ -67,3 +67,28 @@ func TestMCPGetJSONUsesTheListingsObject(t *testing.T) {
 		t.Errorf("object = %+v (raw %s)", d, out.String())
 	}
 }
+
+func TestMCPGetJSONRefusesAMissingNameWithOneObject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewMCPCmd()
+	var out, errb bytes.Buffer // stdout alone carries the object; cobra's "Error:" line goes to stderr
+	cmd.SetOut(&out)
+	cmd.SetErr(&errb)
+	cmd.SetArgs([]string{"get", "nope", "--json"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("a missing server exited zero")
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("stdout is not one JSON object: %v\n%s", err, out.String())
+	}
+	if doc["found"] != false || doc["name"] != "nope" {
+		t.Errorf("refusal object = %v", doc)
+	}
+}

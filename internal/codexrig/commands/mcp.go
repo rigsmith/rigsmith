@@ -128,6 +128,14 @@ func newMCPGetCmd() *cobra.Command {
 				printNeeds(cmd, e)
 				return nil
 			}
+			if asJSON {
+				// One object on stdout even in refusal, so a launcher never has
+				// to parse an error message to learn there is nothing to parse.
+				if err := writeJSON(out, map[string]any{"found": false, "name": args[0], "message": fmt.Sprintf("no MCP server named %q", args[0])}); err != nil {
+					return err
+				}
+				return errCheckFailed
+			}
 			return fmt.Errorf("no MCP server named %q", args[0])
 		},
 	}

@@ -175,6 +175,10 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		}
 		return msg.Result, nil
 	}
+	// Out of step in this direction too: complete lines kept arriving and
+	// none was the answer, and the answer may yet turn up after the caller
+	// has gone. The next exchange would read it as its own.
+	c.dead = fmt.Errorf("%s: no answer before the deadline", method)
 	return nil, fmt.Errorf("%s: no answer from codex app-server", method)
 }
 

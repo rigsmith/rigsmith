@@ -164,7 +164,10 @@ func TestSwitchJSONHasTheStableShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdout, _, _ := run(t, "switch", "--json", "--dry-run", alice.ID)
+	stdout, _, err := run(t, "switch", "--json", "--dry-run", alice.ID)
+	if err != nil {
+		t.Fatalf("switch --dry-run: %v\n%s", err, stdout)
+	}
 	var doc map[string]any
 	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
 		t.Fatalf("stdout is not one JSON object: %v\n%q", err, stdout)
