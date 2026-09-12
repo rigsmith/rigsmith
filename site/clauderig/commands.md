@@ -9,14 +9,14 @@
 | `status` | Sync state: remote, last sync, roots, hooks |
 | `repo` | Repo size, files, commits and history-vs-content ratio; `repo gc` repacks (no history lost), `repo prune --before 2026-08-01` folds older history into one commit |
 | `search` | Find a Claude Code session by title or content across live + synced history (alias `grep`); `--since`/`--until`/`--cwd` narrow, `--raw` grep lines, `--all` every file, `--live`/`--repo` scope, `-s` case-sensitive |
-| `recent` | List sessions newest first (alias `last`); dated by each transcript's own records rather than by file mtime, and labelled with the client + Desktop profile that ran each one. Takes an optional search term to narrow the window. `--since` (default `24h`) / `--until` / `--cwd` / `--account` narrow, `--limit` caps, `-l` adds resume commands |
+| `recent` | List sessions newest first (alias `last`); dated by each transcript's own records rather than by file mtime, and labelled with the client + Desktop profile that ran each one. Takes an optional search term to narrow the window. `--since` (default `24h`) / `--until` / `--cwd` / `--account` narrow, `--limit` caps, `-l` adds resume commands, `--json` emits the same list as records |
 | `ledger` | Report the permanent session index; `ledger backfill` recovers rows for sessions pruned before it existed (`-n` dry run) |
 | `global` | `install` / `uninstall` / `status` the global sync hooks in `~/.claude` (alias `hooks`) |
 | `project` | `install` / `uninstall` / `status` this repo's guard hook + CLAUDE.md guide (committed) |
 | `local` | same as `project`, but gitignored (`.claude/settings.local.json`) |
 | `guard` | The PreToolUse hook that enforces worktree/PR discipline — invoked by Claude Code, not run by hand (wired in by `project`/`local`) |
 | `guide` | `install` / `uninstall` / `status` / `show` the CLAUDE.md guide block standalone (`--global` targets `~/.claude/CLAUDE.md`, `--path` overrides; `install` previews in a scrollable UI, skipped with `-y` or off a TTY) |
-| `mcp` | `list` (alias `ls`) / `get` / `add` / `remove` (alias `rm`) / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
+| `mcp` | `list` (alias `ls`) / `get` / `add` / `remove` (alias `rm`) / `enable` / `disable` MCP servers (`--scope user｜project｜local`, `--transport stdio｜http｜sse`, `--env`, `--header`); `list` and `get` say whether each server travels to another machine, and `list --json` emits that as records; bare `mcp` on a TTY opens an interactive screen (mirrors `claude mcp`) |
 | `account` | Manage multiple Claude Code logins: `add` / `list` (alias `ls`/`status`) / `run <id｜email> [-- claude args]` / `switch` / `sessions` (alias `ps`) / `remove` (alias `rm`) / `purge`. `run --no-share` isolates a session; `switch` takes `--dry-run` / `--force` / `--kill` |
 | `desktop` (alias `app`) | Several Claude Desktop accounts side by side, each in its own profile: `add` / `open` / `list` / `quit` / `map` / `shortcut` / `prune` / `rm` (alias `remove`). `prune` reclaims Electron caches and, with `--vm` or `--all`, the Cowork VM image or its whole bundle, without deleting the profile; `--dry-run` shows the breakdown |
 | `config` | `get` / `set` / `show` / `path` / `edit` (`~/.clauderig/config.json`) |
@@ -118,6 +118,7 @@ clauderig recent                    # the last 24 hours
 clauderig recent webhook            # …narrowed to sessions that mention it
 clauderig recent --since 7d --cwd acme-api
 clauderig recent -l                 # full ids and resume commands
+clauderig recent --json             # the same list as records, for a script
 ```
 
 ```text
@@ -376,6 +377,47 @@ those are is whatever that install is signed into.
 
 The profile model this sits on is in
 [`docs/CLAUDERIG-DESKTOP-PROFILES.md`](https://github.com/rigsmith/rigsmith/blob/main/docs/CLAUDERIG-DESKTOP-PROFILES.md).
+
+## Which MCP servers travel
+
+An MCP server you added on this machine is not necessarily on the next one, and
+which ones survive the trip has nothing to do with the server and everything to
+do with the file Claude Code wrote it into. `mcp list` says so per server, in a
+`TRAVELS` column:
+
+```text
+SCOPE    NAME       TRANSPORT STATE     TRAVELS    TARGET
+user     railway    stdio     —         no         railway mcp proxy
+project  tidy       stdio     enabled   your repo  npx -y @acme/tidy-mcp
+```
+
+Two verdicts, and **neither of them is clauderig**:
+
+- **`no`** — user and local scope live in `~/.claude.json`, which sits *beside*
+  `~/.claude` rather than inside it, so it is outside the sync root entirely.
+  clauderig does not back these up. They work here and nowhere else.
+- **`your repo`** — project scope lives in the repository's own `.mcp.json`, so
+  it travels when the repo does, with no help from clauderig. What does *not*
+  travel with it is the approval: whether you trusted the server is recorded in
+  `.claude/settings.local.json`, which is gitignored, so a colleague who clones
+  the repo is asked again.
+
+That is the finding, not an omission in the column: **every place Claude Code
+stores an MCP server is outside the tree clauderig syncs.** A backup that ran
+nightly for a year carries none of them. The column exists to say so where you
+would look, rather than on the machine where you find out.
+
+`get` prints the same verdict for one server, with the notes in full, and
+`list --json` carries them as records (`portability.backedUp`,
+`portability.carrier`, `portability.notes[].kind`) for a script that wants to
+gate on them.
+
+Two notes are worth reading whatever the verdict says. A value that looks like a
+secret and is written into a file you commit is named explicitly — it is in your
+repository in plain text, and clauderig's redaction covers what it syncs, not
+what your repo carries. And an absolute path outside any folder clauderig knows
+how to translate (`$HOME`, your projects directory) is a path that exists on this
+machine only; the server will be defined on the other machine and fail to start.
 
 ## Settings Claude Code ignores
 

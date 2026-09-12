@@ -8,9 +8,12 @@ import (
 	"os"
 	"strings"
 
+	"encoding/json"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mcp"
 	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
 	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
@@ -77,11 +80,17 @@ func scopeFlag(cmd *cobra.Command, def settings.Scope) func() (settings.Scope, e
 }
 
 func newMCPListCmd() *cobra.Command {
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
-		Short:   "List configured MCP servers across scopes",
-		Args:    cobra.NoArgs,
+		Short:   "List configured MCP servers, and say which will survive a restore",
+		Long: "Lists every scope, with what happens to each server on another machine.\n\n" +
+			"The answer is mostly about SCOPE. A user- or local-scope server is defined in\n" +
+			"~/.claude.json, which sits beside ~/.claude rather than inside it — so clauderig\n" +
+			"does not back it up, and it will not be there on a new machine. A project-scope\n" +
+			"server travels in your own repo's .mcp.json instead.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			home, dir, err := mcpHomeRepo(cmd.Context())
 			if err != nil {
@@ -91,9 +100,13 @@ func newMCPListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if asJSON {
+				return emitMCPJSON(cmd.OutOrStdout(), entries)
+			}
 			return printServerList(cmd, entries)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the listing and the portability verdict as JSON")
 	return cmd
 }
 
@@ -152,6 +165,42 @@ func printServerDetail(out io.Writer, e mcp.Entry) {
 	if e.State != mcp.StateNA {
 		fmt.Fprintf(out, "  state      %s\n", stateText(e.State))
 	}
+
+	folders, osToken := thisMachine()
+	verdict := mcp.Judge(e, folders, osToken)
+	fmt.Fprintf(out, "  travels    %s\n", travelsText(verdict))
+	for _, n := range verdict.Notes {
+		fmt.Fprintf(out, "    %s\n", DimStyle.Render(noteLine(n)))
+	}
+}
+
+// mcpJSON is the `mcp list --json` document.
+type mcpJSON struct {
+	Servers []mcpServerJSON `json:"servers"`
+}
+
+type mcpServerJSON struct {
+	Name        string          `json:"name"`
+	Scope       string          `json:"scope"`
+	Transport   string          `json:"transport"`
+	State       string          `json:"state,omitempty"`
+	Target      string          `json:"target,omitempty"`
+	Portability mcp.Portability `json:"portability"`
+}
+
+func emitMCPJSON(out io.Writer, entries []mcp.Entry) error {
+	folders, osToken := thisMachine()
+	doc := mcpJSON{Servers: make([]mcpServerJSON, 0, len(entries))}
+	for _, e := range entries {
+		doc.Servers = append(doc.Servers, mcpServerJSON{
+			Name: e.Name, Scope: string(e.Scope), Transport: e.Server.Transport(),
+			State: string(e.State), Target: e.Server.Summary(),
+			Portability: mcp.Judge(e, folders, osToken),
+		})
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
 }
 
 func newMCPAddCmd() *cobra.Command {
@@ -323,13 +372,73 @@ func printServerList(cmd *cobra.Command, entries []mcp.Entry) error {
 		fmt.Fprintln(out, DimStyle.Render("no MCP servers configured — add one with `clauderig mcp add`"))
 		return nil
 	}
-	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("%-8s %-18s %-9s %-9s %s", "SCOPE", "NAME", "TRANSPORT", "STATE", "TARGET")))
+	folders, osToken := thisMachine()
+	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("%-8s %-18s %-9s %-9s %-10s %s",
+		"SCOPE", "NAME", "TRANSPORT", "STATE", "TRAVELS", "TARGET")))
+	// A note that names FIELDS is about this server and belongs on its row. One
+	// that does not is about the scope — "nothing at this scope is backed up",
+	// "approval is gitignored" — and printing it under every server says the
+	// same sentence three times and buries the rows it is meant to explain.
+	var scopeNotes []string
+	seen := map[string]bool{}
 	for _, e := range entries {
-		fmt.Fprintf(out, "%-8s %-18s %-9s %-9s %s\n",
+		verdict := mcp.Judge(e, folders, osToken)
+		fmt.Fprintf(out, "%-8s %-18s %-9s %-9s %-10s %s\n",
 			string(e.Scope), e.Name, e.Server.Transport(),
-			stateText(e.State), DimStyle.Render(e.Server.Summary()))
+			stateText(e.State), travelsText(verdict), DimStyle.Render(e.Server.Summary()))
+		for _, n := range verdict.Notes {
+			if len(n.Fields) > 0 {
+				fmt.Fprintf(out, "    %s\n", DimStyle.Render(noteLine(n)))
+				continue
+			}
+			line := string(e.Scope) + " scope — " + n.Text
+			if !seen[line] {
+				seen[line] = true
+				scopeNotes = append(scopeNotes, line)
+			}
+		}
+	}
+	if len(scopeNotes) > 0 {
+		fmt.Fprintln(out)
+		for _, line := range scopeNotes {
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(line))
+		}
 	}
 	return nil
+}
+
+// travelsText is the one-word answer for the listing: what carries this server
+// to another machine, if anything does.
+func travelsText(p mcp.Portability) string {
+	switch {
+	case p.BackedUp && len(p.Notes) == 0:
+		return OkStyle.Render("yes")
+	case p.BackedUp:
+		return WarnStyle.Render("with work")
+	case p.Carrier != "":
+		return DimStyle.Render("your repo")
+	default:
+		return ErrStyle.Render("no")
+	}
+}
+
+// noteLine renders one note, naming the fields it is about when it has them.
+func noteLine(n mcp.Note) string {
+	if len(n.Fields) == 0 {
+		return n.Text
+	}
+	return strings.Join(n.Fields, ", ") + " — " + n.Text
+}
+
+// thisMachine is the path vocabulary the verdict judges against: a value is
+// portable exactly when this machine can express it as a template.
+func thisMachine() (pathmap.MapFolders, string) {
+	cfg, err := config.LoadOrDefault()
+	if err != nil {
+		cfg = config.Default()
+	}
+	me := config.DetectFor(cfg)
+	return me.Folders(), me.OS
 }
 
 func stateText(s mcp.State) string {
