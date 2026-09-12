@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 func fexists(p string) bool { _, err := os.Stat(p); return err == nil }

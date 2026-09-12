@@ -10,8 +10,8 @@ import (
 
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
-	"github.com/rigsmith/rigsmith/internal/clauderig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/hooks"
 	"github.com/spf13/cobra"
 )

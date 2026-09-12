@@ -1,0 +1,183 @@
+// Package redact strips secrets from an agent CLI's config before it is
+// committed to the sync repo, and scans for any that slip past (the tripwire).
+// Redaction is an always-on transform: secret-bearing fields are replaced with a
+// sentinel so restore can tell "this was redacted — keep the local machine's
+// value" rather than clobbering it with a placeholder. Secrets are never synced;
+// a new machine re-authenticates (the strip-don't-sync model).
+//
+// It is shared by every rig that backs an agent up — clauderig and codexrig
+// today — and that sharing is the point. The credential rules, the entropy
+// backstop and the merge semantics are the whole safety claim of these tools; two
+// copies of them would diverge, and the copy that fell behind would be the one
+// quietly publishing a token. A vendor supplies its own allowlist and its own
+// codecs, never its own idea of what a secret looks like.
+package redact
+
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+)
+
+// Placeholder marks a value that was redacted out. Restore treats a field whose
+// synced value equals Placeholder as "leave the local value untouched".
+//
+// It keeps its clauderig spelling in every rig on purpose: the sentinel is WIRE
+// FORMAT. It sits in committed files that a restore on another machine — possibly
+// running an older binary, possibly the other tool against a shared repo — has to
+// recognise. Renaming it per vendor would buy a tidier grep and cost a silent
+// failure mode in which a redacted field is restored as the literal string.
+const Placeholder = "__CLAUDERIG_REDACTED__"
+
+// Policy decides which JSON fields hold secrets.
+type Policy struct {
+	// SecretKeys are key names (case-insensitive) whose scalar string value is
+	// always a secret (token, password, authorization, …).
+	SecretKeys map[string]bool
+	// SecretContainers are key names (case-insensitive) whose value is an object
+	// that is a *bucket* of credentials — every string leaf under it is redacted
+	// (env, headers).
+	SecretContainers map[string]bool
+}
+
+func set(words ...string) map[string]bool {
+	m := make(map[string]bool, len(words))
+	for _, w := range words {
+		m[strings.ToLower(w)] = true
+	}
+	return m
+}
+
+// secretKeySuffixes flags compound / camelCase secret key names that the exact
+// SecretKeys set misses (apiToken, githubToken, clientSecret, privateKey, …).
+// Matched as a suffix of the separator-stripped, lowercased key, so the indicator
+// is the trailing word: telemetry fields like maxTokens, tokenCount, and
+// publicKey do not match and are left untouched.
+var secretKeySuffixes = []string{
+	"token", "secret", "password", "passwd", "apikey", "bearer",
+	"privatekey", "secretkey", "accesskey", "signingkey",
+}
+
+var keySepStripper = strings.NewReplacer("_", "", "-", "")
+
+// isSecretKey reports whether a JSON key name denotes a scalar secret: either an
+// exact policy key, or a name ending in a known secret-indicating word.
+func isSecretKey(lowerKey string, p Policy) bool {
+	if p.SecretKeys[lowerKey] {
+		return true
+	}
+	norm := keySepStripper.Replace(lowerKey)
+	for _, suf := range secretKeySuffixes {
+		if strings.HasSuffix(norm, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultPolicy covers the secret-bearing shapes Claude Code config can carry:
+// inline API keys/tokens by key name, and env/headers buckets (MCP servers,
+// settings env) by container.
+func DefaultPolicy() Policy {
+	return Policy{
+		SecretKeys: set(
+			"token", "accesstoken", "access_token", "refreshtoken", "refresh_token",
+			"apikey", "api_key", "authtoken", "auth_token", "password", "passwd",
+			"secret", "clientsecret", "client_secret", "authorization", "auth",
+			"bearer", "x-api-key", "anthropic_api_key", "openai_api_key",
+			"tokencache", "token_cache", "sessiontoken", "session_token",
+		),
+		SecretContainers: set("env", "headers", "oauth", "credentials"),
+	}
+}
+
+// Redact returns a deep-redacted copy of v (parsed JSON: map/slice/scalar) and the
+// sorted list of dotted paths that were redacted. v is not mutated.
+func Redact(v any, p Policy) (any, []string) {
+	var paths []string
+	out := redactNode(v, "", false, p, &paths)
+	sort.Strings(paths)
+	return out, paths
+}
+
+// RedactBytes redacts a JSON document, returning indented JSON. Keys are emitted
+// in Go's deterministic (sorted) order, so output is stable across syncs.
+func RedactBytes(data []byte, p Policy) (redacted []byte, paths []string, err error) {
+	var v any
+	if err = json.Unmarshal(data, &v); err != nil {
+		return nil, nil, err
+	}
+	out, paths := Redact(v, p)
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, nil, err
+	}
+	return append(b, '\n'), paths, nil
+}
+
+func redactNode(node any, path string, redactAllStrings bool, p Policy, paths *[]string) any {
+	switch n := node.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(n))
+		for k, v := range n {
+			child := joinPath(path, k)
+			kl := strings.ToLower(k)
+			switch {
+			case isSecretKey(kl, p) && isScalar(v):
+				out[k] = Placeholder
+				*paths = append(*paths, child)
+			default:
+				out[k] = redactNode(v, child, redactAllStrings || p.SecretContainers[kl], p, paths)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(n))
+		for i, v := range n {
+			out[i] = redactNode(v, joinIndex(path, i), redactAllStrings, p, paths)
+		}
+		return out
+	case string:
+		if redactAllStrings {
+			*paths = append(*paths, path)
+			return Placeholder
+		}
+		return n
+	default:
+		return node
+	}
+}
+
+func isScalar(v any) bool {
+	switch v.(type) {
+	case map[string]any, []any:
+		return false
+	default:
+		return true
+	}
+}
+
+func joinPath(base, key string) string {
+	if base == "" {
+		return key
+	}
+	return base + "." + key
+}
+
+func joinIndex(base string, i int) string {
+	return base + "[" + itoa(i) + "]"
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b [20]byte
+	pos := len(b)
+	for i > 0 {
+		pos--
+		b[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(b[pos:])
+}

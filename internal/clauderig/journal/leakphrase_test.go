@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 // The bug this pins: a plural noun helper with the verb written out beside it,

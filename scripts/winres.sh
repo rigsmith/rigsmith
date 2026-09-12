@@ -53,7 +53,7 @@ case "$target" in
 esac
 
 if [ "$target" = cli ] || [ "$target" = all ]; then
-  for tool in rig shiprig changerig clauderig; do
+  for tool in rig shiprig changerig clauderig codexrig; do
     make_syso "$tool" "$ROOT/cmd/$tool/rsrc" git-tag
   done
 fi

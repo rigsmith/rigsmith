@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
+	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/peek"
@@ -50,7 +50,7 @@ func TestE2E_GitBytePreservation(t *testing.T) {
 			}
 			repo, err := gitrepo.Init(ctx, stage)
 			must(t, err)
-			must(t, backupgit.Prepare(ctx, stage))
+			must(t, backupgit.Prepare(ctx, stage, "ClaudeRig"))
 			if changed, err := repo.Commit(ctx, "initial"); err != nil || !changed {
 				t.Fatalf("initial commit: %t %v", changed, err)
 			}
@@ -58,7 +58,7 @@ func TestE2E_GitBytePreservation(t *testing.T) {
 			if _, err := engine.Sync(opts); err != nil {
 				t.Fatal(err)
 			}
-			must(t, backupgit.Prepare(ctx, stage))
+			must(t, backupgit.Prepare(ctx, stage, "ClaudeRig"))
 			if changed, err := repo.Commit(ctx, "append"); err != nil || !changed {
 				t.Fatalf("append commit: %t %v", changed, err)
 			}

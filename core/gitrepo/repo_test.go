@@ -512,3 +512,28 @@ func TestCommitPathsRecordsAnUntrackedPath(t *testing.T) {
 		t.Errorf("staging the named path swept up another; dirty = %v", dirty)
 	}
 }
+
+// SetRemote only adds. A caller that meant "origin IS this url" had to check
+// first and, in practice, skipped the repoint — so a remote changed in the
+// config kept pushing to the old one.
+func TestEnsureRemoteAddsThenRepoints(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	repo, err := Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EnsureRemote(ctx, "origin", "https://example.com/first.git"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.EnsureRemote(ctx, "origin", "https://example.com/second.git"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runGit(ctx, dir, "remote", "get-url", "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out); got != "https://example.com/second.git" {
+		t.Errorf("origin = %q, want the repointed url", got)
+	}
+}

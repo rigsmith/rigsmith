@@ -9,9 +9,9 @@ package service
 import (
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 // Service delivers synchronous progress to an optional observer. Observers must

@@ -21,7 +21,7 @@ const INSTALL_HOSTS: Record<string, string> = {
 
 // Tools the installer can fetch. All four ship a release archive for every
 // platform, and scripts/install.{sh,ps1} accept all four by name.
-const TOOLS = new Set(['rig', 'changerig', 'shiprig', 'clauderig'])
+const TOOLS = new Set(['rig', 'changerig', 'shiprig', 'clauderig', 'codexrig'])
 
 // Packages installable with Homebrew. A superset of TOOLS: `rigsmith` is the
 // bundle cask, and `clauderig-ui` is the window, which the direct installer does
@@ -35,6 +35,7 @@ const DOCS_PATH: Record<string, string> = {
   changerig: '/changerig/',
   shiprig: '/shiprig/',
   clauderig: '/clauderig/',
+  codexrig: '/codexrig/',
   all: '/guide/installation',
 }
 

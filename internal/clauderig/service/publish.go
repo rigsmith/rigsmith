@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
+	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 )
@@ -43,7 +43,7 @@ func (s Service) Publish(ctx context.Context, req PublishRequest) (result Publis
 			return result, err
 		}
 	}
-	if err := backupgit.Prepare(ctx, req.StagingDir); err != nil {
+	if err := backupgit.Prepare(ctx, req.StagingDir, "ClaudeRig"); err != nil {
 		return result, err
 	}
 	if err := engine.CheckPublish(req.StagingDir); err != nil {

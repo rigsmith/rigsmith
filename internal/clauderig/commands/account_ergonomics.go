@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/dirmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
-	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
 	"github.com/spf13/cobra"
 )
 

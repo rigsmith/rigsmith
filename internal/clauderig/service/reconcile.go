@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
-	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
+	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mergepolicy"
 )
@@ -76,7 +76,7 @@ func FinishMerge(ctx context.Context, repo *gitrepo.Repo) error {
 		return err
 	}
 	if merging {
-		if err := backupgit.Prepare(ctx, root); err != nil {
+		if err := backupgit.Prepare(ctx, root, "ClaudeRig"); err != nil {
 			return err
 		}
 	}

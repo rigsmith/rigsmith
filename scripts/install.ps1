@@ -32,9 +32,9 @@ $version = if ($env:RIGSMITH_VERSION) { $env:RIGSMITH_VERSION } else { 'latest' 
 function Info($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Fail($m) { Write-Host "error: $m" -ForegroundColor Red; exit 1 }
 
-$known = @('rig', 'shiprig', 'clauderig', 'changerig', 'all')
+$known = @('rig', 'shiprig', 'clauderig', 'codexrig', 'changerig', 'all')
 if ($known -notcontains $target) {
-    Fail "unknown target '$target' (expected: rig, shiprig, clauderig, changerig, or omit for all)"
+    Fail "unknown target '$target' (expected: rig, shiprig, clauderig, codexrig, changerig, or omit for all)"
 }
 
 # --- detect arch -------------------------------------------------------------
@@ -63,7 +63,7 @@ $ver = $tag.TrimStart('v')
 
 # The bundle zip carries all four binaries; a single tool has its own zip.
 if ($target -eq 'all') {
-    $binaries = @('rig', 'changerig', 'shiprig', 'clauderig')
+    $binaries = @('rig', 'changerig', 'shiprig', 'clauderig', 'codexrig')
     $archive = "rigsmith_${ver}_windows_${arch}.zip"
 } else {
     $binaries = @($target)

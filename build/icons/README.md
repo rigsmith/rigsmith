@@ -7,7 +7,8 @@ unaffected.
 ## Source
 
 Rasterized from the square tile marks in [`design/marks/`](../../design/marks/)
-(`tile-rig.svg`, `tile-shipRig.svg`, `tile-changeRig.svg`, `tile-claudeRig.svg`)
+(`tile-rig.svg`, `tile-shipRig.svg`, `tile-changeRig.svg`, `tile-claudeRig.svg`,
+`tile-codexRig.svg`)
 — the tile treatment carries the rounded dark background an app icon needs, vs.
 the transparent plain marks. Committed here so CI needs no SVG rasterizer.
 
@@ -17,7 +18,8 @@ Requires `rsvg-convert` (`brew install librsvg`):
 
 ```sh
 for pair in rig:tile-rig shiprig:tile-shipRig changerig:tile-changeRig \
-            clauderig:tile-claudeRig claudeRigUi:tile-claudeRig; do
+            clauderig:tile-claudeRig claudeRigUi:tile-claudeRig \
+            codexrig:tile-codexRig; do
   tool=${pair%%:*}; src=${pair##*:}
   rsvg-convert -w 256 -h 256 "design/marks/$src.svg" -o "build/icons/$tool.png"
 done
@@ -36,3 +38,11 @@ window, whose main package is not under `cmd/` and whose version comes from its
 own module rather than from `git describe` (`sh scripts/winres.sh ui`). The Go linker embeds it into the
 Windows build automatically. go-winres downsamples the 256px source to the
 smaller icon sizes (48/32/16) itself.
+
+## codexRig's tile is provisional
+
+`tile-codexRig.svg` was built from the same parts as the others — the dark
+rounded tile, the bracket frame, the accent — with a diamond for the glyph and
+cyan for the accent, matching the banner in `core/brand`. It is a consistent
+placement inside the existing system rather than a designed mark, and it is the
+one icon here worth replacing deliberately.

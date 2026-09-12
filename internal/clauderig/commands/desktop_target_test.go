@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/dirmap"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
-	"github.com/rigsmith/rigsmith/internal/clauderig/dirmap"
 )
 
 // stubApp reports a fixed set of profiles as open.

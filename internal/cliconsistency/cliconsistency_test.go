@@ -23,6 +23,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/cliguard"
 	changerig "github.com/rigsmith/rigsmith/internal/changerig/commands"
 	clauderig "github.com/rigsmith/rigsmith/internal/clauderig/commands"
+	codexrig "github.com/rigsmith/rigsmith/internal/codexrig/commands"
 	rig "github.com/rigsmith/rigsmith/internal/rig/cli"
 	shiprig "github.com/rigsmith/rigsmith/internal/shiprig/cli"
 	"github.com/spf13/cobra"
@@ -40,6 +41,7 @@ func roots() []*cobra.Command {
 		shiprig.NewRootCmd(),
 		changerig.NewRootCmd(),
 		clauderig.NewRootCmd("dev"),
+		codexrig.NewRootCmd("dev"),
 	}
 }
 

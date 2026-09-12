@@ -3,9 +3,9 @@ package service
 import (
 	"regexp"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/account"
 	"github.com/rigsmith/rigsmith/internal/clauderig/devices"
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 // Identity is the single live-account observation used for this capture.

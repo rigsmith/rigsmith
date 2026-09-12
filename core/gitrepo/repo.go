@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -45,13 +46,27 @@ func Init(ctx context.Context, dir string) (*Repo, error) {
 		return nil, err
 	}
 	_, _ = runGit(ctx, dir, "config", "commit.gpgsign", "false")
+	// A chunked rollout's part sits at <sessions shard>/<long rollout name>.chunks/<64 hex>.part,
+	// which under a deep staging directory crosses Windows' 260-character
+	// MAX_PATH; git then refuses the add with "Filename too long". Git for
+	// Windows honours core.longpaths for exactly this. Windows only, so the
+	// repository's config — which the compatibility baseline observes — is
+	// unchanged everywhere else.
+	if runtime.GOOS == "windows" {
+		_, _ = runGit(ctx, dir, "config", "core.longpaths", "true")
+	}
 	// Set name and email independently so a partial global config (e.g. email set
 	// but not name) can't cause "Please tell me who you are" on commit.
+	//
+	// Named for the toolchain rather than for one of its tools: this repo may be
+	// a clauderig backup or a codexrig one, and a CI runner has no identity of
+	// its own, so whichever tool happened to call Init would otherwise sign the
+	// other's commits.
 	if _, err := runGit(ctx, dir, "config", "user.email"); err != nil {
-		_, _ = runGit(ctx, dir, "config", "user.email", "clauderig@localhost")
+		_, _ = runGit(ctx, dir, "config", "user.email", "rigsmith@localhost")
 	}
 	if _, err := runGit(ctx, dir, "config", "user.name"); err != nil {
-		_, _ = runGit(ctx, dir, "config", "user.name", "clauderig")
+		_, _ = runGit(ctx, dir, "config", "user.name", "rigsmith")
 	}
 	return &Repo{Dir: dir}, nil
 }
@@ -79,6 +94,17 @@ func (r *Repo) SetRemote(ctx context.Context, name, url string) error {
 }
 
 // HasRemote reports whether a named remote exists.
+// EnsureRemote makes name point at url, adding it or repointing it. SetRemote
+// only adds, so a caller that wanted "the remote IS this" had to check first
+// and, in practice, skipped the repoint.
+func (r *Repo) EnsureRemote(ctx context.Context, name, url string) error {
+	if r.HasRemote(ctx, name) {
+		_, err := runGit(ctx, r.Dir, "remote", "set-url", name, url)
+		return err
+	}
+	return r.SetRemote(ctx, name, url)
+}
+
 func (r *Repo) HasRemote(ctx context.Context, name string) bool {
 	_, err := runGit(ctx, r.Dir, "remote", "get-url", name)
 	return err == nil
@@ -640,6 +666,19 @@ func runGitShown(ctx context.Context, dir, stdin string, env []string, shown []s
 // modified files included — the caller has already decided the directory
 // goes. A path that is not tracked is not an error: the point is that it is
 // gone.
+// RemovePath drops one file from the index and the working tree. Used to
+// settle a conflicted path as "gone" — git rm is what tells the merge the
+// conflict is resolved, and the file goes so the next add does not bring it back.
+func (r *Repo) RemovePath(ctx context.Context, path string) error {
+	if _, err := runGit(ctx, r.Dir, "rm", "-qf", "--ignore-unmatch", "--", path); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(r.Dir, filepath.FromSlash(path))); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (r *Repo) RemoveTree(ctx context.Context, dir string) error {
 	// Only ever a directory inside this repository — checked before git rm
 	// runs, not after: "." would empty the index, and ".git" would take the

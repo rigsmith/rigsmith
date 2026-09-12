@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigsmith.dev/schemas/codexrig.json",
+  "title": "codexrig config",
+  "description": "Configuration for codexrig (~/.codexrig/config.json): the sync remote, per-machine path maps, sync roots, and retention.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "description": "Config schema version."
+    },
+    "remote": {
+      "type": "string",
+      "description": "The private git remote sync pushes to and pulls from. codexrig verifies it is private and refuses a public one."
+    },
+    "machines": {
+      "type": "object",
+      "description": "Per-machine path identities, keyed by machine name.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "os": {
+            "type": "string",
+            "enum": [
+              "macos",
+              "windows",
+              "linux"
+            ],
+            "description": "pathmap OS token."
+          },
+          "home": {
+            "type": "string",
+            "description": "The machine's home directory."
+          },
+          "tokens": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Extra known-folder tokens (e.g. a custom $DROPBOX)."
+          }
+        }
+      }
+    },
+    "roots": {
+      "type": "array",
+      "description": "Sync roots and their per-OS locations. codexrig ships one: \"cli\", Codex's home at $HOME/.codex.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Root id. \"cli\" is Codex's home."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "location": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Where the root lives, as portable templates resolved against a machine.",
+            "properties": {
+              "override": {
+                "type": "string",
+                "description": "Wins on this machine only."
+              },
+              "perOS": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "OS token to literal path."
+              },
+              "portable": {
+                "type": "string",
+                "description": "A token-bearing path, identical on every OS (e.g. \"$HOME/.codex\")."
+              }
+            }
+          }
+        }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The rolling window for session rollouts, and the size limits that keep one runaway session from wedging a push.",
+      "properties": {
+        "historyDays": {
+          "type": "integer",
+          "description": "Drop rollouts older than this many days. 0 keeps everything."
+        },
+        "squashFactor": {
+          "type": "number",
+          "description": "Squash history when the git footprint exceeds this multiple of the retained tree."
+        },
+        "floorBytes": {
+          "type": "integer",
+          "description": "NOT IMPLEMENTED YET — history squash is recorded here for forward compatibility and has no effect. Never squash below this size."
+        },
+        "maxFileBytes": {
+          "type": "integer",
+          "description": "Drop any single file larger than this. 0 means the default (50 MB); negative means no cap."
+        },
+        "largeFileBytes": {
+          "type": "integer",
+          "description": "Past this size a rollout is restaged only once it has grown by half as much again, or has gone quiet. 0 means the default (8 MB); negative restages every change."
+        },
+        "squashKeepDays": {
+          "type": "integer",
+          "description": "NOT IMPLEMENTED YET — history squash is recorded here for forward compatibility and has no effect. Whole days of sync history an automatic squash leaves standing. 0 means the default (30)."
+        }
+      }
+    },
+    "syncSessions": {
+      "type": "boolean",
+      "description": "Carry session rollouts as well as configuration. Off by default: a rollout is large, and cross-machine resume is not a proven round trip, so carrying it is backup rather than portability."
+    },
+    "redactTranscripts": {
+      "type": "boolean",
+      "description": "Scrub credential-shaped tokens out of the STAGED copy of a rollout. The live file in ~/.codex is never touched."
+    },
+    "autoRestore": {
+      "type": "boolean",
+      "description": "Let the session-start hook also restore onto a machine that has no Codex configuration yet. It never restores over an established machine."
+    },
+    "alwaysPrune": {
+      "type": "boolean",
+      "description": "Make `restore` remove skills, prompts and rules deleted on another machine, as if --prune were passed."
+    },
+    "hookIntervalMinutes": {
+      "type": "integer",
+      "description": "How long a hook-driven sync waits before doing the work again. Absent means the default (5). 0 or negative means no wait at all. Codex's Stop hook fires at the end of every turn in every open session."
+    },
+    "chunkRollouts": {
+      "type": "boolean",
+      "description": "Store a rollout over 8 MiB in the repo as content-addressed 4 MiB parts plus an index, so an append costs a chunk rather than a copy. Absent follows what the repository already holds: parts if it has chunked rollouts, whole files if it has large plain ones, parts when there is nothing large yet to go on. A chunked rollout is also exempt from maxFileBytes, since no blob it produces approaches a host's object limit."
+    }
+  }
+}
