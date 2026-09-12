@@ -3,6 +3,7 @@ package mcp
 import (
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -27,8 +28,6 @@ const (
 	NoteNotBackedUp NoteKind = "not-backed-up"
 	// NoteInYourRepository: it travels, but through the user's own git repo.
 	NoteInYourRepository NoteKind = "in-your-repository"
-	// NoteSecretsNotCarried: env/header values are redacted out of the backup.
-	NoteSecretsNotCarried NoteKind = "secrets-not-carried"
 	// NoteSecretsCommitted: env/header values sit in a file the user's own repo
 	// commits — clauderig does not redact what it does not sync.
 	NoteSecretsCommitted NoteKind = "secrets-committed"
@@ -36,7 +35,34 @@ const (
 	NoteMachinePath NoteKind = "machine-path"
 	// NoteNeedsApproval: a project server must be approved again on arrival.
 	NoteNeedsApproval NoteKind = "needs-approval"
+	// NoteNotCommitted: the project file exists but git will not carry it, so
+	// "it travels with the repo" is false for this one.
+	NoteNotCommitted NoteKind = "not-committed"
+	// NoteCarriageUnknown: git could not be asked whether the project file is
+	// committed, so the verdict is a guess and says so.
+	NoteCarriageUnknown NoteKind = "carriage-unknown"
 )
+
+// Carriage is what the caller could learn about the file a project-scope entry
+// lives in. Whether .mcp.json is COMMITTED is what decides "your repo" — an
+// ignored or never-added file is on this machine and nowhere else, and reading
+// the file off disk cannot tell the difference.
+type Carriage int
+
+const (
+	CarriageUnknown   Carriage = iota // git could not be asked
+	CarriageTracked                   // committed: a clone gets it
+	CarriageUntracked                 // present, never added
+	CarriageIgnored                   // matched by a gitignore rule
+)
+
+// Env is what this machine and this checkout contribute to the verdict.
+type Env struct {
+	Folders pathmap.MapFolders
+	OS      string
+	// ProjectFile is the carriage of <repo>/.mcp.json. Ignored for other scopes.
+	ProjectFile Carriage
+}
 
 // Note is one thing to know, as a token and a sentence.
 type Note struct {
@@ -60,10 +86,7 @@ type Portability struct {
 func (p Portability) Clean() bool { return p.BackedUp && len(p.Notes) == 0 }
 
 // Judge works out what will happen to a server on another machine.
-//
-// folders and osToken describe THIS machine, and are what decide whether an
-// absolute path can be expressed portably.
-func Judge(e Entry, folders pathmap.MapFolders, osToken string) Portability {
+func Judge(e Entry, env Env) Portability {
 	var p Portability
 
 	switch e.Scope {
@@ -86,12 +109,35 @@ func Judge(e Entry, folders pathmap.MapFolders, osToken string) Portability {
 		// It travels, but through the user's own repository rather than
 		// through the backup — which is usually what they want, and is worth
 		// saying plainly so they do not go looking for it in the wrong place.
+		//
+		// "The repo carries it" is only true if the repo actually carries it.
+		// A .mcp.json that is gitignored or was never added is on this machine
+		// and nowhere else, and reading the file off disk cannot tell.
 		p.BackedUp = false
-		p.Carrier = "your repository"
-		p.Notes = append(p.Notes, Note{
-			Kind: NoteInYourRepository,
-			Text: "defined in this repo's .mcp.json, so it travels when the repo does. clauderig is not involved.",
-		})
+		switch env.ProjectFile {
+		case CarriageIgnored, CarriageUntracked:
+			what := "is not committed"
+			if env.ProjectFile == CarriageIgnored {
+				what = "is matched by a gitignore rule"
+			}
+			p.Notes = append(p.Notes, Note{
+				Kind: NoteNotCommitted,
+				Text: "defined in this repo's .mcp.json, which " + what + " — so a clone does not get it and neither does clauderig. This server works in this checkout only.",
+			})
+			return p
+		case CarriageUnknown:
+			p.Carrier = "your repository"
+			p.Notes = append(p.Notes, Note{
+				Kind: NoteCarriageUnknown,
+				Text: "defined in this repo's .mcp.json — but git could not be asked whether that file is committed, so whether it travels is unconfirmed.",
+			})
+		default:
+			p.Carrier = "your repository"
+			p.Notes = append(p.Notes, Note{
+				Kind: NoteInYourRepository,
+				Text: "defined in this repo's .mcp.json, so it travels when the repo does. clauderig is not involved.",
+			})
+		}
 		// Approval is recorded in .claude/settings.local.json, which is
 		// gitignored by convention — so the definition arrives and the
 		// permission does not.
@@ -99,27 +145,30 @@ func Judge(e Entry, folders pathmap.MapFolders, osToken string) Portability {
 			Kind: NoteNeedsApproval,
 			Text: "approval is recorded in .claude/settings.local.json, which is gitignored, so a fresh clone asks again.",
 		})
+
+	default:
+		return p
 	}
 
+	// Only project scope reaches here: the other two return above. So the
+	// secret note is always the committed-in-your-repo one.
 	if fields := secretFields(e.Server); len(fields) > 0 {
-		switch e.Scope {
-		case settings.Project:
-			p.Notes = append(p.Notes, Note{
-				Kind: NoteSecretsCommitted, Fields: fields,
-				Text: "these values are committed to your repository in plain text — clauderig redacts what it syncs, and it does not sync this file.",
-			})
-		default:
-			p.Notes = append(p.Notes, Note{
-				Kind: NoteSecretsNotCarried, Fields: fields,
-				Text: "these values are treated as secrets and replaced in the backup; set them again on each machine.",
-			})
-		}
+		p.Notes = append(p.Notes, Note{
+			Kind: NoteSecretsCommitted, Fields: fields,
+			Text: "these values are committed to your repository in plain text — clauderig redacts what it syncs, and it does not sync this file.",
+		})
 	}
 
-	if fields := machinePaths(e.Server, folders, osToken); len(fields) > 0 {
+	// EVERY absolute path, not only the ones Portablize cannot express.
+	// Portablizing is what clauderig does to files it carries, and it does not
+	// carry this one: .mcp.json travels through git byte for byte, so a path
+	// under your own home is exactly as broken on a machine with a different
+	// home as one under /opt. Saying only the latter would give the former a
+	// clean bill of health it has not earned.
+	if fields := absolutePaths(e.Server); len(fields) > 0 {
 		p.Notes = append(p.Notes, Note{
 			Kind: NoteMachinePath, Fields: fields,
-			Text: "an absolute path here is outside any folder clauderig knows how to translate, so it will arrive spelled for this machine.",
+			Text: "an absolute path travels verbatim in .mcp.json — nothing rewrites it for the machine that clones the repo, so the server will be defined there and fail to start.",
 		})
 	}
 	return p
@@ -142,23 +191,21 @@ func secretFields(s Server) []string {
 	return out
 }
 
-// machinePaths names values holding an absolute path that cannot be portablized.
-func machinePaths(s Server, folders pathmap.MapFolders, osToken string) []string {
+// absolutePaths names the values holding an absolute path. Arguments are named
+// by index — args[1], not args — because Fields is what `mcp list --json`
+// exposes, and three unportable arguments collapsing to one "args" tells a
+// caller there is a problem without saying where.
+func absolutePaths(s Server) []string {
 	var out []string
-	check := func(label, v string) {
-		if !isAbsPath(v) {
-			return
-		}
-		if _, ok := pathmap.Portablize(v, folders, osToken); !ok {
-			out = append(out, label)
+	if isAbsPath(s.Command) {
+		out = append(out, "command")
+	}
+	for i, a := range s.Args {
+		if isAbsPath(a) {
+			out = append(out, "args["+strconv.Itoa(i)+"]")
 		}
 	}
-	check("command", s.Command)
-	for _, a := range s.Args {
-		check("args", a)
-	}
-	sort.Strings(out)
-	return dedup(out)
+	return out
 }
 
 // isAbsPath is deliberately shape-based rather than a filesystem check: a
@@ -171,19 +218,11 @@ func isAbsPath(v string) bool {
 	if strings.HasPrefix(v, "/") || filepath.IsAbs(v) {
 		return true
 	}
+	// \\server\share\…, a UNC path, which is absolute and is not rooted at a
+	// drive letter. Checked before the drive form because it matches neither.
+	if strings.HasPrefix(v, `\\`) {
+		return true
+	}
 	// C:\… and C:/…, which filepath.IsAbs does not recognise off Windows.
 	return len(v) > 2 && v[1] == ':' && (v[2] == '\\' || v[2] == '/')
-}
-
-func dedup(in []string) []string {
-	if len(in) < 2 {
-		return in
-	}
-	out := in[:1]
-	for _, v := range in[1:] {
-		if v != out[len(out)-1] {
-			out = append(out, v)
-		}
-	}
-	return out
 }

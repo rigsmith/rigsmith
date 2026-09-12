@@ -304,6 +304,8 @@ func Sync(opts Options) (*Report, error) {
 	// file this run staged; this is what lets that copy be taken back out again,
 	// without touching one an older clauderig left behind.
 	stagedThisRun := map[string]bool{}
+	// Condemned copies this run staged and then failed to remove again.
+	var stranded []string
 	// What the last audit read and found clean, so the unchanged path below can
 	// skip re-reading bytes nothing has touched since. Never written here.
 	audited := newAuditCache(opts.StagingDir)
@@ -799,7 +801,13 @@ func Sync(opts Options) (*Report, error) {
 			// clauderig staged is the user's to deal with, and deleting it would
 			// hide the problem rather than report it.
 			if stagedThisRun[f.Path] {
-				if err := removeStaged(opts.StagingDir, f.Path); err == nil {
+				// A failure here is the one outcome worth saying out loud: the
+				// condemned bytes are still in the tree, which is the state
+				// this removal exists to prevent. Keep going — every other
+				// condemned file still has to be tried — and report at the end.
+				if err := removeStaged(opts.StagingDir, f.Path); err != nil {
+					stranded = append(stranded, fmt.Sprintf("%s: %v", f.Path, err))
+				} else {
 					delete(stagedThisRun, f.Path)
 				}
 			}
@@ -818,6 +826,13 @@ func Sync(opts Options) (*Report, error) {
 	// were still copied, and the reason to distrust their mtimes is gone.
 	writeStageClock(opts.StagingDir, startedAt)
 	if len(rep.Findings) > 0 {
+		// A condemned copy that could not be deleted outranks the tripwire text:
+		// the refusal alone reads as "nothing left the machine", and here
+		// something is still sitting in the staging tree.
+		if len(stranded) > 0 {
+			return rep, fmt.Errorf("secret tripwire: %d value(s) look like credentials, and %d condemned file(s) could not be removed from staging — delete them by hand before the next sync: %s",
+				len(rep.Findings), len(stranded), strings.Join(stranded, "; "))
+		}
 		// The two halves of the wire need different remedies, so say which one
 		// fired: a JSON value means the redactor's key rules missed something, a
 		// whole file means it should never have been in the allowlist.
@@ -1262,7 +1277,10 @@ func copyTranscriptSnapshot(src, dst string, mtime time.Time, chunked bool) erro
 // removeStaged deletes a staged file and, for a chunked transcript, the parts
 // that belong to it. Removing the index alone would leave a directory of
 // orphaned chunks that nothing references and nothing later cleans up.
-func removeStaged(staging, rel string) error {
+// removeStaged is a var for the same reason probeMtimeTick is: the failure path
+// matters more than the success one here, and there is no way to make a delete
+// fail from outside a run that is itself writing the file it will delete.
+var removeStaged = func(staging, rel string) error {
 	p := filepath.Join(staging, filepath.FromSlash(rel))
 	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 		return err

@@ -396,8 +396,10 @@ Two verdicts, and **neither of them is clauderig**:
 - **`no`** — user and local scope live in `~/.claude.json`, which sits *beside*
   `~/.claude` rather than inside it, so it is outside the sync root entirely.
   clauderig does not back these up. They work here and nowhere else.
-- **`your repo`** — project scope lives in the repository's own `.mcp.json`, so
-  it travels when the repo does, with no help from clauderig. What does *not*
+- **`your repo`** — project scope lives in the repository's own `.mcp.json`, *and
+  git is carrying that file*, so it travels when the repo does, with no help from
+  clauderig. An uncommitted or gitignored `.mcp.json` reads `no` instead, and
+  `unchecked` means git could not be asked. What does *not*
   travel with it is the approval: whether you trusted the server is recorded in
   `.claude/settings.local.json`, which is gitignored, so a colleague who clones
   the repo is asked again.
@@ -412,12 +414,25 @@ would look, rather than on the machine where you find out.
 `portability.carrier`, `portability.notes[].kind`) for a script that wants to
 gate on them.
 
-Two notes are worth reading whatever the verdict says. A value that looks like a
-secret and is written into a file you commit is named explicitly — it is in your
-repository in plain text, and clauderig's redaction covers what it syncs, not
-what your repo carries. And an absolute path outside any folder clauderig knows
-how to translate (`$HOME`, your projects directory) is a path that exists on this
-machine only; the server will be defined on the other machine and fail to start.
+Two notes are worth reading whatever the verdict says.
+
+**Every `env` and `header` value in a committed server is named** — not the ones
+that look like secrets. clauderig treats those two maps as secret *containers*
+rather than guessing per value, which is the right default for what it syncs and
+means the note does not depend on a heuristic. What it cannot do is redact a file
+it does not sync: in `.mcp.json` those values are in your repository in plain
+text.
+
+**Every absolute path is named too**, including one under `$HOME` that clauderig
+could have written portably. That translation is something it does to files it
+carries, and it does not carry this one — git moves `.mcp.json` byte for byte, so
+`/Users/you/bin/server` is exactly as broken on a machine with a different home
+as `/opt/homebrew/bin/server` is. The server arrives defined and fails to start.
+
+One more thing the column checks: **whether `.mcp.json` is actually committed.**
+A file that is gitignored or was never added reads `no`, because a clone does not
+get it — and if git cannot be asked, the column says `unchecked` rather than
+guessing.
 
 ## Settings Claude Code ignores
 

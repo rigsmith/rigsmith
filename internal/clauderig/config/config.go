@@ -241,7 +241,24 @@ func Detect(name string) Machine {
 // DetectFor builds a Machine for this host, named by ResolveName — the form
 // every caller wants, and the one that keeps the CLI and the UI agreeing about
 // which registry entry is "this machine".
-func DetectFor(cfg *Config) Machine { return Detect(ResolveName(cfg)) }
+// DetectFor is Detect for a machine this config may already know about: the
+// live OS and home, plus the custom folder tokens the config entry records.
+//
+// It used to be Detect(ResolveName(cfg)), which took only the NAME from the
+// config and rebuilt everything else from the host — so Machine.Tokens, the one
+// field that exists solely to be configured, never reached Folders(). Every
+// caller (doctor, peek, mcp) resolved paths against HOME alone, and a path
+// under a user's own configured folder read as machine-specific.
+func DetectFor(cfg *Config) Machine {
+	name := ResolveName(cfg)
+	m := Detect(name)
+	if cfg != nil {
+		if known, ok := cfg.Machines[name]; ok && len(known.Tokens) > 0 {
+			m.Tokens = known.Tokens
+		}
+	}
+	return m
+}
 
 // UnresolvedName is the placeholder used when this machine has no stable
 // identity — no matching config entry and no usable hostname.

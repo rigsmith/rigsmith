@@ -12,7 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
-	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mcp"
 	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
@@ -101,9 +101,9 @@ func newMCPListCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return emitMCPJSON(cmd.OutOrStdout(), entries)
+				return emitMCPJSON(cmd.OutOrStdout(), entries, judgeEnv(cmd.Context()))
 			}
-			return printServerList(cmd, entries)
+			return printServerList(cmd, entries, judgeEnv(cmd.Context()))
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the listing and the portability verdict as JSON")
@@ -133,7 +133,7 @@ func newMCPGetCmd() *cobra.Command {
 					continue
 				}
 				found = true
-				printServerDetail(out, e)
+				printServerDetail(out, e, judgeEnv(cmd.Context()))
 			}
 			if !found {
 				return fmt.Errorf("no MCP server named %q", args[0])
@@ -144,7 +144,7 @@ func newMCPGetCmd() *cobra.Command {
 }
 
 // printServerDetail renders one server's full configuration.
-func printServerDetail(out io.Writer, e mcp.Entry) {
+func printServerDetail(out io.Writer, e mcp.Entry, env mcp.Env) {
 	fmt.Fprintf(out, "%s %s\n", HeaderStyle.Render(e.Name), DimStyle.Render("("+string(e.Scope)+")"))
 	fmt.Fprintf(out, "  transport  %s\n", e.Server.Transport())
 	if e.Server.Command != "" {
@@ -166,8 +166,7 @@ func printServerDetail(out io.Writer, e mcp.Entry) {
 		fmt.Fprintf(out, "  state      %s\n", stateText(e.State))
 	}
 
-	folders, osToken := thisMachine()
-	verdict := mcp.Judge(e, folders, osToken)
+	verdict := mcp.Judge(e, env)
 	fmt.Fprintf(out, "  travels    %s\n", travelsText(verdict))
 	for _, n := range verdict.Notes {
 		fmt.Fprintf(out, "    %s\n", DimStyle.Render(noteLine(n)))
@@ -188,14 +187,13 @@ type mcpServerJSON struct {
 	Portability mcp.Portability `json:"portability"`
 }
 
-func emitMCPJSON(out io.Writer, entries []mcp.Entry) error {
-	folders, osToken := thisMachine()
+func emitMCPJSON(out io.Writer, entries []mcp.Entry, env mcp.Env) error {
 	doc := mcpJSON{Servers: make([]mcpServerJSON, 0, len(entries))}
 	for _, e := range entries {
 		doc.Servers = append(doc.Servers, mcpServerJSON{
 			Name: e.Name, Scope: string(e.Scope), Transport: e.Server.Transport(),
 			State: string(e.State), Target: e.Server.Summary(),
-			Portability: mcp.Judge(e, folders, osToken),
+			Portability: mcp.Judge(e, env),
 		})
 	}
 	enc := json.NewEncoder(out)
@@ -366,13 +364,12 @@ func parseKV(pairs []string) (map[string]string, error) {
 }
 
 // printServerList renders the `mcp list` table.
-func printServerList(cmd *cobra.Command, entries []mcp.Entry) error {
+func printServerList(cmd *cobra.Command, entries []mcp.Entry, env mcp.Env) error {
 	out := cmd.OutOrStdout()
 	if len(entries) == 0 {
 		fmt.Fprintln(out, DimStyle.Render("no MCP servers configured — add one with `clauderig mcp add`"))
 		return nil
 	}
-	folders, osToken := thisMachine()
 	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("%-8s %-18s %-9s %-9s %-10s %s",
 		"SCOPE", "NAME", "TRANSPORT", "STATE", "TRAVELS", "TARGET")))
 	// A note that names FIELDS is about this server and belongs on its row. One
@@ -382,7 +379,7 @@ func printServerList(cmd *cobra.Command, entries []mcp.Entry) error {
 	var scopeNotes []string
 	seen := map[string]bool{}
 	for _, e := range entries {
-		verdict := mcp.Judge(e, folders, osToken)
+		verdict := mcp.Judge(e, env)
 		fmt.Fprintf(out, "%-8s %-18s %-9s %-9s %-10s %s\n",
 			string(e.Scope), e.Name, e.Server.Transport(),
 			stateText(e.State), travelsText(verdict), DimStyle.Render(e.Server.Summary()))
@@ -409,12 +406,23 @@ func printServerList(cmd *cobra.Command, entries []mcp.Entry) error {
 
 // travelsText is the one-word answer for the listing: what carries this server
 // to another machine, if anything does.
+func hasNote(p mcp.Portability, k mcp.NoteKind) bool {
+	for _, n := range p.Notes {
+		if n.Kind == k {
+			return true
+		}
+	}
+	return false
+}
+
 func travelsText(p mcp.Portability) string {
 	switch {
 	case p.BackedUp && len(p.Notes) == 0:
 		return OkStyle.Render("yes")
 	case p.BackedUp:
 		return WarnStyle.Render("with work")
+	case p.Carrier != "" && hasNote(p, mcp.NoteCarriageUnknown):
+		return WarnStyle.Render("unchecked")
 	case p.Carrier != "":
 		return DimStyle.Render("your repo")
 	default:
@@ -430,15 +438,46 @@ func noteLine(n mcp.Note) string {
 	return strings.Join(n.Fields, ", ") + " — " + n.Text
 }
 
-// thisMachine is the path vocabulary the verdict judges against: a value is
-// portable exactly when this machine can express it as a template.
-func thisMachine() (pathmap.MapFolders, string) {
+// judgeEnv is what this machine and this checkout contribute to a portability
+// verdict: the path vocabulary, and whether git will actually carry .mcp.json.
+func judgeEnv(ctx context.Context) mcp.Env {
 	cfg, err := config.LoadOrDefault()
 	if err != nil {
 		cfg = config.Default()
 	}
 	me := config.DetectFor(cfg)
-	return me.Folders(), me.OS
+	return mcp.Env{Folders: me.Folders(), OS: me.OS, ProjectFile: projectFileCarriage(ctx, repoRootBestEffort(ctx))}
+}
+
+// projectFileCarriage asks git whether <repo>/.mcp.json is committed. Every
+// failure answers CarriageUnknown, which prints as an unconfirmed verdict
+// rather than a confident wrong one: "it travels with your repo" is a claim
+// about git, and a tool that cannot reach git has not checked it.
+func projectFileCarriage(ctx context.Context, repoRoot string) mcp.Carriage {
+	if repoRoot == "" {
+		return mcp.CarriageUnknown
+	}
+	repo, err := gitrepo.Open(ctx, repoRoot)
+	if err != nil {
+		return mcp.CarriageUnknown
+	}
+	tracked, err := repo.PathInIndex(ctx, ".mcp.json")
+	if err != nil {
+		return mcp.CarriageUnknown
+	}
+	if tracked {
+		return mcp.CarriageTracked
+	}
+	// Not in the index: ignored and merely-never-added are different messages,
+	// because one of them is a setting the user chose.
+	ignored, err := repo.IgnoredPaths(ctx, ".mcp.json")
+	if err != nil {
+		return mcp.CarriageUntracked
+	}
+	if len(ignored) > 0 {
+		return mcp.CarriageIgnored
+	}
+	return mcp.CarriageUntracked
 }
 
 func stateText(s mcp.State) string {

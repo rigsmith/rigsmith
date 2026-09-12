@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -9,6 +10,11 @@ import (
 )
 
 func folders() pathmap.MapFolders { return pathmap.MapFolders{"HOME": "/Users/x"} }
+
+// env() is the ordinary case: this machine, and a .mcp.json git carries.
+func env() Env {
+	return Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: CarriageTracked}
+}
 
 func kinds(p Portability) []string {
 	out := make([]string, 0, len(p.Notes))
@@ -33,7 +39,7 @@ func has(p Portability, k NoteKind) bool {
 func TestUserAndLocalServersAreNotBackedUp(t *testing.T) {
 	for _, scope := range []settings.Scope{settings.User, settings.Local} {
 		e := Entry{Name: "thing", Scope: scope, Server: Server{Command: "npx", Args: []string{"-y", "pkg"}}}
-		p := Judge(e, folders(), pathmap.OSMacOS)
+		p := Judge(e, env())
 		if p.BackedUp {
 			t.Errorf("%s scope reported as backed up; it lives in ~/.claude.json, outside the sync root", scope)
 		}
@@ -50,7 +56,7 @@ func TestUserAndLocalServersAreNotBackedUp(t *testing.T) {
 // stops somebody looking for it in the backup.
 func TestAProjectServerTravelsInTheRepositoryAndNeedsReapproving(t *testing.T) {
 	e := Entry{Name: "thing", Scope: settings.Project, Server: Server{Command: "npx"}}
-	p := Judge(e, folders(), pathmap.OSMacOS)
+	p := Judge(e, env())
 	if p.BackedUp {
 		t.Error("clauderig does not carry .mcp.json; the repo does")
 	}
@@ -74,11 +80,11 @@ func TestSecretsInAProjectServerAreCommittedNotRedacted(t *testing.T) {
 	e := Entry{Name: "thing", Scope: settings.Project, Server: Server{
 		Command: "npx", Env: map[string]string{"API_TOKEN": "ghp_x", "REGION": "eu"},
 	}}
-	p := Judge(e, folders(), pathmap.OSMacOS)
+	p := Judge(e, env())
 	if !has(p, NoteSecretsCommitted) {
 		t.Fatalf("notes = %v, want the committed-secrets warning", kinds(p))
 	}
-	if has(p, NoteSecretsNotCarried) {
+	if has(p, NoteNotCommitted) {
 		t.Error("a project server's env is not redacted by clauderig; it is committed")
 	}
 	for _, n := range p.Notes {
@@ -98,18 +104,24 @@ func TestSecretsInAProjectServerAreCommittedNotRedacted(t *testing.T) {
 	}
 }
 
-func TestAnAbsolutePathOutsideAKnownFolderIsFlagged(t *testing.T) {
+// Superseded the "portable paths are fine" version of this test. That reading
+// borrowed a guarantee from the sync path: Portablize matters for files
+// clauderig CARRIES, and it does not carry .mcp.json. Git moves that file byte
+// for byte, so /Users/x/bin/server is as broken under a different home as
+// /opt/homebrew/bin/server is — the one difference being that clauderig could
+// have rewritten the first, if it were ever in a position to rewrite anything.
+func TestAnAbsolutePathIsFlaggedWhoeverCouldHaveTranslatedIt(t *testing.T) {
 	portable := Entry{Name: "a", Scope: settings.Project, Server: Server{Command: "/Users/x/bin/server"}}
-	if has(Judge(portable, folders(), pathmap.OSMacOS), NoteMachinePath) {
-		t.Error("a path under HOME can be translated and should not be flagged")
+	if !has(Judge(portable, env()), NoteMachinePath) {
+		t.Error("a path under HOME went unflagged, but nothing rewrites this file")
 	}
 	local := Entry{Name: "b", Scope: settings.Project, Server: Server{Command: "/opt/homebrew/bin/server"}}
-	p := Judge(local, folders(), pathmap.OSMacOS)
+	p := Judge(local, env())
 	if !has(p, NoteMachinePath) {
 		t.Errorf("notes = %v, want the machine-path warning for a path outside any known folder", kinds(p))
 	}
 	relative := Entry{Name: "c", Scope: settings.Project, Server: Server{Command: "npx", Args: []string{"-y", "pkg"}}}
-	if has(Judge(relative, folders(), pathmap.OSMacOS), NoteMachinePath) {
+	if has(Judge(relative, env()), NoteMachinePath) {
 		t.Error("a bare command is resolved on PATH and is not a machine path")
 	}
 }
@@ -119,7 +131,7 @@ func TestWindowsDriveLettersCountAsAbsolute(t *testing.T) {
 	// a Windows machine would otherwise pass unflagged.
 	for _, cmd := range []string{`C:\tools\server.exe`, "C:/tools/server.exe"} {
 		e := Entry{Name: "w", Scope: settings.Project, Server: Server{Command: cmd}}
-		if !has(Judge(e, folders(), pathmap.OSMacOS), NoteMachinePath) {
+		if !has(Judge(e, env()), NoteMachinePath) {
 			t.Errorf("%q was not recognised as an absolute path", cmd)
 		}
 	}
@@ -128,7 +140,7 @@ func TestWindowsDriveLettersCountAsAbsolute(t *testing.T) {
 func TestNotesCarryStableTokensNotJustProse(t *testing.T) {
 	// Scripts branch on the kind; the sentence beside it can be reworded.
 	e := Entry{Name: "thing", Scope: settings.User, Server: Server{Command: "npx"}}
-	for _, n := range Judge(e, folders(), pathmap.OSMacOS).Notes {
+	for _, n := range Judge(e, env()).Notes {
 		if n.Kind == "" {
 			t.Errorf("note %q has no kind", n.Text)
 		}
@@ -144,12 +156,93 @@ func TestNotesCarryStableTokensNotJustProse(t *testing.T) {
 // that would rot silently if the allowlist ever grew a rule — so pin it here.
 func TestJudge_NoScopeIsCarriedByTheBackup(t *testing.T) {
 	for _, sc := range []settings.Scope{settings.User, settings.Project, settings.Local} {
-		p := Judge(Entry{Scope: sc, Name: "x", Server: Server{Command: "npx"}}, pathmap.MapFolders{}, "darwin")
+		p := Judge(Entry{Scope: sc, Name: "x", Server: Server{Command: "npx"}}, Env{OS: "darwin", ProjectFile: CarriageTracked})
 		if p.BackedUp {
 			t.Fatalf("scope %v now reports as backed up — if that is deliberate, `travelsText`'s \"yes\" branch is live and this test should say which scope reaches it", sc)
 		}
 		if len(p.Notes) == 0 {
 			t.Fatalf("scope %v travels through nothing and says nothing about it", sc)
 		}
+	}
+}
+
+// "It travels with your repo" is a claim about git, so it has to be checked
+// against git. A .mcp.json that is gitignored or was never added is on this
+// machine and nowhere else, and reading the file off disk cannot tell.
+func TestAProjectServerInAnUncommittedFileDoesNotTravel(t *testing.T) {
+	e := Entry{Scope: settings.Project, Name: "tidy", Server: Server{Command: "npx"}}
+	for _, tc := range []struct {
+		carriage Carriage
+		wantWord string
+	}{
+		{CarriageUntracked, "is not committed"},
+		{CarriageIgnored, "gitignore"},
+	} {
+		p := Judge(e, Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: tc.carriage})
+		if p.Carrier != "" {
+			t.Errorf("carriage %v: Carrier = %q, want empty — nothing carries it", tc.carriage, p.Carrier)
+		}
+		if !has(p, NoteNotCommitted) {
+			t.Errorf("carriage %v: notes = %v, want not-committed", tc.carriage, kinds(p))
+		}
+		if has(p, NoteInYourRepository) {
+			t.Errorf("carriage %v: still claims the repository carries it", tc.carriage)
+		}
+		var found bool
+		for _, n := range p.Notes {
+			if n.Kind == NoteNotCommitted && strings.Contains(n.Text, tc.wantWord) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("carriage %v: note does not say why: %v", tc.carriage, p.Notes)
+		}
+	}
+}
+
+// A verdict nobody could check says so, rather than guessing confidently.
+func TestAProjectServerSaysSoWhenGitCouldNotBeAsked(t *testing.T) {
+	e := Entry{Scope: settings.Project, Name: "tidy", Server: Server{Command: "npx"}}
+	p := Judge(e, Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: CarriageUnknown})
+	if !has(p, NoteCarriageUnknown) {
+		t.Errorf("notes = %v, want carriage-unknown", kinds(p))
+	}
+	if has(p, NoteInYourRepository) {
+		t.Error("an unchecked verdict claimed the repository carries it")
+	}
+}
+
+// EVERY absolute path, not only the ones Portablize cannot express. .mcp.json
+// travels through git byte for byte and nothing rewrites it, so a path under
+// your own home is exactly as broken on a machine with a different home.
+func TestEveryAbsolutePathIsFlaggedBecauseNothingRewritesThisFile(t *testing.T) {
+	underHome := Entry{Scope: settings.Project, Name: "mine",
+		Server: Server{Command: "/Users/x/bin/mine"}}
+	p := Judge(underHome, env())
+	if !has(p, NoteMachinePath) {
+		t.Fatalf("a path under HOME was called portable: %v", kinds(p))
+	}
+	// And each argument is named by index, so a caller can act on the right one.
+	multi := Entry{Scope: settings.Project, Name: "multi", Server: Server{
+		Command: "npx", Args: []string{"--root", "/opt/a", "--cache", "/var/b", "rel/c"}}}
+	var fields []string
+	for _, n := range Judge(multi, env()).Notes {
+		if n.Kind == NoteMachinePath {
+			fields = n.Fields
+		}
+	}
+	want := []string{"args[1]", "args[3]"}
+	if !reflect.DeepEqual(fields, want) {
+		t.Errorf("fields = %v, want %v", fields, want)
+	}
+}
+
+// A UNC path is absolute and is not rooted at a drive letter, so the drive
+// check alone reads \\\\server\\share\\x.exe as a relative path.
+func TestUNCPathsCountAsAbsolute(t *testing.T) {
+	e := Entry{Scope: settings.Project, Name: "unc",
+		Server: Server{Command: `\\fileserver\tools\mcp.exe`}}
+	if !has(Judge(e, env()), NoteMachinePath) {
+		t.Error("a UNC path was not recognised as absolute")
 	}
 }

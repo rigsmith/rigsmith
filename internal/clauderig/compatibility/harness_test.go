@@ -340,6 +340,26 @@ func normalizeTimes(v map[string]any, keys []string) {
 	}
 }
 
+// intendedDifferences are behaviour changes made on purpose, keyed by the
+// observation path they show up at, valued by the reason.
+//
+// The harness exists to catch changes nobody meant, and it cannot tell those
+// from the ones somebody did — so the two need a place to be told apart, and a
+// pinned baseline plus "advance it when the test goes red" would mean the
+// baseline stops asserting anything the first time someone is in a hurry.
+//
+// An entry that is no longer needed FAILS the run. An allowance that outlives
+// its change is exactly how this file would rot into a list of things nobody
+// checks, and it is the same control the tests on this branch grew: the
+// permission has to keep being necessary, or it goes.
+var intendedDifferences = map[string]string{
+	"refused/files/home/.clauderig/repo/cli/projects/-workspace-acme/s.jsonl": "a copy the publication audit condemns is now taken back out of staging instead of left in the working tree",
+}
+
+// usedIntended records which allowances actually fired. Subtests here run
+// sequentially, so a plain map is enough.
+var usedIntended = map[string]bool{}
+
 func compare(t *testing.T, a, b map[string]string) {
 	t.Helper()
 	if reflect.DeepEqual(a, b) {
@@ -361,7 +381,12 @@ func compare(t *testing.T, a, b map[string]string) {
 		av, aok := a[k]
 		bv, bok := b[k]
 		if av != bv || aok != bok {
-			t.Fatalf("compatibility changed at %s\nbaseline (present=%t): %s\ncandidate (present=%t): %s", k, aok, av, bok, bv)
+			if why, ok := intendedDifferences[k]; ok {
+				usedIntended[k] = true
+				t.Logf("intended difference at %s: %s", k, why)
+				continue
+			}
+			t.Fatalf("compatibility changed at %s\nbaseline (present=%t): %s\ncandidate (present=%t): %s\n\nIf this change is deliberate, add the path to intendedDifferences with the reason.", k, aok, av, bok, bv)
 		}
 	}
 }

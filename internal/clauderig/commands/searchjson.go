@@ -103,7 +103,9 @@ type RecentHit struct {
 // for the same reason search's do: so a caller can tell "nothing in the window"
 // from "nothing could be read".
 type RecentJSON struct {
-	Query    string      `json:"query,omitempty"`
+	// No omitempty: `recent` takes no search term, so the field would vanish
+	// exactly when it is most often used, and `search --json` always emits it.
+	Query    string      `json:"query"`
 	Sessions []RecentHit `json:"sessions"`
 	// Total is how many matched before --limit; Sessions is what fits.
 	Total        int `json:"total"`
