@@ -144,10 +144,27 @@ func nextStepFor(info status.Info) string {
 // nextStep is retained for callers/tests that want the hint for a model's state.
 func (m Model) nextStep() string { return nextStepFor(m.info) }
 
+// hotkeyLegend builds the accelerator list FROM the actions on screen.
+//
+// It was written out by hand, and drifted: `d` for Desktop profiles was added to
+// the menu and never to the legend, so the shortcut worked and nothing said so.
+// Deriving it means an action cannot be added without its key appearing, and it
+// also stops the legend advertising a key for something this machine has no
+// action for — the list is already filtered to what is available.
+func hotkeyLegend(items []action) string {
+	keys := make([]string, 0, len(items))
+	for _, a := range items {
+		if a.hotkey != "" {
+			keys = append(keys, a.hotkey)
+		}
+	}
+	return strings.Join(keys, "/")
+}
+
 func (m Model) Init() tea.Cmd { return nil }
 
 // Update drives the menu: ↑/↓ (k/j) move the cursor, enter selects; the action
-// hotkeys (i/s/r/t) are accelerators that select directly — and because only
+// hotkeys are accelerators that select directly — and because only
 // available actions are in the list, an unavailable hotkey is inert. q/esc quit.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	k, ok := msg.(tea.KeyMsg)
@@ -206,7 +223,7 @@ func (m Model) View() string {
 		b.WriteString(fmt.Sprintf("%s%s  %s\n", cursor, row, dim.Render(a.desc)))
 	}
 
-	b.WriteString("\n" + dim.Render("↑/↓ move · enter select · i/s/r/t/m/a shortcut · q quit") + "\n")
+	b.WriteString("\n" + dim.Render("↑/↓ move · enter select · "+hotkeyLegend(m.items)+" shortcut · q quit") + "\n")
 	return b.String()
 }
 

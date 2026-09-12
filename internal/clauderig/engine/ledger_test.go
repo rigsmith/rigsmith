@@ -351,3 +351,21 @@ func TestRecordLedger_EndComesFromTheTranscript(t *testing.T) {
 		t.Errorf("End moved to %s after a touch, want %s", got, want)
 	}
 }
+
+// sessionIDsFrom is a second, independent filter from the one recordLedger
+// walks with, and TestRecordLedger_IgnoresSubagentTranscripts exercises only
+// that other one — this guard could be deleted outright with the whole engine
+// suite green. Its answer decides which staged sidecars the prune considers
+// orphaned, so "a subagent transcript is not a session" needs its own test.
+func TestSessionIDsFrom_CountsOnlyTopLevelTranscripts(t *testing.T) {
+	got := sessionIDsFrom([]string{
+		"projects/-Users-john-p/aaaaaaaa-1111-2222-3333-444444444444.jsonl",
+		"projects/-Users-john-p/subagents/bbbbbbbb-1111-2222-3333-444444444444.jsonl",
+		"projects/-Users-john-p/tool-results/cccccccc-1111-2222-3333-444444444444.jsonl",
+		"projects/-Users-john-p/notes.md",
+		"history/dddddddd-1111-2222-3333-444444444444.jsonl",
+	})
+	if len(got) != 1 || !got["aaaaaaaa-1111-2222-3333-444444444444"] {
+		t.Fatalf("sessionIDsFrom = %v, want only the top-level transcript", got)
+	}
+}

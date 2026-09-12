@@ -200,6 +200,39 @@ func TestSync_NoSidecarPruneWhenCLIRootAbsent(t *testing.T) {
 	}
 }
 
+// The case the test above does not reach, despite its name. There, a CLI root
+// IS configured and merely fails to resolve, so cliSynced answers from the
+// root's own Skipped flag. A machine that syncs Desktop only has no CLI root in
+// its config at all, and the answer then comes from cliSynced's final return —
+// which nothing exercised: inverting it deleted this sidecar and the whole
+// engine suite stayed green.
+func TestSync_NoSidecarPruneWhenNoCLIRootIsConfigured(t *testing.T) {
+	staging := t.TempDir()
+	stageTranscript(t, staging, "-Users-other-p", "someone-elses-session")
+	kept := stageSidecar(t, staging, "claude-code-sessions", "a", "transcript-not-in-staging")
+
+	liveDesk := t.TempDir()
+	write(t, liveDesk, "claude-code-sessions/acct/org/local_a.json",
+		`{"cliSessionId":"transcript-not-in-staging"}`)
+
+	cfg := config.Default()
+	cfg.Roots = []config.Root{
+		{ID: "desktop", Enabled: true, Location: pathmap.Cascade{Portable: liveDesk}},
+	}
+	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: cfg, Machine: john,
+		SourceOverride: map[string]string{"desktop": liveDesk}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.SidecarsPruned != 0 {
+		t.Errorf("SidecarsPruned = %d, want 0 with no CLI root configured", rep.SidecarsPruned)
+	}
+	if _, serr := os.Stat(kept); serr != nil {
+		t.Error("a sidecar was deleted on the evidence of transcripts this machine never syncs")
+	}
+}
+
 // An unreadable subtree must not be read as "those transcripts are gone" — this
 // pass deletes on absence, so incomplete evidence has to mean no action.
 func TestStagedTranscriptIDs_UnreadableSubtreeFailsOpen(t *testing.T) {

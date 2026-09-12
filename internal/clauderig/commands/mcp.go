@@ -8,9 +8,12 @@ import (
 	"os"
 	"strings"
 
+	"encoding/json"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/mcp"
 	"github.com/rigsmith/rigsmith/internal/clauderig/settings"
 	"github.com/rigsmith/rigsmith/internal/clauderig/tui"
@@ -77,11 +80,17 @@ func scopeFlag(cmd *cobra.Command, def settings.Scope) func() (settings.Scope, e
 }
 
 func newMCPListCmd() *cobra.Command {
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
-		Short:   "List configured MCP servers across scopes",
-		Args:    cobra.NoArgs,
+		Short:   "List configured MCP servers, and say which will survive a restore",
+		Long: "Lists every scope, with what happens to each server on another machine.\n\n" +
+			"The answer is mostly about SCOPE. A user- or local-scope server is defined in\n" +
+			"~/.claude.json, which sits beside ~/.claude rather than inside it — so clauderig\n" +
+			"does not back it up, and it will not be there on a new machine. A project-scope\n" +
+			"server travels in your own repo's .mcp.json instead.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			home, dir, err := mcpHomeRepo(cmd.Context())
 			if err != nil {
@@ -91,9 +100,13 @@ func newMCPListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return printServerList(cmd, entries)
+			if asJSON {
+				return emitMCPJSON(cmd.OutOrStdout(), entries, judgeEnv(cmd.Context()))
+			}
+			return printServerList(cmd, entries, judgeEnv(cmd.Context()))
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the listing and the portability verdict as JSON")
 	return cmd
 }
 
@@ -120,7 +133,7 @@ func newMCPGetCmd() *cobra.Command {
 					continue
 				}
 				found = true
-				printServerDetail(out, e)
+				printServerDetail(out, e, judgeEnv(cmd.Context()))
 			}
 			if !found {
 				return fmt.Errorf("no MCP server named %q", args[0])
@@ -131,7 +144,7 @@ func newMCPGetCmd() *cobra.Command {
 }
 
 // printServerDetail renders one server's full configuration.
-func printServerDetail(out io.Writer, e mcp.Entry) {
+func printServerDetail(out io.Writer, e mcp.Entry, env mcp.Env) {
 	fmt.Fprintf(out, "%s %s\n", HeaderStyle.Render(e.Name), DimStyle.Render("("+string(e.Scope)+")"))
 	fmt.Fprintf(out, "  transport  %s\n", e.Server.Transport())
 	if e.Server.Command != "" {
@@ -152,6 +165,40 @@ func printServerDetail(out io.Writer, e mcp.Entry) {
 	if e.State != mcp.StateNA {
 		fmt.Fprintf(out, "  state      %s\n", stateText(e.State))
 	}
+
+	verdict := mcp.Judge(e, env)
+	fmt.Fprintf(out, "  travels    %s\n", travelsText(verdict))
+	for _, n := range verdict.Notes {
+		fmt.Fprintf(out, "    %s\n", DimStyle.Render(noteLine(n)))
+	}
+}
+
+// mcpJSON is the `mcp list --json` document.
+type mcpJSON struct {
+	Servers []mcpServerJSON `json:"servers"`
+}
+
+type mcpServerJSON struct {
+	Name        string          `json:"name"`
+	Scope       string          `json:"scope"`
+	Transport   string          `json:"transport"`
+	State       string          `json:"state,omitempty"`
+	Target      string          `json:"target,omitempty"`
+	Portability mcp.Portability `json:"portability"`
+}
+
+func emitMCPJSON(out io.Writer, entries []mcp.Entry, env mcp.Env) error {
+	doc := mcpJSON{Servers: make([]mcpServerJSON, 0, len(entries))}
+	for _, e := range entries {
+		doc.Servers = append(doc.Servers, mcpServerJSON{
+			Name: e.Name, Scope: string(e.Scope), Transport: e.Server.Transport(),
+			State: string(e.State), Target: e.Server.Summary(),
+			Portability: mcp.Judge(e, env),
+		})
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
 }
 
 func newMCPAddCmd() *cobra.Command {
@@ -317,19 +364,134 @@ func parseKV(pairs []string) (map[string]string, error) {
 }
 
 // printServerList renders the `mcp list` table.
-func printServerList(cmd *cobra.Command, entries []mcp.Entry) error {
+func printServerList(cmd *cobra.Command, entries []mcp.Entry, env mcp.Env) error {
 	out := cmd.OutOrStdout()
 	if len(entries) == 0 {
 		fmt.Fprintln(out, DimStyle.Render("no MCP servers configured — add one with `clauderig mcp add`"))
 		return nil
 	}
-	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("%-8s %-18s %-9s %-9s %s", "SCOPE", "NAME", "TRANSPORT", "STATE", "TARGET")))
+	fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("%-8s %-18s %-9s %-9s %-10s %s",
+		"SCOPE", "NAME", "TRANSPORT", "STATE", "TRAVELS", "TARGET")))
+	// A note that names FIELDS is about this server and belongs on its row. One
+	// that does not is about the scope — "nothing at this scope is backed up",
+	// "approval is gitignored" — and printing it under every server says the
+	// same sentence three times and buries the rows it is meant to explain.
+	var scopeNotes []string
+	seen := map[string]bool{}
 	for _, e := range entries {
-		fmt.Fprintf(out, "%-8s %-18s %-9s %-9s %s\n",
+		verdict := mcp.Judge(e, env)
+		fmt.Fprintf(out, "%-8s %-18s %-9s %-9s %-10s %s\n",
 			string(e.Scope), e.Name, e.Server.Transport(),
-			stateText(e.State), DimStyle.Render(e.Server.Summary()))
+			stateText(e.State), travelsText(verdict), DimStyle.Render(e.Server.Summary()))
+		for _, n := range verdict.Notes {
+			if len(n.Fields) > 0 {
+				fmt.Fprintf(out, "    %s\n", DimStyle.Render(noteLine(n)))
+				continue
+			}
+			line := string(e.Scope) + " scope — " + n.Text
+			if !seen[line] {
+				seen[line] = true
+				scopeNotes = append(scopeNotes, line)
+			}
+		}
+	}
+	if len(scopeNotes) > 0 {
+		fmt.Fprintln(out)
+		for _, line := range scopeNotes {
+			fmt.Fprintf(out, "%s\n", DimStyle.Render(line))
+		}
 	}
 	return nil
+}
+
+// travelsText is the one-word answer for the listing: what carries this server
+// to another machine, if anything does.
+func hasNote(p mcp.Portability, k mcp.NoteKind) bool {
+	for _, n := range p.Notes {
+		if n.Kind == k {
+			return true
+		}
+	}
+	return false
+}
+
+func travelsText(p mcp.Portability) string {
+	switch {
+	case p.BackedUp && len(p.Notes) == 0:
+		return OkStyle.Render("yes")
+	case p.BackedUp:
+		return WarnStyle.Render("with work")
+	case hasNote(p, mcp.NoteCarriageUnknown):
+		return WarnStyle.Render("unchecked")
+	case p.Carrier != "":
+		return DimStyle.Render("your repo")
+	default:
+		return ErrStyle.Render("no")
+	}
+}
+
+// noteLine renders one note, naming the fields it is about when it has them.
+func noteLine(n mcp.Note) string {
+	if len(n.Fields) == 0 {
+		return n.Text
+	}
+	return strings.Join(n.Fields, ", ") + " — " + n.Text
+}
+
+// judgeEnv is what this machine and this checkout contribute to a portability
+// verdict: the path vocabulary, and whether git will actually carry .mcp.json.
+func judgeEnv(ctx context.Context) mcp.Env {
+	cfg, err := config.LoadOrDefault()
+	if err != nil {
+		cfg = config.Default()
+	}
+	me := config.DetectFor(cfg)
+	carriage, committed := projectFileCarriage(ctx, repoRootBestEffort(ctx))
+	return mcp.Env{Folders: me.Folders(), OS: me.OS, ProjectFile: carriage, CommittedServers: committed}
+}
+
+// projectFileCarriage asks git what a CLONE would get. Every failure answers
+// CarriageUnknown, which prints as an unconfirmed verdict rather than a
+// confident wrong one: "it travels with your repo" is a claim about git, and a
+// tool that could not reach git has not checked it.
+//
+// HEAD, not the index. `git ls-files` answers "is it staged", and a file added
+// but never committed is not in a clone — so the index would have said "your
+// repo" about something no one else can see.
+func projectFileCarriage(ctx context.Context, repoRoot string) (mcp.Carriage, map[string]string) {
+	if repoRoot == "" {
+		return mcp.CarriageUnknown, nil
+	}
+	repo, err := gitrepo.Open(ctx, repoRoot)
+	if err != nil {
+		return mcp.CarriageUnknown, nil
+	}
+	committed, err := repo.ShowFile(ctx, "HEAD", ".mcp.json")
+	if err == nil {
+		// The file is committed. Which SERVERS are committed is a second
+		// question: a tracked file can hold one that exists only in the
+		// working tree, and a clone gets the commit.
+		defs, nerr := mcp.ServerDefsIn(committed)
+		if nerr != nil {
+			// Committed but unreadable. Not CarriageTracked: with no defs to
+			// compare against, Judge would fall back to the file-level answer
+			// and tell every server it travels, on the strength of a document
+			// nobody could parse.
+			return mcp.CarriageUnknown, nil
+		}
+		return mcp.CarriageTracked, defs
+	}
+	// Not in HEAD. Ignored and merely-never-added are different messages,
+	// because one of them is a setting the user chose — but an error asking is
+	// neither, and must not be reported as either.
+	ignored, ierr := repo.IgnoredPaths(ctx, ".mcp.json")
+	if ierr != nil {
+		return mcp.CarriageUnknown, nil
+	}
+	if len(ignored) > 0 {
+		return mcp.CarriageIgnored, nil
+	}
+	return mcp.CarriageUntracked, nil
 }
 
 func stateText(s mcp.State) string {

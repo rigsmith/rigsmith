@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,13 +69,44 @@ func TestAuditCacheIgnoresAnOlderRuleSet(t *testing.T) {
 	stage := filepath.Join(t.TempDir(), "repo")
 	write(t, stage, "cli/projects/-p/a.jsonl", `{"type":"user","text":"ghp_`+strings.Repeat("a", 40)+`"}`+"\n")
 
-	// A cache from a previous version that called the file clean.
-	stale := "clauderig-audit 0\n" + "0 0 cli/projects/-p/a.jsonl\n"
+	// A cache from a previous version that called the file clean — and one that
+	// carries the file's REAL size and mtime, so wasClean's own check cannot be
+	// what rejects it. Written with 0 0, this test passed with the version gate
+	// deleted outright: the size never matched, and the gate under test was
+	// never the reason for the answer.
+	rel := "cli/projects/-p/a.jsonl"
+	st, err := os.Stat(filepath.Join(stage, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := fmt.Sprintf("clauderig-audit 0\n%d %d %s\n", st.Size(), st.ModTime().UnixNano(), rel)
 	if err := os.WriteFile(filepath.Join(filepath.Dir(stage), ".audit-cache"), []byte(stale), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if found, err := Audit(stage); err != nil || len(found) != 1 {
 		t.Fatalf("stale cache was trusted: %v %v", found, err)
+	}
+}
+
+// The control for the test above: the same entry under the CURRENT version is
+// trusted, which is what proves the version string is the only thing separating
+// the two runs. Without it, a stale-cache test still passes if the entry it
+// writes could never have matched anything.
+func TestAuditCacheTrustsItsOwnRuleSet(t *testing.T) {
+	stage := filepath.Join(t.TempDir(), "repo")
+	write(t, stage, "cli/projects/-p/a.jsonl", `{"type":"user","text":"ghp_`+strings.Repeat("a", 40)+`"}`+"\n")
+
+	rel := "cli/projects/-p/a.jsonl"
+	st, err := os.Stat(filepath.Join(stage, filepath.FromSlash(rel)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := fmt.Sprintf("clauderig-audit %s\n%d %d %s\n", auditVersion, st.Size(), st.ModTime().UnixNano(), rel)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(stage), ".audit-cache"), []byte(current), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := Audit(stage); err != nil || len(found) != 0 {
+		t.Fatalf("a current-version entry for this exact file was not trusted: %v %v", found, err)
 	}
 }
 
