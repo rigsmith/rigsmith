@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/codexrig/ledger"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
 )
 
@@ -23,6 +24,10 @@ import (
 const (
 	Live = "live" // this machine's Codex home
 	Repo = "repo" // the synced repo, holding every machine's
+	// Remembered is not a store at all: it means the rollout is gone and only
+	// the ledger row survives. Named alongside the others because it is what a
+	// listing shows in the same column.
+	Remembered = "remembered"
 )
 
 // Target is one place to look.
@@ -47,6 +52,14 @@ type Row struct {
 
 	Stores []string `json:"stores"`
 	Path   string   `json:"path"`
+	// Remembered means the only thing left is a ledger row: the rollout itself
+	// aged out of the sync window. The distinction matters to whoever is
+	// reading — "this existed and its body is in git history" is a different
+	// answer from "no such session", and only one of them is actionable.
+	Remembered bool `json:"remembered,omitempty"`
+	// Shard is the rollout's directory in the repo, which is where to look for
+	// its body in git history once the file itself is gone.
+	Shard string `json:"shard,omitempty"`
 	// Resumable is true only for a session in this machine's own Codex home:
 	// `codex resume` reads from there, so a repo-only copy has to be restored
 	// before it can be opened.
@@ -74,6 +87,10 @@ type Options struct {
 	Content       string
 	CaseSensitive bool
 	Limit         int
+	// Ledger is the permanent index, so a session whose rollout has aged out of
+	// the window is still findable. Optional: a caller that only wants what is
+	// on disk passes none.
+	Ledger map[string]ledger.Entry
 }
 
 // Report is what a listing had to work with.
@@ -113,17 +130,36 @@ func List(opts Options) ([]Row, Report) {
 		}
 	}
 
+	// Sessions the ledger remembers but no store still holds. Added after the
+	// walk so a row with a real file always wins: the file is the better
+	// source, and the ledger is what is left when there is no file.
+	for id := range opts.Ledger {
+		if byID[id] == nil {
+			byID[id] = &Row{ID: id, Remembered: true}
+		}
+	}
+
 	rows := make([]Row, 0, len(byID))
 	for _, row := range byID {
-		if !hydrate(row) {
+		if row.Remembered {
+			fromLedger(row, opts.Ledger[row.ID])
+		} else if !hydrate(row) {
 			rep.Skipped++
 			continue
+		} else {
+			rep.Read++
 		}
-		rep.Read++
 		if !keep(*row, opts) {
 			continue
 		}
-		if opts.Content != "" && !matchesText(*row, opts.Content, opts.CaseSensitive) {
+		// A remembered session has no body to search, so a content query can
+		// only match what the ledger kept. Skipping the file read here is
+		// correctness, not an optimisation: Path is empty.
+		if opts.Content != "" && row.Remembered {
+			if !matchesText(*row, opts.Content, opts.CaseSensitive) {
+				continue
+			}
+		} else if opts.Content != "" && !matchesText(*row, opts.Content, opts.CaseSensitive) {
 			n, snip := scanFile(row.Path, opts.Content, opts.CaseSensitive)
 			if n == 0 {
 				continue
@@ -211,6 +247,17 @@ func shardOutOfWindow(rel string, opts Options) bool {
 		return false
 	}
 	return day.After(opts.Until.AddDate(0, 0, 1))
+}
+
+// fromLedger fills a row that has no file left behind it.
+func fromLedger(row *Row, e ledger.Entry) {
+	row.When = e.End
+	if row.When.IsZero() {
+		row.When = e.Started
+	}
+	row.Cwd, row.Title, row.Branch, row.Version = e.Cwd, e.Title, e.Branch, e.CLIVersion
+	row.Shard = e.Shard
+	row.Stores = append(row.Stores, Remembered)
 }
 
 // hydrate fills a row from its file. False means the file said nothing usable,

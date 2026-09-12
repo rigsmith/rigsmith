@@ -11,6 +11,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/internal/codexrig/codexhome"
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
+	"github.com/rigsmith/rigsmith/internal/codexrig/ledger"
 	"github.com/rigsmith/rigsmith/internal/codexrig/sessions"
 	"github.com/spf13/cobra"
 )
@@ -174,6 +175,10 @@ func listOptions(live, repo bool, since, until, cwd string, limit int) (sessions
 		opts.Targets = append(opts.Targets, sessions.Target{
 			Label: sessions.Repo, Dir: filepath.Join(staging, config.RootCLI),
 		})
+		// The permanent index, so a session whose rollout aged out of the
+		// window is still findable. Only alongside the repo: a --live listing
+		// is asking what is on this machine, and a remembered session is not.
+		opts.Ledger = ledger.LoadAll(staging)
 	}
 	_ = cfg
 	return opts, nil
@@ -255,6 +260,15 @@ func renderSession(out io.Writer, r sessions.Row, showMatches bool) {
 // resumeHint says what can actually be done with this session, which is a
 // different answer depending on where the only copy is.
 func resumeHint(r sessions.Row) string {
+	if r.Remembered {
+		// Naming the directory is the difference between a fact and something
+		// actionable: it is the pathspec to hand `git log`.
+		if r.Shard != "" {
+			return "aged out of the sync window — recover it from git history: " +
+				"git -C ~/.codexrig/repo log --diff-filter=D --name-only -- 'cli/" + r.Shard + "/*" + r.ID + "*'"
+		}
+		return "aged out of the sync window — the body is in the repo's git history"
+	}
 	if r.Resumable {
 		if r.Cwd != "" {
 			return "resume: cd " + shellQuote(r.Cwd) + " && codex resume " + r.ID

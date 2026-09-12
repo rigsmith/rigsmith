@@ -10,7 +10,9 @@ import (
 	"github.com/rigsmith/rigsmith/core/pathmap"
 	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
+	"github.com/rigsmith/rigsmith/internal/codexrig/ledger"
 	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
+	"github.com/rigsmith/rigsmith/internal/codexrig/sessions"
 )
 
 // Every secret below is synthetic and obviously so. The point of putting one in
@@ -458,6 +460,14 @@ func TestRetentionDropsOldRolloutsFromTheTreeAsWellAsOnCopy(t *testing.T) {
 	syncInto(t, m, staging, true)
 
 	// Age both copies past the window.
+	// Throw the ledger away, which is the upgrade case: a repo whose rollouts
+	// were staged by a codexrig that had no ledger yet. Without it the test
+	// passes on the row the FIRST sync wrote, and proves nothing about the
+	// order the second one does its work in.
+	if err := os.RemoveAll(filepath.Join(staging, ledger.DirName)); err != nil {
+		t.Fatal(err)
+	}
+
 	old := timeLongAgo()
 	for _, p := range []string{
 		filepath.Join(m.codex, filepath.FromSlash(rolloutRel)),
@@ -576,3 +586,81 @@ func ageTree(t *testing.T, root string, by time.Duration) {
 
 // timeLongAgo is a timestamp comfortably outside any retention window used here.
 func timeLongAgo() time.Time { return time.Now().AddDate(0, 0, -400) }
+
+func TestAnAgedOutSessionIsStillRememberedAndFindable(t *testing.T) {
+	// The ledger's whole reason to exist, and the reason it is written BEFORE
+	// retention runs. The other order would let a rollout be pruned in the same
+	// sync that should have recorded it, and a later search would answer "no
+	// such session" for a conversation that simply got old.
+	m := newMachine(t, "one")
+	seedTypicalHome(t, m)
+	seedRollout(t, m)
+	staging := t.TempDir()
+	rep := syncInto(t, m, staging, true)
+	if rep.LedgerAdded == 0 {
+		t.Fatalf("the first sync recorded nothing in the ledger (%s)", rep.LedgerError)
+	}
+
+	// Throw the ledger away, which is the upgrade case: a repo whose rollouts
+	// were staged by a codexrig that had no ledger yet. Without it the test
+	// passes on the row the FIRST sync wrote, and proves nothing about the
+	// order the second one does its work in.
+	if err := os.RemoveAll(filepath.Join(staging, ledger.DirName)); err != nil {
+		t.Fatal(err)
+	}
+
+	old := timeLongAgo()
+	for _, p := range []string{
+		filepath.Join(m.codex, filepath.FromSlash(rolloutRel)),
+		stagedPath(staging, rolloutRel),
+	} {
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg, mc := m.cfg(true)
+	if _, err := Sync(Options{
+		StagingDir: staging, Config: cfg, Machine: mc,
+		RetentionDays:  30,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: m.codex},
+	}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	if _, err := os.Stat(stagedPath(staging, rolloutRel)); err == nil {
+		t.Fatal("setup: the rollout should have aged out of the tree")
+	}
+	remembered := ledger.LoadAll(staging)
+	e, ok := remembered["01a0722a-7356-7592-922a-336289bdc101"]
+	if !ok {
+		t.Fatal("the aged-out rollout was pruned in the same sync that should have recorded it, " +
+			"and is now forgotten entirely — a search would say it never existed")
+	}
+	if e.Title == "" || e.Cwd == "" {
+		t.Errorf("row = %+v, want enough to recognise it by", e)
+	}
+	if e.Shard == "" {
+		t.Error("the row does not say where in git history to look for the body")
+	}
+
+	// And it comes back out of a listing, marked as remembered rather than
+	// presented as something that can be opened.
+	rows, _ := sessions.List(sessions.Options{
+		Targets: []sessions.Target{{Label: sessions.Repo, Dir: filepath.Join(staging, config.RootCLI)}},
+		Ledger:  remembered,
+	})
+	if len(rows) != 1 {
+		t.Fatalf("got %d row(s), want the remembered session", len(rows))
+	}
+	if !rows[0].Remembered {
+		t.Error("a session with no body left should be marked remembered")
+	}
+	if rows[0].Resumable {
+		t.Error("a session with no body cannot be resumed, and must not claim it can")
+	}
+	if rows[0].Title == "" {
+		t.Error("the listing shows nothing to recognise it by")
+	}
+}

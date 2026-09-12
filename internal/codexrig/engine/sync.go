@@ -80,7 +80,13 @@ type Report struct {
 	Roots           []RootResult
 	ManifestCwds    int
 	RetentionPruned int
-	Findings        []redact.Finding // non-empty ⇒ Sync returned an error
+	// LedgerAdded is sessions newly recorded or re-fingerprinted; LedgerTotal
+	// is how many this machine's ledger remembers, aged-out ones included.
+	LedgerAdded int
+	LedgerTotal int
+	// LedgerError is why the ledger could not be updated. Never fatal.
+	LedgerError string
+	Findings    []redact.Finding // non-empty ⇒ Sync returned an error
 }
 
 // CredentialFiles counts the findings that are whole files of credential
@@ -408,6 +414,19 @@ func Sync(opts Options) (*Report, error) {
 		rr.Disallowed = removed
 
 		rep.Roots = append(rep.Roots, rr)
+	}
+
+	// Record every staged session in the permanent ledger BEFORE retention runs.
+	// The synced tree is a rolling window; the ledger is not, so a rollout that
+	// is about to age out still leaves a searchable row behind. The other order
+	// would make `search` answer "no such session" for a conversation that
+	// simply got old, which reads as "that never happened".
+	if added, total, lerr := recordLedger(opts.StagingDir, opts.Machine.Name); lerr == nil {
+		rep.LedgerAdded, rep.LedgerTotal = added, total
+	} else {
+		// Best-effort: the ledger makes a later search better, and must never
+		// cost anybody a backup.
+		rep.LedgerError = lerr.Error()
 	}
 
 	// Enforce retention on the STAGED tree as well as on copy, so a rollout that
