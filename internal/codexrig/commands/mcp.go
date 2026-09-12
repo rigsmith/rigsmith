@@ -94,9 +94,10 @@ func newMCPListCmd() *cobra.Command {
 func newMCPGetCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:   "get <name>",
-		Short: "Show one server in full",
-		Args:  cobra.ExactArgs(1),
+		Use:          "get <name>",
+		Short:        "Show one server in full",
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true, // stdout may carry exactly one JSON object; a usage block after it is not an object
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 			entries, err := loadServers()

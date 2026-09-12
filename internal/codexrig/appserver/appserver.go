@@ -142,15 +142,28 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
 		deadline = dl
 	}
+	res, err := c.await(id, method, deadline)
+	var refused *serverError
+	if errors.As(err, &refused) {
+		return nil, err
+	}
+	if err != nil {
+		// Whichever way the wait failed — the server closed, a line never
+		// finished, or lines kept coming and none was the answer — the answer
+		// may yet arrive after this caller has gone, into a buffer nobody
+		// drains, and the next exchange would read it as its own. One place
+		// retires the client for all of them.
+		c.dead = err
+		return nil, err
+	}
+	return res, nil
+}
+
+// await reads replies until the one for id, or the deadline.
+func (c *Client) await(id int, method string, deadline time.Time) (json.RawMessage, error) {
 	for time.Now().Before(deadline) {
-		// ReadString has no deadline of its own, and a server that stops
-		// mid-line would hold this forever — the clock is only consulted
-		// between complete lines. Read on a goroutine and race the clock.
 		line, err := c.readLine(time.Until(deadline))
 		if err != nil {
-			if errors.Is(err, errDeadline) {
-				c.dead = err
-			}
 			return nil, fmt.Errorf("codex app-server closed: %w", err)
 		}
 		var msg struct {
@@ -171,16 +184,15 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 			continue
 		}
 		if msg.Error != nil {
-			return nil, fmt.Errorf("%s: %s", method, msg.Error.Message)
+			return nil, &serverError{fmt.Errorf("%s: %s", method, msg.Error.Message)}
 		}
 		return msg.Result, nil
 	}
-	// Out of step in this direction too: complete lines kept arriving and
-	// none was the answer, and the answer may yet turn up after the caller
-	// has gone. The next exchange would read it as its own.
-	c.dead = fmt.Errorf("%s: no answer before the deadline", method)
-	return nil, fmt.Errorf("%s: no answer from codex app-server", method)
+	return nil, fmt.Errorf("%s: no answer from codex app-server before the deadline", method)
 }
+
+// serverError is an answer — the server said no — and leaves the client in step.
+type serverError struct{ error }
 
 var errDeadline = errors.New("no reply before the deadline")
 
