@@ -141,6 +141,16 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (SwitchResult, error) {
 		}
 	}
 
+	// Look again, now. The scan above ran before the backup and the
+	// round-trip of the displaced credential, and a Codex that started in
+	// between would be running when its credential changed underneath it —
+	// the exact thing the first scan refuses. Force and Kill already decided.
+	if !opts.Force && !opts.Kill {
+		if insts, err := s.scanner()(machineHome); err == nil && len(insts) > 0 {
+			res.Blocking = insts
+			return res, fmt.Errorf("%w — %d session(s) started during the swap; nothing was changed", ErrCodexBusy, len(insts))
+		}
+	}
 	if err := WriteLive(target); err != nil {
 		return res, err
 	}

@@ -15,7 +15,10 @@ package ledger
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -308,7 +311,13 @@ func readFile(path string) ([]Entry, error) {
 		}
 		out = append(out, e)
 	}
-	return out, sc.Err()
+	// One line past the scanner's cap ends the scan with ErrTooLong. The rows
+	// before it parsed fine, and for an aged-out session such a row is the
+	// only record left — so keep them, as the comment above already promised.
+	if err := sc.Err(); err != nil && !errors.Is(err, bufio.ErrTooLong) {
+		return out, err
+	}
+	return out, nil
 }
 
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
@@ -317,8 +326,16 @@ var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 // name comes from a hostname and a hostname is not a filename.
 func fileName(device string) string {
 	n := strings.Trim(unsafeName.ReplaceAllString(device, "-"), ".-")
+	// Sanitising is lossy: "a/b" and "a?b" both became a-b.jsonl and then
+	// shared one ledger, merging rows and overwriting each other's RecordedBy.
+	// When the name lost something, a fingerprint of the ORIGINAL keeps the
+	// two apart; a name that survived intact keeps the file it always had.
 	if n == "" {
 		n = "unknown"
+	}
+	if n != device {
+		sum := sha256.Sum256([]byte(device))
+		n += "-" + hex.EncodeToString(sum[:4])
 	}
 	return n + ".jsonl"
 }

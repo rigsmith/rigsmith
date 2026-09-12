@@ -101,7 +101,7 @@
         },
         "floorBytes": {
           "type": "integer",
-          "description": "Never squash below this size."
+          "description": "NOT IMPLEMENTED YET — history squash is recorded here for forward compatibility and has no effect. Never squash below this size."
         },
         "maxFileBytes": {
           "type": "integer",
@@ -113,7 +113,7 @@
         },
         "squashKeepDays": {
           "type": "integer",
-          "description": "Whole days of sync history an automatic squash leaves standing. 0 means the default (30)."
+          "description": "NOT IMPLEMENTED YET — history squash is recorded here for forward compatibility and has no effect. Whole days of sync history an automatic squash leaves standing. 0 means the default (30)."
         }
       }
     },

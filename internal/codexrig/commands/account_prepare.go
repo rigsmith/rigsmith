@@ -110,10 +110,15 @@ func NewAccountPrepareCmd() *cobra.Command {
 			default:
 				return fail(reasonNoTokens, fmt.Errorf("%s's home cannot authenticate (%s) — run `codexrig account run %s` and log in", a.Title(), state, a.ID))
 			}
-			if got, err := s.HomeIdentity(a.ID); err == nil {
-				if a.Email != "" && got.Email != "" && !strings.EqualFold(a.Email, got.Email) {
-					return fail(reasonHomeDesync, fmt.Errorf("%s's home authenticates as %s — it is not the account it is filed under", a.Title(), got.Email))
-				}
+			got, err := s.HomeIdentity(a.ID)
+			if err != nil {
+				// Not ignored: "prepared" is a promise that Codex started here
+				// will be this account, and an identity nobody could read is
+				// not that promise.
+				return fail(reasonHomeUnknown, fmt.Errorf("%s's home is there but who it authenticates as could not be read: %w", a.Title(), err))
+			}
+			if mismatch := homeMismatch(a, got); mismatch != "" {
+				return fail(reasonHomeDesync, fmt.Errorf("%s's home authenticates as %s — it is not the account it is filed under", a.Title(), mismatch))
 			}
 
 			if asJSON {
@@ -157,4 +162,18 @@ func classifyPrepare(err error) string {
 	default:
 		return reasonFailed
 	}
+}
+
+// homeMismatch says how a home's identity differs from the account it is filed
+// under, or "" when it is the same login. Email alone is not identity — one
+// address can hold several ChatGPT accounts — so a differing account id counts
+// when both sides have one.
+func homeMismatch(a account.Account, got account.Identity) string {
+	if a.Email != "" && got.Email != "" && !strings.EqualFold(a.Email, got.Email) {
+		return got.Email
+	}
+	if a.AccountID != "" && got.AccountID != "" && a.AccountID != got.AccountID {
+		return "the same email but account " + got.AccountID
+	}
+	return ""
 }

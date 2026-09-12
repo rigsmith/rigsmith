@@ -307,8 +307,15 @@ func (s *Store) List() ([]Account, error) {
 			continue
 		}
 		a, err := s.load(e.Name())
+		if os.IsNotExist(err) {
+			continue // a directory without a meta file is not an account
+		}
 		if err != nil {
-			continue // a directory without readable meta is not an account
+			// A meta file that exists and cannot be read IS an account, with a
+			// problem — skipping it made the account vanish from every listing
+			// and from `account list --json`, which is how a script would
+			// have noticed.
+			return nil, fmt.Errorf("account %s: its record cannot be read: %w", e.Name(), err)
 		}
 		out = append(out, a)
 	}
@@ -663,7 +670,7 @@ type StoredStatus struct {
 	Account
 	Active           bool   `json:"active"`
 	CredentialTokens bool   `json:"credentialTokens"`
-	Home             string `json:"home"`
+	Home             string `json:"session"` // the same field `account list --json` calls session
 }
 
 // StoredStatuses reports every account's health, in List order.

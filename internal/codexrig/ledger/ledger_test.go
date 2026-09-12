@@ -184,15 +184,18 @@ func TestATruncatedLineDoesNotLoseTheRest(t *testing.T) {
 
 func TestADeviceNameIsSanitisedIntoAFilename(t *testing.T) {
 	// A device name comes from a hostname, and a hostname is not a filename.
-	cases := map[string]string{
-		"Johns-MacBook-Pro.local": "Johns-MacBook-Pro.local.jsonl",
-		"work/laptop":             "work-laptop.jsonl",
-		"":                        "unknown.jsonl",
-		"...":                     "unknown.jsonl",
+	// A name that needs no sanitising keeps the file it always had; one that
+	// lost something carries a fingerprint of the original, because "a/b" and
+	// "a?b" sanitising to the same file meant two devices sharing one ledger.
+	if got := fileName("Johns-MacBook-Pro.local"); got != "Johns-MacBook-Pro.local.jsonl" {
+		t.Errorf("an ordinary hostname moved: %s", got)
 	}
-	for in, want := range cases {
-		if got := fileName(in); got != want {
-			t.Errorf("fileName(%q) = %q, want %q", in, got, want)
-		}
+	altered := fileName("work/laptop")
+	if !strings.HasPrefix(altered, "work-laptop-") || !strings.HasSuffix(altered, ".jsonl") || len(altered) != len("work-laptop-")+8+len(".jsonl") {
+		t.Errorf("fileName(%q) = %q, want work-laptop-<8 hex>.jsonl", "work/laptop", altered)
+	}
+	empty, dots := fileName(""), fileName("...")
+	if !strings.HasPrefix(empty, "unknown-") || !strings.HasPrefix(dots, "unknown-") || empty == dots {
+		t.Errorf("empty and punctuation-only names: %q %q — want distinct unknown-<hash> files", empty, dots)
 	}
 }

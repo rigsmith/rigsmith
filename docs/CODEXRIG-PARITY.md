@@ -29,7 +29,7 @@ rows are rounded up.
 | `config` | `config` | ✅ | `show`/`get`/`set`/`path`/`edit`. Keys differ where the tools differ: `syncSessions` is new, and `chunkTranscripts` is `chunkRollouts`. |
 | `guard` | `guard` | 🟡 | Base-branch and hidden-worktree protection, and a patch is judged whole. No session-relocation refusals: Codex has no such tools. No commit inspection — the write is refused before the commit, which is the better moment. |
 | `guide` | `guide` | ✅ | `AGENTS.md` instead of `CLAUDE.md`. `install`/`uninstall`/`status`/`show`, same managed-block mechanics. |
-| `search` | `search` | 🟡 | Grouped by session, with `--since`/`--until`/`--cwd`/`--live`/`--repo`/`--json`, and ledger rows for sessions whose bodies have aged out. No `--raw`/`--all` grep mode — the one thing still missing. |
+| `search` | `search` | 🟡 | Grouped by session, with `--since`/`--until`/`--cwd`/`--live`/`--repo`/`--json`, and ledger rows for sessions whose bodies have aged out. No `--raw`/`--all` grep mode, and no `--account` filter: a Codex rollout does not record which login produced it, so sessions carry no account attribution to filter on. |
 | `recent` | `recent` | ✅ | Plus `--json`, which clauderig's lacks. |
 | `mcp` | `mcp` | 🟡 | Read-only, by choice: `codex mcp` already adds and removes, and a second writer for one TOML table is a way for the two to disagree. What this adds instead is a portability verdict per server. |
 | `account` | `account` | 🟡 | `add`, `list`, `run`, `prepare`, `switch`, `sessions`, `remove`, `purge`, `doctor`, `alias`, `disable`/`enable`, `map`/`unmap`. Only `watch` is missing (see below). |
@@ -89,7 +89,7 @@ rows are rounded up.
 | Credential lock cooperation | 🟡 | 🟡 | Claude Code takes a refresh lock that clauderig cooperates with. Codex takes none, so codexrig locks against ITSELF and protects against Codex by refusing while it is running, writing atomically, and keeping a backup. |
 | Live-process detection | `account/live.go` | ✅ | Process table plus Codex's writer locks, with a process's home resolved against its own `HOME`. |
 | Transcript/session reading | `rollout` | ✅ | A different format, read the same way: header from the front, activity from the tail, never the middle. Validated against every rollout on a real machine. |
-| Session listing / search | `sessions` | ✅ | Live store, repo store and ledger rows, with one-sided date-shard pruning. No Desktop sidecars, because there are none. |
+| Session listing / search | `sessions` | ✅ | Live store, repo store and ledger rows, with one-sided date-shard pruning. The live store follows `CODEX_HOME`, so a session in an isolated account home is listed when that account is the one in use. No Desktop sidecars, because there are none. |
 | Split-session health | — | ➖ | clauderig detects one session filed in two places and can consolidate, because Claude Code files by a slug derived from the working directory and a session that moves gets a second file. **Measured against 60 real rollouts: Codex never does this.** It APPENDS to the original rollout on resume, which keeps its original shard — one here spans eight calendar days with a single `session_meta`. The live-versus-repo case is handled by preferring the live copy, and the repo-versus-repo case by the merge policy. |
 | `dirmap` | shared | ✅ | Moved to `internal/agentrig`. The path comparison is what is worth sharing, not the file format. |
 | `peek` | `peek` | ✅ | See the command row. |

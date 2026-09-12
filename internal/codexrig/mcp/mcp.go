@@ -17,6 +17,7 @@ package mcp
 import (
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
@@ -67,7 +68,9 @@ type Portability struct {
 	// which is a confusing way to find out.
 	SecretEnv []string `json:"secretEnv,omitempty"`
 	// LocalPaths names values that are absolute paths this machine's layout
-	// cannot express portably, so they arrive spelled for here.
+	// cannot express portably, so they arrive spelled for here. Each entry is
+	// "<field>=<path>" — command=/opt/x, args[1]=/srv/y — because a field
+	// name alone told a script that something needed attention and not what.
 	LocalPaths []string `json:"localPaths,omitempty"`
 }
 
@@ -147,13 +150,13 @@ func judge(s Server, folders pathmap.MapFolders, osToken string) Portability {
 			return
 		}
 		if _, ok := pathmap.Portablize(v, folders, osToken); !ok {
-			p.LocalPaths = append(p.LocalPaths, label)
+			p.LocalPaths = append(p.LocalPaths, label+"="+v)
 		}
 	}
 	check("command", s.Command)
 	check("cwd", s.Cwd)
-	for _, a := range s.Args {
-		check("args", a)
+	for i, a := range s.Args {
+		check("args["+strconv.Itoa(i)+"]", a)
 	}
 	sort.Strings(p.LocalPaths)
 	p.LocalPaths = dedup(p.LocalPaths)

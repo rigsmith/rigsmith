@@ -20,7 +20,12 @@ import (
 // authenticate, or codexrig's pointer names a different account than the
 // credential does. Those are the four problems below, and there is no fifth.
 type Observation struct {
-	At string `json:"at"`
+	// PointerStale is the active-account id when active.json names an account
+	// whose record is missing or unreadable. Reported rather than accepted:
+	// with the live credential absent, that id used to pass straight through
+	// as PointerID and the diagnosis called it healthy.
+	PointerStale string `json:"pointerStale,omitempty"`
+	At           string `json:"at"`
 
 	LiveEmail     string `json:"liveEmail,omitempty"`
 	LiveAccountID string `json:"liveAccountId,omitempty"`
@@ -82,6 +87,9 @@ func (s *Store) Diagnose() Observation {
 
 	ptr, _ := s.Active()
 	if ptr != "" {
+		if _, lerr := s.load(ptr); lerr != nil {
+			o.PointerStale = ptr
+		}
 		if o.PointerID == "" {
 			o.PointerID = ptr
 		} else if ptr != o.PointerID {
@@ -111,6 +119,9 @@ func (o Observation) Problems() []string {
 	}
 	if o.PointerEmail != "" {
 		out = append(out, fmt.Sprintf("codexrig's active account (%s) is not the login the credential authenticates as (%s)", o.PointerEmail, orNone(o.LiveEmail)))
+	}
+	if o.PointerStale != "" {
+		out = append(out, fmt.Sprintf("codexrig's active account (%s) has no readable record — it was removed, or its meta.json is damaged", o.PointerStale))
 	}
 	if o.Untracked && !o.LoggedOut && o.LiveErr == "" {
 		out = append(out, fmt.Sprintf("the live login (%s) is not tracked — run `codexrig account add` to keep it", orNone(o.LiveEmail)))

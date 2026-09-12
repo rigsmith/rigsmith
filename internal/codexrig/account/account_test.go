@@ -682,3 +682,72 @@ func TestCaptureFromHomeRefusesADifferentAccountOnTheSameEmail(t *testing.T) {
 		t.Error("the stored credential was overwritten anyway")
 	}
 }
+
+// The documented repair path: log in inside the account's own home, then
+// capture. Pins the success return and that the stored credential is the
+// refreshed one, not the one from before the login.
+func TestCaptureFromHomeStoresTheRefreshedCredential(t *testing.T) {
+	s, _ := sandbox(t)
+	a, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, err := s.EnsureHome(a, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshed := fakeCred(t, "alice@example.com", "A", "acct-1", "plus") // same login, new tokens/plan
+	if err := writeAuthAt(home, refreshed); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CaptureFromHome(a); err != nil {
+		t.Fatalf("capture from the account's own home failed: %v", err)
+	}
+	got, err := s.Credential(a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(refreshed) {
+		t.Error("the stored credential is not the one captured from the home")
+	}
+}
+
+// active.json naming an account whose record is gone used to pass straight
+// through as PointerID when the live credential was absent, and the diagnosis
+// called it healthy.
+func TestDiagnoseReportsAPointerAtAMissingAccount(t *testing.T) {
+	s, _ := sandbox(t)
+	a, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetActive(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(s.dir(a.ID)); err != nil { // the record is gone, the pointer is not
+		t.Fatal(err)
+	}
+	obs := s.Diagnose()
+	if obs.PointerStale != a.ID {
+		t.Errorf("PointerStale = %q, want %q", obs.PointerStale, a.ID)
+	}
+	if len(obs.Problems()) == 0 || obs.InSync {
+		t.Errorf("a pointer at a missing account was reported healthy: %+v", obs)
+	}
+}
+
+// A meta file that exists and cannot be read is an account with a problem, not
+// a directory to skip — skipping it made the account vanish from every listing.
+func TestListReportsAnUnreadableAccountRatherThanHidingIt(t *testing.T) {
+	s, _ := sandbox(t)
+	a, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.metaPath(a.ID), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.List(); err == nil || !strings.Contains(err.Error(), a.ID) {
+		t.Fatalf("List = %v, want an error naming the account whose record is damaged", err)
+	}
+}

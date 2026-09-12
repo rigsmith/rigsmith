@@ -173,9 +173,11 @@ type accountJSON struct {
 
 type accountListJSON struct {
 	Active string `json:"active"`
-	// Desynced means codexrig's pointer names a different login than the
-	// credential does — the same question clauderig's flag of this name asks,
-	// even though the shape of the disagreement differs between the two CLIs.
+	// Desynced is the whole diagnosis disagreeing with itself — the pointer,
+	// a tokenless live credential, an untracked login — the same question
+	// clauderig's flag of this name asks. It used to cover the pointer alone,
+	// so a caller could read problems:[…], inSync:false, desynced:false at
+	// once.
 	Desynced bool          `json:"desynced"`
 	Accounts []accountJSON `json:"accounts"`
 	// Problems carries the doctor's findings so a caller polling `list --json`
@@ -205,7 +207,7 @@ func newAccountListCmd() *cobra.Command {
 			if asJSON {
 				doc := accountListJSON{
 					Accounts: []accountJSON{},
-					Desynced: obs.PointerEmail != "",
+					Desynced: !obs.InSync, // the whole diagnosis, not the pointer alone
 					Problems: obs.Problems(),
 				}
 				for _, r := range rows {
@@ -274,6 +276,9 @@ func newAccountRunCmd() *cobra.Command {
 			ref := ""
 			passthrough := args
 			if d := cmd.ArgsLenAtDash(); d >= 0 {
+				if d > 1 {
+					return fmt.Errorf("one account reference before --, got %d: %s", d, strings.Join(args[:d], " "))
+				}
 				if d > 0 {
 					ref = args[0]
 				}
@@ -294,6 +299,15 @@ func newAccountRunCmd() *cobra.Command {
 			home, err := s.EnsureHome(a, !noShare)
 			if err != nil {
 				return err
+			}
+			// The same check prepare makes, for the same reason: launching
+			// Codex under a label is a claim about which login it will be.
+			got, err := s.HomeIdentity(a.ID)
+			if err != nil {
+				return fmt.Errorf("%s's home is there but who it authenticates as could not be read: %w", a.Title(), err)
+			}
+			if mismatch := homeMismatch(a, got); mismatch != "" {
+				return fmt.Errorf("%s's home authenticates as %s — refusing to start Codex under the wrong label", a.Title(), mismatch)
 			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "%s %s (%s=%s)\n",
 				DimStyle.Render("session:"), a.Title(), codexhome.EnvHome, home)
@@ -431,8 +445,12 @@ func newAccountRemoveCmd() *cobra.Command {
 			}
 			// A binding to an account that no longer exists would silently
 			// resolve to nothing, which reads as "no account mapped here".
-			if dm, derr := dirMap(); derr == nil {
-				_ = dm.PruneAccount(a.ID)
+			dm, derr := dirMap()
+			if derr != nil {
+				return fmt.Errorf("removed %s, but its directory bindings could not be opened to prune: %w", a.Title(), derr)
+			}
+			if err := dm.PruneAccount(a.ID); err != nil {
+				return fmt.Errorf("removed %s, but a directory binding still points at it: %w", a.Title(), err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", OkStyle.Render("Removed"), a.Title())
 			return nil
@@ -471,6 +489,17 @@ func newAccountPurgeCmd() *cobra.Command {
 			}
 			if err := s.Purge(); err != nil {
 				return err
+			}
+			// Bindings outlive the accounts they name unless pruned here too;
+			// `remove` prunes, and `purge` is remove for every account.
+			dm, derr := dirMap()
+			if derr != nil {
+				return fmt.Errorf("purged, but the directory bindings could not be opened to prune: %w", derr)
+			}
+			for _, a := range all {
+				if err := dm.PruneAccount(a.ID); err != nil {
+					return fmt.Errorf("purged, but a directory binding still points at %s: %w", a.ID, err)
+				}
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %d accounts\n", OkStyle.Render("Purged"), len(all))
 			return nil

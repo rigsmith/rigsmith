@@ -156,7 +156,14 @@ func listOptions(live, repo bool, since, until, cwd string, limit int) (sessions
 		return opts, errors.New("--until is before --since")
 	}
 
-	home, err := codexhome.Default()
+	// The live store is whatever Codex would use — including an isolated
+	// account home when CODEX_HOME is set, which is how `account prepare` and
+	// `account run` point a session at one login. Reading ~/.codex regardless
+	// made every session in an isolated home invisible to `--live`.
+	home, ok := codexhome.Env()
+	if !ok {
+		home, err = codexhome.Default()
+	}
 	if err != nil {
 		return opts, err
 	}
