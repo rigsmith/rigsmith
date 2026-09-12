@@ -315,7 +315,18 @@ func resolveAccountRef(s *account.Store, ref string) (account.Account, error) {
 	// A directory binding is an answer the user already gave, so it outranks
 	// "there happens to be only one".
 	if cwd, err := os.Getwd(); err == nil {
-		if id := mappedAccount(cwd); id != "" {
+		id, merr := mappedAccount(cwd)
+		if merr != nil {
+			return account.Account{}, fmt.Errorf("this directory's account mapping could not be read, and guessing instead could start the wrong login: %w", merr)
+		}
+		// A binding naming an account that no longer exists falls through, on
+		// purpose: `account remove` prunes what pointed at it, so a survivor is
+		// a leftover rather than an instruction, and
+		// TestABindingToADeletedAccountDoesNotResolve pins that. What must NOT
+		// fall through is a mapping that could not be READ — there the user's
+		// answer may well exist and simply be unreachable, and guessing past it
+		// starts a login they bound this directory away from.
+		if id != "" {
 			if a, rerr := s.Resolve(id); rerr == nil {
 				return a, nil
 			}

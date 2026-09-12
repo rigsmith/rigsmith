@@ -46,8 +46,12 @@ func NewRestoreCmd() *cobra.Command {
 				return err
 			}
 			man, err := manifest.Load(staging)
-			if err != nil {
+			if os.IsNotExist(err) {
 				return errors.New("no snapshot in the sync repo yet — run `codexrig sync` on a machine that has one")
+			} else if err != nil {
+				// A corrupt or unreadable manifest is a different problem, and
+				// the advice above sends the reader to fix the wrong machine.
+				return fmt.Errorf("reading the snapshot manifest: %w", err)
 			}
 
 			opts := engine.RestoreOptions{

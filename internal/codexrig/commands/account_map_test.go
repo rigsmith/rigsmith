@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/dirmap"
@@ -226,5 +228,48 @@ func TestABindingToADeletedAccountDoesNotResolve(t *testing.T) {
 	}
 	if got.ID != "bob-other-test" {
 		t.Errorf("resolved %q", got.ID)
+	}
+}
+
+// An unreadable mapping is not an absent one. Treating both as "" let the
+// caller fall through to "there happens to be only one enabled account" and
+// start Codex under a login this directory was explicitly bound away from.
+func TestAnUnreadableBindingRefusesRatherThanGuessing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file permission bits do not gate reads on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permissions are not enforced")
+	}
+	s, home := twoAccounts(t)
+	proj := filepath.Join(home, "Git", "proj")
+	if err := os.MkdirAll(proj, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bind(t, home, proj, "alice-example-com")
+	// Exactly ONE account left enabled, so falling through would SUCCEED and
+	// silently hand back bob — the hazard itself. With two enabled, the
+	// fall-through errors as ambiguous and the test passes for the wrong
+	// reason, which it did until this line was added.
+	if err := s.SetDisabled("alice-example-com", true); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := dirMap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(store.Path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(store.Path, 0o600) })
+
+	t.Chdir(proj)
+	got, err := resolveAccountRef(s, "")
+	if err == nil {
+		t.Fatalf("an unreadable mapping resolved to %q instead of refusing", got.ID)
+	}
+	if !strings.Contains(err.Error(), "could not be read") {
+		t.Errorf("refused for a different reason than the unreadable mapping: %v", err)
 	}
 }

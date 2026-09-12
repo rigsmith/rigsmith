@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -111,16 +112,24 @@ func mapTarget(args []string) (string, error) {
 	return os.Getwd()
 }
 
-// mappedAccount reports the account bound to a directory, or "" when none is.
-// Used to resolve a bare `account run`.
-func mappedAccount(dir string) string {
+// mappedAccount reports the account bound to a directory. A missing mapping is
+// ("", nil); anything else is an error.
+//
+// The distinction is load-bearing. Collapsing both into "" made an unreadable
+// or malformed mapping look like "no binding here", and the caller then falls
+// back to "there happens to be only one enabled account" — which starts Codex
+// under a login the user explicitly bound this directory away from.
+func mappedAccount(dir string) (string, error) {
 	store, err := dirMap()
 	if err != nil {
-		return ""
+		return "", err
 	}
 	e, err := store.Lookup(dir)
-	if err != nil {
-		return ""
+	if errors.Is(err, dirmap.ErrNoMapping) {
+		return "", nil
 	}
-	return e.Account
+	if err != nil {
+		return "", err
+	}
+	return e.Account, nil
 }

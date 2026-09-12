@@ -21,13 +21,20 @@ func NewPullCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
+			// Reported like every other failure here, not returned. The two
+			// lines below used to break the contract this command states two
+			// paragraphs down: a config.json that does not parse, or a home
+			// that cannot be resolved, would exit non-zero from a session-start
+			// hook — which is the one thing this command must never do.
 			cfg, err := config.LoadOrDefault()
 			if err != nil {
-				return err
+				fmt.Fprintf(out, "  %s %v\n", WarnStyle.Render("!"), err)
+				return nil
 			}
 			staging, err := config.StagingDir()
 			if err != nil {
-				return err
+				fmt.Fprintf(out, "  %s %v\n", WarnStyle.Render("!"), err)
+				return nil
 			}
 			svc := service.Service{Observe: renderEvent(out)}
 			res := svc.Pull(cmd.Context(), service.PullRequest{

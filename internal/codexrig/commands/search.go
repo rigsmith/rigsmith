@@ -345,7 +345,16 @@ func tildeHome(p string) string {
 		return p
 	}
 	for _, h := range []string{home, resolved(home)} {
-		if h != "" && strings.HasPrefix(p, h) {
+		if h == "" {
+			continue
+		}
+		// The exact home, or the home followed by a separator. A bare prefix
+		// also matches a SIBLING whose name merely starts the same way, so with
+		// home /home/bob the path /home/bobby/Git printed as ~by/Git.
+		if p == h {
+			return "~"
+		}
+		if strings.HasPrefix(p, h+string(filepath.Separator)) {
 			return "~" + p[len(h):]
 		}
 	}

@@ -44,7 +44,10 @@ func openStaging(cmd *cobra.Command) (*gitrepo.Repo, error) {
 	}
 	repo, err := gitrepo.Open(cmd.Context(), staging)
 	if err != nil {
-		return nil, errors.New("no sync repo on this machine yet — run `codexrig init`, then `codexrig pull`")
+		// Wrapped: this advice is right for "there is no repo" and wrong for a
+		// permission error, a corrupt .git, or a missing git binary — and those
+		// reach the reader as the same sentence with the cause thrown away.
+		return nil, fmt.Errorf("no sync repo on this machine yet — run `codexrig init`, then `codexrig pull`: %w", err)
 	}
 	return repo, nil
 }
@@ -86,6 +89,10 @@ func newPeekListCmd() *cobra.Command {
 				return nil
 			}
 			total := len(sessions)
+			// Before truncation: a machine whose sessions all fall past the
+			// limit would otherwise be missing from the hint that tells you to
+			// filter by machine, which is exactly when you would want it.
+			machines := peek.Machines(sessions)
 			if !all && limit > 0 && len(sessions) > limit {
 				sessions = sessions[:limit]
 			}
@@ -116,7 +123,7 @@ func newPeekListCmd() *cobra.Command {
 			if total > len(sessions) {
 				fmt.Fprintf(out, "\n%s\n", DimStyle.Render(fmt.Sprintf("showing %d of %d — use --all or --limit", len(sessions), total)))
 			}
-			if names := peek.Machines(sessions); len(names) > 1 {
+			if names := machines; len(names) > 1 {
 				fmt.Fprintf(out, "%s\n", DimStyle.Render("machines: "+strings.Join(names, ", ")+" — filter with --device"))
 			}
 			return nil

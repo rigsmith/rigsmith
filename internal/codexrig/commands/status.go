@@ -175,7 +175,10 @@ func gatherAccount() status.AccountInfo {
 		if a, rerr := s.Resolve(id.Email); rerr == nil {
 			info.Alias = a.Alias
 		}
-		if o := s.Diagnose(); o.PointerEmail != "" {
+		// Only when nothing worse is already reported. "The credential holds no
+		// usable token" is the more urgent of the two and was being overwritten
+		// by the drift note, which is advice about a login that does not work.
+		if o := s.Diagnose(); o.PointerEmail != "" && info.Problem == "" {
 			info.Problem = "codexrig's active account (" + o.PointerEmail + ") is not the login in use"
 		}
 	}

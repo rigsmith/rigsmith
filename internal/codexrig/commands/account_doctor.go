@@ -42,8 +42,18 @@ func newAccountDoctorCmd() *cobra.Command {
 				}
 			}
 
+			// Computed once, before either output path: a diagnosis that still
+			// reports problems has to leave a non-zero status behind whichever
+			// way it was rendered, or a script reads unhealthy state as healthy.
+			problems := obs.Problems()
 			if asJSON {
-				return writeJSON(out, obs)
+				if err := writeJSON(out, obs); err != nil {
+					return err
+				}
+				if len(problems) > 0 {
+					return errCheckFailed
+				}
+				return nil
 			}
 
 			fmt.Fprintln(out, HeaderStyle.Render("Codex identity"))
@@ -63,7 +73,6 @@ func newAccountDoctorCmd() *cobra.Command {
 				fmt.Fprintf(out, "  %-14s %s\n", codexhome.EnvHome, WarnStyle.Render(obs.EnvHome))
 			}
 
-			problems := obs.Problems()
 			fmt.Fprintln(out)
 			if len(problems) == 0 {
 				fmt.Fprintf(out, "%s\n", OkStyle.Render("✓ the live login and codexrig's record agree"))
@@ -77,7 +86,11 @@ func newAccountDoctorCmd() *cobra.Command {
 			}
 
 			printStoredAccounts(cmd, obs)
-			if len(problems) > 0 && !fix {
+			// Not `&& !fix`. A repair that did not resolve everything is still
+			// an unhealthy account, and reporting success because a fix was
+			// ATTEMPTED is the same mistake as reporting it because JSON was
+			// asked for. `problems` is recomputed after the repair above.
+			if len(problems) > 0 {
 				return errCheckFailed
 			}
 			return nil

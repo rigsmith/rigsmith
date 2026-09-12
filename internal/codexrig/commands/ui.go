@@ -69,6 +69,9 @@ func dispatch(cmd *cobra.Command, verb string) error {
 	next.SetOut(cmd.OutOrStdout())
 	next.SetErr(cmd.ErrOrStderr())
 	next.SetIn(cmd.InOrStdin())
-	next.SetArgs(nil)
+	// Not nil: Cobra resolves SetArgs(nil) to os.Args[1:], which still holds
+	// "ui" — and the dispatched command's cobra.NoArgs then rejects its own
+	// name. An empty non-nil slice means what nil was meant to mean.
+	next.SetArgs([]string{})
 	return next.Execute()
 }

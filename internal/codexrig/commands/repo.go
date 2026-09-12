@@ -87,7 +87,9 @@ func newRepoStatusCmd() *cobra.Command {
 				}
 			}
 
-			if rep.Files == 0 {
+			// Bytes, not just Files: a repo holding only empty files passes a
+			// Files check and then divides by zero, printing NaN% per category.
+			if rep.Files == 0 || rep.Bytes == 0 {
 				fmt.Fprintf(out, "\n  %s\n", DimStyle.Render("nothing synced yet"))
 				return nil
 			}
@@ -131,7 +133,7 @@ func newRepoGCCmd() *cobra.Command {
 			}
 			repo, err := gitrepo.Open(cmd.Context(), staging)
 			if err != nil {
-				return fmt.Errorf("no sync repo on this machine yet")
+				return fmt.Errorf("no sync repo on this machine yet: %w", err)
 			}
 			before, _ := repo.GitDirBytes(cmd.Context())
 			fmt.Fprintf(out, "  %s\n", DimStyle.Render("repacking "+humanBytes(before)+" — this can take a while"))

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -225,7 +226,11 @@ func detectCodexVersion() string {
 	if err != nil {
 		return ""
 	}
-	out, err := exec.Command(bin, "--version").Output()
+	// Bounded: this runs on every sync, including the hook-driven ones that
+	// must never block, and a codex that does not return would stall them all.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "--version").Output()
 	if err != nil {
 		return ""
 	}

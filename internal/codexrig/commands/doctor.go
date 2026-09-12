@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"time"
 
@@ -43,7 +42,11 @@ func NewDoctorCmd(version string) *cobra.Command {
 				Accent: brand.AccentCodex, FixAll: fixAll, Interactive: interactive(),
 			})
 			if fails > 0 {
-				os.Exit(1)
+				// Not os.Exit: `codexrig ui` dispatches this command in-process,
+				// so exiting here takes the whole process down mid-render and
+				// skips every deferred cleanup. main already maps a returned
+				// error to exit code 1, so the gate is unchanged.
+				return errCheckFailed
 			}
 			return nil
 		},
