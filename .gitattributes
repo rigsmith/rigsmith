@@ -9,6 +9,3 @@ scripts/testdata/winget-komac/*.yaml -text
 # Persisted routing fixtures are canonical JSON plus LF; keep their exact bytes
 # on Windows too, regardless of the checkout core.autocrlf setting.
 internal/clauderig/commands/testdata/hook-routing/*.json -text
-
-# Embedded release schemas are hashed against upstream bytes on every platform.
-internal/codexrig/configcodec/schema/*.json -text

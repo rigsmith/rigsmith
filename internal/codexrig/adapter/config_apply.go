@@ -26,8 +26,8 @@ type configReplacements interface {
 // Apply consumes and closes a plan. It obtains the shared destination writer
 // lock, rechecks the full plan, stages all changes, then rechecks before each
 // replacement. Participating restore writers serialize; Codex and other editors
-// must be idle through application. This is not a multi-file transaction. A
-// supported-version validator is still required during PrepareConfigRestore.
+// must be idle through application. This is not a multi-file transaction.
+// PrepareConfigRestore always checks file safety; extra validation is optional.
 func (p *ConfigRestorePlan) Apply(ctx context.Context) (result ConfigRestoreResult, err error) {
 	if p.closed || p.source == nil {
 		return result, ErrConfigPlanClosed

@@ -4,12 +4,12 @@
 existing Codex home. It does not write config files, create a missing home,
 publish destination data, invoke Codex, or expose a new CLI command.
 [Application](CODEXRIG-V2-CONFIG-APPLY.md) now consumes these plans for file
-replacement. [Versioned preparation](CODEXRIG-V2-CONFIG-VALIDATION.md) now adds
-a pinned structural validator; production destination-readiness checks still follow.
+replacement. [Restore safety](CODEXRIG-V2-CONFIG-VALIDATION.md) defines the built-in checks;
+Codex owns runtime semantics.
 
 ## Preparation contract
 
-1. Require a Codex-home destination and a non-nil `ConfigRestoreValidator`.
+1. Require a Codex-home destination. `ConfigRestoreValidator` is optional.
    Validate all incoming names and TOML before opening the destination. Only base
    and named profile files are accepted; traversal, non-config files, duplicates,
    case collisions, reserved Windows names and unsafe backup content refuse the
@@ -23,8 +23,8 @@ a pinned structural validator; production destination-readiness checks still fol
    destination files absent from the backup. For semantic no-ops, retain original
    bytes, comments and formatting. Changed files use the codec's encoding. Empty
    backup sets express no deletion intent.
-4. Check destination fingerprints and the selected name set. Pass detached copies
-   of the complete, sorted proposed base/profile set to the required validator.
+4. Check destination fingerprints and the selected name set. If a validator is supplied, pass detached copies
+   of the complete, sorted proposed base/profile set to it.
    The set includes unchanged and retained files, so validation can evaluate base
    settings together with every profile. A callback failure returns the fixed
    `ErrConfigValidation`, without echoing its potentially private diagnostics.
@@ -43,13 +43,11 @@ not forcibly interrupt callback code or OS syscalls.
 
 ## Private plans and validation responsibility
 
-`ConfigRestoreValidator` remains an explicit integration boundary. The versioned
-entry point composes the bundled structural validator with this mandatory
-destination callback. A production caller must supply supported-version and
-destination checks for usable base/profile configuration, including missing
-helpers, credentials, referenced artifacts and provider/agent definitions. A nil
-validator fails closed. The synthetic accepting validators in tests do not make
-this API ready for a user-facing restore command.
+`ConfigRestoreValidator` is an optional integration check. Nil runs the built-in
+file-name, TOML, portability and destination-consistency checks only. A supplied
+callback may refuse the complete proposed set; it is not expected to certify
+Codex startup, provider availability or external permission policy. Preparation
+and application do not execute Codex or configured helpers.
 
 Validation inputs contain destination credentials and paths. The callback must
 not log or publish them or execute configured helpers. Its buffers are detached:

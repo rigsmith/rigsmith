@@ -144,9 +144,6 @@ func TestPrepareConfigRestoreRejectsInvalidInput(t *testing.T) {
 			t.Fatalf("bad late profile produced a plan or reached validator: %v", err)
 		}
 	}
-	if p, err := PrepareConfigRestore(t.Context(), Root{CodexHome, t.TempDir()}, ConfigCapture{}, nil); !errors.Is(err, ErrConfigRestoreInput) || p != nil {
-		t.Fatal("missing validator accepted")
-	}
 	if p, err := PrepareConfigRestore(t.Context(), Root{UserSkills, t.TempDir()}, ConfigCapture{}, acceptConfig); !errors.Is(err, ErrConfigRestoreInput) || p != nil {
 		t.Fatal("wrong destination kind accepted")
 	}
@@ -355,5 +352,40 @@ func TestRestorePlanMergedBytesLimit(t *testing.T) {
 	p, err := PrepareConfigRestore(t.Context(), Root{CodexHome, root}, backup, func(context.Context, []ConfigFile) error { called = true; return nil })
 	if p != nil || !errors.Is(err, files.ErrSourceLimit) || called {
 		t.Fatalf("oversized merged set accepted: %v", err)
+	}
+}
+
+// Restore checks file safety without requiring a second implementation of Codex.
+func TestPrepareConfigRestoreBuiltInSafety(t *testing.T) {
+	root := t.TempDir()
+	putConfig(t, root, "config.toml", "model='old'\nmodel_provider='local-provider'\napi_key='keep-local'\n[permissions.local.network.domains]\n'example.test'='allow'")
+	plan, err := PrepareConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": "model='future-model'\nmodel_provider='local-provider'"}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer plan.Close()
+	if len(plan.Changes()) != 1 || plan.Changes()[0].Action != "update" {
+		t.Fatal("missing preview", plan.Changes())
+	}
+	result, err := plan.Apply(t.Context())
+	if err != nil || len(result.Applied) != 1 {
+		t.Fatal("safe restore failed", result, err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "future-model") || !strings.Contains(string(data), "keep-local") || !strings.Contains(string(data), "permissions") {
+		t.Fatal("lost portable or local settings")
+	}
+	for _, unsafe := range []string{"model=", "api_key='incoming-secret'"} {
+		p, err := PrepareConfigRestore(t.Context(), Root{CodexHome, root}, captureFiles(map[string]string{"config.toml": unsafe}), nil)
+		if p != nil {
+			p.Close()
+			t.Fatal("unsafe input produced plan")
+		}
+		if err == nil {
+			t.Fatal("unsafe input accepted")
+		}
 	}
 }

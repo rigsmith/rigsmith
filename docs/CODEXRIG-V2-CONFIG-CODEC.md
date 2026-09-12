@@ -71,9 +71,9 @@ conservative merge contract, not an attempt to infer integration identity.
 The resulting bytes are not automatically a runnable Codex config. In particular,
 a new machine may still need a command, helper or credentials supplied locally.
 The [restore planner](CODEXRIG-V2-CONFIG-RESTORE.md) merges the full destination
-set and requires a caller-supplied validator. Supported-version usable-config
-validation remains an integration gate; [file application](CODEXRIG-V2-CONFIG-APPLY.md)
-now handles staged replacement and partial-outcome reporting. It must never publish the
+set and always checks file safety; a caller-supplied validator is optional.
+Codex owns runtime semantics. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
+handles staged replacement and partial-outcome reporting. It must never publish the
 local merged output, which contains destination secrets.
 
 ## Shared mechanics and Claude compatibility
@@ -91,16 +91,15 @@ Tests use synthetic bytes only, including round trips, redaction/refusal, quoted
 and escaped keys, native TOML types, array reordering, endpoint changes, limits,
 malformed local input and fuzzed capture/restore idempotence.
 
-## Remaining 8b gates
+## Remaining workflow
 
-[Bounded source-file capture](CODEXRIG-V2-CONFIG-CAPTURE.md) connects this codec to
-base/profile files in 8b.2. [Content path policy](CODEXRIG-V2-CONFIG-PATHS.md)
-applies in 8b.3. [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) follows in
-8b.4, with [file application](CODEXRIG-V2-CONFIG-APPLY.md) in 8b.5.
-Supported-version validation, structured hook
-and customization processing, independent CodexRig config/state and backup repo,
-and user-facing sync/restore integration remain to be delivered. This codec does
-not complete milestone 8b or enable sync in the preview.
+[Capture](CODEXRIG-V2-CONFIG-CAPTURE.md), [path policy](CODEXRIG-V2-CONFIG-PATHS.md),
+[restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) and
+[file application](CODEXRIG-V2-CONFIG-APPLY.md) are implemented internally.
+Next, connect independent settings/repository wiring and public config commands,
+including the minimum-version check and interrupted-restore recovery. Customizations,
+sessions and hooks are later extensions. The [delivery plan](CLAUDERIG-SHARED-LAYERS-ROADMAP.md)
+defines release scope; no runtime-semantic validation stage remains.
 
 Codex field semantics were checked against the official
 [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
