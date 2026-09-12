@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,29 @@ type machine struct {
 	codex   string // its ~/.codex
 	name    string
 	osToken string
+}
+
+// project is the fixture's project directory, spelled the way this platform
+// spells a path. Windows is the point: C:\Users\… is what Codex records there,
+// and it is what PortablizeKeys has to cope with.
+func (m machine) project() string { return filepath.Join(m.home, "Git", "thing") }
+
+// tomlPath spells a native path as a TOML LITERAL string. A basic string reads
+// the backslashes in C:\Users as escape sequences and the document stops
+// parsing — which, on Windows, made the config unreadable, the sync skip it,
+// and four tests fail for a reason that had nothing to do with what they check.
+// A literal string is also how a person would write a Windows path in TOML.
+func tomlPath(p string) string { return "'" + p + "'" }
+
+// jsonPath spells a native path as a JSON string, escaped as JSON requires.
+// Codex records the working directory inside the rollout, so the fixture has to
+// produce a document that decodes.
+func jsonPath(p string) string {
+	b, err := json.Marshal(p)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
 }
 
 func newMachine(t *testing.T, name string) machine {
@@ -77,10 +101,10 @@ args = ["mcp", "proxy"]
 [mcp_servers.railway.env]
 RAILWAY_TOKEN = "`+fakeToken+`"
 
-[projects."`+m.home+`/Git/thing"]
+[projects.`+tomlPath(m.project())+`]
 trust_level = "trusted"
 
-[hooks.state."`+m.home+`/Git/thing/.codex/hooks.json:pre_tool_use:0:0"]
+[hooks.state.`+tomlPath(filepath.Join(m.project(), ".codex", "hooks.json")+":pre_tool_use:0:0")+`]
 trusted_hash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 `)
 	m.write(t, "AGENTS.md", "# house rules\nBe brief.\n")
@@ -99,7 +123,7 @@ const rolloutRel = "sessions/2026/09/05/rollout-2026-09-05T11-22-59-01a0722a-735
 
 func seedRollout(t *testing.T, m machine) {
 	t.Helper()
-	meta := `{"timestamp":"2026-09-05T11:22:59.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0722a-7356-7592-922a-336289bdc101","timestamp":"2026-09-05T11:22:59.016Z","cwd":"` + m.home + `/Git/thing","cli_version":"0.144.6","source":"vscode","git":{"branch":"main"}}}`
+	meta := `{"timestamp":"2026-09-05T11:22:59.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0722a-7356-7592-922a-336289bdc101","timestamp":"2026-09-05T11:22:59.016Z","cwd":` + jsonPath(m.project()) + `,"cli_version":"0.144.6","source":"vscode","git":{"branch":"main"}}}`
 	msg := `{"timestamp":"2026-09-05T11:23:00.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review the launcher"}]}}`
 	m.write(t, rolloutRel, meta+"\n"+msg+"\n")
 }
@@ -272,7 +296,7 @@ func TestRolloutsAreOptInAndCarryTheirCwdIntoTheManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := m.home + "/Git/thing"
+	want := m.project()
 	tmpl, ok := man.Cwds[want]
 	if !ok {
 		t.Fatalf("the rollout's working directory is not in the manifest: %+v", man.Cwds)
@@ -506,7 +530,7 @@ func TestRetentionDropsOldRolloutsFromTheTreeAsWellAsOnCopy(t *testing.T) {
 func TestScrubbingRewritesTheStagedCopyAndLeavesTheLiveOneAlone(t *testing.T) {
 	m := newMachine(t, "one")
 	seedTypicalHome(t, m)
-	meta := `{"timestamp":"2026-09-05T11:22:59.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0722a-7356-7592-922a-336289bdc101","cwd":"` + m.home + `"}}`
+	meta := `{"timestamp":"2026-09-05T11:22:59.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0722a-7356-7592-922a-336289bdc101","cwd":` + jsonPath(m.home) + `}}`
 	leak := `{"timestamp":"2026-09-05T11:23:00.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"use ` + fakeToken + ` please"}]}}`
 	m.write(t, rolloutRel, meta+"\n"+leak+"\n")
 
@@ -672,7 +696,7 @@ func TestAnAgedOutSessionIsStillRememberedAndFindable(t *testing.T) {
 func bigRollout(t *testing.T, cwd string, turns int) string {
 	t.Helper()
 	var b strings.Builder
-	b.WriteString(`{"timestamp":"2026-09-05T11:22:59.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0722a-7356-7592-922a-336289bdc101","timestamp":"2026-09-05T11:22:59.016Z","cwd":"` + cwd + `","cli_version":"0.144.6"}}` + "\n")
+	b.WriteString(`{"timestamp":"2026-09-05T11:22:59.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0722a-7356-7592-922a-336289bdc101","timestamp":"2026-09-05T11:22:59.016Z","cwd":` + jsonPath(cwd) + `,"cli_version":"0.144.6"}}` + "\n")
 	b.WriteString(`{"timestamp":"2026-09-05T11:23:00.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review the launcher"}]}}` + "\n")
 	filler := strings.Repeat("y", 900)
 	for i := 0; i < turns; i++ {
@@ -687,7 +711,7 @@ func TestALargeRolloutIsStoredInPartsAndComesBackWhole(t *testing.T) {
 	// per-file cap, so without this it is the one conversation never backed up.
 	m := newMachine(t, "one")
 	seedTypicalHome(t, m)
-	want := bigRollout(t, m.home+"/Git/thing", 12000) // ~11 MB, over the 8 MB threshold
+	want := bigRollout(t, m.project(), 12000) // ~11 MB, over the 8 MB threshold
 	m.write(t, rolloutRel, want)
 
 	cfg, mc := m.cfg(true)
@@ -727,7 +751,7 @@ func TestALargeRolloutIsStoredInPartsAndComesBackWhole(t *testing.T) {
 	if string(got) != want {
 		t.Error("the chunked rollout does not read back byte for byte")
 	}
-	if meta, ok, _ := rollout.ReadMeta(staged); !ok || meta.Cwd != m.home+"/Git/thing" {
+	if meta, ok, _ := rollout.ReadMeta(staged); !ok || meta.Cwd != m.project() {
 		t.Errorf("the header reader could not read a chunked rollout: %+v", meta)
 	}
 	if title := rollout.FirstPrompt(staged); title != "review the launcher" {

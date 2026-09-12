@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -305,7 +306,10 @@ func TestEnsureHomeSeedsSharesAndReportsReady(t *testing.T) {
 	if st.Mode()&os.ModeSymlink != 0 {
 		t.Fatal("auth.json must be a real file in the account's home, never a link to the machine's")
 	}
-	if st.Mode().Perm() != 0o600 {
+	// Windows maps only the read-only bit through os.Chmod, so 0600 is not
+	// expressible there and the file reports -rw-rw-rw-. The production code is
+	// right on POSIX; asserting it everywhere only ever failed the Windows leg.
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Errorf("auth.json mode = %v, want 0600 — it is the whole secret", st.Mode().Perm())
 	}
 	for _, name := range []string{"config.toml", "AGENTS.md"} {
@@ -577,5 +581,71 @@ func TestSlugifyProducesIDsThatConsumersAccept(t *testing.T) {
 		if strings.HasPrefix(id, "-") || strings.HasSuffix(id, "-") || strings.Contains(id, "--") {
 			t.Errorf("id %q would be rejected downstream", id)
 		}
+	}
+}
+
+// os.WriteFile applies its mode only when it CREATES the file, so rewriting an
+// auth.json that was somehow left world-readable would faithfully preserve that.
+// The store writes a fresh file and renames, which cannot inherit a mode.
+func TestSaveTightensAWorldReadableCredential(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go's Chmod on Windows maps only the read-only bit, so 0600 is not expressible")
+	}
+	s, _ := sandbox(t)
+	a, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred := s.credPath(a.ID)
+	if err := os.Chmod(cred, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro")); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Lstat(cred)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v after a rewrite, want 0600", st.Mode().Perm())
+	}
+}
+
+// An accounts directory that cannot be listed but can still be written to is
+// the shape that loses a credential: capture sees no accounts, treats every
+// slug as free, and overwrites somebody else's login with this one.
+func TestCaptureRefusesWhenItCannotSeeWhatIsAlreadyThere(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory permission bits do not gate traversal on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: directory permissions are not enforced")
+	}
+	s, _ := sandbox(t)
+	first, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(s.credPath(first.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Chmod(s.accountsDir(), 0o300); err != nil { // writable, not listable
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(s.accountsDir(), 0o700) })
+
+	if _, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-9", "pro")); err == nil {
+		t.Fatal("capture proceeded without being able to see the existing accounts")
+	}
+	_ = os.Chmod(s.accountsDir(), 0o700)
+	after, err := os.ReadFile(s.credPath(first.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Error("the existing account's credential was overwritten")
 	}
 }

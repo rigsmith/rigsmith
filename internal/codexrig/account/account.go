@@ -168,7 +168,14 @@ func (s *Store) CaptureLive(cred []byte) (Account, bool, error) {
 		return Account{}, false, errors.New("could not determine who this credential belongs to — codexrig needs an email (ChatGPT login) or an account id to name it by")
 	}
 
-	existing, _ := s.List()
+	// Not `existing, _ :=`. A directory that cannot be enumerated but can still
+	// be written to is the dangerous shape: the loop below sees no accounts, so
+	// it treats every slug as free and hands back an id that already belongs to
+	// somebody, and save() then overwrites their credential with this one.
+	existing, err := s.List()
+	if err != nil {
+		return Account{}, false, fmt.Errorf("cannot read the accounts directory, so a new login could overwrite an existing one: %w", err)
+	}
 	accountID := strings.TrimSpace(id.AccountID)
 	slug := Slugify(label)
 	if slug == "" {
@@ -229,19 +236,32 @@ func (s *Store) save(a Account, cred []byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(s.metaPath(a.ID), append(b, '\n'), 0o600); err != nil {
+	// atomicWrite, not os.WriteFile, for two reasons that both bite here.
+	// WriteFile truncates before it writes, and SaveCredential's own doc says
+	// the stored copy is the only one left once the machine has switched away —
+	// so a crash mid-write destroys a credential with nothing to restore from.
+	// And WriteFile's mode applies only when CREATING: rewriting a file that
+	// was somehow left 0644 would faithfully preserve 0644. Writing a fresh
+	// temp file and renaming gets both properties at once.
+	if err := atomicWrite(s.metaPath(a.ID), append(b, '\n'), 0o600); err != nil {
 		return err
 	}
 	if len(cred) > 0 {
-		if err := os.WriteFile(s.credPath(a.ID), cred, 0o600); err != nil {
+		if err := atomicWrite(s.credPath(a.ID), cred, 0o600); err != nil {
 			return err
 		}
 		// An isolated home that already exists is holding the PREVIOUS
 		// credential, and nothing about its own files changed when this one
 		// did — so EnsureHome's "it already authenticates" test would keep
 		// handing back the stale login forever. Mark it instead.
+		// Not discarded: if the marker cannot be written, EnsureHome's "this
+		// home already authenticates" test keeps handing back the PREVIOUS
+		// login, forever, while capture reports success. A capture whose
+		// effects will not be seen has not succeeded.
 		if dirExists(s.HomeDir(a.ID)) {
-			_ = os.WriteFile(s.stalePath(a.ID), []byte("credential updated\n"), 0o600)
+			if err := atomicWrite(s.stalePath(a.ID), []byte("credential updated\n"), 0o600); err != nil {
+				return fmt.Errorf("stored the credential but could not mark %s's home stale, so it would keep using the old login: %w", a.ID, err)
+			}
 		}
 	}
 	return nil

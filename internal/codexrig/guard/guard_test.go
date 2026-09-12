@@ -2,11 +2,26 @@ package guard
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
-func onBase() Env { return Env{InRepo: true, Root: "/repo", OnBase: true} }
+// abs spells an absolute path the way this platform spells one. Windows is the
+// whole reason: filepath.IsAbs("/elsewhere") is FALSE there, because there is no
+// drive letter — so repoRel treats the literal as relative, joins it onto the
+// cwd, and lands INSIDE the repo. A test about a path outside the repository
+// then asserts the opposite of what it says, and only Windows notices.
+func abs(parts ...string) string {
+	root := "/"
+	if runtime.GOOS == "windows" {
+		root = `C:\`
+	}
+	return filepath.Join(root, filepath.Join(parts...))
+}
+
+func onBase() Env { return Env{InRepo: true, Root: abs("repo"), OnBase: true} }
 
 func TestAPatchTouchingAnyCodeFileIsRefused(t *testing.T) {
 	// The case a per-file guard gets wrong: Codex applies one patch that
@@ -22,7 +37,7 @@ func TestAPatchTouchingAnyCodeFileIsRefused(t *testing.T) {
 -x
 +y
 *** End Patch`
-	res := Evaluate(Request{Tool: "apply_patch", Cwd: "/repo", Command: patch}, onBase())
+	res := Evaluate(Request{Tool: "apply_patch", Cwd: abs("repo"), Command: patch}, onBase())
 	if res.Decision != Deny {
 		t.Fatal("a patch that rewrites a .go file on a base branch was allowed")
 	}
@@ -36,7 +51,7 @@ func TestAPatchOfOnlyDocsIsAllowed(t *testing.T) {
 *** Update File: README.md
 *** Add File: docs/design.md
 *** End Patch`
-	if Evaluate(Request{Tool: "apply_patch", Cwd: "/repo", Command: patch}, onBase()).Decision != Defer {
+	if Evaluate(Request{Tool: "apply_patch", Cwd: abs("repo"), Command: patch}, onBase()).Decision != Defer {
 		t.Error("documentation should be editable on a base branch")
 	}
 }
@@ -61,11 +76,11 @@ func TestPatchPathsReadsEveryAddressingForm(t *testing.T) {
 }
 
 func TestASingleFileEditIsJudgedToo(t *testing.T) {
-	deny := Evaluate(Request{Tool: "Write", Cwd: "/repo", FilePath: "/repo/main.go"}, onBase())
+	deny := Evaluate(Request{Tool: "Write", Cwd: abs("repo"), FilePath: abs("repo", "main.go")}, onBase())
 	if deny.Decision != Deny {
 		t.Error("a code write on a base branch was allowed")
 	}
-	allow := Evaluate(Request{Tool: "Write", Cwd: "/repo", FilePath: "/repo/CHANGELOG.md"}, onBase())
+	allow := Evaluate(Request{Tool: "Write", Cwd: abs("repo"), FilePath: abs("repo", "CHANGELOG.md")}, onBase())
 	if allow.Decision != Defer {
 		t.Error("a markdown write on a base branch was refused")
 	}
@@ -79,22 +94,22 @@ func TestARelativePathIsResolvedAgainstTheToolsCwd(t *testing.T) {
 }
 
 func TestAPathOutsideTheRepositoryIsNotThisRepositorysBusiness(t *testing.T) {
-	res := Evaluate(Request{Tool: "Write", Cwd: "/repo", FilePath: "/elsewhere/thing.go"}, onBase())
+	res := Evaluate(Request{Tool: "Write", Cwd: abs("repo"), FilePath: abs("elsewhere", "thing.go")}, onBase())
 	if res.Decision != Defer {
 		t.Error("a file outside the repo was judged by the repo's branch policy")
 	}
 }
 
 func TestNothingIsRefusedOffABaseBranch(t *testing.T) {
-	env := Env{InRepo: true, Root: "/repo", OnBase: false}
-	if Evaluate(Request{Tool: "Write", Cwd: "/repo", FilePath: "/repo/main.go"}, env).Decision != Defer {
+	env := Env{InRepo: true, Root: abs("repo"), OnBase: false}
+	if Evaluate(Request{Tool: "Write", Cwd: abs("repo"), FilePath: abs("repo", "main.go")}, env).Decision != Defer {
 		t.Error("a branch is exactly where code changes belong")
 	}
 }
 
 func TestTheOverrideIsHonoured(t *testing.T) {
-	env := Env{InRepo: true, Root: "/repo", OnBase: true, Override: true}
-	if Evaluate(Request{Tool: "Write", Cwd: "/repo", FilePath: "/repo/main.go"}, env).Decision != Defer {
+	env := Env{InRepo: true, Root: abs("repo"), OnBase: true, Override: true}
+	if Evaluate(Request{Tool: "Write", Cwd: abs("repo"), FilePath: abs("repo", "main.go")}, env).Decision != Defer {
 		t.Error("an explicit override was ignored")
 	}
 }
@@ -102,21 +117,21 @@ func TestTheOverrideIsHonoured(t *testing.T) {
 func TestBypassPermissionsIsRespected(t *testing.T) {
 	// The user has already told Codex to stop asking. Being the one thing that
 	// still refuses just teaches them to remove the hook.
-	req := Request{Tool: "Write", Cwd: "/repo", FilePath: "/repo/main.go", PermissionMode: "bypassPermissions"}
+	req := Request{Tool: "Write", Cwd: abs("repo"), FilePath: abs("repo", "main.go"), PermissionMode: "bypassPermissions"}
 	if Evaluate(req, onBase()).Decision != Defer {
 		t.Error("the guard argued with a mode the user explicitly chose")
 	}
 }
 
 func TestAHiddenWorktreeIsRefusedEvenOffABaseBranch(t *testing.T) {
-	env := Env{InRepo: true, Root: "/repo", OnBase: false}
-	res := Evaluate(Request{Tool: "Bash", Cwd: "/repo", Command: "git worktree add .codex/worktrees/x -b x"}, env)
+	env := Env{InRepo: true, Root: abs("repo"), OnBase: false}
+	res := Evaluate(Request{Tool: "Bash", Cwd: abs("repo"), Command: "git worktree add .codex/worktrees/x -b x"}, env)
 	if res.Decision != Deny {
 		t.Error("a worktree under .codex/worktrees was allowed")
 	}
 	// Removing one has to keep working: blocking the cleanup is a poor way to
 	// discourage them.
-	rm := Evaluate(Request{Tool: "Bash", Cwd: "/repo", Command: "git worktree remove .codex/worktrees/x"}, env)
+	rm := Evaluate(Request{Tool: "Bash", Cwd: abs("repo"), Command: "git worktree remove .codex/worktrees/x"}, env)
 	if rm.Decision != Defer {
 		t.Error("cleaning up a hidden worktree was blocked")
 	}
