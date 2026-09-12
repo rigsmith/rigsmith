@@ -91,16 +91,15 @@ Tests use synthetic bytes only, including round trips, redaction/refusal, quoted
 and escaped keys, native TOML types, array reordering, endpoint changes, limits,
 malformed local input and fuzzed capture/restore idempotence.
 
-## Remaining 8b gates
+## Remaining workflow
 
-[Bounded source-file capture](CODEXRIG-V2-CONFIG-CAPTURE.md) connects this codec to
-base/profile files in 8b.2. [Content path policy](CODEXRIG-V2-CONFIG-PATHS.md)
-applies in 8b.3. [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) follows in
-8b.4, with [file application](CODEXRIG-V2-CONFIG-APPLY.md) in 8b.5.
-The command-level minimum-version check, structured hook
-and customization processing, independent CodexRig config/state and backup repo,
-and user-facing sync/restore integration remain to be delivered. This codec does
-not complete milestone 8b or enable sync in the preview.
+[Capture](CODEXRIG-V2-CONFIG-CAPTURE.md), [path policy](CODEXRIG-V2-CONFIG-PATHS.md),
+[restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) and
+[file application](CODEXRIG-V2-CONFIG-APPLY.md) are implemented internally.
+Next, connect independent settings/repository wiring and public config commands,
+including the minimum-version check and interrupted-restore recovery. Customizations,
+sessions and hooks are later extensions. The [delivery plan](CLAUDERIG-SHARED-LAYERS-ROADMAP.md)
+defines release scope; no runtime-semantic validation stage remains.
 
 Codex field semantics were checked against the official
 [configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)

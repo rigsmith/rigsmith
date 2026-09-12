@@ -81,9 +81,11 @@ references in every selected file; arbitrary strings are not proven portable.
 
 [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) merges destination bytes
 and checks the complete file set without writing files. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
-now handles replacement. The command-level minimum-version check, structured hooks/customizations, independent CodexRig state/repository
-and sync/restore commands remain in 8b. The internal codec/capture changesets are deferred until a user-facing workflow
-uses them; these prerequisites should not announce unavailable features.
+now handles replacement. Independent CodexRig settings/repository wiring and public
+config commands, including the minimum-version check and interrupted-restore
+recovery, are next. Customizations, sessions and hooks are separate later
+extensions in the [delivery plan](CLAUDERIG-SHARED-LAYERS-ROADMAP.md).
+End-user changesets accompany the usable workflow, not internal prerequisites.
 No existing Claude caller is switched to
 the new Source API. Claude's file handling, backup defaults and state are unchanged.
 

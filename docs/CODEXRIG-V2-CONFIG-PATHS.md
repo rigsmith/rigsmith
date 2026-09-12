@@ -72,7 +72,9 @@ configuration, credentials, or referenced files are read in validation.
 
 [Restore preparation](CODEXRIG-V2-CONFIG-RESTORE.md) now checks the complete
 destination set, with an optional additional validation callback. [File application](CODEXRIG-V2-CONFIG-APPLY.md)
-now handles replacement. The command-level minimum-version check, structured hooks/customizations,
-independent CodexRig state/repository and sync/restore commands remain the next
-8b work. The shared path mapping engine and Claude adapter are unchanged; this
-policy concerns Codex-specific TOML semantics.
+now handles replacement. Independent CodexRig settings/repository wiring and public
+config commands, including the minimum-version check and interrupted-restore
+recovery, are next. Customizations, sessions and hooks are separate later
+extensions in the [delivery plan](CLAUDERIG-SHARED-LAYERS-ROADMAP.md).
+The shared path mapping engine and Claude adapter are unchanged; this policy
+concerns Codex-specific TOML handling.
