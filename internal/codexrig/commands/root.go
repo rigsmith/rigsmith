@@ -11,7 +11,7 @@ func NewRootCmd(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:     "codexrig",
 		Version: version,
-		Short:   "Sync your Codex CLI setup across machines, and run several logins side by side",
+		Short:   "Sync your Codex CLI configuration across machines, and run several logins side by side",
 		Long: "codexRig syncs your Codex CLI config, instructions, skills and session\n" +
 			"rollouts to your own git remote and restores them on any machine — rewriting\n" +
 			"paths across OSes and never leaking secrets. It also keeps several Codex\n" +

@@ -5,6 +5,7 @@
 #   - ./cmd/rig       -> binary `rig`       (dev launcher)
 #   - ./cmd/shiprig   -> binary `shiprig`   (release tool)
 #   - ./cmd/clauderig -> binary `clauderig` (Claude config sync)
+#   - ./cmd/codexrig  -> binary `codexrig`  (Codex config sync)
 #   - ./cmd/changerig -> binary `changerig` (changeset tool)
 #
 # Each binary gets its own build block with an explicit `main` path.
@@ -97,6 +98,24 @@ builds:
       post:
         - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
 
+  - id: codexrig
+    main: ./cmd/codexrig
+    binary: codexrig
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    hooks:
+      post:
+        - cmd: sh ./scripts/sign-windows.sh "{{ .Path }}" "{{ .Os }}"
+
   - id: changerig
     main: ./cmd/changerig
     binary: changerig
@@ -128,6 +147,7 @@ notarize:
         - shiprig
         - changerig
         - clauderig
+        - codexrig
       sign:
         certificate: "{{ .Env.MACOS_SIGN_P12 }}" # base64 of the Developer ID Application .p12
         password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
@@ -154,6 +174,17 @@ archives:
     ids:
       - clauderig
     name_template: "clauderig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+
+  - id: codexrig
+    ids:
+      - codexrig
+    name_template: "codexrig_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
     format_overrides:
@@ -192,6 +223,7 @@ archives:
       - rig
       - shiprig
       - clauderig
+      - codexrig
       - changerig
     name_template: "rigsmith_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
@@ -283,20 +315,29 @@ homebrew_casks:
     homepage: "https://rigsmith.dev"
     description: "Sync your Claude Code configuration across machines, path-correct on restore"
 
-  # The bundle cask: `brew install --cask rigsmith/tap/rigsmith` installs all four
-  # binaries from the combined archive. `binaries:` (plural) emits one stanza per
-  # tool. (`brews` formulae would be simpler for multi-binary but are deprecated.)
-  - name: rigsmith
-    ids: [rigsmith]
-    binaries: [rig, changerig, shiprig, clauderig]
+  - name: codexrig
+    ids: [codexrig]
     repository:
       owner: rigsmith
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://rigsmith.dev"
-    description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
+    description: "Sync your Codex CLI configuration across machines, and run several logins side by side"
 
-# Scoop bucket (Windows): `scoop install rigsmith` drops all four binaries on PATH
+  # The bundle cask: `brew install --cask rigsmith/tap/rigsmith` installs all five
+  # binaries from the combined archive. `binaries:` (plural) emits one stanza per
+  # tool. (`brews` formulae would be simpler for multi-binary but are deprecated.)
+  - name: rigsmith
+    ids: [rigsmith]
+    binaries: [rig, changerig, shiprig, clauderig, codexrig]
+    repository:
+      owner: rigsmith
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://rigsmith.dev"
+    description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig, codexrig"
+
+# Scoop bucket (Windows): `scoop install rigsmith` drops all five binaries on PATH
 # from the combined archive. Disabled until the bucket repo + token exist, so the
 # release never fails on a missing token; set SCOOP_BUCKET_TOKEN (write access to
 # rigsmith/scoop-bucket) to activate.
@@ -309,7 +350,7 @@ scoops:
       name: scoop-bucket
       token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
     homepage: "https://rigsmith.dev"
-    description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
+    description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig, codexrig"
     license: MIT
 
 # winget (Windows): DISABLED — scripts/winget-submit.sh (komac) owns this lane.
@@ -403,6 +444,30 @@ winget:
           name: winget-pkgs
           branch: master
 
+  - name: CodexRig
+    package_identifier: RigSmith.CodexRig
+    publisher: RigSmith
+    publisher_url: "https://rigsmith.dev"
+    author: John Campion Jr
+    short_description: "Sync your Codex CLI configuration across machines, and run several logins side by side"
+    homepage: "https://rigsmith.dev"
+    license: MIT
+    license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"
+    ids: [codexrig]
+    skip_upload: "true" # komac owns this lane — see the note above
+    repository:
+      owner: JohnCampionJr
+      name: winget-pkgs
+      branch: "codexrig-{{ .Version }}"
+      token: "{{ .Env.WINGET_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
   - name: ShipRig
     package_identifier: RigSmith.ShipRig
     publisher: RigSmith
@@ -435,7 +500,7 @@ winget:
     publisher: RigSmith
     publisher_url: "https://rigsmith.dev"
     author: John Campion Jr
-    short_description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig"
+    short_description: "The rigsmith toolchain: rig, changerig, shiprig, clauderig, codexrig"
     homepage: "https://rigsmith.dev"
     license: MIT
     license_url: "https://github.com/rigsmith/rigsmith/blob/main/LICENSE"

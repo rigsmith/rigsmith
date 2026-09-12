@@ -12,7 +12,8 @@
   "changelogScopes": [
     "rig",
     "clauderig",
-    "clauderig-ui"
+    "clauderig-ui",
+    "codexrig"
   ],
   "access": "restricted",
   "updateInternalDependencies": "patch",

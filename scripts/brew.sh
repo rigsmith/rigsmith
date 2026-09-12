@@ -32,10 +32,10 @@ fi
 
 case "$what" in
   all|rigsmith) cask="rigsmith" ;;                       # the bundle: all four CLIs
-  rig|changerig|shiprig|clauderig|clauderig-ui) cask="$what" ;;
+  rig|changerig|shiprig|clauderig|codexrig|clauderig-ui) cask="$what" ;;
   *)
     echo "unknown package: $what" >&2
-    echo "try: rigsmith (all four), rig, changerig, shiprig, clauderig, clauderig-ui" >&2
+    echo "try: rigsmith (all five), rig, changerig, shiprig, clauderig, codexrig, clauderig-ui" >&2
     exit 1
     ;;
 esac

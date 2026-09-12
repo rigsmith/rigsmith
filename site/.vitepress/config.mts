@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitepress'
 import { withMermaid } from 'vitepress-plugin-mermaid'
 
-// The site is keyed by binary name: /rig/, /changerig/, /shiprig/, /clauderig/,
+// The site is keyed by binary name: /rig/, /changerig/, /shiprig/, /clauderig/, /codexrig/,
 // plus /core/ (the engine) and /compare/. Each tool section gets its own
 // sidebar, selected by path prefix below. Brand casing per the family
 // convention: `Rig` capitalized in prose (shipRig, changeRig, claudeRig),
@@ -52,6 +52,7 @@ export default withMermaid(defineConfig({
       { text: 'changeRig', link: '/changerig/', activeMatch: '^/changerig/' },
       { text: 'shipRig', link: '/shiprig/', activeMatch: '^/shiprig/' },
       { text: 'claudeRig', link: '/clauderig/', activeMatch: '^/clauderig/' },
+      { text: 'codexRig', link: '/codexrig/', activeMatch: '^/codexrig/' },
       { text: 'core', link: '/core/', activeMatch: '^/core/' },
       { text: 'Compare', link: '/compare/changesets', activeMatch: '^/compare/' },
     ],
@@ -93,6 +94,15 @@ export default withMermaid(defineConfig({
           items: [
             { text: 'Overview', link: '/clauderig/' },
             { text: 'Commands', link: '/clauderig/commands' },
+          ],
+        },
+      ],
+      '/codexrig/': [
+        {
+          text: 'codexRig — Codex CLI sync',
+          items: [
+            { text: 'Overview', link: '/codexrig/' },
+            { text: 'Commands', link: '/codexrig/commands' },
           ],
         },
       ],

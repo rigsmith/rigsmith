@@ -13,10 +13,11 @@ and the shared engine under `core/`:
 | [`cmd/changerig/`](cmd/changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Its `commands` package (under `internal/changerig`) is reused by shiprig. Aliased `changeset`. |
 | [`cmd/shiprig/`](cmd/shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
 | [`cmd/clauderig/`](cmd/clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction, complete staged-text secret scanning, Git byte preservation, and transcript chunking (on for new configurations). Restore checks that recreated memory links resolve inside the selected folder and skips links pointing outside it. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |
+| [`cmd/codexrig/`](cmd/codexrig/) | `codexrig` | The same idea for the Codex CLI: sync `config.toml`, `AGENTS.md`, skills, prompts and rules across machines via a private git repo, with cross-OS path correction (including the absolute paths Codex writes as TOML table KEYS), TOML-aware field-level redaction, and several Codex logins side by side, each in its own `CODEX_HOME`. Session rollouts are opt-in and are never rewritten. See [docs/CODEXRIG-DESIGN.md](docs/CODEXRIG-DESIGN.md). |
 
 These binaries are single, statically-linked Go executables — the north-star
 property: no .NET runtime, no Node, installable via `curl | sh` / Homebrew /
-winget / Scoop on any machine John roams onto. Every release builds all four
+winget / Scoop on any machine John roams onto. Every release builds all five
 tools for macOS, Linux, and Windows, on x86-64 and Arm64 alike.
 
 ## Status

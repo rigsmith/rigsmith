@@ -54,6 +54,7 @@ packages="${WINGET_PACKAGES:-RigSmith.Rig:rig
 RigSmith.ShipRig:shiprig
 RigSmith.ChangeRig:changerig
 RigSmith.ClaudeRig:clauderig
+RigSmith.CodexRig:codexrig
 RigSmith.Rigsmith:rigsmith}"
 
 rm -rf "$out"
