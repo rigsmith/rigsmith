@@ -756,10 +756,11 @@ func TestListReportsAnUnreadableAccountRatherThanHidingIt(t *testing.T) {
 // The credential is written before the record that describes it. Written the
 // other way round, a failed credential write left new metadata paired with
 // the old credential — List believed the record, Switch used the tokens.
+//
+// Only the CREDENTIAL write may fail here. The first version of this test made
+// the whole directory unwritable, which failed the record write too under
+// either order, and passed with the order swapped back.
 func TestAFailedCredentialWriteLeavesTheRecordUntouched(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
-		t.Skip("needs a directory the owner cannot write")
-	}
 	s, _ := sandbox(t)
 	a, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
 	if err != nil {
@@ -769,14 +770,17 @@ func TestAFailedCredentialWriteLeavesTheRecordUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(s.dir(a.ID), 0o500); err != nil { // no new files: the atomic write must fail
+	// A non-empty directory where auth.json goes: the atomic rename onto it
+	// fails, while meta.json beside it writes fine.
+	if err := os.Remove(s.credPath(a.ID)); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(s.dir(a.ID), 0o700) })
+	if err := os.MkdirAll(filepath.Join(s.credPath(a.ID), "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "plus")); err == nil {
 		t.Fatal("expected the credential write to fail")
 	}
-	_ = os.Chmod(s.dir(a.ID), 0o700)
 	after, _ := os.ReadFile(s.metaPath(a.ID))
 	if !bytes.Equal(after, before) {
 		t.Error("the record changed although the credential did not")
