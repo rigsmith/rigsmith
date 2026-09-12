@@ -458,7 +458,7 @@ func judgeEnv(ctx context.Context) mcp.Env {
 // HEAD, not the index. `git ls-files` answers "is it staged", and a file added
 // but never committed is not in a clone — so the index would have said "your
 // repo" about something no one else can see.
-func projectFileCarriage(ctx context.Context, repoRoot string) (mcp.Carriage, map[string]bool) {
+func projectFileCarriage(ctx context.Context, repoRoot string) (mcp.Carriage, map[string]string) {
 	if repoRoot == "" {
 		return mcp.CarriageUnknown, nil
 	}
@@ -471,11 +471,15 @@ func projectFileCarriage(ctx context.Context, repoRoot string) (mcp.Carriage, ma
 		// The file is committed. Which SERVERS are committed is a second
 		// question: a tracked file can hold one that exists only in the
 		// working tree, and a clone gets the commit.
-		names, nerr := mcp.ServerNamesIn(committed)
+		defs, nerr := mcp.ServerDefsIn(committed)
 		if nerr != nil {
-			return mcp.CarriageTracked, nil // committed but unreadable there
+			// Committed but unreadable. Not CarriageTracked: with no defs to
+			// compare against, Judge would fall back to the file-level answer
+			// and tell every server it travels, on the strength of a document
+			// nobody could parse.
+			return mcp.CarriageUnknown, nil
 		}
-		return mcp.CarriageTracked, names
+		return mcp.CarriageTracked, defs
 	}
 	// Not in HEAD. Ignored and merely-never-added are different messages,
 	// because one of them is a setting the user chose — but an error asking is

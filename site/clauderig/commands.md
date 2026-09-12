@@ -416,13 +416,14 @@ gate on them.
 
 Two notes are worth reading whatever the verdict says.
 
-**Every `env` and `header` value in a committed server is named**, and any
-argument that looks like a credential with it — not the ones
-that look like secrets. clauderig treats those two maps as secret *containers*
-rather than guessing per value, which is the right default for what it syncs and
-means the note does not depend on a heuristic. What it cannot do is redact a file
-it does not sync: in `.mcp.json` those values are in your repository in plain
-text.
+**Every `env` and `header` value in a committed server is named** — all of them,
+not the ones that look like secrets. clauderig treats those two maps as secret
+*containers* rather than judging each value, which is the right default for what
+it syncs and means the note does not rest on a guess. Arguments are different:
+most of them are ordinary, so an argument is named only when its value looks
+like a credential (`--token=ghp_…`). What clauderig cannot do either way is
+redact a file it does not sync: in `.mcp.json` these values sit in your
+repository in plain text.
 
 **Every absolute path is named too**, including one under `$HOME` that clauderig
 could have written portably. That translation is something it does to files it

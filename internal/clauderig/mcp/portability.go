@@ -63,11 +63,12 @@ type Env struct {
 	OS      string
 	// ProjectFile is the carriage of <repo>/.mcp.json. Ignored for other scopes.
 	ProjectFile Carriage
-	// CommittedServers names the servers present in the COMMITTED .mcp.json.
-	// A tracked file can still hold a server that exists only in the working
-	// tree, and a clone would not get that one. nil means "not established",
-	// which leaves the file-level answer to stand on its own.
-	CommittedServers map[string]bool
+	// CommittedServers fingerprints the servers in the COMMITTED .mcp.json, by
+	// name. A tracked file can hold a server that exists only in the working
+	// tree, and an EDITED one keeps its name while a clone still receives the
+	// old definition — so the value matters, not just the key. nil means "not
+	// established", which leaves the file-level answer to stand on its own.
+	CommittedServers map[string]string
 }
 
 // Note is one thing to know, as a token and a sentence.
@@ -135,12 +136,22 @@ func Judge(e Entry, env Env) Portability {
 			// A committed FILE can still hold a server that only exists in the
 			// working tree, and a clone gets the commit — so the file being
 			// carried is necessary and not sufficient.
-			if env.CommittedServers != nil && !env.CommittedServers[e.Name] {
-				p.Notes = append(p.Notes, Note{
-					Kind: NoteNotCommitted,
-					Text: "this repo's .mcp.json is committed, but this server is only in your working copy — commit it, or a clone will not have it.",
-				})
-				return p
+			if env.CommittedServers != nil {
+				committed, ok := env.CommittedServers[e.Name]
+				if !ok {
+					p.Notes = append(p.Notes, Note{
+						Kind: NoteNotCommitted,
+						Text: "this repo's .mcp.json is committed, but this server is only in your working copy — commit it, or a clone will not have it.",
+					})
+					return p
+				}
+				if committed != Fingerprint(e.Server) {
+					p.Notes = append(p.Notes, Note{
+						Kind: NoteNotCommitted,
+						Text: "this server is committed under this name, but your working copy has changed it — a clone still gets the committed definition, not the one shown here.",
+					})
+					return p
+				}
 			}
 			p.Carrier = "your repository"
 			p.Notes = append(p.Notes, Note{
@@ -157,6 +168,12 @@ func Judge(e Entry, env Env) Portability {
 				Kind: NoteCarriageUnknown,
 				Text: "defined in this repo's .mcp.json — but git could not be asked what it carries, so whether this server travels is unconfirmed.",
 			})
+			// Nothing below this point applies. "A fresh clone asks again",
+			// "these values are committed", "a clone will fail to start it" —
+			// every one of them describes what a clone receives, and no clone
+			// has been established. The fields are still worth knowing, but not
+			// under sentences that assert arrival.
+			return p
 		}
 		// Approval is recorded in .claude/settings.local.json, which is
 		// gitignored by convention — so the definition arrives and the

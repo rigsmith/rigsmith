@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -261,7 +262,7 @@ func TestUNCPathsCountAsAbsolute(t *testing.T) {
 func TestAServerOnlyInTheWorkingCopyDoesNotTravel(t *testing.T) {
 	e := Entry{Scope: settings.Project, Name: "brand-new", Server: Server{Command: "npx"}}
 	env := Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: CarriageTracked,
-		CommittedServers: map[string]bool{"already-there": true}}
+		CommittedServers: map[string]string{"already-there": Fingerprint(Server{Command: "npx"})}}
 	p := Judge(e, env)
 	if p.Carrier != "" {
 		t.Errorf("Carrier = %q for a server no clone would receive", p.Carrier)
@@ -304,5 +305,69 @@ func TestACredentialInAnArgumentIsNamed(t *testing.T) {
 		Command: "npx", Args: []string{"-y", "@acme/tidy-mcp", "--verbose"}}}
 	if has(Judge(plain, env()), NoteSecretsCommitted) {
 		t.Error("an ordinary argument list was reported as carrying a credential")
+	}
+}
+
+// A name that survives an edit is not the same server: change the command and a
+// clone still receives the old definition, under the same name.
+func TestAnEditedServerDoesNotTravelUnderItsCommittedName(t *testing.T) {
+	committed := Server{Command: "npx", Args: []string{"-y", "@acme/tidy-mcp"}}
+	env := Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: CarriageTracked,
+		CommittedServers: map[string]string{"tidy": Fingerprint(committed)}}
+
+	edited := Entry{Scope: settings.Project, Name: "tidy",
+		Server: Server{Command: "npx", Args: []string{"-y", "@acme/tidy-mcp", "--fast"}}}
+	p := Judge(edited, env)
+	if p.Carrier != "" {
+		t.Errorf("Carrier = %q for a definition no clone would receive", p.Carrier)
+	}
+	if !has(p, NoteNotCommitted) {
+		t.Errorf("notes = %v, want not-committed", kinds(p))
+	}
+	// Unedited, it travels — or the check is just refusing everything.
+	same := Entry{Scope: settings.Project, Name: "tidy", Server: committed}
+	if q := Judge(same, env); q.Carrier != "your repository" {
+		t.Errorf("an unchanged committed server reported Carrier %q, notes %v", q.Carrier, kinds(q))
+	}
+}
+
+// With carriage unconfirmed, nothing downstream may assert what a clone gets:
+// "a fresh clone asks again", "these values are committed", "it will fail to
+// start there" all describe an arrival nobody established.
+func TestAnUncheckedVerdictMakesNoClaimsAboutTheClone(t *testing.T) {
+	e := Entry{Scope: settings.Project, Name: "x", Server: Server{
+		Command: "/opt/homebrew/bin/dbmcp",
+		Env:     map[string]string{"TOKEN": "ghp_" + strings.Repeat("a", 40)},
+	}}
+	p := Judge(e, Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: CarriageUnknown})
+	for _, k := range []NoteKind{NoteNeedsApproval, NoteSecretsCommitted, NoteMachinePath} {
+		if has(p, k) {
+			t.Errorf("an unconfirmed verdict still claimed %q: %v", k, kinds(p))
+		}
+	}
+	// The same server with carriage confirmed says all three, so the gate is
+	// suppressing them rather than the fixture failing to provoke them.
+	q := Judge(e, Env{Folders: folders(), OS: pathmap.OSMacOS, ProjectFile: CarriageTracked})
+	for _, k := range []NoteKind{NoteNeedsApproval, NoteSecretsCommitted, NoteMachinePath} {
+		if !has(q, k) {
+			t.Errorf("with carriage confirmed, %q is missing: %v", k, kinds(q))
+		}
+	}
+}
+
+// A committed document whose mcpServers is the wrong shape is unreadable, not
+// empty — reporting it as empty tells a user their committed servers are gone.
+func TestServerDefsInRejectsAMalformedServersField(t *testing.T) {
+	for _, doc := range []string{`{"mcpServers":[]}`, `{"mcpServers":"nope"}`, `{"mcpServers":3}`} {
+		if _, err := ServerDefsIn([]byte(doc)); !errors.Is(err, ErrNoServersMap) {
+			t.Errorf("ServerDefsIn(%s) err = %v, want ErrNoServersMap", doc, err)
+		}
+	}
+	// Absent and null are genuinely "no servers", and must not be errors.
+	for _, doc := range []string{`{}`, `{"mcpServers":null}`, ``} {
+		got, err := ServerDefsIn([]byte(doc))
+		if err != nil || len(got) != 0 {
+			t.Errorf("ServerDefsIn(%q) = %v %v, want an empty map", doc, got, err)
+		}
 	}
 }
