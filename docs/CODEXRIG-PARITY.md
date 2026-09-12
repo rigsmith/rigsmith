@@ -132,15 +132,28 @@ Not parity, but worth recording — they came out of Codex being different.
 
 ## What is left
 
-Two things, and neither is load-bearing.
+Four things. None is load-bearing, and one is blocked rather than pending.
+
+**Compatibility fixtures.** clauderig builds its own shipped binary at a pinned
+commit and diffs the two tools' behaviour over identical inputs, which is how it
+notices a change that is invisible to every unit test. A new tool has no baseline
+to pin yet — the first release is the baseline — but the harness is worth
+standing up then rather than retrofitting, and this is the entry most likely to
+be quietly skipped.
 
 **History squash.** No `config-history` side branch, no size-triggered fold. It
 matters much less than it did: the growth squashing existed to fix came from
 re-committing whole transcripts, and chunking removes that. `repo status` says
 when the footprint is lopsided, and `repo gc` is almost always the whole answer.
 
-**Desktop profiles.** Codex's desktop host is the ChatGPT app, and no isolated
-account-profile launch has been established for it. This one is blocked on a
-mechanism to build against, not on effort.
+**`account watch`.** Polling for identity changes. clauderig needs it because
+Claude Code's two identity stores drift apart; Codex keeps one, so there is far
+less to watch and `account doctor` covers it.
 
-Everything else in the table is either built or marked ➖ with the reason.
+**Desktop profiles.** Codex's desktop host is the ChatGPT app, and no isolated
+account-profile launch has been established for it. Blocked on a mechanism to
+build against, not on effort — and the first thing to check is whether one
+exists, not to invent one.
+
+Everything else in the table is either built or marked ➖ with the reason it does
+not apply.
