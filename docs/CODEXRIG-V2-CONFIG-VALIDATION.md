@@ -34,8 +34,14 @@ parsed copy now fills five known permission-map gaps from the same release; see
    validate the effective result. Tables merge recursively; arrays and scalars
    replace. A profile never inherits another profile's definitions. The release's
    memory-setting alias is canonicalized within each parsed layer before merge;
-   proposed restore bytes are unchanged. Selected permission-domain declaration checks follow native normalization
-   and glob syntax; full policy compilation remains destination/runtime work.
+   proposed restore bytes are unchanged. Selected permission-domain declaration
+   checks follow native normalization and glob syntax. Selected endpoint checks
+   also reject blank explicit proxy/SOCKS addresses and invalid allowed Unix-socket
+   path declarations after inheritance. Socket maps merge by exact key; only
+   effective allows require Unix-style or destination-native Go absolute paths,
+   with NUL refusal as restore policy. These checks include selected disabled
+   networks; inactive profiles remain uncompiled. Full policy compilation remains
+   destination/runtime work.
 3. Enforce native TOML numeric kinds and the schema's signed/unsigned widths,
    including uint16 ports and int32 values. A float such as `1.0` cannot satisfy
    an integer field. Nonfinite floats and TOML date/time values are refused;
@@ -82,7 +88,9 @@ Layer composition and permission catalog/selection checks are now available via
 [`PrepareLayeredConfigRestore`](CODEXRIG-V2-LAYERED-VALIDATION.md), using trusted
 caller-supplied context. The required destination callback still needs production
 discovery/freshness checks for managed/system/project sources, full permission
-compilation and other managed requirements, remaining runtime constraints,
+compilation and other managed requirements, complete native proxy URL parsing
+and permissive host/port fallback, bind-address behavior, socket availability and
+platform support, remaining runtime constraints,
 referenced files and agent definitions, helper availability and
 credential readiness. It must not execute configured helpers or expose private
 diagnostics. Model-dependent values such as reasoning effort also remain outside
@@ -91,7 +99,12 @@ production restore wiring must choose the versioned entry point and complete the
 checks. Accepting test callbacks are not a production readiness implementation.
 An allowed helper or URL only has valid configuration fields: this layer does not
 check its existence, reachability, credentials, environment values or launch
-behavior. No inherited environment or live authentication store is read.
+behavior. In particular, a nonblank proxy address is not proof that the native
+URL parser accepts it, and an absolute socket path is not proof of availability.
+Endpoint checks perform no path lookup, address resolution or socket connection;
+see the [endpoint contract](CODEXRIG-V2-LAYERED-VALIDATION.md#selected-network-endpoint-declarations)
+for inheritance and validation limits. No inherited environment or live
+authentication store is read.
 
 Stage 8b.6 remains in progress until that destination layer is implemented.
 Customization portability, independent state/repository, user-facing commands and
