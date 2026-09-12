@@ -371,3 +371,30 @@ func TestServerDefsInRejectsAMalformedServersField(t *testing.T) {
 		}
 	}
 }
+
+// A JSON null unmarshals into a struct without complaint and leaves it zeroed,
+// so `"tidy": null` became a Server{} — which `mcp list` rendered as an ordinary
+// stdio row with a blank target, and the verdict then said it travels. An object
+// with neither a command nor a url reads identically once parsed.
+func TestAnEntryThatDefinesNothingIsNotAServer(t *testing.T) {
+	for _, doc := range []string{
+		`{"mcpServers":{"tidy":null}}`,
+		`{"mcpServers":{"tidy":{}}}`,
+		`{"mcpServers":{"tidy":{"args":["-y"]}}}`,
+	} {
+		if got, err := ServerDefsIn([]byte(doc)); err == nil {
+			t.Errorf("ServerDefsIn(%s) = %v, want an error naming the entry", doc, got)
+		} else if !strings.Contains(err.Error(), "tidy") {
+			t.Errorf("the error does not name the entry: %v", err)
+		}
+	}
+	// The shapes that ARE servers still parse, or this has gone too far.
+	for _, doc := range []string{
+		`{"mcpServers":{"tidy":{"command":"npx"}}}`,
+		`{"mcpServers":{"api":{"type":"http","url":"https://x/mcp"}}}`,
+	} {
+		if _, err := ServerDefsIn([]byte(doc)); err != nil {
+			t.Errorf("ServerDefsIn(%s) refused a valid server: %v", doc, err)
+		}
+	}
+}

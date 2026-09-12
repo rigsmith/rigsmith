@@ -335,6 +335,14 @@ func projectStates(home, repoRoot string) (func(name string) State, error) {
 
 // parseServer decodes a raw JSON server object into a Server.
 func parseServer(raw any) (Server, error) {
+	// A JSON null unmarshals into a struct without complaint and leaves it
+	// zeroed, so `"tidy": null` became a server with no command that `mcp list`
+	// showed as an ordinary stdio row with a blank target — and the portability
+	// verdict then said it travels. A string, array or number already errored
+	// here; null was the one shape that turned into a phantom.
+	if raw == nil {
+		return Server{}, errors.New("is null, not a server definition")
+	}
 	b, err := json.Marshal(raw)
 	if err != nil {
 		return Server{}, err
@@ -342,6 +350,12 @@ func parseServer(raw any) (Server, error) {
 	var s Server
 	if err := json.Unmarshal(b, &s); err != nil {
 		return Server{}, err
+	}
+	// An object with neither a command nor a URL defines nothing runnable, and
+	// reads identically to null once parsed. Same reasoning: better to name a
+	// broken entry than to list a server that cannot start.
+	if s.Command == "" && s.URL == "" {
+		return Server{}, errors.New("has neither a command nor a url")
 	}
 	return s, nil
 }
