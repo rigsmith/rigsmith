@@ -2,12 +2,10 @@
 // store that holds one — this machine's live Codex home, and the synced repo
 // with every machine's.
 //
-// Codex's date sharding is real leverage that Claude Code's layout does not
-// offer: sessions/YYYY/MM/DD means a time-windowed listing can skip whole
-// directories before opening a single file. It is used for exactly that and
-// nothing more — the shard is when a session STARTED, so a session resumed
-// weeks later keeps its original directory, and the times shown always come
-// from the records.
+// Codex's date sharding looks like leverage for a time-windowed listing, and it
+// is — but only in one direction. The shard is when a session STARTED, and Codex
+// appends to the same rollout on resume, so an old directory can hold a
+// conversation that was active this morning. See shardOutOfWindow.
 package sessions
 
 import (
@@ -61,9 +59,9 @@ type Row struct {
 // Options select and filter.
 type Options struct {
 	Targets []Target
-	// Since and Until bound by the session's own timestamps. The date shard
-	// prunes directories first, with a day of slack either side, because the
-	// shard is the START date and a session can run past midnight.
+	// Since and Until bound by the session's own timestamps, which always come
+	// from the records rather than from the shard or the file's mtime. See
+	// shardOutOfWindow for what the directory layout can and cannot prune.
 	Since time.Time
 	Until time.Time
 	// Cwd matches the working directory, case-insensitively.
@@ -183,27 +181,36 @@ func walkRollouts(dir string, opts Options) []found {
 	return out
 }
 
-// shardOutOfWindow reports whether a sessions/YYYY/MM/DD directory is entirely
-// outside the requested window.
+// shardOutOfWindow reports whether a sessions/YYYY/MM/DD directory can be
+// skipped without opening anything inside it.
 //
-// A day of slack either side, deliberately. The shard names when a session
-// STARTED, so one that ran past midnight has records after its own directory's
-// date, and pruning exactly would drop it.
+// Only the LATE side is prunable, and the asymmetry is the whole point.
+//
+// The shard names when a session STARTED, and Codex APPENDS to the same rollout
+// when you resume it — one on the machine this was written against spans eight
+// calendar days and never leaves its original directory. So a shard older than
+// the `since` bound may be full of records inside the window, and pruning it
+// would silently hide exactly the long-running sessions a person is most likely
+// to be looking for. (This was written the other way first, with a day of slack
+// either side. A day is not eight.)
+//
+// The `until` side is safe, because a session cannot have records before it
+// started: a shard dated after the bound holds nothing that belongs in the
+// window. One day of slack covers a session opened just before midnight in a
+// timezone the shard does not record.
+//
+// Mtime is not a substitute for the missing half. A restore re-dates whole
+// trees, so a file's timestamp says when it arrived here, not when the
+// conversation happened.
 func shardOutOfWindow(rel string, opts Options) bool {
-	if opts.Since.IsZero() && opts.Until.IsZero() {
+	if opts.Until.IsZero() {
 		return false
 	}
 	day, ok := rollout.DateOf(rel + "/rollout-0000-00-00T00-00-00-00000000-0000-0000-0000-000000000000.jsonl")
 	if !ok {
 		return false
 	}
-	if !opts.Since.IsZero() && day.Before(opts.Since.AddDate(0, 0, -1)) {
-		return true
-	}
-	if !opts.Until.IsZero() && day.After(opts.Until.AddDate(0, 0, 1)) {
-		return true
-	}
-	return false
+	return day.After(opts.Until.AddDate(0, 0, 1))
 }
 
 // hydrate fills a row from its file. False means the file said nothing usable,

@@ -46,7 +46,7 @@ rows are rounded up.
 | `desktop` | — | ⬜ | Codex's desktop host is the ChatGPT app, and no isolated account-profile launch has been established for it. The assessment said to treat this as separate work; it still is. |
 | `device` | — | ⬜ | The device registry is written and read, but there is no command to list or forget a machine. |
 | `account watch` | — | ⬜ | Polling for identity changes. Less useful here: Codex has no second identity store to drift against, so there is far less to watch. |
-| `account map` / `unmap` | — | ⬜ | Binding a directory to an account, so a bare `account run` in that directory picks it. Worth building: clauderig's dirmap file format is already a documented integration point, and this store has no counterpart for it. |
+| `account map` / `unmap` | `account map` / `unmap` | ✅ | Nearest binding wins. A bare reference with several accounts and no binding reports `unmapped-directory` rather than a generic failure. |
 
 ## Subsystems
 
@@ -73,7 +73,7 @@ rows are rounded up.
 | Journal | `journal` | ✅ | One file per machine, append-before-commit, refused/failed/ok. |
 | **Ledger** (permanent session index) | — | ⬜ | clauderig remembers a session after its body ages out, so a search can say "this existed, recover it from git history" rather than "no such conversation". Matters less while rollouts are opt-in; a real gap once they are on. |
 | Merge policy | `mergepolicy` | 🟡 | Manifest union, device newest-per-machine, config newest-commit. A rollout merges only when one side is a PREFIX of the other; anything else is left for a person, per the assessment's instruction not to line-union divergent histories. |
-| Git attribute hardening | — | ⬜ | clauderig's `backupgit` forces byte preservation against a hostile global `.gitattributes`. Not ported; a machine with aggressive CRLF settings could still mangle a staged file. **The most likely of these gaps to bite someone.** |
+| Git attribute hardening | shared | ✅ | `backupgit` moved to `internal/agentrig` and is used by both. Written into the backup so it applies on another machine's first clone, `Prepare` on publish so a renormalised index cannot commit stale bytes, `Validate` on every push attempt. Proven by a gated end-to-end test with a control that fails if the hostile settings are not biting. |
 | Publish / reconcile / retry | `service` | ✅ | Tripwire inside the retry loop, merge repaired before capture, never `git add -A` over a conflicted index. |
 | History squash | — | ⬜ | No `config-history` side branch, no size-triggered squash. |
 | Hooks | `hooks` | ✅ | Plus trust, which Codex requires. Pinned by a live test against a real `codex`. |
@@ -90,13 +90,31 @@ rows are rounded up.
 | Live-process detection | `account/live.go` | ✅ | Process table plus Codex's writer locks, with a process's home resolved against its own `HOME`. |
 | Transcript/session reading | `rollout` | ✅ | A different format, read the same way: header from the front, activity from the tail, never the middle. Validated against every rollout on a real machine. |
 | Session listing / search | `sessions` | 🟡 | Live and repo stores, date-shard pruning. No ledger rows, no duplicate/split detection, no Desktop sidecars. |
-| Split-session health | — | ⬜ | clauderig detects one session filed in two places and can consolidate. Codex's date sharding arguably makes this MORE likely — a session resumed the next day plausibly writes under a new date — so this is worth building. |
-| `dirmap` | — | ⬜ | Per-machine directory-to-account bindings. clauderig's `dir-map.json` is read by outside callers, so the format is settled; there is simply no codexrig equivalent yet. |
+| Split-session health | — | ➖ | clauderig detects one session filed in two places and can consolidate, because Claude Code files by a slug derived from the working directory and a session that moves gets a second file. **Measured against 60 real rollouts: Codex never does this.** It APPENDS to the original rollout on resume, which keeps its original shard — one here spans eight calendar days with a single `session_meta`. The live-versus-repo case is handled by preferring the live copy, and the repo-versus-repo case by the merge policy. |
+| `dirmap` | shared | ✅ | Moved to `internal/agentrig`. The path comparison is what is worth sharing, not the file format. |
 | `peek` | — | ⬜ | See the command row. |
 | `contents` | — | ⬜ | "What is actually in my sync repo, by category and size." |
 | TUI dashboard | `tui` | ✅ | Same intent-then-act model. |
 | Compatibility fixtures (pinned-baseline differ) | — | ⬜ | clauderig builds a shipped baseline binary and diffs its behaviour. A new tool has no baseline; the pattern is worth adopting from the first release rather than retrofitting. |
-| End-to-end suite | 🟡 | 🟡 | Round-trip, cross-machine restore, tripwire, retention and scrubbing are covered as engine tests against synthetic homes. There is no gated `CODEXRIG_E2E` suite over a local bare remote. |
+| End-to-end suite | `e2e` | ✅ | `CODEXRIG_E2E=1`: a full round trip over a local bare remote, byte preservation under hostile git settings in both line-ending flavours, and a refusal for a nested attribute file that would permit conversion. |
+
+## What measuring Codex changed
+
+Two entries above moved because real data disagreed with an assumption, and both
+are worth naming rather than quietly editing.
+
+**Split sessions are not a thing here.** The first version of this table said
+date sharding made one session-in-two-places *more* likely. Sixty real rollouts
+say otherwise: Codex appends to the original file on resume and leaves it in its
+original shard.
+
+**That same measurement found a bug in the session listing.** A rollout on this
+machine spans eight calendar days from its shard date. The listing pruned
+directories on both ends of a `--since`/`--until` window with one day of slack —
+so `--since 2d` would have skipped the directory holding a conversation that was
+active yesterday, and hidden exactly the long-running sessions somebody is most
+likely to be looking for. The prune is now one-sided: only the late end, where a
+session cannot have records from before it started.
 
 ## Things codexRig has that claudeRig does not
 
@@ -114,10 +132,7 @@ Not parity, but worth recording — they came out of Codex being different.
 
 ## The order these are worth building in
 
-1. **Git attribute hardening.** The only gap here that can silently corrupt data.
-2. **`map`/`unmap` and the dirmap.** Small, and the file format is already settled by clauderig.
-3. **Split-session detection.** Date sharding makes the two-copies case more likely, not less.
-4. **The ledger**, before rollouts become the common case.
-5. **Chunked rollout storage**, for anyone who turns sessions on and keeps them.
-6. **`peek`, `repo`, `contents`, `device`** — useful, none of them load-bearing.
-7. **Desktop profiles**, once an isolation mechanism exists to build on.
+1. **The ledger**, before rollouts become the common case.
+2. **Chunked rollout storage**, for anyone who turns sessions on and keeps them.
+3. **`peek`, `repo`, `contents`, `device`** — useful, none of them load-bearing.
+4. **Desktop profiles**, once an isolation mechanism exists to build on.
