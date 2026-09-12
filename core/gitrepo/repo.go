@@ -47,11 +47,16 @@ func Init(ctx context.Context, dir string) (*Repo, error) {
 	_, _ = runGit(ctx, dir, "config", "commit.gpgsign", "false")
 	// Set name and email independently so a partial global config (e.g. email set
 	// but not name) can't cause "Please tell me who you are" on commit.
+	//
+	// Named for the toolchain rather than for one of its tools: this repo may be
+	// a clauderig backup or a codexrig one, and a CI runner has no identity of
+	// its own, so whichever tool happened to call Init would otherwise sign the
+	// other's commits.
 	if _, err := runGit(ctx, dir, "config", "user.email"); err != nil {
-		_, _ = runGit(ctx, dir, "config", "user.email", "clauderig@localhost")
+		_, _ = runGit(ctx, dir, "config", "user.email", "rigsmith@localhost")
 	}
 	if _, err := runGit(ctx, dir, "config", "user.name"); err != nil {
-		_, _ = runGit(ctx, dir, "config", "user.name", "clauderig")
+		_, _ = runGit(ctx, dir, "config", "user.name", "rigsmith")
 	}
 	return &Repo{Dir: dir}, nil
 }
