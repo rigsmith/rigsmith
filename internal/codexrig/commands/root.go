@@ -29,6 +29,7 @@ func NewRootCmd(version string) *cobra.Command {
 		NewSearchCmd(),
 		NewRecentCmd(),
 		NewLedgerCmd(),
+		NewPeekCmd(),
 		NewRepoCmd(),
 		NewDeviceCmd(),
 		NewGuardCmd(),

@@ -11,17 +11,20 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
 	"github.com/rigsmith/rigsmith/internal/codexrig/engine"
 	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
+	"github.com/rigsmith/rigsmith/internal/codexrig/peek"
 )
 
 func gate(t *testing.T) {
@@ -352,4 +355,150 @@ func tail(s string) string {
 		return s
 	}
 	return "…" + s[len(s)-80:]
+}
+
+// TestE2E_PeekReadsAnotherMachinesSessionWithoutRestoring is the workflow peek
+// exists for: two machines, one repo, and a conversation you want to look at
+// without writing the other machine's setup over your own.
+func TestE2E_PeekReadsAnotherMachinesSessionWithoutRestoring(t *testing.T) {
+	gate(t)
+	ctx := context.Background()
+	remote := bareRemote(t)
+
+	one := newMachine(t, "one")
+	write(t, one.codex, "config.toml", "model = \"gpt-6-astra\"\n")
+	write(t, one.codex, "skills/only-on-one/SKILL.md", "# should not travel by peek\n")
+	write(t, one.codex, rolloutRel, rolloutBody(one.home+"/Git/thing", "\n"))
+
+	cfg, mc := one.cfg(true)
+	stage := t.TempDir()
+	if _, err := engine.Sync(engine.Options{
+		StagingDir: stage, Config: cfg, Machine: mc,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: one.codex},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gitrepo.Init(ctx, stage)
+	must(t, err)
+	must(t, backupgit.Prepare(ctx, stage))
+	if _, err := repo.Commit(ctx, "codexrig sync: one"); err != nil {
+		t.Fatal(err)
+	}
+	must(t, repo.SetRemote(ctx, "origin", remote))
+	must(t, repo.Push(ctx, "origin", "main"))
+
+	// Machine two clones the repo but restores nothing.
+	two := newMachine(t, "two")
+	cloned := filepath.Join(t.TempDir(), "repo")
+	twoRepo, err := gitrepo.Clone(ctx, remote, cloned)
+	must(t, err)
+
+	// The clone's own tip is `main`; a real second machine reads origin/main
+	// after a fetch. Both are exercised: the default ref must be the remote's.
+	sessions, err := peek.List(ctx, twoRepo, "main")
+	must(t, err)
+	if len(sessions) != 1 {
+		t.Fatalf("peek listed %d session(s), want the one machine one pushed", len(sessions))
+	}
+	got := sessions[0]
+	if got.Machine != "one" {
+		t.Errorf("Machine = %q, want the machine named in the commit subject", got.Machine)
+	}
+	sessions = peek.Titles(ctx, twoRepo, "main", sessions)
+	if sessions[0].Title != "review the launcher" {
+		t.Errorf("Title = %q, want the first thing that was typed", sessions[0].Title)
+	}
+	if sessions[0].Cwd != one.home+"/Git/thing" {
+		t.Errorf("Cwd = %q", sessions[0].Cwd)
+	}
+
+	// A prefix resolves, and reading needs nothing on disk.
+	found, err := peek.Find(sessions, got.ID[:8])
+	must(t, err)
+	body, err := peek.Read(ctx, twoRepo, "main", found)
+	must(t, err)
+	if string(body) != rolloutBody(one.home+"/Git/thing", "\n") {
+		t.Error("the session read back from the object store differs from what was pushed")
+	}
+
+	// Nothing has been written to machine two yet.
+	if _, err := os.Stat(filepath.Join(two.codex, filepath.FromSlash(rolloutRel))); err == nil {
+		t.Fatal("listing and reading wrote to the machine; peek is read-only")
+	}
+
+	// Get writes exactly one file.
+	gotFile, err := peek.Get(ctx, twoRepo, "main", found, two.codex)
+	must(t, err)
+	if read(t, gotFile.Path) != string(body) {
+		t.Error("the written rollout differs from the one in the repo")
+	}
+	if _, err := os.Stat(filepath.Join(two.codex, "config.toml")); err == nil {
+		t.Error("peek get brought the other machine's config across; it should write one session and nothing else")
+	}
+	if _, err := os.Stat(filepath.Join(two.codex, "skills/only-on-one/SKILL.md")); err == nil {
+		t.Error("peek get brought the other machine's skills across")
+	}
+
+	// And it refuses rather than overwrite: the local copy may be the file a
+	// live session is writing into.
+	if _, err := peek.Get(ctx, twoRepo, "main", found, two.codex); !errors.Is(err, peek.ErrExists) {
+		t.Errorf("second get error = %v, want ErrExists", err)
+	}
+}
+
+// TestE2E_PeekDoesNotListWhatRetentionHasPruned keeps peek's promise honest:
+// everything it lists can be read. A log walk alone would report paths that no
+// longer exist at the tip.
+func TestE2E_PeekDoesNotListWhatRetentionHasPruned(t *testing.T) {
+	gate(t)
+	ctx := context.Background()
+	one := newMachine(t, "one")
+	write(t, one.codex, "config.toml", "model = \"x\"\n")
+	write(t, one.codex, rolloutRel, rolloutBody(one.home, "\n"))
+
+	cfg, mc := one.cfg(true)
+	stage := t.TempDir()
+	if _, err := engine.Sync(engine.Options{
+		StagingDir: stage, Config: cfg, Machine: mc,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: one.codex},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gitrepo.Init(ctx, stage)
+	must(t, err)
+	if _, err := repo.Commit(ctx, "codexrig sync: one"); err != nil {
+		t.Fatal(err)
+	}
+	if s, lerr := peek.List(ctx, repo, "main"); lerr != nil || len(s) != 1 {
+		t.Fatalf("setup: listed %d (%v)", len(s), lerr)
+	}
+
+	// Age it out on both sides and sync again, so retention prunes the staged
+	// copy — the rollout is now only in history.
+	old := time.Now().AddDate(0, 0, -400)
+	for _, p := range []string{
+		filepath.Join(one.codex, filepath.FromSlash(rolloutRel)),
+		filepath.Join(stage, config.RootCLI, filepath.FromSlash(rolloutRel)),
+	} {
+		must(t, os.Chtimes(p, old, old))
+	}
+	if _, err := engine.Sync(engine.Options{
+		StagingDir: stage, Config: cfg, Machine: mc,
+		RetentionDays:  30,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: one.codex},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(ctx, "codexrig sync: one"); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := peek.List(ctx, repo, "main")
+	must(t, err)
+	if len(sessions) != 0 {
+		t.Errorf("peek listed %d pruned session(s); everything it lists has to be readable", len(sessions))
+	}
 }
