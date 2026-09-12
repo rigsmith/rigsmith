@@ -85,3 +85,14 @@ func TestDetectForHandsOutACopyOfTheTokens(t *testing.T) {
 		t.Error("editing the detected machine's tokens edited the config")
 	}
 }
+
+// HOME is detected, never configured. A token by that name would redirect
+// every $HOME template — the default root, and so the restore target — to
+// wherever config.json said.
+func TestATokenNamedHomeCannotRedirectTheDetectedHome(t *testing.T) {
+	m := Machine{Name: "x", OS: "macos", Home: "/Users/real", Tokens: map[string]string{"home": "/other", "HOME": "/elsewhere", "PROJECTS": "/srv"}}
+	f := m.Folders()
+	if f["HOME"] != "/Users/real" || f["PROJECTS"] != "/srv" {
+		t.Errorf("Folders() = %v", f)
+	}
+}

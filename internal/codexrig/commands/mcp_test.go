@@ -88,7 +88,7 @@ func TestMCPGetJSONRefusesAMissingNameWithOneObject(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 		t.Fatalf("stdout is not one JSON object: %v\n%s", err, out.String())
 	}
-	if doc["found"] != false || doc["name"] != "nope" {
+	if msg, _ := doc["message"].(string); doc["found"] != false || doc["name"] != "nope" || msg == "" {
 		t.Errorf("refusal object = %v", doc)
 	}
 }

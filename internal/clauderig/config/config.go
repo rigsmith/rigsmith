@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/confkit"
@@ -53,6 +54,12 @@ type Machine struct {
 func (m Machine) Folders() pathmap.MapFolders {
 	f := pathmap.MapFolders{"HOME": m.Home}
 	for k, v := range m.Tokens {
+		// HOME is detected, never configured: a token by that name would
+		// redirect every $HOME template — the default root, and so the
+		// restore target — to wherever config.json said.
+		if strings.EqualFold(k, "HOME") {
+			continue
+		}
 		f[k] = v
 	}
 	return f
