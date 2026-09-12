@@ -242,23 +242,39 @@ example and regression-testing clauderig on every commit. The Codex engine is it
 own, the two are close enough to compare, and the extraction is now a refactor
 with two real implementations to generalise over rather than one and a guess.
 
+### One conversation was 84% of the backup
+
+Measuring before building changed what got built. On the machine this was written
+against, 59 rollouts total 215 MB — and a single session is 172 MB of that,
+against a median of 0.05 MB.
+
+That one file is two problems at once. It is over the default 50 MB per-file cap,
+so it was being dropped entirely: the largest conversation on the machine was the
+one thing never backed up. And it is append-only and rewritten on every sync, so
+carrying it whole costs roughly (size × syncs) / 2 — gigabytes of history to
+record one conversation.
+
+So past 8 MiB a rollout is stored as content-addressed 4 MiB parts plus a
+one-line index. Measured on that same file: 44 parts, a 4 KB index, and one more
+turn reuses 43 of them. A chunked rollout is exempt from the per-file cap,
+because the reason for the cap — hosts reject oversized objects and fail the
+whole push — does not apply when no blob exceeds one chunk.
+
+Everything reads through one opener, so the header reader, the tail reader, the
+search, the ledger and the audit are unaware of which representation they got.
+The audit reading the index instead of the conversation would clear a file nobody
+looked at, which is why that has its own test.
+
 ## What is not built
 
 Written down so nobody assumes otherwise. See the parity table in
 [CODEXRIG-PARITY.md](CODEXRIG-PARITY.md) for the full accounting.
 
-- **Chunked rollout storage.** clauderig splits a large transcript into
-  content-addressed 4 MB parts so an append costs one blob rather than a whole
-  copy. codexrig has the large-file throttle and the size cap but not the
-  chunking, so a very long session costs more history than it needs to.
-- **A permanent session ledger.** clauderig remembers a session after its body
-  ages out, so a search can say "this existed, recover it from git history"
-  rather than "no such conversation". With rollouts opt-in this matters less, but
-  it is a real gap when they are on.
+- **History squash.** No `config-history` side branch, no size-triggered fold.
+  Much less pressing now: the growth squashing existed to fix came from
+  re-committing whole transcripts, and chunking removes that.
 - **Desktop profiles.** Codex's desktop host is the ChatGPT app, and no isolated
-  account-profile launch has been established for it. The assessment said to
-  treat this as separate work, and it still is.
-- **`peek`.** Reading another machine's session straight out of the git object
-  store, without restoring.
+  account-profile launch has been established for it. Blocked on a mechanism to
+  build against, not on effort.
 - **Automations.** Excluded rather than solved: restoring a scheduled job onto a
   second machine would run it twice.

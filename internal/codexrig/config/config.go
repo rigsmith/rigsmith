@@ -172,6 +172,13 @@ type Config struct {
 	// a backup tool should do only because you asked it to.
 	RedactTranscripts bool `json:"redactTranscripts,omitempty"`
 
+	// ChunkRollouts stores a large rollout in the repo as content-addressed
+	// parts rather than as one blob, so an append costs a chunk instead of a
+	// copy. A POINTER, because absent has to mean something different from
+	// false: absent follows whatever the repo is already doing, which is what
+	// lets a second machine join a fleet without being told.
+	ChunkRollouts *bool `json:"chunkRollouts,omitempty"`
+
 	// SyncSessions carries rollout files (Codex's session transcripts) as well
 	// as configuration. Separate from clauderig, where transcripts are always
 	// in: Codex rollouts are the artifact whose cross-machine resume is NOT yet
@@ -188,11 +195,13 @@ type Config struct {
 // Default returns a config with the standard root and retention, no machines or
 // remote yet (init fills those).
 func Default() *Config {
+	chunked := true
 	return &Config{
-		Schema:    schemaVersion,
-		Machines:  map[string]Machine{},
-		Roots:     DefaultRoots(),
-		Retention: Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes, LargeFileBytes: DefaultLargeFileBytes},
+		ChunkRollouts: &chunked,
+		Schema:        schemaVersion,
+		Machines:      map[string]Machine{},
+		Roots:         DefaultRoots(),
+		Retention:     Retention{HistoryDays: 90, SquashFactor: 2.0, FloorBytes: 500 << 20, MaxFileBytes: DefaultMaxFileBytes, LargeFileBytes: DefaultLargeFileBytes},
 		// On by default, unlike the sessions themselves: once someone opts into
 		// carrying conversation text, scrubbing it is the behaviour they meant.
 		RedactTranscripts: true,

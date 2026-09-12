@@ -36,6 +36,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
 	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 )
 
 // FileRedaction names one file the redactor changed, and what it took out.
@@ -135,6 +136,9 @@ type Options struct {
 	// RedactRollouts scrubs credential-shaped tokens out of the STAGED copy of a
 	// rollout. The live file is never touched.
 	RedactRollouts bool
+	// ChunkRollouts stores a rollout over rolloutstore.Threshold as
+	// content-addressed parts, so an append costs a chunk rather than a copy.
+	ChunkRollouts bool
 
 	// MaxFileBytes drops any single file larger than this (<= 0 = no cap). Git
 	// hosts reject oversized blobs and take the whole push down with them.
@@ -253,9 +257,17 @@ func Sync(opts Options) (*Report, error) {
 			// Size cap. Remove any copy an earlier, uncapped sync staged —
 			// otherwise the cap can never dig a repo out of the hole it was
 			// added to fix.
-			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes {
+			//
+			// A rollout that will be stored in parts is exempt, and that is the
+			// point of the exemption rather than a loophole: no blob it produces
+			// exceeds one chunk, so the reason for the cap — git hosts reject
+			// oversized objects and fail the whole push — does not apply. Without
+			// it the largest conversation on a machine is the one thing never
+			// backed up. The one measured here is 180 MB against a 50 MB cap.
+			chunkable := opts.ChunkRollouts && isRollout && info.Size() > rolloutstore.Threshold
+			if opts.MaxFileBytes > 0 && info.Size() > opts.MaxFileBytes && !chunkable {
 				rr.Oversize = append(rr.Oversize, OversizeFile{Rel: rel, Bytes: info.Size()})
-				_ = os.Remove(dstPath)
+				_ = rolloutstore.Remove(dstPath)
 				continue
 			}
 
@@ -298,7 +310,9 @@ func Sync(opts Options) (*Report, error) {
 
 			// Verbatim files: rollouts, skills, rules, instructions.
 			scrub := opts.RedactRollouts && isRollout
-			staged, serr := os.Stat(dstPath)
+			// The LOGICAL size, so a rollout kept in parts compares against its
+			// source exactly as a plain one does.
+			staged, serr := rolloutstore.Stat(dstPath)
 			if serr != nil {
 				staged = nil
 			}
@@ -385,7 +399,7 @@ func Sync(opts Options) (*Report, error) {
 				if err := writeFileMtime(dstPath, data, info.ModTime()); err != nil {
 					return nil, err
 				}
-			} else if err := copyPreservingMtime(srcPath, dstPath, info.ModTime()); err != nil {
+			} else if err := stageLarge(srcPath, dstPath, info.ModTime(), chunkable); err != nil {
 				if os.IsNotExist(err) {
 					rr.Skipped++
 					continue
@@ -414,6 +428,13 @@ func Sync(opts Options) (*Report, error) {
 		rr.Disallowed = removed
 
 		rep.Roots = append(rep.Roots, rr)
+	}
+
+	// Bring already-staged rollouts to the configured representation, so turning
+	// the setting on converts what is there rather than only affecting what
+	// arrives next.
+	if err := convertStagedRollouts(opts.StagingDir, opts.ChunkRollouts); err != nil {
+		return rep, err
 	}
 
 	// Record every staged session in the permanent ledger BEFORE retention runs.
@@ -741,7 +762,14 @@ func reconcileStagedRoot(stageRoot string, list allowlist.List) (int, error) {
 		if rerr != nil {
 			return rerr
 		}
-		if !list.Match(filepath.ToSlash(rel)) {
+		rel = filepath.ToSlash(rel)
+		// A part belongs to its index, not to the allowlist. Judging it on its
+		// own would delete the contents of a rollout the rules still permit and
+		// leave an index pointing at nothing.
+		if rolloutstore.IsPartPath(rel) {
+			return nil
+		}
+		if !list.Match(rel) {
 			doomed = append(doomed, p)
 		}
 		return nil
@@ -750,7 +778,9 @@ func reconcileStagedRoot(stageRoot string, list allowlist.List) (int, error) {
 		return 0, err
 	}
 	for _, p := range doomed {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		// Remove, not os.Remove: a rollout that is no longer allowed takes its
+		// parts with it.
+		if err := rolloutstore.Remove(p); err != nil && !os.IsNotExist(err) {
 			return 0, err
 		}
 	}
@@ -796,7 +826,7 @@ func pruneAgedRollouts(staging string, cutoff time.Time) (int, error) {
 				return nil
 			}
 			if info.ModTime().Before(cutoff) {
-				if rmErr := os.Remove(p); rmErr == nil {
+				if rmErr := rolloutstore.Remove(p); rmErr == nil {
 					pruned++
 				}
 			}
@@ -920,4 +950,65 @@ func copyPreservingMtime(src, dst string, mod time.Time) error {
 		return err
 	}
 	return os.Chtimes(dst, mod, mod)
+}
+
+// stageLarge copies a rollout into staging in whichever representation is
+// asked for.
+func stageLarge(src, dst string, mod time.Time, chunked bool) error {
+	if !chunked {
+		return copyPreservingMtime(src, dst, mod)
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	return rolloutstore.Write(dst, in, mod)
+}
+
+// convertStagedRollouts brings every staged rollout to the configured
+// representation.
+//
+// Turning the setting on has to reach what is ALREADY in the repo — which is
+// where the large conversations are. Nothing about those files changes when the
+// setting does, so the incremental skip would leave them as single blobs until
+// each one happened to be written to again.
+func convertStagedRollouts(staging string, chunked bool) error {
+	roots, err := os.ReadDir(staging)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, rootDir := range roots {
+		if !rootDir.IsDir() || rootDir.Name() == ".git" {
+			continue
+		}
+		base := filepath.Join(staging, rootDir.Name())
+		werr := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			rel, rerr := filepath.Rel(base, p)
+			if rerr != nil {
+				return rerr
+			}
+			if !rollout.IsRolloutRel(filepath.ToSlash(rel)) {
+				return nil
+			}
+			_, cerr := rolloutstore.Convert(p, chunked)
+			return cerr
+		})
+		if werr != nil {
+			return werr
+		}
+	}
+	return nil
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
 	"github.com/rigsmith/rigsmith/internal/codexrig/ledger"
 	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"github.com/rigsmith/rigsmith/internal/codexrig/sessions"
 )
 
@@ -663,4 +665,235 @@ func TestAnAgedOutSessionIsStillRememberedAndFindable(t *testing.T) {
 	if rows[0].Title == "" {
 		t.Error("the listing shows nothing to recognise it by")
 	}
+}
+
+// bigRollout builds a rollout comfortably over the chunking threshold, out of
+// records shaped like the real thing so boundaries land mid-record.
+func bigRollout(t *testing.T, cwd string, turns int) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString(`{"timestamp":"2026-09-05T11:22:59.000Z","ordinal":0,"type":"session_meta","payload":{"session_id":"01a0722a-7356-7592-922a-336289bdc101","timestamp":"2026-09-05T11:22:59.016Z","cwd":"` + cwd + `","cli_version":"0.144.6"}}` + "\n")
+	b.WriteString(`{"timestamp":"2026-09-05T11:23:00.000Z","ordinal":1,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"review the launcher"}]}}` + "\n")
+	filler := strings.Repeat("y", 900)
+	for i := 0; i < turns; i++ {
+		b.WriteString(`{"timestamp":"2026-09-05T11:24:00.000Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` + filler + `"}]}}` + "\n")
+	}
+	return b.String()
+}
+
+func TestALargeRolloutIsStoredInPartsAndComesBackWhole(t *testing.T) {
+	// The measurement this exists for: on a real machine 59 rollouts total 215
+	// MB and ONE of them is 180 MB. That single file is over the default
+	// per-file cap, so without this it is the one conversation never backed up.
+	m := newMachine(t, "one")
+	seedTypicalHome(t, m)
+	want := bigRollout(t, m.home+"/Git/thing", 12000) // ~11 MB, over the 8 MB threshold
+	m.write(t, rolloutRel, want)
+
+	cfg, mc := m.cfg(true)
+	staging := t.TempDir()
+	rep, err := Sync(Options{
+		StagingDir: staging, Config: cfg, Machine: mc,
+		ChunkRollouts: true,
+		// Deliberately BELOW the rollout's size: a chunked rollout must be
+		// exempt, because no blob it produces is anywhere near a host's limit.
+		MaxFileBytes:   4 << 20,
+		SourceOverride: map[string]string{config.RootCLI: m.codex},
+	})
+	if err != nil {
+		t.Fatalf("sync: %v (findings %+v)", err, rep.Findings)
+	}
+	if len(rep.Roots[0].Oversize) > 0 {
+		t.Fatalf("the rollout was dropped as oversize: %+v", rep.Roots[0].Oversize)
+	}
+
+	staged := stagedPath(staging, rolloutRel)
+	raw, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rolloutstore.IsIndex(raw) {
+		t.Fatal("the rollout was staged whole rather than in parts")
+	}
+	if int64(len(raw)) > 64<<10 {
+		t.Errorf("the index is %d bytes; it should be a fraction of the rollout", len(raw))
+	}
+
+	// It still reads as the conversation it is, through every reader.
+	got, err := rolloutstore.ReadFile(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Error("the chunked rollout does not read back byte for byte")
+	}
+	if meta, ok, _ := rollout.ReadMeta(staged); !ok || meta.Cwd != m.home+"/Git/thing" {
+		t.Errorf("the header reader could not read a chunked rollout: %+v", meta)
+	}
+	if title := rollout.FirstPrompt(staged); title != "review the launcher" {
+		t.Errorf("FirstPrompt on a chunked rollout = %q", title)
+	}
+	if act, ok := rollout.LastActivity(staged); !ok || act.At.IsZero() {
+		t.Error("the tail reader could not read a chunked rollout")
+	}
+
+	// And a restore reconstructs plain JSONL, which is what Codex reads.
+	two := newMachine(t, "two")
+	cfg2, mc2 := two.cfg(true)
+	if _, err := Restore(RestoreOptions{
+		StagingDir: staging, Config: cfg2, Machine: mc2,
+		TargetOverride: map[string]string{config.RootCLI: two.codex},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	restored := read(t, filepath.Join(two.codex, filepath.FromSlash(rolloutRel)))
+	if restored != want {
+		t.Error("the restored rollout is not the conversation that was captured")
+	}
+	if rolloutstore.IsIndex([]byte(restored)) {
+		t.Fatal("an index was restored onto the machine instead of the rollout")
+	}
+	// Nothing belonging to the repo's representation leaks onto the machine.
+	if _, err := os.Stat(filepath.Join(two.codex, filepath.FromSlash(rolloutRel)) + rolloutstore.Suffix); err == nil {
+		t.Error("a parts directory was restored onto the machine")
+	}
+}
+
+func TestAppendingToALargeRolloutCostsAChunkNotACopy(t *testing.T) {
+	m := newMachine(t, "one")
+	seedTypicalHome(t, m)
+	first := bigRollout(t, m.home, 12000)
+	m.write(t, rolloutRel, first)
+
+	cfg, mc := m.cfg(true)
+	staging := t.TempDir()
+	opts := Options{
+		StagingDir: staging, Config: cfg, Machine: mc,
+		ChunkRollouts:  true,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: m.codex},
+	}
+	if _, err := Sync(opts); err != nil {
+		t.Fatal(err)
+	}
+	before := partSet(t, stagedPath(staging, rolloutRel))
+
+	// One more turn, and a flush so the large-file throttle does not defer it.
+	grown := first + `{"timestamp":"2026-09-05T11:30:00.000Z","ordinal":3,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"one more thing"}]}}` + "\n"
+	m.write(t, rolloutRel, grown)
+	opts.Flush = []string{filepath.Join(m.codex, filepath.FromSlash(rolloutRel))}
+	if _, err := Sync(opts); err != nil {
+		t.Fatal(err)
+	}
+	after := partSet(t, stagedPath(staging, rolloutRel))
+
+	kept := 0
+	for name := range before {
+		if after[name] {
+			kept++
+		}
+	}
+	// Every full part is content-addressed and unchanged, so git already has
+	// it. Only the last one is rewritten.
+	if kept < len(before)-1 {
+		t.Errorf("only %d of %d parts survived an append — git would store the whole conversation again", kept, len(before))
+	}
+	got, err := rolloutstore.ReadFile(stagedPath(staging, rolloutRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != grown {
+		t.Error("the appended rollout did not read back correctly")
+	}
+}
+
+func TestTurningChunkingOnConvertsWhatIsAlreadyStaged(t *testing.T) {
+	// The setting has to reach what is already in the repo — which is where the
+	// large conversations are. Nothing about those files changes when the
+	// setting does, so the incremental skip would leave them as single blobs.
+	m := newMachine(t, "one")
+	seedTypicalHome(t, m)
+	m.write(t, rolloutRel, bigRollout(t, m.home, 12000))
+
+	cfg, mc := m.cfg(true)
+	staging := t.TempDir()
+	base := Options{
+		StagingDir: staging, Config: cfg, Machine: mc,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: m.codex},
+	}
+	if _, err := Sync(base); err != nil { // chunking off
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(stagedPath(staging, rolloutRel)); rolloutstore.IsIndex(raw) {
+		t.Fatal("setup: it should have been staged whole")
+	}
+
+	on := base
+	on.ChunkRollouts = true
+	if _, err := Sync(on); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(stagedPath(staging, rolloutRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rolloutstore.IsIndex(raw) {
+		t.Error("turning chunking on left the already-staged rollout whole")
+	}
+
+	// And back again, because a setting that cannot be undone is a trap.
+	if _, err := Sync(base); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(stagedPath(staging, rolloutRel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rolloutstore.IsIndex(raw) {
+		t.Error("turning chunking off left the rollout in parts")
+	}
+	if _, err := os.Stat(stagedPath(staging, rolloutRel) + rolloutstore.Suffix); err == nil {
+		t.Error("the parts directory was left behind")
+	}
+}
+
+func TestACredentialInsideAChunkedRolloutIsStillCaught(t *testing.T) {
+	// The audit must read the conversation, not the index. Scanning a few
+	// hundred bytes of hashes would clear a file nobody looked at.
+	m := newMachine(t, "one")
+	seedTypicalHome(t, m)
+	leaky := bigRollout(t, m.home, 12000) +
+		`{"timestamp":"2026-09-05T11:31:00.000Z","ordinal":4,"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"use ` + fakeToken + ` please"}]}}` + "\n"
+	m.write(t, rolloutRel, leaky)
+
+	cfg, mc := m.cfg(true)
+	staging := t.TempDir()
+	rep, err := Sync(Options{
+		StagingDir: staging, Config: cfg, Machine: mc,
+		ChunkRollouts:  true,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: m.codex},
+	})
+	if err == nil {
+		t.Fatal("a credential inside a chunked rollout was published")
+	}
+	if len(rep.Findings) == 0 {
+		t.Fatal("the sync refused without saying what it found")
+	}
+}
+
+func partSet(t *testing.T, staged string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(staged + rolloutstore.Suffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]bool{}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".part") {
+			out[e.Name()] = true
+		}
+	}
+	return out
 }

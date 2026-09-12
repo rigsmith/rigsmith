@@ -17,7 +17,7 @@ import (
 
 // configKeys are the settings `config get`/`set` expose, in the order a person
 // would meet them.
-var configKeys = []string{"remote", "syncSessions", "redactTranscripts", "autoRestore", "alwaysPrune", "hookIntervalMinutes"}
+var configKeys = []string{"remote", "syncSessions", "redactTranscripts", "chunkRollouts", "autoRestore", "alwaysPrune", "hookIntervalMinutes"}
 
 // NewConfigCmd builds `codexrig config`.
 func NewConfigCmd() *cobra.Command {
@@ -102,6 +102,7 @@ func newConfigSetCmd() *cobra.Command {
 		Short: "Change one setting",
 		Long: "remote               the private git repo this machine syncs to\n" +
 			"syncSessions         carry session rollouts as well as configuration\n" +
+			"chunkRollouts        store a large rollout as parts, so an append costs a chunk not a copy\n" +
 			"redactTranscripts    scrub credential-shaped tokens out of staged rollouts\n" +
 			"autoRestore          restore automatically on a machine with no Codex setup\n" +
 			"alwaysPrune          make `restore` prune by default\n" +
@@ -163,6 +164,16 @@ func applyConfigSet(cmd *cobra.Command, cfg *config.Config, key, value string) (
 		}
 		cfg.RedactTranscripts = on
 		return fmt.Sprintf("redactTranscripts = %v (applies on the next sync)", on), nil
+	case "chunkRollouts":
+		on, err := parseBool(value)
+		if err != nil {
+			return "", err
+		}
+		cfg.ChunkRollouts = &on
+		if on {
+			return "chunkRollouts = true (large rollouts become content-addressed parts on the next sync)", nil
+		}
+		return "chunkRollouts = false (they become single files again on the next sync)", nil
 	case "autoRestore":
 		on, err := parseBool(value)
 		if err != nil {
@@ -202,6 +213,11 @@ func configValue(cfg *config.Config, key string) string {
 		return strconv.FormatBool(cfg.SyncSessions)
 	case "redactTranscripts":
 		return strconv.FormatBool(cfg.RedactTranscripts)
+	case "chunkRollouts":
+		if cfg.ChunkRollouts == nil {
+			return "true (default)"
+		}
+		return strconv.FormatBool(*cfg.ChunkRollouts)
 	case "autoRestore":
 		return strconv.FormatBool(cfg.AutoRestore)
 	case "alwaysPrune":

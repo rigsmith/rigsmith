@@ -25,6 +25,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/codexrig/engine"
 	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
 	"github.com/rigsmith/rigsmith/internal/codexrig/peek"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 )
 
 func gate(t *testing.T) {
@@ -500,5 +501,85 @@ func TestE2E_PeekDoesNotListWhatRetentionHasPruned(t *testing.T) {
 	must(t, err)
 	if len(sessions) != 0 {
 		t.Errorf("peek listed %d pruned session(s); everything it lists has to be readable", len(sessions))
+	}
+}
+
+// TestE2E_AChunkedRolloutSurvivesAPushAndAClone closes the last gap in the
+// chunking story: the parts are arbitrary bytes cut at arbitrary offsets — a
+// boundary can fall inside a JSON record or inside a UTF-8 character — so they
+// are exactly what git's text conversion would corrupt, and the corruption would
+// only show up as a rollout that no longer reconstructs on the other machine.
+func TestE2E_AChunkedRolloutSurvivesAPushAndAClone(t *testing.T) {
+	gate(t)
+	attrs := filepath.Join(t.TempDir(), "attributes")
+	must(t, os.WriteFile(attrs, []byte("* text eol=crlf\n"), 0o644))
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.autocrlf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "true")
+	t.Setenv("GIT_CONFIG_KEY_1", "core.attributesFile")
+	t.Setenv("GIT_CONFIG_VALUE_1", attrs)
+
+	ctx := context.Background()
+	one := newMachine(t, "one")
+	write(t, one.codex, "config.toml", "model = \"x\"\n")
+
+	// Over the threshold, with a CRLF in the middle so a conversion would show.
+	var b strings.Builder
+	b.WriteString(rolloutBody(one.home, "\n"))
+	line := `{"timestamp":"2026-09-05T11:24:00.000Z","ordinal":2,"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"` +
+		strings.Repeat("z", 900) + `"}]}}` + "\r\n"
+	for b.Len() < 3*rolloutstore.ChunkSize {
+		b.WriteString(line)
+	}
+	want := b.String()
+	write(t, one.codex, rolloutRel, want)
+
+	cfg, mc := one.cfg(true)
+	stage := t.TempDir()
+	if _, err := engine.Sync(engine.Options{
+		StagingDir: stage, Config: cfg, Machine: mc,
+		ChunkRollouts:  true,
+		MaxFileBytes:   config.DefaultMaxFileBytes,
+		SourceOverride: map[string]string{config.RootCLI: one.codex},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(stage, config.RootCLI, filepath.FromSlash(rolloutRel))); !rolloutstore.IsIndex(raw) {
+		t.Fatal("setup: the rollout should have been chunked")
+	}
+
+	repo, err := gitrepo.Init(ctx, stage)
+	must(t, err)
+	must(t, backupgit.Prepare(ctx, stage))
+	if _, err := repo.Commit(ctx, "codexrig sync: one"); err != nil {
+		t.Fatal(err)
+	}
+	remote := bareRemote(t)
+	must(t, repo.SetRemote(ctx, "origin", remote))
+	must(t, repo.Push(ctx, "origin", "main"))
+
+	two := newMachine(t, "two")
+	cloned := filepath.Join(t.TempDir(), "repo")
+	_, err = gitrepo.Clone(ctx, remote, cloned)
+	must(t, err)
+
+	// Reconstructing is the real assertion: a part whose bytes moved fails its
+	// own hash, so this cannot pass on a corrupted clone.
+	got, err := rolloutstore.ReadFile(filepath.Join(cloned, config.RootCLI, filepath.FromSlash(rolloutRel)))
+	must(t, err)
+	if string(got) != want {
+		t.Errorf("the chunked rollout did not survive the round trip: %d bytes back, %d sent", len(got), len(want))
+	}
+
+	// And a restore on the second machine puts plain JSONL where Codex reads it.
+	cfg2, mc2 := two.cfg(true)
+	if _, err := engine.Restore(engine.RestoreOptions{
+		StagingDir: cloned, Config: cfg2, Machine: mc2,
+		TargetOverride: map[string]string{config.RootCLI: two.codex},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if read(t, filepath.Join(two.codex, filepath.FromSlash(rolloutRel))) != want {
+		t.Error("the restored rollout is not the conversation that was captured")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -60,7 +61,10 @@ func Audit(staging string) ([]redact.Finding, error) {
 			if cache.wasClean(rel, entry) {
 				return nil
 			}
-			f, err := os.Open(abs)
+			// Through the store, so a rollout kept in parts is scanned as the
+			// conversation it is. Scanning the index instead would read a few
+			// hundred bytes of hashes and clear a file nobody looked at.
+			f, err := rolloutstore.Open(abs)
 			if err != nil {
 				mu.Lock()
 				findings = append(findings, redact.Finding{Path: rel, Kind: redact.KindUnreadable, File: true})
@@ -133,6 +137,12 @@ func listStagedFiles(staging string) ([]string, error) {
 			if rel == ".git" || strings.HasPrefix(rel, ".git/") {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		// A part is bytes from inside a rollout the index already covers.
+		// Scanning it as well doubles the work and reports a finding twice,
+		// naming a path nobody can act on.
+		if rolloutstore.IsPartPath(rel) {
 			return nil
 		}
 		out = append(out, rel)

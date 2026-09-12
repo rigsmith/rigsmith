@@ -16,6 +16,7 @@ import (
 	"github.com/rigsmith/rigsmith/internal/codexrig/config"
 	"github.com/rigsmith/rigsmith/internal/codexrig/manifest"
 	"github.com/rigsmith/rigsmith/internal/codexrig/rollout"
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 )
 
 // RestoreOptions configure a restore.
@@ -162,6 +163,16 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			mode := os.FileMode(0o644)
 			if strings.HasSuffix(rel, ".json") || filepath.Base(rel) == "auth.json" {
 				mode = 0o600
+			}
+			// A rollout is reconstructed rather than copied: Codex reads plain
+			// JSONL, and the parts are the repo's business, not the machine's.
+			if rollout.IsRolloutRel(rel) {
+				if err := rolloutstore.Materialize(src, dst, mode); err != nil {
+					rr.Skipped++
+					continue
+				}
+				rr.Written++
+				continue
 			}
 			if err := copyOut(src, dst, mode); err != nil {
 				rr.Skipped++

@@ -21,11 +21,12 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
-	"os"
 	"path"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rigsmith/rigsmith/internal/codexrig/rolloutstore"
 )
 
 // Envelope is the outer record every line carries.
@@ -89,7 +90,7 @@ const maxLineBytes = 4 << 20
 
 // ReadMeta reads a rollout's header without reading its body.
 func ReadMeta(path string) (Meta, bool, error) {
-	f, err := os.Open(path)
+	f, err := rolloutstore.Open(path)
 	if err != nil {
 		return Meta{}, false, err
 	}
@@ -145,7 +146,7 @@ const (
 // LastActivity reads the tail of a rollout for its most recent timestamp and the
 // last thing said in either direction.
 func LastActivity(p string) (Activity, bool) {
-	f, err := os.Open(p)
+	f, err := rolloutstore.Open(p)
 	if err != nil {
 		return Activity{}, false
 	}
@@ -297,7 +298,7 @@ const promptMax = 70
 // sandbox rules and the project's AGENTS.md as messages, and a title taken from
 // those would read the same for every session in a repo.
 func FirstPrompt(p string) string {
-	f, err := os.Open(p)
+	f, err := rolloutstore.Open(p)
 	if err != nil {
 		return ""
 	}
@@ -406,7 +407,7 @@ type Usage struct {
 
 // LastUsage reads the newest token_count event from the tail of a rollout.
 func LastUsage(p string) (Usage, bool) {
-	f, err := os.Open(p)
+	f, err := rolloutstore.Open(p)
 	if err != nil {
 		return Usage{}, false
 	}

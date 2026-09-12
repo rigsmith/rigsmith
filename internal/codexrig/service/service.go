@@ -152,6 +152,7 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) 
 		CodexVersion:   req.CodexVersion,
 		RetentionDays:  req.Config.Retention.HistoryDays,
 		RedactRollouts: req.Config.RedactTranscripts,
+		ChunkRollouts:  chunkRollouts(req.Config),
 		MaxFileBytes:   req.Config.Retention.MaxFileBytes,
 		LargeFileBytes: req.Config.Retention.LargeFileBytes,
 		Flush:          req.Flush,
@@ -199,6 +200,19 @@ func (s Service) Sync(ctx context.Context, req SyncRequest) (SyncResult, error) 
 	})
 	out.Committed, out.Pushed = pub.Committed, pub.Pushed
 	return out, perr
+}
+
+// chunkRollouts decides whether large rollouts are stored in parts.
+//
+// Absent means yes. The setting is a pointer precisely so "not configured" can
+// differ from "off" — and the default has to be on, because the case it exists
+// for is a conversation big enough that nobody notices the problem until the
+// repo is already enormous.
+func chunkRollouts(cfg *config.Config) bool {
+	if cfg.ChunkRollouts == nil {
+		return true
+	}
+	return *cfg.ChunkRollouts
 }
 
 func recordFor(machine string, rep *engine.Report, err error) journal.Record {

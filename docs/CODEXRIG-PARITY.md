@@ -38,13 +38,13 @@ rows are rounded up.
 | `local` | — | ➖ | Claude Code has `settings.local.json`, gitignored per checkout. Codex has no counterpart; a third scope would mean writing a file Codex does not read. |
 | `ui` | `ui` | ✅ | Same intent-then-act dashboard. Its key legend is built from the action list, so an action cannot be added without its shortcut appearing — clauderig's lost one that way. |
 | `merge` | — | 🟡 | The merge POLICY is built and runs automatically inside sync and pull. There is no separate `merge` command to drive it by hand. |
-| `repo` (`gc`, `prune`) | — | ⬜ | No repo-size reporting, no manual repack, no history squash. Retention prunes rollouts, but nothing reports the git footprint or folds history. |
-| `peek` | — | ⬜ | Reading another machine's session straight from the git object store, without restoring. A genuinely useful thing that is simply not built. |
-| `ledger` | — | ⬜ | See "Session ledger" below. |
+| `repo` (`gc`, `prune`) | `repo` (`status`, `gc`) | 🟡 | Size by category, and a repack. No history squash: with chunking in place an append costs a chunk rather than a copy, so the growth squashing existed to fix is largely gone. |
+| `peek` | `peek` | ✅ | `list`, `show`, `get`. Lists only what it can read — a log walk alone reports paths retention has since pruned — and `get` is additive, refusing rather than overwriting. |
+| `ledger` | `ledger` | ✅ | What is remembered, and which machine recorded it. |
 | `move` | — | ➖ | clauderig rewrites transcripts when a project directory moves, because Claude Code files them by a slug derived from the path. Codex files by date and records the directory inside the rollout, so there is no slug to rename — and rewriting the rollout is the one thing codexrig will not do. |
 | `reroot` | — | ➖ | Same reason. `codex resume --cd` is Codex's own answer. |
 | `desktop` | — | ⬜ | Codex's desktop host is the ChatGPT app, and no isolated account-profile launch has been established for it. The assessment said to treat this as separate work; it still is. |
-| `device` | — | ⬜ | The device registry is written and read, but there is no command to list or forget a machine. |
+| `device` | `device` | ✅ | `list` and `forget`. Forgetting a machine removes its entry only; what it synced stays. |
 | `account watch` | — | ⬜ | Polling for identity changes. Less useful here: Codex has no second identity store to drift against, so there is far less to watch. |
 | `account map` / `unmap` | `account map` / `unmap` | ✅ | Nearest binding wins. A bare reference with several accounts and no binding reports `unmapped-directory` rather than a generic failure. |
 
@@ -67,15 +67,15 @@ rows are rounded up.
 | Whole-tree publication audit | `engine.Audit` | ✅ | Same, plus: a file THIS run staged that the audit condemns is taken back out, which clauderig leaves in the tree. |
 | Audit cache | `engine.auditCache` | ✅ | Same read-once-per-(size,mtime) contract. |
 | Transcript scrubbing | `engine.scrubInto` | ✅ | Line-at-a-time, live file untouched, private-key material refused rather than rewritten. |
-| **Chunked transcript storage** | — | ⬜ | clauderig splits a large transcript into content-addressed 4 MB parts, so an append costs one blob rather than a whole copy. Not built. A very long session costs more history than it needs to. |
+| **Chunked rollout storage** | `rolloutstore` | ✅ | Content-addressed 4 MiB parts plus a one-line index, past an 8 MiB threshold. Measured on the largest real rollout here — 172 MB becomes 44 parts and a 4 KB index, and one more turn reuses 43 of them. A chunked rollout is also exempt from the per-file cap, since no blob it produces is near a host's limit: without that, the biggest conversation on a machine is the one thing never backed up. |
 | Manifest | `manifest` | 🟡 | Much smaller, because there are no slugs to translate. It carries the source OS, the Codex version, and a portable spelling of each working directory. |
 | Device registry | `devices` | ✅ | Same shape; identity only, never a token. |
 | Journal | `journal` | ✅ | One file per machine, append-before-commit, refused/failed/ok. |
-| **Ledger** (permanent session index) | — | ⬜ | clauderig remembers a session after its body ages out, so a search can say "this existed, recover it from git history" rather than "no such conversation". Matters less while rollouts are opt-in; a real gap once they are on. |
+| **Ledger** (permanent session index) | `ledger` | ✅ | One file per device, written before retention runs. `search` and `recent` surface remembered sessions with the git command that recovers the body; `codexrig ledger` reports what is kept. |
 | Merge policy | `mergepolicy` | 🟡 | Manifest union, device newest-per-machine, config newest-commit. A rollout merges only when one side is a PREFIX of the other; anything else is left for a person, per the assessment's instruction not to line-union divergent histories. |
 | Git attribute hardening | shared | ✅ | `backupgit` moved to `internal/agentrig` and is used by both. Written into the backup so it applies on another machine's first clone, `Prepare` on publish so a renormalised index cannot commit stale bytes, `Validate` on every push attempt. Proven by a gated end-to-end test with a control that fails if the hostile settings are not biting. |
 | Publish / reconcile / retry | `service` | ✅ | Tripwire inside the retry loop, merge repaired before capture, never `git add -A` over a conflicted index. |
-| History squash | — | ⬜ | No `config-history` side branch, no size-triggered squash. |
+| History squash | — | 🟡 | No `config-history` side branch and no size-triggered squash. Much less pressing with chunking: the growth it existed to fix came from re-committing whole transcripts. |
 | Hooks | `hooks` | ✅ | Plus trust, which Codex requires. Pinned by a live test against a real `codex`. |
 | Settings auditing | — | ➖ | clauderig's `settings` package exists to catch Claude Code silently ignoring certain keys at certain scopes. No equivalent inventory is known for Codex; inventing one would be guessing. |
 | Instruction blocks | `agentsmd` | ✅ | `AGENTS.md`, same marker mechanics, and a test asserting the prose still matches what the guard does. |
@@ -92,8 +92,8 @@ rows are rounded up.
 | Session listing / search | `sessions` | 🟡 | Live and repo stores, date-shard pruning. No ledger rows, no duplicate/split detection, no Desktop sidecars. |
 | Split-session health | — | ➖ | clauderig detects one session filed in two places and can consolidate, because Claude Code files by a slug derived from the working directory and a session that moves gets a second file. **Measured against 60 real rollouts: Codex never does this.** It APPENDS to the original rollout on resume, which keeps its original shard — one here spans eight calendar days with a single `session_meta`. The live-versus-repo case is handled by preferring the live copy, and the repo-versus-repo case by the merge policy. |
 | `dirmap` | shared | ✅ | Moved to `internal/agentrig`. The path comparison is what is worth sharing, not the file format. |
-| `peek` | — | ⬜ | See the command row. |
-| `contents` | — | ⬜ | "What is actually in my sync repo, by category and size." |
+| `peek` | `peek` | ✅ | See the command row. |
+| `contents` | `contents` | ✅ | Behind `codexrig repo status`. |
 | TUI dashboard | `tui` | ✅ | Same intent-then-act model. |
 | Compatibility fixtures (pinned-baseline differ) | — | ⬜ | clauderig builds a shipped baseline binary and diffs its behaviour. A new tool has no baseline; the pattern is worth adopting from the first release rather than retrofitting. |
 | End-to-end suite | `e2e` | ✅ | `CODEXRIG_E2E=1`: a full round trip over a local bare remote, byte preservation under hostile git settings in both line-ending flavours, and a refusal for a nested attribute file that would permit conversion. |
@@ -130,9 +130,17 @@ Not parity, but worth recording — they came out of Codex being different.
 | **Condemned staged copies are removed** | A file the audit finds a credential in is taken back out of the working tree, not just refused. |
 | **`recent --json`** | clauderig's `recent` has no JSON output. |
 
-## The order these are worth building in
+## What is left
 
-1. **The ledger**, before rollouts become the common case.
-2. **Chunked rollout storage**, for anyone who turns sessions on and keeps them.
-3. **`peek`, `repo`, `contents`, `device`** — useful, none of them load-bearing.
-4. **Desktop profiles**, once an isolation mechanism exists to build on.
+Two things, and neither is load-bearing.
+
+**History squash.** No `config-history` side branch, no size-triggered fold. It
+matters much less than it did: the growth squashing existed to fix came from
+re-committing whole transcripts, and chunking removes that. `repo status` says
+when the footprint is lopsided, and `repo gc` is almost always the whole answer.
+
+**Desktop profiles.** Codex's desktop host is the ChatGPT app, and no isolated
+account-profile launch has been established for it. This one is blocked on a
+mechanism to build against, not on effort.
+
+Everything else in the table is either built or marked ➖ with the reason.
