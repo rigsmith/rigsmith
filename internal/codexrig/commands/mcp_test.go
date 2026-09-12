@@ -1,6 +1,10 @@
 package commands
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,5 +36,34 @@ func TestMCPDisplayKeepsKeysAndDropsValues(t *testing.T) {
 		if got := forDisplay([]mcp.Entry{u})[0].Target; strings.Contains(got, "tok") || strings.Contains(got, "ghp_") || !strings.Contains(got, "example.com/mcp") {
 			t.Errorf("url %s shown as %s", raw, got)
 		}
+	}
+}
+
+func TestMCPGetJSONUsesTheListingsObject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "[mcp_servers.tidy]\ncommand = \"npx\"\nargs = [\"-y\", \"@acme/tidy-mcp\"]\n[mcp_servers.tidy.env]\nAPI_KEY = \"sk-secret\"\n"
+	if err := os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := NewMCPCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"get", "tidy", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	var d displayEntry
+	if err := json.Unmarshal(out.Bytes(), &d); err != nil {
+		t.Fatalf("not one JSON object: %v\n%s", err, out.String())
+	}
+	if d.Name != "tidy" || strings.Join(d.EnvKeys, ",") != "API_KEY" || strings.Contains(out.String(), "sk-secret") {
+		t.Errorf("object = %+v (raw %s)", d, out.String())
 	}
 }

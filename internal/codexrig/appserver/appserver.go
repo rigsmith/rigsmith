@@ -38,6 +38,11 @@ type Client struct {
 	out  *bufio.Reader
 	mu   sync.Mutex
 	next int
+	// dead is set once a reply missed its deadline. The reader goroutine may
+	// still deliver that reply later, into a buffer nobody drains, and every
+	// later exchange would be reading one message behind — so a client that
+	// has timed out once refuses further calls rather than answer wrongly.
+	dead error
 }
 
 // Available reports whether the Codex CLI is on PATH at all.
@@ -118,6 +123,9 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	// for an answer that has already gone by.
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.dead != nil {
+		return nil, fmt.Errorf("codex app-server client is out of step after an earlier timeout (%v); close it and start another", c.dead)
+	}
 	c.next++
 	id := c.next
 
@@ -140,6 +148,9 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 		// between complete lines. Read on a goroutine and race the clock.
 		line, err := c.readLine(time.Until(deadline))
 		if err != nil {
+			if errors.Is(err, errDeadline) {
+				c.dead = err
+			}
 			return nil, fmt.Errorf("codex app-server closed: %w", err)
 		}
 		var msg struct {
@@ -167,6 +178,8 @@ func (c *Client) Call(ctx context.Context, method string, params any) (json.RawM
 	return nil, fmt.Errorf("%s: no answer from codex app-server", method)
 }
 
+var errDeadline = errors.New("no reply before the deadline")
+
 // readLine is c.out.ReadString with a deadline. A line that arrives after the
 // deadline is dropped by the buffered channel; the client is then out of step
 // with the server and the caller should Close it.
@@ -184,7 +197,7 @@ func (c *Client) readLine(within time.Duration) (string, error) {
 	case r := <-ch:
 		return r.line, r.err
 	case <-time.After(within):
-		return "", errors.New("no reply before the deadline")
+		return "", errDeadline
 	}
 }
 

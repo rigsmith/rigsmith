@@ -241,8 +241,23 @@ func Detect(name string) Machine {
 	return Machine{Name: name, OS: OSToken(), Home: home}
 }
 
-// DetectFor builds a Machine for this host, named by ResolveName.
-func DetectFor(cfg *Config) Machine { return Detect(ResolveName(cfg)) }
+// DetectFor is Detect for a machine this config may already know about: the
+// live OS and home, plus the custom folder tokens the config entry records.
+//
+// It used to be Detect(ResolveName(cfg)), which took only the NAME from the
+// config and rebuilt everything else from the host — so Machine.Tokens, the one
+// field that exists solely to be configured, never reached Folders(), and
+// every command portablized against HOME alone. clauderig had the same hole.
+func DetectFor(cfg *Config) Machine {
+	name := ResolveName(cfg)
+	m := Detect(name)
+	if cfg != nil {
+		if known, ok := cfg.Machines[name]; ok && len(known.Tokens) > 0 {
+			m.Tokens = known.Tokens
+		}
+	}
+	return m
+}
 
 // UnresolvedName is the placeholder used when this machine has no stable
 // identity — no matching config entry and no usable hostname. Anything that

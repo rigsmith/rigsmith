@@ -110,6 +110,15 @@ func TestAnUnterminatedReplyStillHonoursTheDeadline(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Call did not return after its deadline")
 	}
+	// The client is now one message behind its server. A later call must
+	// refuse immediately rather than read the stale reply as its own.
+	start := time.Now()
+	if _, err := c.Call(context.Background(), "again", nil); err == nil || !strings.Contains(err.Error(), "out of step") {
+		t.Errorf("a timed-out client accepted another call: %v", err)
+	}
+	if time.Since(start) > time.Second {
+		t.Error("the refusal waited instead of answering at once")
+	}
 }
 
 func itoa(n int) string {

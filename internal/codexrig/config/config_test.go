@@ -48,3 +48,22 @@ func TestDefaultHasNoOpinionOnChunking(t *testing.T) {
 		t.Fatal("Default() sets chunkRollouts explicitly, so a new machine can never follow what the repo already does")
 	}
 }
+
+// Machine.Tokens exists solely to be configured — nothing else writes it — and
+// DetectFor used to rebuild the machine from the host with the name alone, so
+// the tokens never reached Folders() and every command portablized against
+// HOME only.
+func TestDetectForCarriesTheConfiguredMachinesTokens(t *testing.T) {
+	cfg := Default()
+	me := Detect("")
+	me.Name = "here"
+	me.Tokens = map[string]string{"PROJECTS": "/srv/projects"}
+	cfg.Machines["here"] = me
+	got := DetectFor(cfg)
+	if got.Name != "here" {
+		t.Skipf("this host did not resolve to the configured machine (%q); the token overlay is keyed on that", got.Name)
+	}
+	if got.Folders()["PROJECTS"] != "/srv/projects" {
+		t.Errorf("Folders() = %v, the configured token is missing", got.Folders())
+	}
+}

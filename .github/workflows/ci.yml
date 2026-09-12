@@ -112,6 +112,12 @@ jobs:
           CLAUDERIG_E2E: '1' # synthetic fixtures only; real-data scan has its own gate
         run: go test ./... -count=1
 
+      # The app-server client's serialisation test only catches an unserialised
+      # client under the race detector: without it the shared reader happens
+      # to hand each caller its own line. One package, so the cost stays small.
+      - name: Race (app-server client)
+        run: go test -race ./internal/codexrig/appserver -count=1
+
       # ./ui is a SEPARATE module, so `go test ./...` above never reaches it —
       # a workspace does not make one module's ./... cross into another. That
       # gap is not theoretical: two ui/bridge tests sat red from the commit that

@@ -92,7 +92,8 @@ func newMCPListCmd() *cobra.Command {
 }
 
 func newMCPGetCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "get <name>",
 		Short: "Show one server in full",
 		Args:  cobra.ExactArgs(1),
@@ -105,6 +106,9 @@ func newMCPGetCmd() *cobra.Command {
 			for _, e := range entries {
 				if e.Name != args[0] {
 					continue
+				}
+				if asJSON {
+					return writeJSON(out, forDisplay([]mcp.Entry{e})[0])
 				}
 				fmt.Fprintf(out, "%s\n", HeaderStyle.Render(e.Name))
 				fmt.Fprintf(out, "  %-10s %s\n", "transport", e.Transport())
@@ -127,6 +131,8 @@ func newMCPGetCmd() *cobra.Command {
 			return fmt.Errorf("no MCP server named %q", args[0])
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the server as JSON, the same object `list --json` uses")
+	return cmd
 }
 
 func printNeeds(cmd *cobra.Command, e mcp.Entry) {
