@@ -1,6 +1,7 @@
 package account
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -749,5 +750,35 @@ func TestListReportsAnUnreadableAccountRatherThanHidingIt(t *testing.T) {
 	}
 	if _, err := s.List(); err == nil || !strings.Contains(err.Error(), a.ID) {
 		t.Fatalf("List = %v, want an error naming the account whose record is damaged", err)
+	}
+}
+
+// The credential is written before the record that describes it. Written the
+// other way round, a failed credential write left new metadata paired with
+// the old credential — List believed the record, Switch used the tokens.
+func TestAFailedCredentialWriteLeavesTheRecordUntouched(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory the owner cannot write")
+	}
+	s, _ := sandbox(t)
+	a, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(s.metaPath(a.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(s.dir(a.ID), 0o500); err != nil { // no new files: the atomic write must fail
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(s.dir(a.ID), 0o700) })
+	if _, _, err := s.CaptureLive(fakeCred(t, "alice@example.com", "A", "acct-1", "plus")); err == nil {
+		t.Fatal("expected the credential write to fail")
+	}
+	_ = os.Chmod(s.dir(a.ID), 0o700)
+	after, _ := os.ReadFile(s.metaPath(a.ID))
+	if !bytes.Equal(after, before) {
+		t.Error("the record changed although the credential did not")
 	}
 }

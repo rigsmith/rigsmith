@@ -185,11 +185,21 @@ func chunkedHead(ctx context.Context, repo *gitrepo.Repo, ref, p string) ([]byte
 	if len(idx.Parts) == 0 {
 		return nil, nil
 	}
-	first, err := repo.ShowPrefix(ctx, ref, rolloutstore.PartPath(p, idx.Parts[0].Hash), headBytes)
+	// The whole first part, checked against the index, and only then cut to
+	// headBytes. A bounded prefix of an unverified part would let a tampered
+	// part put a title and cwd on a listing that Read would refuse.
+	first := idx.Parts[0]
+	body, err := repo.ShowFile(ctx, ref, rolloutstore.PartPath(p, first.Hash))
 	if err != nil {
 		return nil, err
 	}
-	return first, nil
+	if len(body) != first.Size || rolloutstore.HashOf(body) != first.Hash {
+		return nil, fmt.Errorf("rollout part %s does not match its index", first.Hash[:8])
+	}
+	if len(body) > headBytes {
+		body = body[:headBytes]
+	}
+	return body, nil
 }
 
 // cwdFrom reads the working directory out of a rollout's header record.

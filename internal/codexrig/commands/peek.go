@@ -80,6 +80,9 @@ func newPeekListCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
+			if limit < 0 {
+				return errors.New("--limit cannot be negative")
+			}
 			repo, sessions, err := peekSessions(cmd, ref, device)
 			if err != nil {
 				return err

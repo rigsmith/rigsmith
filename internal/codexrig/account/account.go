@@ -167,6 +167,14 @@ func (s *Store) CaptureLive(cred []byte) (Account, bool, error) {
 	if label == "" {
 		return Account{}, false, errors.New("could not determine who this credential belongs to — codexrig needs an email (ChatGPT login) or an account id to name it by")
 	}
+	// Under the store's lock: choosing an id and writing under it are two
+	// steps, and two captures of the same login racing between them both saw
+	// the slug as free and the later one overwrote the first.
+	lock, err := s.AcquireSwap(5 * time.Second)
+	if err != nil {
+		return Account{}, false, err
+	}
+	defer lock.Release()
 
 	// Not `existing, _ :=`. A directory that cannot be enumerated but can still
 	// be written to is the dangerous shape: the loop below sees no accounts, so
@@ -236,6 +244,17 @@ func (s *Store) save(a Account, cred []byte) error {
 	if err != nil {
 		return err
 	}
+	// The credential FIRST, then the record that describes it. Written the
+	// other way round, a failed credential write left new metadata paired
+	// with the old credential, and List and Resolve believed the metadata
+	// while Switch used the tokens. A record that fails after the credential
+	// landed leaves an older description of a valid login, which the next
+	// capture corrects.
+	if len(cred) > 0 {
+		if err := atomicWrite(s.credPath(a.ID), cred, 0o600); err != nil {
+			return err
+		}
+	}
 	// atomicWrite, not os.WriteFile, for two reasons that both bite here.
 	// WriteFile truncates before it writes, and SaveCredential's own doc says
 	// the stored copy is the only one left once the machine has switched away —
@@ -247,9 +266,6 @@ func (s *Store) save(a Account, cred []byte) error {
 		return err
 	}
 	if len(cred) > 0 {
-		if err := atomicWrite(s.credPath(a.ID), cred, 0o600); err != nil {
-			return err
-		}
 		// An isolated home that already exists is holding the PREVIOUS
 		// credential, and nothing about its own files changed when this one
 		// did — so EnsureHome's "it already authenticates" test would keep
@@ -594,6 +610,14 @@ func (s *Store) EnsureHome(a Account, share bool) (string, error) {
 // CaptureFromHome repairs an account's stored credential from its own isolated
 // home — the path back from "I logged this account in inside its own home".
 func (s *Store) CaptureFromHome(a Account) error {
+	// Same lock as CaptureLive and Switch: the marker this clears at the end
+	// is one a concurrent capture may have just written for a NEWER
+	// credential, and clearing it would leave the home trusting the older.
+	lock, err := s.AcquireSwap(5 * time.Second)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
 	home := s.HomeDir(a.ID)
 	cred, err := readAuthAt(home)
 	if err != nil {

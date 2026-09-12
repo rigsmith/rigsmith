@@ -100,6 +100,12 @@ func IsIndexFile(p string) (bool, error) {
 // tree — git at a ref, for `peek` — does not hand back the index JSON as if it
 // were the conversation.
 func Assemble(idx *Index, fetch func(hash string) ([]byte, error)) ([]byte, error) {
+	// An index that came through Decode is already checked. One built by hand
+	// is not, and idx.Size drives an allocation while the error text slices
+	// p.Hash[:8] — so check here too, before either can hurt.
+	if err := idx.Validate(); err != nil {
+		return nil, err
+	}
 	out := make([]byte, 0, idx.Size)
 	for _, p := range idx.Parts {
 		body, err := fetch(p.Hash)
@@ -145,6 +151,62 @@ func (idx *Index) References(hash string) bool {
 func HashOf(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// Validate checks the index against itself, the same rules Decode applies:
+// every hash the shape a part is named by, every size within a chunk, and the
+// parts adding up to Size.
+func (idx *Index) Validate() error {
+	var total int64
+	for i, p := range idx.Parts {
+		if len(p.Hash) != 64 || !isLowerHex(p.Hash) {
+			return fmt.Errorf("rollout index: part %d has a malformed hash", i)
+		}
+		if p.Size <= 0 || p.Size > ChunkSize {
+			return fmt.Errorf("rollout index: part %d claims %d bytes; a part holds between 1 and %d", i, p.Size, ChunkSize)
+		}
+		total += int64(p.Size)
+	}
+	if total != idx.Size {
+		return fmt.Errorf("rollout index: parts add up to %d bytes, index says %d", total, idx.Size)
+	}
+	return nil
+}
+
+func isLowerHex(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+// closeOnEOF closes the file the first time a read returns io.EOF, so a
+// consumer that reads to the end and then renames over the path does not find
+// the source still open.
+type closeOnEOF struct {
+	f      *os.File
+	closed bool
+}
+
+func (c *closeOnEOF) Read(p []byte) (int, error) {
+	if c.closed {
+		return 0, io.EOF
+	}
+	n, err := c.f.Read(p)
+	if errors.Is(err, io.EOF) {
+		_ = c.Close()
+	}
+	return n, err
+}
+
+func (c *closeOnEOF) Close() error {
+	if c.closed {
+		return nil
+	}
+	c.closed = true
+	return c.f.Close()
 }
 
 // PartPath is where a part lives relative to its rollout: <rollout>.chunks/<hash>.part.
@@ -472,8 +534,12 @@ func Convert(p string, chunked bool) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		err = Write(p, f, info.ModTime())
-		_ = f.Close()
+		// Write renames the new index over p once it has read the source to
+		// EOF. Holding the source open across that rename is a sharing
+		// violation on Windows, so the handle closes itself at EOF.
+		src := &closeOnEOF{f: f}
+		err = Write(p, src, info.ModTime())
+		_ = src.Close()
 		return err == nil, err
 	case !chunked && isIdx:
 		if err := Materialize(p, p, 0o644); err != nil {

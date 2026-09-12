@@ -61,7 +61,9 @@ func acquireSyncLock(staging string, wait time.Duration) (*syncLock, bool, error
 				// disk with this process's live pid and no lock comes back to
 				// release it, so every later attempt waits out the full stale
 				// timeout for a lock nobody holds.
-				_ = os.Remove(path)
+				if rerr := os.Remove(path); rerr != nil {
+					return nil, false, fmt.Errorf("%w; and the lock file could not be removed, so later syncs will wait out the stale timeout: %v", cerr, rerr)
+				}
 				return nil, false, cerr
 			}
 			return &syncLock{path: path, token: token}, true, nil

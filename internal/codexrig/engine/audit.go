@@ -27,7 +27,7 @@ import (
 //
 // It fails closed: a file that cannot be read is a finding, not a pass.
 func Audit(staging string) ([]redact.Finding, error) {
-	files, err := listStagedFiles(staging)
+	files, others, err := listStaged(staging)
 	if err != nil {
 		return nil, err
 	}
@@ -35,6 +35,23 @@ func Audit(staging string) ([]redact.Finding, error) {
 
 	var mu sync.Mutex
 	var findings []redact.Finding
+
+	// Everything that is not a content file is judged first, cheaply. A
+	// non-regular entry is refused outright: it is not data this can scan,
+	// and following it would read outside the tree. A part is fine only when
+	// an index in the tree vouches for it — that owner's logical read is how
+	// its bytes get scanned — and refused when nothing does.
+	referenced := referencedParts(staging, files)
+	for _, rel := range others {
+		if rolloutstore.IsPartPath(rel) {
+			if referenced[rel] {
+				continue
+			}
+			findings = append(findings, redact.Finding{Path: rel, Kind: "chunk part no index references", File: true})
+			continue
+		}
+		findings = append(findings, redact.Finding{Path: rel, Kind: "not a regular file", File: true})
+	}
 
 	g := new(errgroup.Group)
 	g.SetLimit(runtime.NumCPU())
@@ -115,8 +132,19 @@ func CheckPublish(staging string) error {
 }
 
 func listStagedFiles(staging string) ([]string, error) {
-	var out []string
-	err := filepath.WalkDir(staging, func(p string, d fs.DirEntry, err error) error {
+	files, _, err := listStaged(staging)
+	return files, err
+}
+
+// listStaged walks the staging tree and sorts what it finds into two lists:
+// files — regular files that are content, for restore to write out — and
+// others, everything else: symlinks and other non-regular entries, and chunk
+// parts. The audit needs the second list as much as the first. When
+// listStagedFiles alone existed and simply dropped those entries, a symlink
+// in a cloned tree passed the audit by never being shown to it, and a part
+// no index referenced was neither scanned nor refused.
+func listStaged(staging string) (files, others []string, err error) {
+	err = filepath.WalkDir(staging, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
@@ -139,28 +167,45 @@ func listStagedFiles(staging string) ([]string, error) {
 			}
 			return nil
 		}
-		// A symlink is not content. The staging tree is written by this
-		// process, but a RESTORE reads a tree cloned from a remote — so an
-		// entry pointing at /etc/passwd or at the target's own live config
-		// would be followed by os.ReadFile and its bytes restored as though
-		// they were the backup's. Only regular files travel.
-		if !d.Type().IsRegular() {
+		if !d.Type().IsRegular() || rolloutstore.IsPartPath(rel) {
+			others = append(others, rel)
 			return nil
 		}
-		// A part is bytes from inside a rollout the index already covers.
-		// Scanning it as well doubles the work and reports a finding twice,
-		// naming a path nobody can act on.
-		if rolloutstore.IsPartPath(rel) {
-			return nil
-		}
-		out = append(out, rel)
+		files = append(files, rel)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	sort.Strings(out)
-	return out, nil
+	sort.Strings(files)
+	sort.Strings(others)
+	return files, others, nil
+}
+
+// referencedParts is every part path some chunk index in the tree vouches for.
+// A part outside this set is bytes no index describes: the audit never reads
+// it through an owner, so it must be refused rather than published unscanned.
+func referencedParts(staging string, files []string) map[string]bool {
+	out := map[string]bool{}
+	for _, rel := range files {
+		abs := filepath.Join(staging, filepath.FromSlash(rel))
+		isIdx, err := rolloutstore.IsIndexFile(abs)
+		if err != nil || !isIdx {
+			continue
+		}
+		raw, err := os.ReadFile(abs)
+		if err != nil {
+			continue
+		}
+		idx, err := rolloutstore.Decode(raw)
+		if err != nil {
+			continue
+		}
+		for _, part := range idx.Parts {
+			out[rolloutstore.PartPath(rel, part.Hash)] = true
+		}
+	}
+	return out
 }
 
 // --- the audit cache -----------------------------------------------------

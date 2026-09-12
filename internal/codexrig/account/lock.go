@@ -81,7 +81,9 @@ func tryLock(path string) (*SwapLock, error) {
 		// The file is already on disk carrying THIS process's pid, and the
 		// caller gets no lock to Release — so lockIsStale sees a live pid and
 		// refuses every swap until the two-minute hold expires.
-		_ = os.Remove(path)
+		if rerr := os.Remove(path); rerr != nil {
+			return nil, fmt.Errorf("%w; and the lock file could not be removed, so later swaps will wait out the stale timeout: %v", err, rerr)
+		}
 		return nil, err
 	}
 	return &SwapLock{path: path, token: token}, nil

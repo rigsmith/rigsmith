@@ -2,6 +2,8 @@ package commands
 
 import (
 	"fmt"
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
+	"sort"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/climenu"
@@ -63,7 +65,7 @@ func newMCPListCmd() *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return writeJSON(out, map[string]any{"servers": entries})
+				return writeJSON(out, map[string]any{"servers": forDisplay(entries)})
 			}
 			if len(entries) == 0 {
 				fmt.Fprintln(out, DimStyle.Render("no MCP servers configured — `codex mcp add`"))
@@ -78,7 +80,7 @@ func newMCPListCmd() *cobra.Command {
 				if !e.Enabled {
 					travels = DimStyle.Render("disabled")
 				}
-				fmt.Fprintf(out, "%-18s %-9s %-9s %s\n", e.Name, e.Transport(), travels, DimStyle.Render(e.Summary()))
+				fmt.Fprintf(out, "%-18s %-9s %-9s %s\n", e.Name, e.Transport(), travels, DimStyle.Render(displaySummary(e.Server)))
 				printNeeds(cmd, e)
 			}
 			return nil
@@ -105,7 +107,7 @@ func newMCPGetCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "%s\n", HeaderStyle.Render(e.Name))
 				fmt.Fprintf(out, "  %-10s %s\n", "transport", e.Transport())
-				fmt.Fprintf(out, "  %-10s %s\n", "target", e.Summary())
+				fmt.Fprintf(out, "  %-10s %s\n", "target", displaySummary(e.Server))
 				if e.Cwd != "" {
 					fmt.Fprintf(out, "  %-10s %s\n", "cwd", e.Cwd)
 				}
@@ -134,4 +136,61 @@ func printNeeds(cmd *cobra.Command, e mcp.Entry) {
 	if len(e.Portability.LocalPaths) > 0 {
 		fmt.Fprintf(out, "    %s %s\n", DimStyle.Render("machine-specific path in:"), strings.Join(e.Portability.LocalPaths, ", "))
 	}
+}
+
+// forDisplay is what the listing may say about a server. This is a
+// portability report, not a config viewer: it names which env keys will be
+// stripped, and never needs their values — and a token in argv or a
+// user:password@ in a URL is exactly the kind of thing that ends up pasted
+// into an issue from here. The keys stay; the values do not.
+func forDisplay(entries []mcp.Entry) []displayEntry {
+	out := make([]displayEntry, 0, len(entries))
+	for _, e := range entries {
+		keys := make([]string, 0, len(e.Env))
+		for k := range e.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		out = append(out, displayEntry{
+			Name: e.Name, Transport: string(e.Transport()), Enabled: e.Enabled,
+			Target: displaySummary(e.Server), Cwd: e.Cwd, EnvKeys: keys,
+			Portability: e.Portability,
+		})
+	}
+	return out
+}
+
+type displayEntry struct {
+	Name        string          `json:"name"`
+	Transport   string          `json:"transport"`
+	Enabled     bool            `json:"enabled"`
+	Target      string          `json:"target"`
+	Cwd         string          `json:"cwd,omitempty"`
+	EnvKeys     []string        `json:"envKeys,omitempty"`
+	Portability mcp.Portability `json:"portability"`
+}
+
+// displaySummary is Summary with credentials taken out: a URL loses its
+// userinfo, and an argument that looks like a secret is shown as such.
+func displaySummary(s mcp.Server) string {
+	if s.URL != "" {
+		if scheme, rest, ok := strings.Cut(s.URL, "://"); ok {
+			if at := strings.LastIndex(rest, "@"); at >= 0 {
+				return scheme + "://***@" + rest[at+1:]
+			}
+		}
+		return s.URL
+	}
+	args := make([]string, 0, len(s.Args))
+	for _, a := range s.Args {
+		v := a
+		if eq := strings.IndexByte(a, '='); eq > 0 && strings.HasPrefix(a, "-") {
+			v = a[eq+1:]
+		}
+		if _, ok := redact.LooksSecret(v); ok {
+			a = strings.TrimSuffix(a, v) + "<redacted>"
+		}
+		args = append(args, a)
+	}
+	return strings.TrimSpace(s.Command + " " + strings.Join(args, " "))
 }

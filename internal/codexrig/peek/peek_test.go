@@ -98,3 +98,38 @@ func TestGetWritesAResumableRolloutWithPrivateMode(t *testing.T) {
 		t.Errorf("mode %v: the whole conversation is readable by other local accounts", st.Mode().Perm())
 	}
 }
+
+// A listing must not show a title from a part that Read would refuse.
+func TestTitlesRefuseATamperedFirstPart(t *testing.T) {
+	repo, _ := chunkedRepo(t)
+	ctx := context.Background()
+	raw, err := repo.ShowFile(ctx, "main", "cli/"+relRollout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx, err := rolloutstore.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite the first part in the working tree with a different, still
+	// parseable header, and commit it under the same name.
+	partPath := filepath.Join(repo.Dir, filepath.FromSlash(rolloutstore.PartPath("cli/"+relRollout, idx.Parts[0].Hash)))
+	body, err := os.ReadFile(partPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := bytes.Replace(body, []byte("review the launcher"), []byte("something forged!!"), 1)
+	if err := os.WriteFile(partPath, forged, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.StageAll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(ctx, "tamper"); err != nil {
+		t.Fatal(err)
+	}
+	got := Titles(ctx, repo, "main", []Session{{Path: "cli/" + relRollout}})
+	if got[0].Title != "" || got[0].Cwd != "" {
+		t.Errorf("title=%q cwd=%q from a part that does not match its index", got[0].Title, got[0].Cwd)
+	}
+}

@@ -145,3 +145,48 @@ func TestChunkedRolloutsThatDivergedStayUnresolved(t *testing.T) {
 		}
 	}
 }
+
+// When the longer side is a PLAIN file, no index references any part, so every
+// conflicted part belongs to the side that lost. Leaving them unresolved made
+// Reconcile abort a valid append-only merge.
+func TestAPlainWinnerDropsTheLosersParts(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	repo, err := gitrepo.Init(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeChunked(t, dir, turns(10000))
+	commitAll(t, ctx, repo, "base")
+	if err := repo.Checkout(ctx, "theirs", true); err != nil {
+		t.Fatal(err)
+	}
+	writeChunked(t, dir, turns(10000, "a"))
+	commitAll(t, ctx, repo, "theirs")
+	if err := repo.Checkout(ctx, "main", false); err != nil {
+		t.Fatal(err)
+	}
+	// Ours has more of the session and is stored whole (a machine with
+	// chunking off), sidecar removed as Convert would.
+	p := filepath.Join(dir, filepath.FromSlash(relRollout))
+	if err := os.RemoveAll(p + rolloutstore.Suffix); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, turns(10000, "a", "b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	commitAll(t, ctx, repo, "ours plain")
+	if conflicted, err := repo.MergeRef(ctx, "theirs"); err != nil || !conflicted {
+		t.Fatalf("fixture: conflicted=%v err=%v", conflicted, err)
+	}
+	rep, err := Resolve(ctx, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Unresolved) != 0 {
+		t.Fatalf("left for a human: %v", rep.Unresolved)
+	}
+	if _, err := os.Lstat(p + rolloutstore.Suffix); !os.IsNotExist(err) {
+		t.Error("the loser's parts survived beside a plain winner")
+	}
+}

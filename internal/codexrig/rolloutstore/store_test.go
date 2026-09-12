@@ -404,3 +404,17 @@ func TestConvertRemovesAStaleSidecarBesideAPlainRollout(t *testing.T) {
 		t.Error("the orphaned .chunks directory survived")
 	}
 }
+
+// An index built by hand — not through Decode — drove an allocation from its
+// Size and sliced a hash for an error message before anyone had checked
+// either. Assemble now refuses what Decode would have.
+func TestAssembleRefusesAMalformedIndexBeforeAllocating(t *testing.T) {
+	huge := &Index{Version: 1, Size: 1 << 40, Parts: []Part{{Hash: strings.Repeat("a", 64), Size: 1}}}
+	if _, err := Assemble(huge, func(string) ([]byte, error) { return []byte("x"), nil }); err == nil {
+		t.Error("a size the parts do not add up to was accepted")
+	}
+	short := &Index{Version: 1, Size: 1, Parts: []Part{{Hash: "abc", Size: 1}}}
+	if _, err := Assemble(short, func(string) ([]byte, error) { return nil, io.EOF }); err == nil {
+		t.Error("a three-character hash was accepted (and would have been sliced [:8])")
+	}
+}

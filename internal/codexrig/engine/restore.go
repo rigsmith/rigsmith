@@ -105,9 +105,17 @@ func Restore(opts RestoreOptions) (*RestoreReport, error) {
 			return nil, err
 		}
 
-		files, err := listStagedFiles(stageRoot)
+		files, others, err := listStaged(stageRoot)
 		if err != nil {
 			return nil, err
+		}
+		// Parts are the insides of a rollout the index beside them restores;
+		// anything else here is a symlink or a device node in a cloned tree,
+		// which restore will not follow and must not pretend it restored.
+		for _, rel := range others {
+			if !rolloutstore.IsPartPath(rel) {
+				rr.Skipped++
+			}
 		}
 		written := map[string]bool{}
 

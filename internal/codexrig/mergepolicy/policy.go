@@ -54,9 +54,11 @@ type Resolution struct {
 	Policy Policy
 	Note   string
 
-	// index is the chunk index this resolution kept, when the file was one.
-	// Its parts are settled against it in Resolve's second pass.
+	// index is the chunk index this resolution kept, when the file was one;
+	// plain records that the kept rollout is a whole file. Either way the
+	// conflicted parts are settled against it in Resolve's second pass.
 	index *rolloutstore.Index
+	plain bool
 }
 
 // Report is the outcome of a reconcile.
@@ -81,6 +83,7 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 	// is decided by which INDEX survives, so the index has to be settled
 	// before its parts can be.
 	kept := map[string]*rolloutstore.Index{}
+	keptPlain := map[string]bool{}
 	unresolved := map[string]bool{}
 	var parts []string
 	for _, p := range paths {
@@ -100,10 +103,12 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 		rep.Resolved = append(rep.Resolved, res)
 		if res.index != nil {
 			kept[p] = res.index
+		} else if res.plain {
+			keptPlain[p] = true
 		}
 	}
 	for _, p := range parts {
-		res, ok, err := resolvePart(ctx, repo, p, kept, unresolved)
+		res, ok, err := resolvePart(ctx, repo, p, kept, keptPlain, unresolved)
 		if err != nil {
 			return rep, err
 		}
@@ -121,13 +126,21 @@ func Resolve(ctx context.Context, repo *gitrepo.Repo) (Report, error) {
 // does the index this merge is keeping reference it. Yes: keep the bytes, hash-
 // checked, from wherever the merge left them intact. No: it is a leftover of
 // the side that lost, and leaving it would publish bytes no index vouches for.
-func resolvePart(ctx context.Context, repo *gitrepo.Repo, p string, kept map[string]*rolloutstore.Index, unresolved map[string]bool) (Resolution, bool, error) {
+func resolvePart(ctx context.Context, repo *gitrepo.Repo, p string, kept map[string]*rolloutstore.Index, keptPlain, unresolved map[string]bool) (Resolution, bool, error) {
 	owner, hash, ok := rolloutstore.SplitPartPath(p)
 	if !ok {
 		return Resolution{}, false, nil
 	}
 	if unresolved[owner] {
 		return Resolution{}, false, nil // the index is a human's problem, so its parts are too
+	}
+	if keptPlain[owner] {
+		// The side that won is a plain file: no index references any part, so
+		// every conflicted part belongs to the side that lost.
+		if err := repo.RemovePath(ctx, p); err != nil {
+			return Resolution{}, false, err
+		}
+		return Resolution{Path: p, Policy: PolicyDrop, Note: "a part of the side that had less; the kept rollout is plain"}, true, nil
 	}
 	idx := kept[owner]
 	if idx == nil {
@@ -238,6 +251,8 @@ func resolveOne(ctx context.Context, repo *gitrepo.Repo, p string) (Resolution, 
 			res := Resolution{Path: p, Policy: PolicyAppend, Note: "one side had more of the same session"}
 			if rolloutstore.IsIndex(keep) {
 				res.index, _ = rolloutstore.Decode(keep)
+			} else {
+				res.plain = true
 			}
 			return res, true, nil
 		}
