@@ -28,9 +28,12 @@ var (
 	shipBanner   = banner{AccentShip, "↑", "ship", "Rig", "release front door"}
 	// U+FE0E keeps Windows Terminal from replacing the mark with its green emoji.
 	claudeBanner = banner{AccentClaude, "✳︎", "claude", "Rig", "Claude Code setup sync"}
+	// U+FE0E for the same reason: a bare diamond is emoji-presentation on Windows.
+	codexBanner = banner{AccentCodex, "◆︎", "codex", "Rig", "Codex CLI setup sync"}
 )
 
-// RigBanner, ChangeBanner, ShipBanner, and ClaudeBanner render a tool's header
+// RigBanner, ChangeBanner, ShipBanner, ClaudeBanner and CodexBanner render a
+// tool's header
 // for a given version string. Pass one straight to fang:
 //
 //	fang.WithBanner(brand.RigBanner)
@@ -38,6 +41,7 @@ func RigBanner(version string) string    { return rigBanner.render(version) }
 func ChangeBanner(version string) string { return changeBanner.render(version) }
 func ShipBanner(version string) string   { return shipBanner.render(version) }
 func ClaudeBanner(version string) string { return claudeBanner.render(version) }
+func CodexBanner(version string) string  { return codexBanner.render(version) }
 
 // render lays out the three-line header: the accent bracket box on the left, the
 // wordmark + version on the middle row, and the tagline on the bottom row.

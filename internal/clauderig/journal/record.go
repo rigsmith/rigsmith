@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 // Summary renders the record as one human line. It lives here rather than in

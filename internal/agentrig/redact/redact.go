@@ -1,9 +1,16 @@
-// Package redact strips secrets from Claude Code config before it is committed to
-// the sync repo, and scans for any that slip past (the tripwire). Redaction is an
-// always-on transform: secret-bearing fields are replaced with a sentinel so
-// restore can tell "this was redacted — keep the local machine's value" rather
-// than clobbering it with a placeholder. Secrets are never synced; a new machine
-// re-authenticates (the strip-don't-sync model).
+// Package redact strips secrets from an agent CLI's config before it is
+// committed to the sync repo, and scans for any that slip past (the tripwire).
+// Redaction is an always-on transform: secret-bearing fields are replaced with a
+// sentinel so restore can tell "this was redacted — keep the local machine's
+// value" rather than clobbering it with a placeholder. Secrets are never synced;
+// a new machine re-authenticates (the strip-don't-sync model).
+//
+// It is shared by every rig that backs an agent up — clauderig and codexrig
+// today — and that sharing is the point. The credential rules, the entropy
+// backstop and the merge semantics are the whole safety claim of these tools; two
+// copies of them would diverge, and the copy that fell behind would be the one
+// quietly publishing a token. A vendor supplies its own allowlist and its own
+// codecs, never its own idea of what a secret looks like.
 package redact
 
 import (
@@ -14,6 +21,12 @@ import (
 
 // Placeholder marks a value that was redacted out. Restore treats a field whose
 // synced value equals Placeholder as "leave the local value untouched".
+//
+// It keeps its clauderig spelling in every rig on purpose: the sentinel is WIRE
+// FORMAT. It sits in committed files that a restore on another machine — possibly
+// running an older binary, possibly the other tool against a shared repo — has to
+// recognise. Renaming it per vendor would buy a tidier grep and cost a silent
+// failure mode in which a redacted field is restored as the literal string.
 const Placeholder = "__CLAUDERIG_REDACTED__"
 
 // Policy decides which JSON fields hold secrets.

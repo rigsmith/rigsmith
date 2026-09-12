@@ -10,6 +10,7 @@
 //	changeRig  violet  AccentChange
 //	shipRig    green   AccentShip
 //	claudeRig  amber   AccentClaude
+//	codexRig   cyan    AccentCodex
 //
 // Pass a tool's accent to Theme / ColorSchemeFunc; the status colors stay
 // common. This is lifted from cli's old internal theme so all four binaries
@@ -53,6 +54,7 @@ var (
 	AccentChange = Violet // changeRig
 	AccentShip   = Green  // shipRig / release
 	AccentClaude = Amber  // claudeRig
+	AccentCodex  = Cyan   // codexRig
 )
 
 // AccentFor returns a tool's accent by its binary name, defaulting to rig's blue
@@ -67,6 +69,8 @@ func AccentFor(tool string) lipgloss.AdaptiveColor {
 		return AccentShip
 	case "clauderig":
 		return AccentClaude
+	case "codexrig":
+		return AccentCodex
 	default:
 		return AccentRig
 	}

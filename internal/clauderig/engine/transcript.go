@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 )
 
 // errPrivateKeyInTranscript stops the scrub for a file carrying a PEM block the

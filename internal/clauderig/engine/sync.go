@@ -18,12 +18,12 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/pathmap"
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"github.com/rigsmith/rigsmith/internal/clauderig/backupgit"
 	"github.com/rigsmith/rigsmith/internal/clauderig/config"
 	"github.com/rigsmith/rigsmith/internal/clauderig/desktop"
 	"github.com/rigsmith/rigsmith/internal/clauderig/manifest"
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/transcript"
 )
 

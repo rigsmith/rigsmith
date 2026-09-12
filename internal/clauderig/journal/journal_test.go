@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
 	"github.com/rigsmith/rigsmith/internal/clauderig/engine"
-	"github.com/rigsmith/rigsmith/internal/clauderig/redact"
 )
 
 func TestAppendAndRead(t *testing.T) {

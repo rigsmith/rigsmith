@@ -3,6 +3,14 @@
 // which is the safety property the community tools lack (a new secret-bearing file
 // upstream is excluded until explicitly allowed). Directory pruning means a 12 GB
 // Electron cache tree is never even descended.
+//
+// The rule engine is vendor-neutral and shared by every rig that backs an agent
+// up; each vendor supplies its own List. That split is the point: "which files
+// may travel" is a judgement about one CLI's layout, while "how a rule set is
+// evaluated" — longest-match-wins, default deny, prune on an any-depth exclude —
+// is a property the tools must not disagree about. A second copy of the matcher
+// would drift, and the drift would show up as a file one tool excludes and the
+// other publishes.
 package allowlist
 
 import (
@@ -34,17 +42,20 @@ type Rule struct {
 	Action  Action
 }
 
-// anyDepth is the prefix marking a "this segment, wherever it appears" pattern.
-const anyDepth = "**/"
+// AnyDepth is the prefix marking a "this segment, wherever it appears" pattern.
+// Exported for the vendor rule sets, which build such patterns by hand.
+const AnyDepth = "**/"
 
 // List is an ordered rule set, evaluated longest-pattern-wins, default deny.
 type List struct {
 	Rules []Rule
 }
 
-// Include/Exclude are builder helpers.
-func inc(p string) Rule { return Rule{Pattern: p, Action: Include} }
-func exc(p string) Rule { return Rule{Pattern: p, Action: Exclude} }
+// Inc and Exc are the rule builders a vendor rule set writes its list with.
+// Exported because those lists live in the vendors' own packages — the whole
+// reason this engine is separate from them.
+func Inc(p string) Rule { return Rule{Pattern: p, Action: Include} }
+func Exc(p string) Rule { return Rule{Pattern: p, Action: Exclude} }
 
 // Match reports whether a file at rel (relative to the root, '/'-separated) syncs.
 func (l List) Match(rel string) bool { return l.decide(rel) == Include }
@@ -65,7 +76,7 @@ func (l List) decide(rel string) Action {
 // prefix, which is what lets a short "**/node_modules" outrank a long include it
 // sits inside.
 func patternCovers(pattern, rel string) (bool, int) {
-	if name, ok := strings.CutPrefix(pattern, anyDepth); ok {
+	if name, ok := strings.CutPrefix(pattern, AnyDepth); ok {
 		segs := strings.Split(rel, "/")
 		for i, seg := range segs {
 			if m, _ := path.Match(name, seg); m {
@@ -91,15 +102,20 @@ func patternCovers(pattern, rel string) (bool, int) {
 	return false, 0
 }
 
-// descend reports whether Walk should enter directory dir. It descends when some
+// Descend reports whether Walk should enter directory dir. Exported because
+// pruning is a guarantee, not an implementation detail: "the 12 GB cache tree is
+// never entered" is a claim a vendor's rule set has to be able to test directly,
+// without materialising 12 GB to prove it.
+//
+// It descends when some
 // include lives strictly below dir (must reach it), or when dir itself resolves
 // to Include (it's inside an allowed tree and not carved out). Otherwise the
 // directory is pruned — this is what keeps the Desktop cache tree untouched.
-func (l List) descend(dir string) bool {
+func (l List) Descend(dir string) bool {
 	// An any-depth exclude is a hard prune: a tree banned by name (node_modules)
 	// is never entered, whatever else the rules say about what lives under it.
 	for _, r := range l.Rules {
-		if r.Action != Exclude || !strings.HasPrefix(r.Pattern, anyDepth) {
+		if r.Action != Exclude || !strings.HasPrefix(r.Pattern, AnyDepth) {
 			continue
 		}
 		if ok, _ := patternCovers(r.Pattern, dir); ok {
@@ -152,7 +168,7 @@ func Walk(root string, l List) ([]string, []Link, error) {
 			return nil
 		}
 		if d.IsDir() {
-			if !l.descend(rel) {
+			if !l.Descend(rel) {
 				return fs.SkipDir
 			}
 			return nil
