@@ -16,6 +16,8 @@ package journal
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -160,6 +162,14 @@ func fileName(machine string) string {
 	n := strings.Trim(unsafeName.ReplaceAllString(machine, "-"), ".-")
 	if n == "" {
 		n = "unknown"
+	}
+	// As the ledger does: a name that survived intact keeps its file, and one
+	// that lost something carries a fingerprint of the original, so "a/b" and
+	// "a-b" do not share a journal — which mattered the moment a refusal
+	// started publishing one machine's file as its own.
+	if n != machine {
+		sum := sha256.Sum256([]byte(machine))
+		n += "-" + hex.EncodeToString(sum[:4])
 	}
 	return n + ".jsonl"
 }

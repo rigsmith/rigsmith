@@ -3,6 +3,7 @@ package peek
 import (
 	"bytes"
 	"context"
+	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +43,11 @@ func chunkedRepo(t *testing.T) (*gitrepo.Repo, []byte) {
 		t.Fatal(err)
 	}
 	if err := rolloutstore.Write(p, bytes.NewReader(want), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// The attributes the product writes before it commits anything: without
+	// them a runner with core.autocrlf refuses the LF rollout outright.
+	if err := backupgit.Ensure(dir, "CodexRig"); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.StageAll(ctx); err != nil {

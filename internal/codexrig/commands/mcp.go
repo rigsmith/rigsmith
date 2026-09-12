@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"github.com/rigsmith/rigsmith/internal/agentrig/redact"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -174,12 +175,22 @@ type displayEntry struct {
 // userinfo, and an argument that looks like a secret is shown as such.
 func displaySummary(s mcp.Server) string {
 	if s.URL != "" {
-		if scheme, rest, ok := strings.Cut(s.URL, "://"); ok {
-			if at := strings.LastIndex(rest, "@"); at >= 0 {
-				return scheme + "://***@" + rest[at+1:]
-			}
+		// Scheme, host and path only. Userinfo is the obvious place for a
+		// credential; a query string or fragment is the other, and a listing
+		// has no use for either.
+		u, err := url.Parse(s.URL)
+		if err != nil {
+			return "(unparseable url)"
 		}
-		return s.URL
+		shown := u.Scheme + "://"
+		if u.User != nil {
+			shown += "***@"
+		}
+		shown += u.Host + u.Path
+		if u.RawQuery != "" || u.Fragment != "" {
+			shown += "?…"
+		}
+		return shown
 	}
 	args := make([]string, 0, len(s.Args))
 	for _, a := range s.Args {

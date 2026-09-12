@@ -15,6 +15,7 @@
 package mcp
 
 import (
+	"fmt"
 	"os"
 	"sort"
 	"strconv"
@@ -122,8 +123,13 @@ func List(home string, folders pathmap.MapFolders, osToken string) ([]Entry, err
 		if env, ok := m["env"].(map[string]any); ok {
 			s.Env = map[string]string{}
 			for k, val := range env {
+				// Every key, whatever its value's type: the whole map is a
+				// secret container, and dropping a non-string entry made
+				// SecretEnv say a value was not needed on arrival when it was.
 				if str, ok := val.(string); ok {
 					s.Env[k] = str
+				} else {
+					s.Env[k] = fmt.Sprint(val)
 				}
 			}
 		}

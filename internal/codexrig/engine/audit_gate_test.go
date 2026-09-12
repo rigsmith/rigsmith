@@ -77,3 +77,37 @@ func TestCheckPublishRefusesAPartNoIndexVouchesFor(t *testing.T) {
 		t.Error("the orphan part is not named as a finding")
 	}
 }
+
+// Decode keeps the index fields it knows and drops the rest. A credential in
+// an unknown field would be in the committed bytes and in nothing the logical
+// read ever showed the scanner.
+func TestCheckPublishScansTheRawIndexBytesToo(t *testing.T) {
+	stage := t.TempDir()
+	rel := "cli/sessions/2026/09/05/rollout-2026-09-05T11-22-59-01a0722a-7356-7592-922a-336289bdc101.jsonl"
+	p := filepath.Join(stage, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := bytes.Repeat([]byte(`{"type":"response_item","payload":{"text":"yyyyyyyy"}}`+"\n"), 200000)
+	if err := rolloutstore.Write(p, bytes.NewReader(body), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A field the index format does not define, holding something the
+	// conversation never held.
+	tampered := bytes.Replace(raw, []byte(`{"codexrig_chunked_rollout":`), []byte(`{"codexrig_chunked_rollout":`), 1)
+	tampered = bytes.TrimRight(tampered, "\n}")
+	tampered = append(tampered, []byte(`,"note":"ghp_`+strings.Repeat("a", 40)+`"}`+"\n")...)
+	if err := os.WriteFile(p, tampered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rolloutstore.Open(p); err != nil {
+		t.Fatalf("fixture: the tampered index no longer decodes: %v", err)
+	}
+	if err := CheckPublish(stage); err == nil {
+		t.Fatal("a credential in an unknown index field was published unscanned")
+	}
+}

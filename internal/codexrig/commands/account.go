@@ -111,11 +111,11 @@ func newAccountAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			a, existed, err := s.CaptureLive(cred)
+			// Capture and activate under one lock: as two calls, a Switch could
+			// land between them and this would point active.json at a login
+			// the machine no longer holds.
+			a, existed, err := s.CaptureLiveActive(cred)
 			if err != nil {
-				return err
-			}
-			if err := s.SetActive(a.ID); err != nil {
 				return err
 			}
 			verb := "Added"

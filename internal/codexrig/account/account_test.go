@@ -786,3 +786,22 @@ func TestAFailedCredentialWriteLeavesTheRecordUntouched(t *testing.T) {
 		t.Error("the record changed although the credential did not")
 	}
 }
+
+func TestCaptureLiveActiveRecordsThePointerWithTheCapture(t *testing.T) {
+	s, _ := sandbox(t)
+	a, _, err := s.CaptureLiveActive(fakeCred(t, "alice@example.com", "A", "acct-1", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Active(); got != a.ID {
+		t.Errorf("active = %q, want %q", got, a.ID)
+	}
+	// And plain CaptureLive still leaves the pointer alone.
+	b, _, err := s.CaptureLive(fakeCred(t, "bob@other.test", "B", "acct-2", "pro"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Active(); got != a.ID {
+		t.Errorf("CaptureLive moved the pointer to %q", b.ID)
+	}
+}

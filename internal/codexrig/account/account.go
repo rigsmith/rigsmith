@@ -155,7 +155,17 @@ func (s *Store) activePath() string         { return filepath.Join(s.accountsDir
 // times a day. An API-key login has no email, so it is named by the key's own
 // account id, and failing that refused — an account codexrig cannot name is one
 // it can never resolve again.
-func (s *Store) CaptureLive(cred []byte) (Account, bool, error) {
+func (s *Store) CaptureLive(cred []byte) (Account, bool, error) { return s.captureLive(cred, false) }
+
+// CaptureLiveActive is CaptureLive that also makes the account the active one,
+// under the same lock. Done as two calls from `account add`, a Switch could land
+// between them and install account B, and the add would then point active.json
+// back at A — a pointer naming a login the machine no longer has.
+func (s *Store) CaptureLiveActive(cred []byte) (Account, bool, error) {
+	return s.captureLive(cred, true)
+}
+
+func (s *Store) captureLive(cred []byte, activate bool) (Account, bool, error) {
 	if !HasTokens(cred) {
 		return Account{}, false, errors.New("the live credential has no usable token (is `codex login` finished?)")
 	}
@@ -232,6 +242,11 @@ func (s *Store) CaptureLive(cred []byte) (Account, bool, error) {
 	}
 	if err := s.save(acct, cred); err != nil {
 		return Account{}, false, err
+	}
+	if activate {
+		if err := s.SetActive(acct.ID); err != nil {
+			return acct, !created, fmt.Errorf("stored %s but could not record it as active: %w", acct.Title(), err)
+		}
 	}
 	return acct, !created, nil
 }

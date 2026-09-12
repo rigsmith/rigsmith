@@ -87,7 +87,7 @@ func TestASingleFileEditIsJudgedToo(t *testing.T) {
 }
 
 func TestARelativePathIsResolvedAgainstTheToolsCwd(t *testing.T) {
-	res := Evaluate(Request{Tool: "Write", Cwd: "/repo/internal", FilePath: "thing.go"}, onBase())
+	res := Evaluate(Request{Tool: "Write", Cwd: abs("repo", "internal"), FilePath: "thing.go"}, onBase())
 	if res.Decision != Deny {
 		t.Error("a relative path was not placed inside the repository")
 	}

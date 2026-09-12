@@ -3,6 +3,7 @@ package mergepolicy
 import (
 	"bytes"
 	"context"
+	"github.com/rigsmith/rigsmith/internal/agentrig/backupgit"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,11 @@ func writeChunked(t *testing.T, dir string, body []byte) {
 
 func commitAll(t *testing.T, ctx context.Context, repo *gitrepo.Repo, msg string) {
 	t.Helper()
+	// The attributes the product writes before it commits anything: without
+	// them a runner with core.autocrlf refuses the LF rollout outright.
+	if err := backupgit.Ensure(repo.Dir, "CodexRig"); err != nil {
+		t.Fatal(err)
+	}
 	if err := repo.StageAll(ctx); err != nil {
 		t.Fatal(err)
 	}

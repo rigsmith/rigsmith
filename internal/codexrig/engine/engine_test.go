@@ -321,7 +321,9 @@ func TestRolloutBytesAreNeverEdited(t *testing.T) {
 	if src != staged {
 		t.Error("the staged rollout differs from the live one; it must be carried byte for byte")
 	}
-	if !strings.Contains(staged, m.home) {
+	// The cwd as the rollout spells it — JSON-escaped, which on Windows is not
+	// the same bytes as the path itself.
+	if !strings.Contains(staged, strings.Trim(jsonPath(m.project()), `"`)) {
 		t.Error("the rollout's recorded cwd was rewritten — that is conversation content")
 	}
 }

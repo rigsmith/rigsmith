@@ -90,6 +90,21 @@ func Audit(staging string) ([]redact.Finding, error) {
 			}
 			finding, serr := redact.ScanReader(rel, f)
 			_ = f.Close()
+			// The physical file too, when it is an index: Decode keeps the
+			// fields it knows and drops the rest, so a credential in an
+			// unknown field would exist in the committed bytes and in nothing
+			// the logical read ever showed the scanner.
+			if serr == nil && finding == nil {
+				if isIdx, ierr := rolloutstore.IsIndexFile(abs); ierr == nil && isIdx {
+					raw, rerr := os.Open(abs)
+					if rerr != nil {
+						serr = rerr
+					} else {
+						finding, serr = redact.ScanReader(rel, raw)
+						_ = raw.Close()
+					}
+				}
+			}
 			switch {
 			case serr != nil:
 				mu.Lock()
