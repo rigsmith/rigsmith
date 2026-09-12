@@ -127,3 +127,35 @@ go build -o clauderig ./cmd/clauderig
 ```
 
 Requires `git` and the GitHub CLI (`gh`, authenticated) for the private-repo gate.
+
+## Before you trust a new test, break the code on purpose
+
+A test that passes with the thing it names removed costs the same to run as a
+real one and buys nothing. Two ways they get written here, both found in this
+suite by mutation testing:
+
+- **The fixture cannot reach the guard.** `TestAuditCacheIgnoresAnOlderRuleSet`
+  wrote its stale cache entry as `0 0 <path>` — a size and mtime matching no
+  file — so `wasClean`'s size check rejected it whatever the version said. The
+  version gate could be deleted outright and the test stayed green.
+- **Another layer answers first.** A `Walk`-level test for the allowlist's
+  symlink containment passes with the containment check removed, because
+  `decide(target)` rejects an escaping target too. Assert such a contract at the
+  function that makes it, or the test measures the wrong layer.
+
+The fix for both is a **control**: an assertion that fails when the situation
+under test stops being the situation. `TestAuditCacheTrustsItsOwnRuleSet` is one
+— the same entry under the current version must be trusted, which is what makes
+the version string the only difference between the two runs.
+
+To sweep for these rather than wait to be bitten, mutate and re-run:
+
+```sh
+# flip one operator or boolean in a non-test source, run that package, restore
+go test -count=1 ./internal/clauderig/<pkg>/
+```
+
+A surviving mutant is not automatically a bad test — many are equivalent
+(`m[k] = true` → `false` changes nothing where the map is checked for presence).
+Confirm by hand: make the *semantic* change the comment warns about, and check
+whether a test names the property.
