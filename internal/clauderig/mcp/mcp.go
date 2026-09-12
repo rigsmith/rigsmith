@@ -17,6 +17,7 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -334,6 +335,14 @@ func projectStates(home, repoRoot string) (func(name string) State, error) {
 
 // parseServer decodes a raw JSON server object into a Server.
 func parseServer(raw any) (Server, error) {
+	// A JSON null unmarshals into a struct without complaint and leaves it
+	// zeroed, so `"tidy": null` became a server with no command that `mcp list`
+	// showed as an ordinary stdio row with a blank target — and the portability
+	// verdict then said it travels. A string, array or number already errored
+	// here; null was the one shape that turned into a phantom.
+	if raw == nil {
+		return Server{}, errors.New("is null, not a server definition")
+	}
 	b, err := json.Marshal(raw)
 	if err != nil {
 		return Server{}, err
@@ -341,6 +350,12 @@ func parseServer(raw any) (Server, error) {
 	var s Server
 	if err := json.Unmarshal(b, &s); err != nil {
 		return Server{}, err
+	}
+	// An object with neither a command nor a URL defines nothing runnable, and
+	// reads identically to null once parsed. Same reasoning: better to name a
+	// broken entry than to list a server that cannot start.
+	if s.Command == "" && s.URL == "" {
+		return Server{}, errors.New("has neither a command nor a url")
 	}
 	return s, nil
 }
@@ -393,6 +408,55 @@ func removeFromList(list []string, name string) []string {
 }
 
 // load reads a JSON object file, treating absent/empty as an empty object.
+// ErrNoServersMap means the document has an mcpServers field that is not a
+// map. Distinct from "no servers": one is an empty repo file, the other is a
+// document nobody can interpret, and reporting the second as the first tells a
+// user their committed servers are missing when they are merely unreadable.
+var ErrNoServersMap = errors.New("mcpServers is present but is not an object")
+
+// ServerDefsIn returns a fingerprint per server defined in a raw .mcp.json.
+// Used to ask what a CLONE would get: the committed blob, not the working tree.
+//
+// Fingerprints rather than names, because a name that survives an edit is not
+// the same server — change the command and a clone still receives the old one.
+func ServerDefsIn(b []byte) (map[string]string, error) {
+	if len(strings.TrimSpace(string(b))) == 0 {
+		return map[string]string{}, nil
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return nil, err
+	}
+	raw, present := doc["mcpServers"]
+	if !present || raw == nil {
+		return map[string]string{}, nil
+	}
+	servers, ok := raw.(map[string]any)
+	if !ok {
+		return nil, ErrNoServersMap
+	}
+	out := make(map[string]string, len(servers))
+	for name, v := range servers {
+		srv, err := parseServer(v)
+		if err != nil {
+			return nil, fmt.Errorf("server %q: %w", name, err)
+		}
+		out[name] = Fingerprint(srv)
+	}
+	return out, nil
+}
+
+// Fingerprint is a stable rendering of everything about a server that decides
+// what it runs. Both sides go through parseServer first, so a field this
+// package does not model cannot make two identical servers compare unequal.
+func Fingerprint(s Server) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 func load(path string) (map[string]any, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {

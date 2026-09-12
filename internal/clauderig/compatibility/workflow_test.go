@@ -53,6 +53,14 @@ func TestWorkflowCompatibility(t *testing.T) {
 			compare(t, a.observations, b.observations)
 		})
 	}
+	// An allowance nobody needed any more is a hole left open. Checked after
+	// every scenario, because each one compares its own observations and a
+	// difference naturally belongs to only one of them.
+	for k, why := range intendedDifferences {
+		if !usedIntended[k] {
+			t.Errorf("intendedDifferences still permits %s (%q), but the baseline and the candidate now agree there — remove the entry", k, why)
+		}
+	}
 }
 
 func session(id, text string) string {

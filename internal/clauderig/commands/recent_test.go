@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,7 @@ func runRecentQuery(t *testing.T, live, query string, sc sessions.Scope, limit i
 	var out, errw bytes.Buffer
 	targets := []search.Target{{Label: cliTarget, Dir: live}}
 	var roots []session.Root
-	if err := listRecent(&out, &errw, testMachine(t.TempDir()), targets, roots, sc, query, limit, long); err != nil {
+	if err := listRecent(&out, &errw, testMachine(t.TempDir()), targets, roots, sc, query, limit, long, false); err != nil {
 		t.Fatal(err)
 	}
 	return stripANSI(out.String())
@@ -51,7 +52,7 @@ func runRecent(t *testing.T, live string, sc sessions.Scope, limit int, long boo
 	var out, errw bytes.Buffer
 	targets := []search.Target{{Label: cliTarget, Dir: live}}
 	var roots []session.Root
-	if err := listRecent(&out, &errw, testMachine(t.TempDir()), targets, roots, sc, "", limit, long); err != nil {
+	if err := listRecent(&out, &errw, testMachine(t.TempDir()), targets, roots, sc, "", limit, long, false); err != nil {
 		t.Fatal(err)
 	}
 	return stripANSI(out.String())
@@ -312,5 +313,80 @@ func TestRecent_LongShowsBranch(t *testing.T) {
 	got := runRecent(t, live, sessions.Scope{Now: now}, 0, true)
 	if !strings.Contains(got, "feat/long-mode") {
 		t.Errorf("--long dropped the branch:\n%s", got)
+	}
+}
+
+// recentJSON runs the listing in JSON mode and returns the decoded document.
+func recentJSON(t *testing.T, live, query string, sc sessions.Scope, limit int) RecentJSON {
+	t.Helper()
+	var out, errw bytes.Buffer
+	targets := []search.Target{{Label: cliTarget, Dir: live}}
+	var roots []session.Root
+	if err := listRecent(&out, &errw, testMachine(t.TempDir()), targets, roots, sc, query, limit, false, true); err != nil {
+		t.Fatal(err)
+	}
+	var doc RecentJSON
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("recent --json did not emit a JSON document: %v\n%s", err, out.String())
+	}
+	return doc
+}
+
+func TestRecentJSON_CarriesWhatTheListingShows(t *testing.T) {
+	live := t.TempDir()
+	now := time.Now().UTC()
+	writeTestFile(t, live, "projects/-Users-x-Git-thing/sess-a.jsonl",
+		recordAs(now.Add(-time.Hour).Format(time.RFC3339), "/Users/x/Git/thing", "feat/x", "cli", "fix the launcher"))
+
+	doc := recentJSON(t, live, "", sessions.Scope{Now: now}, 0)
+	if len(doc.Sessions) != 1 {
+		t.Fatalf("got %d session(s): %+v", len(doc.Sessions), doc.Sessions)
+	}
+	got := doc.Sessions[0]
+	if got.ID != "sess-a" || got.Title != "fix the launcher" {
+		t.Errorf("hit = %+v", got)
+	}
+	if got.Cwd != "/Users/x/Git/thing" || got.Branch != "feat/x" {
+		t.Errorf("hit = %+v, want the cwd and branch the styled listing shows", got)
+	}
+	if doc.Total != 1 || doc.Read == 0 {
+		t.Errorf("counts = total %d read %d; a caller has to tell \"none in the window\" from \"none readable\"", doc.Total, doc.Read)
+	}
+}
+
+func TestRecentJSON_OnlyOffersAResumeCommandThatWouldWork(t *testing.T) {
+	// `claude --resume` reads the live CLI root. A command for a session that is
+	// only in the synced repo is a command that fails, so it is not emitted —
+	// the same rule the styled output follows.
+	live := t.TempDir()
+	now := time.Now().UTC()
+	writeTestFile(t, live, "projects/-Users-x-Git-thing/sess-a.jsonl",
+		recordAs(now.Format(time.RFC3339), "/Users/x/Git/thing", "main", "cli", "hello"))
+
+	doc := recentJSON(t, live, "", sessions.Scope{Now: now}, 0)
+	got := doc.Sessions[0]
+	if !got.Resumable {
+		t.Fatal("a session in the live root is resumable")
+	}
+	if !strings.Contains(got.Resume, "claude --resume") || !strings.Contains(got.Resume, "cd ") {
+		t.Errorf("Resume = %q, want a runnable command including the directory", got.Resume)
+	}
+}
+
+func TestRecentJSON_EmitsNothingButTheDocument(t *testing.T) {
+	// Prose on stdout is what makes a --json flag useless to the thing reading it.
+	live := t.TempDir()
+	now := time.Now().UTC()
+	var out, errw bytes.Buffer
+	targets := []search.Target{{Label: cliTarget, Dir: live}}
+	if err := listRecent(&out, &errw, testMachine(t.TempDir()), targets, nil, sessions.Scope{Now: now}, "", 0, false, true); err != nil {
+		t.Fatal(err)
+	}
+	var doc RecentJSON
+	if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+		t.Fatalf("stdout was not a bare JSON document: %v\n%s", err, out.String())
+	}
+	if len(doc.Sessions) != 0 {
+		t.Errorf("sessions = %+v, want none", doc.Sessions)
 	}
 }

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"github.com/rigsmith/rigsmith/internal/clauderig/allowlist"
 	"os"
 	"path/filepath"
@@ -435,5 +436,122 @@ func TestCopyPreserveMtime_LeavesNothingBehindOnFailure(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Fatalf("temp file left behind: %v", entries)
+	}
+}
+
+// A credential the inbound scan misses is caught by the whole-tree audit, which
+// runs AFTER the copy — so without this the refused file sits in the staging
+// tree, one permissive run away from being committed.
+func TestSync_TakesBackACopyTheAuditCondemns(t *testing.T) {
+	live := t.TempDir()
+	// Pasted into a transcript rather than stored in a named field: the inbound
+	// scan is deliberately narrow and name-led, so this reaches the audit.
+	write(t, live, "projects/p/s.jsonl",
+		`{"type":"user","message":{"content":"the key is sk-ant-api03-`+strings.Repeat("a", 80)+`"}}`+"\n")
+
+	staging := t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)})
+	if err == nil {
+		t.Fatal("expected the tripwire to refuse")
+	}
+	if len(rep.Findings) == 0 {
+		t.Fatal("the sync refused without saying what it found")
+	}
+	staged := filepath.Join(staging, "cli", "projects", "p", "s.jsonl")
+	if _, err := os.Stat(staged); err == nil {
+		t.Error("the condemned file is still in the staging tree")
+	}
+}
+
+// A file an OLDER clauderig staged is reported, not deleted. Removing it would
+// hide the problem instead of surfacing it, and the user may want the bytes.
+func TestSync_LeavesACondemnedFileItDidNotStageThisRun(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "CLAUDE.md", "# ordinary\n")
+
+	staging := t.TempDir()
+	planted := filepath.Join(staging, "cli", "projects", "p", "old.jsonl")
+	if err := os.MkdirAll(filepath.Dir(planted), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"type":"user","message":{"content":"sk-ant-api03-` + strings.Repeat("b", 80) + `"}}` + "\n"
+	if err := os.WriteFile(planted, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	rep, err := Sync(Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)})
+	if err == nil {
+		t.Fatal("expected the tripwire to refuse")
+	}
+	if len(rep.Findings) == 0 {
+		t.Fatal("the pre-existing file was not reported")
+	}
+	if _, err := os.Stat(planted); err != nil {
+		t.Error("a file this run did not stage was deleted; it should be reported and left alone")
+	}
+}
+
+// A config whose own scan condemns it is never written. The sync fails either
+// way, but writing it replaces a staged copy that may have been clean.
+func TestSync_DoesNotStageAJSONItRefuses(t *testing.T) {
+	live := t.TempDir()
+	staging := t.TempDir()
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	opts := Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)}
+
+	// First, a clean copy reaches staging.
+	write(t, live, "plugins/data/thing.json", `{"saved":"ordinary"}`)
+	if _, err := Sync(opts); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	staged := filepath.Join(staging, "cli", "plugins", "data", "thing.json")
+	if !contains(read(t, staged), "ordinary") {
+		t.Fatal("setup: the clean copy should be staged")
+	}
+
+	// Then the live file gains a credential in a field the redactor does not
+	// know by name.
+	write(t, live, "plugins/data/thing.json", `{"saved":"ghp_aaaaaaaaaaaaaaaaaaaaa"}`)
+	if _, err := Sync(opts); err == nil {
+		t.Fatal("expected the tripwire to refuse")
+	}
+	if got := read(t, staged); contains(got, "ghp_") {
+		t.Errorf("the refused content was staged anyway:\n%s", got)
+	}
+	if !contains(read(t, staged), "ordinary") {
+		t.Error("the previously clean staged copy was replaced by the refused one")
+	}
+}
+
+// Taking a condemned copy back out is the point of that branch, so failing to
+// do it cannot be silent: the refusal on its own reads as "nothing left this
+// machine", and here credential bytes are still sitting in the staging tree.
+func TestSync_SaysSoWhenACondemnedCopyCannotBeRemoved(t *testing.T) {
+	live := t.TempDir()
+	write(t, live, "projects/-p/s.jsonl", `{"type":"user","text":"ghp_`+strings.Repeat("a", 40)+`"}`+"\n")
+
+	staging := filepath.Join(t.TempDir(), "repo")
+	m := config.Machine{Name: "mbp", OS: pathmap.OSMacOS, Home: "/Users/john"}
+	opts := Options{StagingDir: staging, Config: cliOnlyConfig(live), Machine: m, SourceOverride: override("cli", live)}
+
+	orig := removeStaged
+	t.Cleanup(func() { removeStaged = orig })
+	removeStaged = func(string, string) error { return errors.New("read-only file system") }
+
+	_, err := Sync(opts)
+	if err == nil {
+		t.Fatal("expected the tripwire to refuse")
+	}
+	if !strings.Contains(err.Error(), "could not be removed from staging") {
+		t.Errorf("a stranded condemned copy was not reported: %v", err)
+	}
+	if !strings.Contains(err.Error(), "read-only file system") {
+		t.Errorf("the underlying reason was dropped: %v", err)
+	}
+	// And the file really is still there, which is what the message promises.
+	if _, serr := os.Stat(filepath.Join(staging, "cli", "projects", "-p", "s.jsonl")); serr != nil {
+		t.Errorf("the message says the copy is stranded, but it is gone: %v", serr)
 	}
 }

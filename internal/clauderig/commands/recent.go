@@ -35,6 +35,7 @@ func NewRecentCmd() *cobra.Command {
 		liveOnly      bool
 		repoOnly      bool
 		long          bool
+		asJSON        bool
 	)
 	cmd := &cobra.Command{
 		Use:     "recent [<text>]",
@@ -130,7 +131,7 @@ func NewRecentCmd() *cobra.Command {
 					return err
 				}
 			}
-			return listRecent(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, sc, query, limit, long)
+			return listRecent(cmd.OutOrStdout(), cmd.ErrOrStderr(), me, targets, roots, sc, query, limit, long, asJSON)
 		},
 	}
 	cmd.Flags().StringVar(&since, "since", "24h", "only sessions used since this time (24h, 7d, a date, or `all`)")
@@ -142,6 +143,7 @@ func NewRecentCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&liveOnly, "live", false, "only this machine's live ~/.claude")
 	cmd.Flags().BoolVar(&repoOnly, "repo", false, "only the synced staging repo")
 	cmd.Flags().BoolVarP(&long, "long", "l", false, "full detail per session, with resume commands")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit the listing as JSON (for scripts and pollers)")
 	return cmd
 }
 
@@ -165,7 +167,7 @@ type recentRow struct {
 // The facts come from [sessions.List], which the UI reads too; what stays here
 // is the text query, which scans transcript bodies and belongs with `search`,
 // and every decision about how to say it.
-func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, sc sessions.Scope, query string, limit int, long bool) error {
+func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target, roots []session.Root, sc sessions.Scope, query string, limit int, long, asJSON bool) error {
 	// No limit here: the query below still has to run over the whole window, or
 	// `--limit 20` would search twenty sessions rather than showing twenty
 	// matches out of all of them.
@@ -206,6 +208,11 @@ func listRecent(out, errw io.Writer, me config.Machine, targets []search.Target,
 	shown := rows
 	if limit > 0 && len(shown) > limit {
 		shown = shown[:limit]
+	}
+	// Before the prose: --json is for scripts, and every line below this is
+	// written for a person reading a terminal.
+	if asJSON {
+		return emitRecentJSON(out, query, shown, len(rows), read, skipped, hidden, undated, unattributed)
 	}
 	if len(shown) == 0 {
 		if query != "" {
