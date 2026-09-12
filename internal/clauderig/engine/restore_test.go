@@ -100,3 +100,32 @@ func TestRestore_UnmappedSlugKept(t *testing.T) {
 		t.Errorf("nothing should be rewritten, got %d", rep.Roots[0].SlugsRewritten)
 	}
 }
+
+// `restore --dir` means "write to the directory I named, and nowhere else". The
+// only coverage for that was the gated end-to-end suite, so on an ordinary run
+// the guard could be inverted with everything green — and inverted, restore
+// writes a root the user did not name, which for the cli root is their live
+// ~/.claude.
+func TestRestore_OverriddenOnlyLeavesUnnamedRootsAlone(t *testing.T) {
+	staging := t.TempDir()
+	write(t, staging, "cli/settings.json", `{"effortLevel":"high"}`)
+	write(t, staging, "desktop/prefs.json", `{"theme":"dark"}`)
+
+	named, untouched := t.TempDir(), t.TempDir()
+	cfg := config.Default()
+	cfg.Roots = []config.Root{
+		{ID: "cli", Enabled: true, Location: pathmap.Cascade{Portable: named}},
+		{ID: "desktop", Enabled: true, Location: pathmap.Cascade{Portable: untouched}},
+	}
+	jane := config.Machine{Name: "jane", OS: pathmap.OSMacOS, Home: "/Users/jane"}
+	if _, err := Restore(RestoreOptions{StagingDir: staging, Config: cfg, Machine: jane,
+		TargetOverride: override("cli", named), OverriddenOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(named, "settings.json")); err != nil {
+		t.Errorf("the named root was not restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(untouched, "prefs.json")); !os.IsNotExist(err) {
+		t.Error("restore --dir wrote a root the user never named")
+	}
+}
