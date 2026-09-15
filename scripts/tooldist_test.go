@@ -31,27 +31,29 @@ type surface struct {
 	// which of them is missing the tool.
 	what string
 	// section narrows the file to the block holding the list, when the pattern
-	// alone would be ambiguous. Empty means the whole file.
+	// alone would be ambiguous. Empty means the whole file. If it captures, only
+	// group 1 is kept — which is how a list embedded in a line of shell keeps
+	// `for`, `tool`, `in` and `do` out of the extracted names.
 	section *regexp.Regexp
 	list    *regexp.Regexp
 }
 
 var distSurfaces = []surface{
-	{file: "install.sh", list: regexp.MustCompile(`install_binary (\w+)`)},
+	{file: "install.sh", list: regexp.MustCompile(`install_binary ([\w-]+)`)},
 	{file: "install.ps1", section: regexp.MustCompile(`(?m)^\s*\$binaries = @\(.*\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
 	{file: "brew.sh", section: regexp.MustCompile(`(?m)^\s*[\w|-]+\) cask=`), list: regexp.MustCompile(`([\w-]+)[|)]`)},
-	{file: "winres.sh", section: regexp.MustCompile(`(?m)^\s*for tool in .*; do$`), list: regexp.MustCompile(`\b(\w+rig|rig)\b`)},
+	{file: "winres.sh", section: regexp.MustCompile(`(?m)^\s*for tool in (.*); do$`), list: regexp.MustCompile(`([\w-]+)`)},
 	// No ^ anchor: the first entry shares its line with `packages="${WINGET_PACKAGES:-`.
 	// The bundle's line ends in `}"` rather than the name, so it falls out here, which
 	// is right — `rigsmith` is not a cmd/ tool.
 	{file: "winget-submit.sh", list: regexp.MustCompile(`(?m)RigSmith\.\w+:([\w-]+)$`)},
-	{file: filepath.Join("npm", "build-packages.mjs"), section: regexp.MustCompile(`(?s)const TOOLS = \{.*?\n\}`), list: regexp.MustCompile(`(?m)^\s*([\w-]+):`)},
-	{file: filepath.Join("..", ".goreleaser.yaml"), what: "builds", list: regexp.MustCompile(`main: \./cmd/(\w+)`)},
+	{file: filepath.Join("npm", "build-packages.mjs"), section: regexp.MustCompile(`(?s)const TOOLS = \{.*?\n\}`), list: regexp.MustCompile(`(?m)^\s*'?([\w-]+)'?:`)},
+	{file: filepath.Join("..", ".goreleaser.yaml"), what: "builds", list: regexp.MustCompile(`main: \./cmd/([\w-]+)`)},
 
 	// A build is not a shipped artifact. `builds` only compiles it; `archives`,
 	// `homebrew_casks` and `scoops` each decide separately whether it reaches
 	// anyone, and a tool can be built and then shipped by none of them.
-	{file: filepath.Join("..", ".goreleaser.yaml"), what: "archives", list: regexp.MustCompile(`name_template: "(\w+)_\{\{ \.Version`)},
+	{file: filepath.Join("..", ".goreleaser.yaml"), what: "archives", list: regexp.MustCompile(`name_template: "([\w-]+)_\{\{ \.Version`)},
 	{file: filepath.Join("..", ".goreleaser.yaml"), what: "casks and scoops", list: regexp.MustCompile(`(?m)^\s+- name: ([\w-]+)$`)},
 
 	// `curl rigsmith.sh/<tool> | sh` is a public installer route, and the edge
@@ -60,7 +62,7 @@ var distSurfaces = []surface{
 	{file: filepath.Join("..", "site", "netlify", "edge-functions", "install.ts"), what: "TOOLS",
 		section: regexp.MustCompile(`(?m)^const TOOLS = new Set\(\[.*\]\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
 	{file: filepath.Join("..", "site", "netlify", "edge-functions", "install.ts"), what: "DOCS_PATH",
-		section: regexp.MustCompile(`(?s)const DOCS_PATH: Record<string, string> = \{.*?\n\}`), list: regexp.MustCompile(`(?m)^\s+([\w-]+):`)},
+		section: regexp.MustCompile(`(?s)const DOCS_PATH: Record<string, string> = \{.*?\n\}`), list: regexp.MustCompile(`(?m)^\s+'?([\w-]+)'?:`)},
 }
 
 // A new cmd/<tool> has to reach every distribution surface, and nothing but this
@@ -126,7 +128,11 @@ func (s surface) label() string {
 func (s surface) toolsListed(raw []byte) (map[string]bool, error) {
 	hay := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	if s.section != nil {
-		hay = strings.Join(s.section.FindAllString(hay, -1), "\n")
+		var blocks []string
+		for _, m := range s.section.FindAllStringSubmatch(hay, -1) {
+			blocks = append(blocks, m[len(m)-1])
+		}
+		hay = strings.Join(blocks, "\n")
 		if hay == "" {
 			return nil, errors.New("the block holding the tool list no longer matches — fix this test's " +
 				"section pattern, otherwise it silently stops checking anything")
