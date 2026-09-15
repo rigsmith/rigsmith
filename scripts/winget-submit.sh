@@ -60,17 +60,51 @@ RigSmith.Rigsmith:rigsmith}"
 rm -rf "$out"
 mkdir -p "$out"
 
+# A package winget has never seen has nothing to update, and komac exits 1 saying
+# so. That is expected exactly once per tool — the first submission is a `komac
+# new` done by hand (see docs/WINGET-SUBMISSIONS.md) — but under `set -e` it used
+# to abort this script, and since the submission below is one call for the whole
+# directory, the FIVE published packages went unsubmitted too. A new tool must not
+# be able to hold back everything shipping beside it, so it is skipped and named.
+#
+# Only that one error is tolerated. Anything else still stops the run.
+err=$(mktemp)
+trap 'rm -f "$err"' EXIT
+skipped=""
+
 for entry in $packages; do
   id=${entry%%:*}
   prefix=${entry#*:}
   echo "→ generating $id $version"
-  komac update "$id" --version "$version" \
+  if komac update "$id" --version "$version" \
     --urls "${base}/${prefix}_${version}_windows_amd64.zip" \
            "${base}/${prefix}_${version}_windows_arm64.zip" \
     --output "$out" \
     --release-notes-url "https://github.com/rigsmith/rigsmith/releases/tag/${tag}" \
-    --dry-run >/dev/null
+    --dry-run >/dev/null 2>"$err"; then
+    continue
+  fi
+  if grep -q "does not exist in microsoft/winget-pkgs" "$err"; then
+    echo "::warning::$id is not published in winget-pkgs yet, so there is nothing to update — skipping it. Its first submission is a manual \`komac new\`; see docs/WINGET-SUBMISSIONS.md. Every published package still goes out."
+    skipped="$skipped $id"
+    continue
+  fi
+  cat "$err" >&2
+  exit 1
 done
+
+if [ -n "$skipped" ]; then
+  echo
+  echo "Not submitted (never published):$skipped"
+fi
+
+# Every package was new, so there is nothing to update and nothing to verify.
+# Not a failure: the release published its archives, and the manual `komac new`
+# for each is what comes next.
+if [ -z "$(find "$out" -name '*.installer.yaml' -print -quit)" ]; then
+  echo "No published package to update. Nothing to submit."
+  exit 0
+fi
 
 # A tripwire that should never fire. komac classifies a nested .exe by
 # substring-matching its PE FileDescription/OriginalFilename against

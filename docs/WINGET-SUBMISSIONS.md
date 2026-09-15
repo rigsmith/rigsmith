@@ -76,6 +76,25 @@ the point:
    were already open.
 4. **Submit** with `komac submit --all`.
 
+### A package winget has never seen is skipped, not fatal
+
+Step 1 fails for a package that has no published manifest — `komac update` exits
+1 with "`<id>` does not exist in microsoft/winget-pkgs" — because there is
+nothing to update. That is expected exactly once per tool, and the manual `komac
+new` below is the answer to it.
+
+What it must not do is take the others with it. The script runs `set -eu`,
+generates every package in one loop, and submits the whole directory in a single
+call at the end, so an unpublished package used to abort the run before anything
+was submitted: one new tool, and **none** of the published five got their update.
+`RigSmith.CodexRig` is in that state now. So that one error — and only that one —
+is caught, named in the log, and skipped; every other failure still stops the run.
+
+If *every* package is new there is nothing to submit and the script says so and
+exits 0. The release published its archives either way; what is outstanding is
+the `komac new`.
+
+
 Two things the check has been wrong about, both fixed by testing against real
 bytes rather than assumed ones: the keys may sit at the root (komac) or inside
 each `Installers:` entry (GoReleaser), and winget-pkgs manifests are **CRLF**,
