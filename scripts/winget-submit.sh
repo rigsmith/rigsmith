@@ -126,10 +126,18 @@ if [ -n "$skipped" ]; then
 fi
 
 # Every package was new, so there is nothing to update and nothing to verify.
-# Not a failure: the release published its archives, and the manual `komac new`
-# for each is what comes next.
+#
+# A partial skip exits 0 — the published packages went out, which is the whole
+# point of this change. Submitting NOTHING is different, and it exits non-zero so
+# the run does not read as a successful submission when none happened. The step
+# is `continue-on-error`, so this colours the step without failing the release —
+# which is the documented, expected state for a package awaiting its first
+# `komac new`.
+#
+# A dry run exits 0 regardless: it was never going to submit anything.
 if [ -z "$(find "$out" -name '*.installer.yaml' -print -quit)" ]; then
   echo "No published package to update. Nothing to submit."
+  [ "$submit" = "--submit" ] && exit 1
   exit 0
 fi
 
