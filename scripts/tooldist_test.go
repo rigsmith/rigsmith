@@ -1,9 +1,11 @@
 package scripts
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -23,13 +25,15 @@ import (
 // so a tool merely mentioned in a comment cannot satisfy it. The comparison is
 // containment, not equality: several of these legitimately carry entries that
 // are not cmd/ tools — the `rigsmith` bundle, the `clauderig-ui` window.
-var distSurfaces = []struct {
+type surface struct {
 	file string
 	// section narrows the file to the block holding the list, when the pattern
 	// alone would be ambiguous. Empty means the whole file.
 	section *regexp.Regexp
 	list    *regexp.Regexp
-}{
+}
+
+var distSurfaces = []surface{
 	{file: "install.sh", list: regexp.MustCompile(`install_binary (\w+)`)},
 	{file: "install.ps1", section: regexp.MustCompile(`(?m)^\s*\$binaries = @\(.*\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
 	{file: "brew.sh", section: regexp.MustCompile(`(?m)^\s*[\w|-]+\) cask=`), list: regexp.MustCompile(`([\w-]+)[|)]`)},
@@ -67,21 +71,9 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 			t.Errorf("%s: %v", s.file, err)
 			continue
 		}
-		hay := string(raw)
-		if s.section != nil {
-			hay = strings.Join(s.section.FindAllString(hay, -1), "\n")
-			if hay == "" {
-				t.Errorf("%s: the block holding the tool list no longer matches — fix this test's section pattern, "+
-					"otherwise it silently stops checking anything", s.file)
-				continue
-			}
-		}
-		listed := map[string]bool{}
-		for _, m := range s.list.FindAllStringSubmatch(hay, -1) {
-			listed[m[1]] = true
-		}
-		if len(listed) == 0 {
-			t.Errorf("%s: no tool names extracted — fix this test's pattern rather than deleting it", s.file)
+		listed, err := s.toolsListed(raw)
+		if err != nil {
+			t.Errorf("%s: %v", s.file, err)
 			continue
 		}
 		var missing []string
@@ -95,6 +87,60 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 			t.Errorf("%s does not install/list %s — a tool under cmd/ that never reaches this surface "+
 				"is invisible to whoever installs that way (it listed: %s)",
 				s.file, strings.Join(missing, ", "), strings.Join(sortedKeys(listed), ", "))
+		}
+	}
+}
+
+// toolsListed reads one surface's own list out of its bytes.
+//
+// The \r strip is not cosmetic. A Windows checkout converts these files to CRLF,
+// and every `$`-anchored pattern here then fails to match — `rig` becomes
+// `rig\r` before the line end. That cost this file a red Windows run, and it is
+// the same trap check-winget-manifests.sh documents for winget-pkgs' own CRLF
+// manifests. Matching against LF regardless of how git checked the file out is
+// what keeps the rules platform-independent.
+func (s surface) toolsListed(raw []byte) (map[string]bool, error) {
+	hay := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	if s.section != nil {
+		hay = strings.Join(s.section.FindAllString(hay, -1), "\n")
+		if hay == "" {
+			return nil, errors.New("the block holding the tool list no longer matches — fix this test's " +
+				"section pattern, otherwise it silently stops checking anything")
+		}
+	}
+	listed := map[string]bool{}
+	for _, m := range s.list.FindAllStringSubmatch(hay, -1) {
+		listed[m[1]] = true
+	}
+	if len(listed) == 0 {
+		return nil, errors.New("no tool names extracted — fix this test's pattern rather than deleting it")
+	}
+	return listed, nil
+}
+
+// The rules must read the same list out of a CRLF checkout as an LF one, which
+// is not obvious from a mac or Linux run: git hands Windows CRLF, and that is
+// where this first broke. Converting the real files rather than a fixture keeps
+// this honest as the patterns change.
+func TestDistributionRulesSurviveACRLFCheckout(t *testing.T) {
+	for _, s := range distSurfaces {
+		raw, err := os.ReadFile(s.file)
+		if err != nil {
+			t.Errorf("%s: %v", s.file, err)
+			continue
+		}
+		lf, err := s.toolsListed(raw)
+		if err != nil {
+			t.Errorf("%s (LF): %v", s.file, err)
+			continue
+		}
+		crlf, err := s.toolsListed([]byte(strings.ReplaceAll(string(raw), "\n", "\r\n")))
+		if err != nil {
+			t.Errorf("%s (CRLF): %v — a Windows checkout would read no tools here", s.file, err)
+			continue
+		}
+		if got, want := sortedKeys(crlf), sortedKeys(lf); !slices.Equal(got, want) {
+			t.Errorf("%s: CRLF reads %v, LF reads %v", s.file, got, want)
 		}
 	}
 }
