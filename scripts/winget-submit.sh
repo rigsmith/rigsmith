@@ -72,6 +72,33 @@ err=$(mktemp)
 trap 'rm -f "$err"' EXIT
 skipped=""
 
+# komac's message is not evidence on its own. It reports the lookup with
+# `.map_err(|_| GitHubError::PackageNonExistent(id))`, throwing the real error
+# away, so a rate limit, a 5xx or a JSON failure all print "<id> does not exist
+# in microsoft/winget-pkgs" exactly as an unpublished package does. Believing it
+# blindly would turn a GitHub blip during a release into a silent no-op — every
+# package "missing", nothing submitted, exit 0. That is the failure this script
+# was changed to prevent, so absence gets confirmed against winget-pkgs itself.
+#
+# 404 is absent. 200 is published, so the komac failure was something else. Any
+# other answer — 403 rate limit, 5xx, a curl that could not run — is not an
+# answer, and none of them mean absent.
+package_absent() {
+  # Not `path`: zsh ties that name to PATH, and anyone sourcing or adapting this
+  # under zsh would wipe their own. Cheap to avoid, miserable to debug.
+  pkgpath=$(printf '%s' "$1" | tr '.' '/')
+  letter=$(printf '%s' "$1" | cut -c1 | tr '[:upper:]' '[:lower:]')
+  code=$(curl -sS -o /dev/null -w '%{http_code}' \
+    ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/${letter}/${pkgpath}" 2>/dev/null)
+  if [ "$code" = "404" ]; then
+    return 0
+  fi
+  echo "::warning::$1: komac said it does not exist, but winget-pkgs answered ${code:-no response} rather than 404. Treating that as a real failure rather than a new package."
+  return 1
+}
+
 for entry in $packages; do
   id=${entry%%:*}
   prefix=${entry#*:}
@@ -84,7 +111,7 @@ for entry in $packages; do
     --dry-run >/dev/null 2>"$err"; then
     continue
   fi
-  if grep -q "does not exist in microsoft/winget-pkgs" "$err"; then
+  if grep -q "does not exist in microsoft/winget-pkgs" "$err" && package_absent "$id"; then
     echo "::warning::$id is not published in winget-pkgs yet, so there is nothing to update — skipping it. Its first submission is a manual \`komac new\`; see docs/WINGET-SUBMISSIONS.md. Every published package still goes out."
     skipped="$skipped $id"
     continue

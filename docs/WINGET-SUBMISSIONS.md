@@ -1,10 +1,14 @@
 # winget submissions: what actually costs time
 
-Every release opens five PRs against [microsoft/winget-pkgs][repo] — the four
-per-tool packages plus the `RigSmith.Rigsmith` bundle — via GoReleaser's winget
-publisher. They are the slowest part of a release, but not uniformly: the 1.4.0
-batch ranged from **same-day to 23 days**, all five submitted within minutes of
-each other.
+Every release opens one PR per package against [microsoft/winget-pkgs][repo] —
+the five per-tool packages plus the `RigSmith.Rigsmith` bundle — through komac
+(the lane is described below; GoReleaser's own publisher is disabled). Six are
+configured; `RigSmith.CodexRig` is the newest and is not published upstream yet,
+so releases currently open five until its first submission is made by hand.
+
+They are the slowest part of a release, but not uniformly: the 1.4.0 batch —
+five packages, before codexrig existed — ranged from **same-day to 23 days**,
+all five submitted within minutes of each other.
 
 This is what the difference was, measured from those PRs.
 

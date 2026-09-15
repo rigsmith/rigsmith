@@ -27,6 +27,9 @@ import (
 // are not cmd/ tools — the `rigsmith` bundle, the `clauderig-ui` window.
 type surface struct {
 	file string
+	// what names the list when a file holds more than one, so a failure says
+	// which of them is missing the tool.
+	what string
 	// section narrows the file to the block holding the list, when the pattern
 	// alone would be ambiguous. Empty means the whole file.
 	section *regexp.Regexp
@@ -43,7 +46,21 @@ var distSurfaces = []surface{
 	// is right — `rigsmith` is not a cmd/ tool.
 	{file: "winget-submit.sh", list: regexp.MustCompile(`(?m)RigSmith\.\w+:([\w-]+)$`)},
 	{file: filepath.Join("npm", "build-packages.mjs"), section: regexp.MustCompile(`(?s)const TOOLS = \{.*?\n\}`), list: regexp.MustCompile(`(?m)^\s*([\w-]+):`)},
-	{file: filepath.Join("..", ".goreleaser.yaml"), list: regexp.MustCompile(`main: \./cmd/(\w+)`)},
+	{file: filepath.Join("..", ".goreleaser.yaml"), what: "builds", list: regexp.MustCompile(`main: \./cmd/(\w+)`)},
+
+	// A build is not a shipped artifact. `builds` only compiles it; `archives`,
+	// `homebrew_casks` and `scoops` each decide separately whether it reaches
+	// anyone, and a tool can be built and then shipped by none of them.
+	{file: filepath.Join("..", ".goreleaser.yaml"), what: "archives", list: regexp.MustCompile(`name_template: "(\w+)_\{\{ \.Version`)},
+	{file: filepath.Join("..", ".goreleaser.yaml"), what: "casks and scoops", list: regexp.MustCompile(`(?m)^\s+- name: ([\w-]+)$`)},
+
+	// `curl rigsmith.sh/<tool> | sh` is a public installer route, and the edge
+	// function gates it on a list written out by hand: a tool missing from TOOLS
+	// is refused and redirected to the docs instead of being installed.
+	{file: filepath.Join("..", "site", "netlify", "edge-functions", "install.ts"), what: "TOOLS",
+		section: regexp.MustCompile(`(?m)^const TOOLS = new Set\(\[.*\]\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
+	{file: filepath.Join("..", "site", "netlify", "edge-functions", "install.ts"), what: "DOCS_PATH",
+		section: regexp.MustCompile(`(?s)const DOCS_PATH: Record<string, string> = \{.*?\n\}`), list: regexp.MustCompile(`(?m)^\s+([\w-]+):`)},
 }
 
 // A new cmd/<tool> has to reach every distribution surface, and nothing but this
@@ -68,12 +85,12 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 	for _, s := range distSurfaces {
 		raw, err := os.ReadFile(s.file)
 		if err != nil {
-			t.Errorf("%s: %v", s.file, err)
+			t.Errorf("%s: %v", s.label(), err)
 			continue
 		}
 		listed, err := s.toolsListed(raw)
 		if err != nil {
-			t.Errorf("%s: %v", s.file, err)
+			t.Errorf("%s: %v", s.label(), err)
 			continue
 		}
 		var missing []string
@@ -86,7 +103,7 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 			sort.Strings(missing)
 			t.Errorf("%s does not install/list %s — a tool under cmd/ that never reaches this surface "+
 				"is invisible to whoever installs that way (it listed: %s)",
-				s.file, strings.Join(missing, ", "), strings.Join(sortedKeys(listed), ", "))
+				s.label(), strings.Join(missing, ", "), strings.Join(sortedKeys(listed), ", "))
 		}
 	}
 }
@@ -99,6 +116,13 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 // the same trap check-winget-manifests.sh documents for winget-pkgs' own CRLF
 // manifests. Matching against LF regardless of how git checked the file out is
 // what keeps the rules platform-independent.
+func (s surface) label() string {
+	if s.what == "" {
+		return s.file
+	}
+	return s.file + " (" + s.what + ")"
+}
+
 func (s surface) toolsListed(raw []byte) (map[string]bool, error) {
 	hay := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	if s.section != nil {
@@ -126,21 +150,21 @@ func TestDistributionRulesSurviveACRLFCheckout(t *testing.T) {
 	for _, s := range distSurfaces {
 		raw, err := os.ReadFile(s.file)
 		if err != nil {
-			t.Errorf("%s: %v", s.file, err)
+			t.Errorf("%s: %v", s.label(), err)
 			continue
 		}
 		lf, err := s.toolsListed(raw)
 		if err != nil {
-			t.Errorf("%s (LF): %v", s.file, err)
+			t.Errorf("%s (LF): %v", s.label(), err)
 			continue
 		}
 		crlf, err := s.toolsListed([]byte(toCRLF(string(raw))))
 		if err != nil {
-			t.Errorf("%s (CRLF): %v — a Windows checkout would read no tools here", s.file, err)
+			t.Errorf("%s (CRLF): %v — a Windows checkout would read no tools here", s.label(), err)
 			continue
 		}
 		if got, want := sortedKeys(crlf), sortedKeys(lf); !slices.Equal(got, want) {
-			t.Errorf("%s: CRLF reads %v, LF reads %v", s.file, got, want)
+			t.Errorf("%s: CRLF reads %v, LF reads %v", s.label(), got, want)
 		}
 	}
 }
