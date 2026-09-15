@@ -134,7 +134,7 @@ func TestDistributionRulesSurviveACRLFCheckout(t *testing.T) {
 			t.Errorf("%s (LF): %v", s.file, err)
 			continue
 		}
-		crlf, err := s.toolsListed([]byte(strings.ReplaceAll(string(raw), "\n", "\r\n")))
+		crlf, err := s.toolsListed([]byte(toCRLF(string(raw))))
 		if err != nil {
 			t.Errorf("%s (CRLF): %v — a Windows checkout would read no tools here", s.file, err)
 			continue
@@ -143,6 +143,14 @@ func TestDistributionRulesSurviveACRLFCheckout(t *testing.T) {
 			t.Errorf("%s: CRLF reads %v, LF reads %v", s.file, got, want)
 		}
 	}
+}
+
+// toCRLF converts to CRLF from whatever the file already is. Normalising to LF
+// first is the point: on Windows these files are checked out CRLF ALREADY, so a
+// plain \n -> \r\n pass yields \r\r\n and tests nothing that exists. This test
+// failed on Windows for exactly that reason while the code it guards was fine.
+func toCRLF(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")
 }
 
 func sortedKeys(m map[string]bool) []string {
