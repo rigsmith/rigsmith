@@ -1,10 +1,14 @@
 # winget submissions: what actually costs time
 
-Every release opens five PRs against [microsoft/winget-pkgs][repo] — the four
-per-tool packages plus the `RigSmith.Rigsmith` bundle — via GoReleaser's winget
-publisher. They are the slowest part of a release, but not uniformly: the 1.4.0
-batch ranged from **same-day to 23 days**, all five submitted within minutes of
-each other.
+Every release opens one PR per package against [microsoft/winget-pkgs][repo] —
+the five per-tool packages plus the `RigSmith.Rigsmith` bundle — through komac
+(the lane is described below; GoReleaser's own publisher is disabled). Six are
+configured; `RigSmith.CodexRig` is the newest and is not published upstream yet,
+so releases currently open five until its first submission is made by hand.
+
+They are the slowest part of a release, but not uniformly: the 1.4.0 batch —
+five packages, before codexrig existed — ranged from **same-day to 23 days**,
+all five submitted within minutes of each other.
 
 This is what the difference was, measured from those PRs.
 
@@ -75,6 +79,25 @@ the point:
    winget-pkgs. Every earlier version of this check could only run after the PRs
    were already open.
 4. **Submit** with `komac submit --all`.
+
+### A package winget has never seen is skipped, not fatal
+
+Step 1 fails for a package that has no published manifest — `komac update` exits
+1 with "`<id>` does not exist in microsoft/winget-pkgs" — because there is
+nothing to update. That is expected exactly once per tool, and the manual `komac
+new` below is the answer to it.
+
+What it must not do is take the others with it. The script runs `set -eu`,
+generates every package in one loop, and submits the whole directory in a single
+call at the end, so an unpublished package used to abort the run before anything
+was submitted: one new tool, and **none** of the published five got their update.
+`RigSmith.CodexRig` is in that state now. So that one error — and only that one —
+is caught, named in the log, and skipped; every other failure still stops the run.
+
+If *every* package is new there is nothing to submit and the script says so and
+exits 0. The release published its archives either way; what is outstanding is
+the `komac new`.
+
 
 Two things the check has been wrong about, both fixed by testing against real
 bytes rather than assumed ones: the keys may sit at the root (komac) or inside

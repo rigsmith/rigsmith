@@ -60,17 +60,86 @@ RigSmith.Rigsmith:rigsmith}"
 rm -rf "$out"
 mkdir -p "$out"
 
+# A package winget has never seen has nothing to update, and komac exits 1 saying
+# so. That is expected exactly once per tool — the first submission is a `komac
+# new` done by hand (see docs/WINGET-SUBMISSIONS.md) — but under `set -e` it used
+# to abort this script, and since the submission below is one call for the whole
+# directory, the FIVE published packages went unsubmitted too. A new tool must not
+# be able to hold back everything shipping beside it, so it is skipped and named.
+#
+# Only that one error is tolerated. Anything else still stops the run.
+err=$(mktemp)
+trap 'rm -f "$err"' EXIT
+skipped=""
+
+# komac's message is not evidence on its own. It reports the lookup with
+# `.map_err(|_| GitHubError::PackageNonExistent(id))`, throwing the real error
+# away, so a rate limit, a 5xx or a JSON failure all print "<id> does not exist
+# in microsoft/winget-pkgs" exactly as an unpublished package does. Believing it
+# blindly would turn a GitHub blip during a release into a silent no-op — every
+# package "missing", nothing submitted, exit 0. That is the failure this script
+# was changed to prevent, so absence gets confirmed against winget-pkgs itself.
+#
+# 404 is absent. 200 is published, so the komac failure was something else. Any
+# other answer — 403 rate limit, 5xx, a curl that could not run — is not an
+# answer, and none of them mean absent.
+package_absent() {
+  # Not `path`: zsh ties that name to PATH, and anyone sourcing or adapting this
+  # under zsh would wipe their own. Cheap to avoid, miserable to debug.
+  pkgpath=$(printf '%s' "$1" | tr '.' '/')
+  letter=$(printf '%s' "$1" | cut -c1 | tr '[:upper:]' '[:lower:]')
+  code=$(curl -sS -o /dev/null -w '%{http_code}' \
+    ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/${letter}/${pkgpath}" 2>/dev/null)
+  if [ "$code" = "404" ]; then
+    return 0
+  fi
+  echo "::warning::$1: komac said it does not exist, but winget-pkgs answered ${code:-no response} rather than 404. Treating that as a real failure rather than a new package."
+  return 1
+}
+
 for entry in $packages; do
   id=${entry%%:*}
   prefix=${entry#*:}
   echo "→ generating $id $version"
-  komac update "$id" --version "$version" \
+  if komac update "$id" --version "$version" \
     --urls "${base}/${prefix}_${version}_windows_amd64.zip" \
            "${base}/${prefix}_${version}_windows_arm64.zip" \
     --output "$out" \
     --release-notes-url "https://github.com/rigsmith/rigsmith/releases/tag/${tag}" \
-    --dry-run >/dev/null
+    --dry-run >/dev/null 2>"$err"; then
+    continue
+  fi
+  if grep -q "does not exist in microsoft/winget-pkgs" "$err" && package_absent "$id"; then
+    echo "::warning::$id is not published in winget-pkgs yet, so there is nothing to update — skipping it. Its first submission is a manual \`komac new\`; see docs/WINGET-SUBMISSIONS.md. Every published package still goes out."
+    skipped="$skipped $id"
+    continue
+  fi
+  cat "$err" >&2
+  exit 1
 done
+
+if [ -n "$skipped" ]; then
+  echo
+  echo "Not submitted (never published):$skipped"
+fi
+
+# Every package was new, so there is nothing to update and nothing to verify.
+#
+# A partial skip exits 0 — the published packages went out, which is the whole
+# point of this change. Submitting NOTHING is different, and it exits non-zero so
+# the run does not read as a successful submission when none happened. The step
+# is `continue-on-error`, so this colours the step without failing the release —
+# which is the documented, expected state for a package awaiting its first
+# `komac new`.
+#
+# A dry run exits 0 regardless: it was never going to submit anything.
+if [ -z "$(find "$out" -name '*.installer.yaml' -print -quit)" ]; then
+  echo "No published package to update. Nothing to submit."
+  [ "$submit" = "--submit" ] && exit 1
+  exit 0
+fi
 
 # A tripwire that should never fire. komac classifies a nested .exe by
 # substring-matching its PE FileDescription/OriginalFilename against
