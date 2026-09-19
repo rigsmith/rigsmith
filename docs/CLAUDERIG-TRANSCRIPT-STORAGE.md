@@ -114,8 +114,8 @@ policies are unchanged.
 
 Sync scans complete staged text streams with bounded memory, including large
 transcripts, unchanged files, remote-only files and stored chunks. It recognizes
-credential prefixes, JWTs, bearer tokens, PEM private-key headers and common
-ASCII JSON escapes. Overlapping reads cover signatures split across scan or
+credential prefixes, JWTs, bearer tokens, PEM private-key blocks (a header with
+key material after it, not the header alone) and common ASCII JSON escapes. Overlapping reads cover signatures split across scan or
 storage boundaries, including long JWTs encoded with ASCII JSON escapes. Raw index bytes are also scanned, including fields ignored
 by JSON decoding. Referenced parts are checked through their logical transcript
 once per audit; unreferenced part files are still scanned separately. Existing credential-filename and auth-config rules also
