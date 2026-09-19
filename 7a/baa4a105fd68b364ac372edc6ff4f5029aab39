@@ -1,0 +1,26 @@
+internal/agentrig/redact/text.go
+  s_6564ed37f1c1c3::t_d010e6291e0709 219-226
+  s_6564ed37f1c1c3::t_443679b0dab2c7 251-256
+  s_6564ed37f1c1c3::t_6f9ca6d89559f2 86-96
+  s_6564ed37f1c1c3::t_3134ca9028e108 8-33
+internal/agentrig/redact/pem_test.go
+  s_6564ed37f1c1c3::t_9c48700e757eea 124-178
+.changeset/pem-header-needs-a-key.md
+  ai_agent 20-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7abaa4a105fd68b364ac372edc6ff4f5029aab39",
+  "prompts": {},
+  "sessions": {
+    "s_6564ed37f1c1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39203511-c0e8-4b86-b49e-8a465676a25c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
