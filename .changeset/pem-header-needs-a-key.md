@@ -14,4 +14,6 @@ The scan now asks what follows the header: a line break or a space, then PEM bas
 
 The text rule the scrubber uses gained the same requirement, and for the same reason. It used to run from the header to the end of the string unconditionally, which existed to keep the scrubber a superset of a scanner that fired on headers — so a mention of one had the rest of the sentence silently rewritten. With the scanner asking for material, that workaround was what remained of the bug.
 
-The line-at-a-time scrubbers keep the old rule, now named `HasPrivateKeyHeader` so the difference cannot be misread: walking a file a line at a time, the body is on the lines after the header and cannot be seen, so there the header alone still has to be enough.
+The old rule survives, named `HasPrivateKeyHeader` so the difference cannot be misread, for the one place it is still right: raw text read a line at a time, where the body is on the lines after the header and cannot be seen, so the header alone has to be enough.
+
+The two scrubbers were refusing on the marker for the same reason, one layer down: after the rewrite, a surviving header was read as a key the rule had failed to span. Nothing needs rewriting in a sentence that merely names one, so the header always survived and the transcript could not be scrubbed at all. Both now ask for material, which only a JSON record can reach — raw text carrying a header still refuses on the header alone, before the rewrite, because there the body is on lines the loop cannot see.
