@@ -1,0 +1,22 @@
+docs/CLAUDERIG-TRANSCRIPT-STORAGE.md
+  s_6564ed37f1c1c3::t_b3f79d6a2432fe 117
+  s_6564ed37f1c1c3::t_2b828ebbb8d7f6 118
+docs/CLAUDERIG-DESIGN.md
+  s_6564ed37f1c1c3::t_8b6f115efed9d3 130-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "fbb85a8b679ddffed9f6ee506b0e4f5f7045f472",
+  "prompts": {},
+  "sessions": {
+    "s_6564ed37f1c1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39203511-c0e8-4b86-b49e-8a465676a25c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
