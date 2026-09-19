@@ -1,0 +1,56 @@
+internal/codexrig/service/journal_refusal_test.go
+  s_6564ed37f1c1c3::t_759dcd9855b1b5 28
+internal/agentrig/redact/stream.go
+  s_6564ed37f1c1c3::t_ec997c4fe97023 116
+internal/agentrig/redact/text_test.go
+  s_6564ed37f1c1c3::t_733603956c476e 222
+  s_6564ed37f1c1c3::t_d925732e220a51 253,258
+  s_6564ed37f1c1c3::t_a536b86cbb626a 223-227
+internal/agentrig/redact/stream_test.go
+  s_6564ed37f1c1c3::t_759dcd9855b1b5 30,114
+internal/agentrig/redact/text.go
+  s_6564ed37f1c1c3::t_6a138baa0d8427 165-204,209-213,219-247
+  s_6564ed37f1c1c3::t_290cb17ac66ee6 59-72
+  s_6564ed37f1c1c3::t_69be39ab9867d9 214-218
+  s_6564ed37f1c1c3::t_b1f22a75e3683e 74
+  s_6564ed37f1c1c3::t_8c3d4ddfce0e2c 205-208
+internal/agentrig/redact/scanfile.go
+  s_6564ed37f1c1c3::t_669e7f2be84ce6 258-260
+  s_6564ed37f1c1c3::t_ec997c4fe97023 261
+internal/agentrig/redact/scan.go
+  s_6564ed37f1c1c3::t_90795ce2a6c6ea 68-72
+  s_6564ed37f1c1c3::t_0bbdb6c14d39b2 64-67,73-77
+  s_6564ed37f1c1c3::t_e24f480a16b393 98
+  s_6564ed37f1c1c3::t_89ab3c458ca6ff 78-82
+internal/clauderig/engine/transcript.go
+  s_6564ed37f1c1c3::t_ec997c4fe97023 144,155
+internal/clauderig/engine/desktop_test.go
+  s_6564ed37f1c1c3::t_8f07437789cb45 284
+internal/agentrig/redact/scanfile_test.go
+  s_6564ed37f1c1c3::t_759dcd9855b1b5 66
+internal/agentrig/redact/scan_test.go
+  s_6564ed37f1c1c3::t_759dcd9855b1b5 14
+internal/codexrig/engine/scrub.go
+  s_6564ed37f1c1c3::t_ec997c4fe97023 88
+internal/agentrig/redact/pem_test.go
+  s_6564ed37f1c1c3::t_b84bb34318f088 1-54,60-123
+  s_6564ed37f1c1c3::t_d81416d924b262 55-59
+.changeset/pem-header-needs-a-key.md
+  s_6564ed37f1c1c3::t_18afad96f7f46a 1-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3d7e8c681477580f39340b0e74ad6bdcb2e39b54",
+  "prompts": {},
+  "sessions": {
+    "s_6564ed37f1c1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39203511-c0e8-4b86-b49e-8a465676a25c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
