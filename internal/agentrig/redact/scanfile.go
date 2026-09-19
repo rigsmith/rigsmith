@@ -255,8 +255,10 @@ func ScanFile(rel string, data []byte) []Finding {
 	if verdict == NameAuthConfig && hasAuthAssignment(string(data)) {
 		return []Finding{{Path: rel, Kind: "auth-config", File: true}}
 	}
-	// A PEM private key block is unambiguous wherever it appears.
-	if pemRe.Match(data) {
+	// A PEM private key block is unambiguous wherever it appears — the block,
+	// that is, and not the header alone, which is ordinary content in any file
+	// that documents or parses one.
+	if HasPrivateKeyMaterial(data) {
 		return []Finding{{Path: rel, Kind: "private-key", File: true}}
 	}
 	// The whole file being one opaque token is the other unambiguous shape: a

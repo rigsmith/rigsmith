@@ -25,7 +25,7 @@ func TestARefusalPublishesItsOwnJournalRecordAndNothingElse(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(rollout), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----\n"
+	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0\n-----END RSA PRIVATE KEY-----\n"
 	body := `{"type":"session_meta","payload":{"session_id":"01a0722a","cwd":"/x"}}` + "\n" +
 		`{"type":"response_item","payload":{"text":"` + strings.ReplaceAll(pem, "\n", "\\n") + `"}}` + "\n"
 	if err := os.WriteFile(rollout, []byte(body), 0o644); err != nil {

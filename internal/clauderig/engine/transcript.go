@@ -141,7 +141,7 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 			// Anything else is raw text, where the body runs on into lines this
 			// loop copies through untouched and the scanner (which matches only
 			// the header) would not notice. Still refused.
-			if redact.HasPrivateKey(line) && !isJSONRecord(line) {
+			if redact.HasPrivateKeyHeader(line) && !isJSONRecord(line) {
 				return nil, errPrivateKeyInTranscript
 			}
 			out, found, changed := redact.RedactText(line)
@@ -152,7 +152,7 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 			// Belt and braces on the case just allowed through: if a marker
 			// survived the rewrite, the rule did not span what it looked like
 			// it spanned, and the rest of the key may still be here.
-			if redact.HasPrivateKey(line) {
+			if redact.HasPrivateKeyHeader(line) {
 				return nil, errPrivateKeyInTranscript
 			}
 			if _, werr := w.Write(line); werr != nil {

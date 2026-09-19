@@ -281,7 +281,7 @@ func TestSync_StagedCredentialKeepsTripping(t *testing.T) {
 func TestSync_StagesExactlyTheBytesItScanned(t *testing.T) {
 	liveCli, liveDesk := t.TempDir(), t.TempDir()
 	write(t, liveCli, "skills/s/SKILL.md", "# fine\n")
-	write(t, liveCli, "skills/s/notes.txt", "-----BEGIN RSA PRIVATE"+" KEY-----\nMIIE\n")
+	write(t, liveCli, "skills/s/notes.txt", "-----BEGIN RSA PRIVATE"+" KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0\n")
 
 	staging := t.TempDir()
 	john := config.Machine{Name: "john", OS: pathmap.OSMacOS, Home: "/Users/john"}

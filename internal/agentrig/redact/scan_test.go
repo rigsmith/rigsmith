@@ -11,7 +11,7 @@ func TestLooksSecret_Positives(t *testing.T) {
 		"AKIAIOSFODNN7EXAMPLE":                     "aws-key",
 		"Bearer abcdefghijklmnopqrstuvwxyz":        "bearer",
 		"eyJhbGci.eyJzdWIxMjM0.SflKxwRJSMeKKF2QT4": "jwt",
-		"-----BEGIN OPENSSH PRIVATE KEY-----\nabc": "private-key",
+		"-----BEGIN OPENSSH PRIVATE KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0": "private-key",
 	}
 	for s, want := range cases {
 		if kind, ok := LooksSecret(s); !ok || kind != want {

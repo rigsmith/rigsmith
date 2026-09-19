@@ -53,14 +53,25 @@ var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	// four BEGIN markers and no END. Both have to go, and stopping at the quote
 	// keeps the surrounding JSON record intact.
 	//
-	// The scanner reports a private key on the header alone, so without this
-	// every transcript that merely quotes one refused the sync for ever: the
-	// scrubber declined to touch PEM at all, and no setting could clear it.
 	// Ordered: the footer bounds the block when there is one, so a message that
 	// pastes a key and then keeps talking loses the key and keeps the talking.
 	// Only when no footer follows does the fallback run to the closing quote.
+	//
+	// The fallback requires a body, and for the same reason the scanner does
+	// (HasPrivateKeyMaterial): without one it ate the sentence after any header
+	// anybody merely mentioned. It used to run from the header to the quote
+	// unconditionally, to keep the scrubber a superset of a scanner that fired
+	// on the header alone — a transcript quoting one would otherwise refuse the
+	// sync for ever. Now that the scanner wants material too, the workaround is
+	// what remains of the bug, and it silently rewrote prose.
+	//
+	// One case is deliberately left out: an encrypted key puts RFC 1421
+	// attributes before its body, which is not twenty base64 characters, so the
+	// fallback does not match. The scanner still sees it, so that key refuses
+	// the sync instead of being scrubbed — noisy, but it fails closed, and
+	// teaching this rule to span attribute lines risks it spanning prose.
 	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*?-----END [A-Z ]*PRIVATE KEY-----`,
-	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*`,
+	`-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\\+(?:r\\+)?n|[\r\n \t])+[A-Za-z0-9+/]{20,}[^"]*`,
 	// An opaque bearer token. LooksSecret already calls one of these a
 	// credential when it judges a config value, and leaving it in a transcript
 	// while redacting it from settings is the inconsistency, not the rule.
@@ -151,8 +162,89 @@ func hint(s string) string {
 	return s[:n] + "…"
 }
 
-// HasPrivateKey reports a PEM private-key header.
-func HasPrivateKey(line []byte) bool { return pemRe.Match(line) }
+// HasPrivateKeyHeader reports a PEM private-key header, with no opinion on what
+// follows it. For the line-at-a-time callers ONLY — a scrubber walking a file
+// line by line cannot see the body, because in raw text the body is on the lines
+// after the header. There the header alone has to be enough, and refusing a file
+// that merely quotes one is the accepted cost of never scrubbing half a key.
+//
+// Everywhere the whole content is in hand, use HasPrivateKeyMaterial instead.
+func HasPrivateKeyHeader(line []byte) bool { return pemRe.Match(line) }
+
+// HasPrivateKeyMaterial reports a PEM private-key header that is actually
+// followed by key material. It is the rule for whole-file and whole-value
+// scanning, where the bytes after the header are available to judge.
+//
+// The header on its own is not evidence, and treating it as such refused real
+// syncs. A cached grep dump over a Nuxt project held minified sourcemaps of
+// `jose` and `@octokit/auth-app`, whose source compares against the header
+// text — `privateKey.includes("-----BEGIN RSA PRIVATE KEY-----")`. Twelve
+// headers, no key. Because a private-key finding is File:true ("credential
+// material, cannot be redacted"), the tripwire refused every sync until the
+// file was deleted by hand, and a session transcript that merely discussed the
+// incident then refused the next one. Anything naming the header — this
+// package's own tests, a runbook, a code sample — was a sync outage waiting to
+// happen.
+func HasPrivateKeyMaterial(data []byte) bool {
+	for _, loc := range pemRe.FindAllIndex(data, -1) {
+		if keyBodyFollows(data[loc[1]:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// pemLookahead bounds the bytes examined after a header. Generous enough for
+// the RFC 1421 attribute lines of an encrypted key, small enough that a file
+// full of headers stays a linear scan.
+const pemLookahead = 512
+
+// keyBodyFollows reports whether rest — the bytes immediately after a PEM
+// header — opens with key material.
+//
+// What follows carries the decision. A real key continues onto the next line,
+// or — as environment variables hold them — straight on after a space; a quoted
+// header continues with the quote or bracket that closed the string literal,
+// which is no kind of base64. That is what clears the bundled-library case.
+func keyBodyFollows(rest []byte) bool {
+	if len(rest) > pemLookahead {
+		rest = rest[:pemLookahead]
+	}
+	// A key inside a JSON string — a transcript, a sourcemap, a .env — carries
+	// its line breaks as an escape rather than the byte, and doubled when the
+	// content was JSON before it was embedded in more JSON.
+	s := escapedNewline.ReplaceAllString(string(rest), "\n")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	s = strings.TrimLeft(s, " \t")
+	if !strings.HasPrefix(s, "\n") {
+		// Single-line form, as environment variables hold keys: the body is the
+		// next token rather than the next line.
+		return pemBody.MatchString(firstToken(s))
+	}
+	lines := strings.Split(s[1:], "\n")
+	for i, line := range lines {
+		// Bounded so a wall of attribute-shaped text cannot carry the search
+		// away from the header it is supposed to be judging.
+		if i >= 8 {
+			return false
+		}
+		line = strings.TrimSpace(line)
+		if line == "" || pemAttr.MatchString(line) {
+			continue
+		}
+		return pemBody.MatchString(line)
+	}
+	return false
+}
+
+// firstToken is s up to the first space or line break.
+func firstToken(s string) string {
+	if i := strings.IndexAny(s, " \t\n\r"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
 
 // IsCredentialMatch reports whether a regex hit is really a credential rather
 // than something merely shaped like one.

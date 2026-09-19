@@ -63,7 +63,7 @@ func TestScanFile_AuditKeyBinary(t *testing.T) {
 }
 
 func TestScanFile_ContentRules(t *testing.T) {
-	pem := []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIEow==\n-----END RSA PRIVATE KEY-----\n")
+	pem := []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0\n-----END RSA PRIVATE KEY-----\n")
 	if got := ScanFile("skills/s/notes.txt", pem); len(got) != 1 || got[0].Kind != "private-key" {
 		t.Errorf("PEM block should trip wherever it appears: %+v", got)
 	}

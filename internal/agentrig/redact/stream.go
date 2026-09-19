@@ -113,7 +113,7 @@ func scanText(rel string, data []byte) *Finding {
 	if ClassifyName(rel) == NameAuthConfig && hasAuthAssignment(string(normalized)) {
 		return &Finding{Path: rel, Kind: "auth-config", File: true}
 	}
-	if HasPrivateKey(normalized) {
+	if HasPrivateKeyMaterial(normalized) {
 		return &Finding{Path: rel, Kind: "private-key", File: true}
 	}
 	for _, loc := range textSecretRe.FindAllIndex(normalized, -1) {

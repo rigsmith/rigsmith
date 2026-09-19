@@ -85,7 +85,7 @@ func scrubInto(dst, src string, mod time.Time) ([]redact.TextHit, error) {
 	for {
 		line, rerr := readBoundedLine(r)
 		if len(line) > 0 {
-			if redact.HasPrivateKey(line) {
+			if redact.HasPrivateKeyHeader(line) {
 				tmp.Close()
 				return nil, errPrivateKey
 			}

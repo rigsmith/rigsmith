@@ -61,6 +61,25 @@ var (
 	jwtRe     = regexp.MustCompile(`^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}$`)
 	pemRe     = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 	tokenChar = regexp.MustCompile(`^[A-Za-z0-9+/=_\-]+$`)
+	// pemBody is one line of PEM base64. The length floor is what separates key
+	// material from the header quoted in code or prose: a real PEM body line is
+	// 48 or 64 characters, and nothing that merely names the header is followed
+	// by twenty unbroken base64 characters.
+	//
+	// The line need only START with the run: a key inside a JSON string ends its
+	// last body line at the closing quote, so anchoring both ends missed exactly
+	// the transcripts and sourcemaps this has to read.
+	pemBody = regexp.MustCompile(`^[A-Za-z0-9+/]{20,}={0,2}(?:$|[\s"',;\\)\]}])`)
+	// pemAttr is an RFC 1421 attribute line. An encrypted legacy key puts
+	// "Proc-Type: 4,ENCRYPTED" and "DEK-Info: …" between the header and the
+	// body, so requiring base64 on the very next line would miss exactly the
+	// keys most worth catching.
+	pemAttr = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*: `)
+	// escapedNewline is a line break that survived JSON encoding. One round
+	// gives `\n`; a transcript records tool output that was ITSELF JSON, so the
+	// same break arrives doubled as `\\n`, and matching only the single form
+	// read a real key as a header with nothing after it.
+	escapedNewline = regexp.MustCompile(`\\+(?:r\\+)?n`)
 )
 
 // sriPrefixes mark Subresource Integrity digests (npm/yarn lockfile "integrity"
@@ -76,7 +95,7 @@ func LooksSecret(s string) (kind string, ok bool) {
 	if s == "" || s == Placeholder {
 		return "", false
 	}
-	if pemRe.MatchString(s) {
+	if HasPrivateKeyMaterial([]byte(s)) {
 		return "private-key", true
 	}
 	if len(s) > 20 && strings.EqualFold(s[:7], "Bearer ") {

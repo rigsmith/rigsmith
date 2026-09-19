@@ -27,7 +27,7 @@ func TestStreamCompleteAndBoundaries(t *testing.T) {
 	}
 }
 func TestStreamEscapedAndLargePEM(t *testing.T) {
-	for _, s := range []string{`{"message":"\u0067\u0068\u0070\u005f` + strings.Repeat("a", 36) + `"}`, strings.Repeat("x", 1<<20) + "-----BEGIN RSA PRIVATE KEY-----\n"} {
+	for _, s := range []string{`{"message":"\u0067\u0068\u0070\u005f` + strings.Repeat("a", 36) + `"}`, strings.Repeat("x", 1<<20) + "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0\n"} {
 		f, err := ScanReader("chat.jsonl", strings.NewReader(s))
 		if f == nil || err != nil {
 			t.Fatalf("%v %v", f, err)
@@ -111,7 +111,7 @@ func TestStreamBearerKindsIgnoreSchemeCase(t *testing.T) {
 // file, or let the redactor scrub the value.
 func TestScanReaderPrefersAWholeFileVerdictOverAnEarlierValue(t *testing.T) {
 	const jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----\n"
+	pem := "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0\n-----END RSA PRIVATE KEY-----\n"
 
 	for _, tc := range []struct {
 		name string
