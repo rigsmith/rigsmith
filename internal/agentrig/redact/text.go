@@ -5,6 +5,32 @@ import (
 	"strings"
 )
 
+// The three pieces of a PEM block that both the scrubber and the scanner have
+// to agree on. They are shared so they cannot drift: where the two disagree,
+// the sync either refuses something already cleaned, or — the outcome that
+// actually stops a machine backing up — detects something it cannot clean, and
+// refuses for ever with the scrubber already on.
+const (
+	// pemSep is one separator between the header and what follows: a line break
+	// as a byte, or as the escape a JSON string carries — doubled when the
+	// content was JSON before it was embedded in more JSON — or a space, which
+	// is how an environment variable holds a key.
+	pemSep = `(?:\\+(?:r\\+)?n|[\r\n \t])`
+	// pemAttrLine is an RFC 1421 attribute, "Proc-Type: 4,ENCRYPTED", which an
+	// encrypted key puts between its header and its body. Ending at a backslash
+	// as well as a quote keeps it inside one line of an escaped JSON string.
+	pemAttrLine = `[A-Za-z][A-Za-z0-9-]*: [^"\r\n\\]*`
+	// pemLead is a header followed by actual key material: any attribute lines,
+	// then twenty unbroken base64 characters. The whole difference between a key
+	// and the name of one.
+	//
+	// The separator run is optional. A key written straight after its header
+	// with nothing between is not a shape PEM produces, but the scanner accepts
+	// it, and a scanner that detects what this cannot rewrite is exactly the
+	// permanent refusal described above.
+	pemLead = `-----BEGIN [A-Z ]*PRIVATE KEY-----(?:` + pemSep + `+` + pemAttrLine + `)*` + pemSep + `*[A-Za-z0-9+/]{20,}`
+)
+
 // textSecretRe finds credential-shaped tokens anywhere in free text, as opposed
 // to LooksSecret, which judges a whole string that is already known to be one
 // value. A transcript is neither: it is prose with a key buried in the middle of
@@ -57,21 +83,17 @@ var textSecretRe = regexp.MustCompile(strings.Join([]string{
 	// pastes a key and then keeps talking loses the key and keeps the talking.
 	// Only when no footer follows does the fallback run to the closing quote.
 	//
-	// The fallback requires a body, and for the same reason the scanner does
-	// (HasPrivateKeyMaterial): without one it ate the sentence after any header
-	// anybody merely mentioned. It used to run from the header to the quote
-	// unconditionally, to keep the scrubber a superset of a scanner that fired
-	// on the header alone — a transcript quoting one would otherwise refuse the
-	// sync for ever. Now that the scanner wants material too, the workaround is
-	// what remains of the bug, and it silently rewrote prose.
-	//
-	// One case is deliberately left out: an encrypted key puts RFC 1421
-	// attributes before its body, which is not twenty base64 characters, so the
-	// fallback does not match. The scanner still sees it, so that key refuses
-	// the sync instead of being scrubbed — noisy, but it fails closed, and
-	// teaching this rule to span attribute lines risks it spanning prose.
-	`-----BEGIN [A-Z ]*PRIVATE KEY-----[^"]*?-----END [A-Z ]*PRIVATE KEY-----`,
-	`-----BEGIN [A-Z ]*PRIVATE KEY-----(?:\\+(?:r\\+)?n|[\r\n \t])+[A-Za-z0-9+/]{20,}[^"]*`,
+	// BOTH require a body, and for the same reason the scanner does
+	// (HasPrivateKeyMaterial): without one they ate the sentence after any
+	// header anybody merely mentioned. The fallback used to run from the header
+	// to the quote unconditionally, to keep the scrubber a superset of a scanner
+	// that fired on the header alone — a transcript quoting one would otherwise
+	// refuse the sync for ever. Now that the scanner wants material too, that
+	// was what remained of the bug. The footer form needs it just as much: a
+	// documentation example is a header and a footer around `<your key here>`,
+	// and rewriting one is the same silent damage to prose.
+	pemLead + `[^"]*?-----END [A-Z ]*PRIVATE KEY-----`,
+	pemLead + `[^"]*`,
 	// An opaque bearer token. LooksSecret already calls one of these a
 	// credential when it judges a config value, and leaving it in a transcript
 	// while redacting it from settings is the inconsistency, not the rule.
@@ -194,10 +216,14 @@ func HasPrivateKeyMaterial(data []byte) bool {
 	return false
 }
 
-// pemLookahead bounds the bytes examined after a header. Generous enough for
-// the RFC 1421 attribute lines of an encrypted key, small enough that a file
-// full of headers stays a linear scan.
-const pemLookahead = 512
+// pemLookahead bounds the bytes examined after a header, and is now the ONLY
+// bound on the search — a line cap sat on top of it until a key with more
+// attribute lines than the cap allowed came back clean.
+//
+// Generous, because every byte of headroom here is a key that cannot be hidden
+// behind padding, and the cost is small: bounded work per header on a file the
+// caller has already capped at scanContentLimit.
+const pemLookahead = 4096
 
 // keyBodyFollows reports whether rest — the bytes immediately after a PEM
 // header — opens with key material.
@@ -222,13 +248,12 @@ func keyBodyFollows(rest []byte) bool {
 		// next token rather than the next line.
 		return pemBody.MatchString(firstToken(s))
 	}
-	lines := strings.Split(s[1:], "\n")
-	for i, line := range lines {
-		// Bounded so a wall of attribute-shaped text cannot carry the search
-		// away from the header it is supposed to be judging.
-		if i >= 8 {
-			return false
-		}
+	// Attribute and blank lines are skipped until the body, and the search is
+	// bounded by pemLookahead alone. A line count on top of it was worse than
+	// redundant: a key with more attribute lines than the cap allowed came back
+	// "no material" and published, which is the one direction this must never
+	// fail in.
+	for _, line := range strings.Split(s[1:], "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || pemAttr.MatchString(line) {
 			continue

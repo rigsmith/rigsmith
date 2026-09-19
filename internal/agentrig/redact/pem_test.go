@@ -121,3 +121,58 @@ func TestPrivateKeyVerdictIsConsistentAcrossEntryPoints(t *testing.T) {
 		t.Errorf("LooksSecret(real key) = (%q,%v), want private-key", kind, ok)
 	}
 }
+
+// Detection and removal must agree on every PEM shape, in both directions.
+//
+// Detected but not removable is the one that stops a machine backing up: the
+// audit refuses, the scrubber has nothing to offer, and no setting the owner
+// can reach clears it. Removable but not detected is quieter and still wrong —
+// it is prose being rewritten on a guess, and the original is not kept.
+//
+// Each case here was a real disagreement found in review of the change that
+// added this file.
+func TestPEMDetectionAndRemovalAgree(t *testing.T) {
+	attrs := "Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,8A7B6C5D4E3F2A1B\n"
+	many := ""
+	for _, a := range []string{"Proc-Type: 4,ENCRYPTED", "DEK-Info: AES-128-CBC,8A7B", "X-One: a", "X-Two: b", "X-Three: c", "X-Four: d", "X-Five: e", "X-Six: f", "X-Seven: g"} {
+		many += a + "\n"
+	}
+
+	for _, tc := range []struct {
+		name string
+		in   string
+		want bool // is this key material?
+	}{
+		// A documentation block is a header and a footer around a placeholder.
+		// The footer-bounded rule used to rewrite these while the scanner —
+		// correctly — called them nothing.
+		{"placeholder block with footer", `{"t":"-----BEGIN PRIVATE KEY-----\n<your key here>\n-----END PRIVATE KEY-----"}`, false},
+		{"elided block with footer", `{"t":"-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"}`, false},
+		{"quoted header", `return k.includes("-----BEGIN RSA PRIVATE KEY-----");`, false},
+		// Body straight after the header with no separator at all. The scanner
+		// accepted it and the scrubber required a separator, so it was detected
+		// and unremovable.
+		{"body adjacent to the header", `{"t":"-----BEGIN RSA PRIVATE KEY-----` + body + `"}`, true},
+		// An encrypted key's attributes sit between the header and the body.
+		{"encrypted, two attribute lines", "-----BEGIN RSA PRIVATE KEY-----\n" + attrs + "\n" + body + "\n", true},
+		// And with more attribute lines than the old eight-line cap allowed,
+		// which made a real key read as no key at all.
+		{"encrypted, nine attribute lines", "-----BEGIN RSA PRIVATE KEY-----\n" + many + "\n" + body + "\n", true},
+		{"plain block", "-----BEGIN RSA PRIVATE KEY-----\n" + body + "\n-----END RSA PRIVATE KEY-----", true},
+		{"json-escaped", `{"k":"-----BEGIN RSA PRIVATE KEY-----\n` + body + `"}`, true},
+		{"json-escaped twice", `{"t":"-----BEGIN RSA PRIVATE KEY-----\\n` + body + `"}`, true},
+	} {
+		detected := HasPrivateKeyMaterial([]byte(tc.in))
+		_, _, removed := RedactText([]byte(tc.in))
+
+		if detected != tc.want {
+			t.Errorf("%s: detected=%v, want %v", tc.name, detected, tc.want)
+		}
+		if detected && !removed {
+			t.Errorf("%s: detected but the scrubber cannot remove it — the sync would refuse for ever", tc.name)
+		}
+		if !detected && removed {
+			t.Errorf("%s: not a credential, but the scrubber rewrote it anyway", tc.name)
+		}
+	}
+}
