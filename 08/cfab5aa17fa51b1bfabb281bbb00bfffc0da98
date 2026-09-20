@@ -1,0 +1,44 @@
+internal/brewrig/brew/brew.go
+  s_9b4d118d1134f2::t_39788282ed2c84 154-158
+internal/brewrig/engine/engine.go
+  s_9b4d118d1134f2::t_36a4987cb23394 94-100
+  s_9b4d118d1134f2::t_0a0a461a922134 107,111
+  s_9b4d118d1134f2::t_39788282ed2c84 81,101,113-114
+internal/brewrig/commands/status.go
+  s_9b4d118d1134f2::t_39788282ed2c84 67
+internal/brewrig/store/store_test.go
+  s_9b4d118d1134f2::t_b3322f00a41b6b 6,544-560,567-568,577-589,592,597,599,603,605-617,624-641
+  s_9b4d118d1134f2::t_0fbf9e404750a8 496-543,642-643
+  s_9b4d118d1134f2::t_39788282ed2c84 81
+  s_9b4d118d1134f2::t_4e6b042ce10f57 561-566
+  s_9b4d118d1134f2::t_03431f3b50610f 569-576,590-591,593-596,598,600-602,604
+  s_9b4d118d1134f2::t_90a10fc4940124 618-623
+internal/brewrig/store/store.go
+  s_9b4d118d1134f2::t_0fbf9e404750a8 506-512
+  s_9b4d118d1134f2::t_4e6b042ce10f57 312-319,328-330
+  s_9b4d118d1134f2::t_52d8e92ffecaed 22,289-299,331-372
+internal/brewrig/inventory/inventory_test.go
+  s_9b4d118d1134f2::t_39788282ed2c84 44,48,67
+internal/brewrig/inventory/inventory.go
+  s_9b4d118d1134f2::t_39788282ed2c84 101-116,270
+internal/brewrig/engine/engine_test.go
+  s_9b4d118d1134f2::t_36a4987cb23394 380-385,388,390-394,396-397,400-406
+  s_9b4d118d1134f2::t_39788282ed2c84 373-374
+  s_9b4d118d1134f2::t_a09a3585518662 377-379,386-387,389,395,398-399,407-412
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "08cfab5aa17fa51b1bfabb281bbb00bfffc0da98",
+  "prompts": {},
+  "sessions": {
+    "s_9b4d118d1134f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc66e1a9-dbd7-4034-9769-2c2fd926f89a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}

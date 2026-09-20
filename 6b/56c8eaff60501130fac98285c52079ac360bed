@@ -1,0 +1,29 @@
+.changeset/brewrig-arrives.md
+  s_9b4d118d1134f2::t_94a48708ab9de0 15
+internal/agentrig/ghrepo/ghrepo_sentinel_test.go
+  s_9b4d118d1134f2::t_6bec35dd562b8a 1-70
+cmd/brewrig/README.md
+  s_9b4d118d1134f2::t_340af28b2bb7c6 50-52
+docs/BREWRIG-DESIGN.md
+  s_9b4d118d1134f2::t_340af28b2bb7c6 84-102
+site/brewrig/index.md
+  s_9b4d118d1134f2::t_340af28b2bb7c6 57-59
+internal/agentrig/ghrepo/ghrepo.go
+  s_9b4d118d1134f2::t_46b9feceb66d24 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6b56c8eaff60501130fac98285c52079ac360bed",
+  "prompts": {},
+  "sessions": {
+    "s_9b4d118d1134f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc66e1a9-dbd7-4034-9769-2c2fd926f89a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
