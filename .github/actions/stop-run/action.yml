@@ -1,0 +1,50 @@
+name: Stop the run
+description: >
+  Cancel the rest of the run after a cheap Linux job failed, and leave a marker
+  saying why. Without the marker the run's conclusion is just "cancelled", which
+  reads as a runner or concurrency problem rather than a test that went red.
+
+# Why this exists as an action rather than four copies of two lines:
+#
+# On 2026-09-19 a stale gitleaks allowlist made the secret scan fail on every
+# branch. Each run then looked like this — gitleaks red for nine seconds, the
+# other five jobs "cancelled" at their setup step — and it was read as the
+# Blacksmith runners misbehaving for a day before anyone opened the per-step
+# conclusions. The cancel was right; its reporting was the problem.
+#
+# The annotation and the step summary are both written before the cancel is
+# requested, so they survive it and land on the run page.
+
+inputs:
+  job:
+    description: The failing job's display name, as the checks list shows it.
+    required: true
+  token:
+    description: A token with actions:write, for `gh run cancel`.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        JOB: ${{ inputs.job }}
+        RUN_ID: ${{ github.run_id }}
+        REPO: ${{ github.repository }}
+      run: |
+        echo "::error title=Run stopped by ${JOB}::${JOB} failed, so the rest of this run was cancelled on purpose to save the macOS and Windows tiers. The run's conclusion is 'cancelled', but the runners and the concurrency group are fine — the failure is in the ${JOB} job."
+
+        {
+          echo "### Run stopped by \`${JOB}\`"
+          echo
+          echo "\`${JOB}\` failed, so the remaining jobs were cancelled deliberately —"
+          echo "a red push should not also pay for the macOS and Windows tiers."
+          echo
+          echo "**This run's conclusion is \`cancelled\` because of that rule, not because"
+          echo "of the runners or the concurrency group.** Every other job will show"
+          echo "\`cancelled\` at whatever step it had reached; the real failure is in"
+          echo "\`${JOB}\`, and its log is the one to read."
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        gh run cancel "${RUN_ID}" --repo "${REPO}"

@@ -144,12 +144,15 @@ jobs:
       # The one-way cancel. On a failure above, stop the whole run so the
       # expensive tiers do not finish a push that is already red. This job's
       # own failure is already recorded when the cancel lands, so the PR still
-      # shows which step broke.
+      # shows which step broke — and the action leaves an annotation and a run
+      # summary saying which job stopped the run, because the run's own
+      # conclusion is only ever "cancelled" and that reads as an infra fault.
       - if: failure()
         name: stop the expensive tiers
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+        uses: ./.github/actions/stop-run
+        with:
+          job: test (linux)
+          token: ${{ github.token }}
 
   test:
     # The expensive tiers: the platforms rigsmith ships for, and the ones a
@@ -244,9 +247,10 @@ jobs:
           ~/.local/bin/gitleaks git --no-banner -v -c .gitleaks.toml
       - if: failure()
         name: stop the expensive tiers
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+        uses: ./.github/actions/stop-run
+        with:
+          job: gitleaks
+          token: ${{ github.token }}
 
   vulncheck:
     name: govulncheck
@@ -295,9 +299,10 @@ jobs:
         run: govulncheck ./...
       - if: failure()
         name: stop the expensive tiers
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+        uses: ./.github/actions/stop-run
+        with:
+          job: govulncheck
+          token: ${{ github.token }}
 
   lint:
     name: vet + gofmt
@@ -337,6 +342,7 @@ jobs:
           fi
       - if: failure()
         name: stop the expensive tiers
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+        uses: ./.github/actions/stop-run
+        with:
+          job: vet + gofmt
+          token: ${{ github.token }}
