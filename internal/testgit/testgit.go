@@ -30,6 +30,7 @@
 package testgit
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,12 +51,26 @@ func init() {
 	}
 	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 
-	// One directory, reused by every test binary and rewritten each time, rather
-	// than a fresh temp dir per binary: an init has nowhere to hang a cleanup,
-	// and forty of them per `go test ./...` would be forty leaks.
-	dir := filepath.Join(os.TempDir(), "rigsmith-hermetic-git")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
+	if err := configure(os.TempDir()); err != nil {
+		// Not a warning. Carrying on here would run the tests against this
+		// machine's git configuration while looking exactly like a run that did
+		// not — which is the failure this package exists to remove, and the one
+		// that costs a day to find because CI, having nothing ambient to leak,
+		// says the opposite.
+		fmt.Fprintf(os.Stderr, "testgit: cannot make git hermetic: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// configure points git at a configuration of our own, written under root.
+//
+// One directory, reused by every test binary and rewritten each time, rather
+// than a fresh temp dir per binary: an init has nowhere to hang a cleanup, and
+// forty of them per `go test ./...` would be forty leaks.
+func configure(root string) error {
+	dir := filepath.Join(root, "rigsmith-hermetic-git")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
 	}
 	ignore := filepath.Join(dir, "ignore")
 	attrs := filepath.Join(dir, "attributes")
@@ -64,11 +79,17 @@ func init() {
 	cfg := "[core]\n\texcludesFile = \"" + filepath.ToSlash(ignore) + "\"\n" +
 		"\tattributesFile = \"" + filepath.ToSlash(attrs) + "\"\n"
 	path := filepath.Join(dir, "config")
-	if write(path, cfg) != nil || write(ignore, "") != nil || write(attrs, "") != nil {
-		return
+	for _, f := range []struct{ path, body string }{
+		{path, cfg}, {ignore, ""}, {attrs, ""},
+	} {
+		if err := write(f.path, f.body); err != nil {
+			return err
+		}
 	}
-	_ = os.Setenv("GIT_CONFIG_GLOBAL", path)
-	_ = os.Setenv("GIT_CONFIG_SYSTEM", path)
+	if err := os.Setenv("GIT_CONFIG_GLOBAL", path); err != nil {
+		return err
+	}
+	return os.Setenv("GIT_CONFIG_SYSTEM", path)
 }
 
 // write replaces path atomically. `go test ./...` starts these binaries at once,

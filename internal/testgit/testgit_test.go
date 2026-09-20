@@ -82,3 +82,22 @@ func TestGlobalIgnoreDoesNotReachTheRepo(t *testing.T) {
 		t.Errorf("a file the test wrote is ignored by something outside the repo: %s", out)
 	}
 }
+
+// The one thing worse than a test binary that cannot make git hermetic is one
+// that carries on anyway: the run then reads this machine's configuration while
+// looking exactly like a run that did not. init() exits on this error, which a
+// test cannot observe, so what is checked here is that the error reaches it.
+func TestSetupFailureIsReported(t *testing.T) {
+	blocked := filepath.Join(t.TempDir(), "root")
+	// A file where the directory would have to go.
+	if err := os.WriteFile(blocked, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := os.Getenv("GIT_CONFIG_GLOBAL")
+	if err := configure(blocked); err == nil {
+		t.Error("configure reported success with nowhere to write")
+	}
+	if got := os.Getenv("GIT_CONFIG_GLOBAL"); got != before {
+		t.Errorf("a failed setup still moved GIT_CONFIG_GLOBAL: %q → %q", before, got)
+	}
+}
