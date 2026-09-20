@@ -2,6 +2,9 @@ package gitrepo
 
 import (
 	"context"
+	"fmt"
+	"math/rand"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -191,11 +194,22 @@ func TestRepack_ReclaimsLooseObjectsWithoutLosingHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An append-only file, committed repeatedly — the transcript's shape.
-	body := strings.Repeat("a line of conversation\n", 400)
+	// An append-only file, committed repeatedly — the transcript's shape. The
+	// lines have to carry real entropy, which is why they are drawn from a seeded
+	// source rather than repeated: zlib already collapses a repeated line inside
+	// the loose object it is written to, so a fixture built from strings.Repeat
+	// costs almost nothing loose and packs to almost the same, leaving pack
+	// bookkeeping as the entire before-and-after difference. A transcript's lines
+	// are all distinct, which is exactly why its bulk sits in loose storage and
+	// why delta compression gets it back.
+	rng := rand.New(rand.NewSource(1))
+	var body strings.Builder
 	for i := 0; i < 12; i++ {
-		body += strings.Repeat("another line of conversation\n", 400)
-		write(t, r.Dir, "t.jsonl", body)
+		for j := 0; j < 400; j++ {
+			fmt.Fprintf(&body, "{\"turn\":%d,\"seq\":%d,\"text\":%q}\n",
+				i, j, strconv.FormatUint(rng.Uint64(), 16))
+		}
+		write(t, r.Dir, "t.jsonl", body.String())
 		if _, err := r.Commit(ctx, "sync"); err != nil {
 			t.Fatal(err)
 		}
@@ -223,8 +237,15 @@ func TestRepack_ReclaimsLooseObjectsWithoutLosingHistory(t *testing.T) {
 	if after.Commits != before.Commits {
 		t.Errorf("commits = %d, want %d — a repack must keep every one", after.Commits, before.Commits)
 	}
-	if after.GitBytes >= before.GitBytes {
-		t.Errorf(".git did not shrink: %d → %d", before.GitBytes, after.GitBytes)
+	// Half, not merely "smaller". A repack also WRITES files — the pack index,
+	// the commit-graph, the reverse index — and on a fixture whose loose objects
+	// cost nothing those can outweigh what was reclaimed, so "smaller" is a
+	// margin thin enough for a newer git's extra bookkeeping file to swallow.
+	// Delta compression returns about four fifths on this shape, so half is
+	// generous, and it still goes red the moment a repack stops packing.
+	if after.GitBytes >= before.GitBytes/2 {
+		t.Errorf(".git barely shrank: %d → %d, want at most half of it back",
+			before.GitBytes, after.GitBytes)
 	}
 }
 
