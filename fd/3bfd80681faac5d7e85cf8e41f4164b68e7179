@@ -1,0 +1,15 @@
+scripts/cancelmarker_test.go
+  ai_agent 1-166
+.gitleaks.toml
+  ai_agent 54-58,60,62
+.github/workflows/ci.yml
+  ai_agent 147-153,156-166,261-271,320-330,370-380
+scripts/gitleaksallowlist_test.go
+  ai_agent 1-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "fd3bfd80681faac5d7e85cf8e41f4164b68e7179",
+  "prompts": {}
+}
