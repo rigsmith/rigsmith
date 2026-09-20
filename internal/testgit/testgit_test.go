@@ -287,3 +287,24 @@ func TestASymlinkedConfigFileIsReplacedNotAccepted(t *testing.T) {
 		t.Error("a symlink holding the right contents was left in place for git to read through")
 	}
 }
+
+// gitquiet turns maintenance off by way of GIT_CONFIG_COUNT, and detach() above
+// clears that channel — so for the eighteen packages that import both, whichever
+// init ran last decided whether `git commit` spawned a detached
+// `git maintenance run`. That process outlives the commit, keeps writing into
+// .git/objects, and races t.TempDir's cleanup into "directory not empty".
+//
+// A setting this package depends on cannot live somewhere this package empties,
+// so these are in the config now and hold whichever order the inits ran in.
+func TestMaintenanceStaysOffWhateverTheInitOrderWas(t *testing.T) {
+	dir := repo(t)
+	for _, want := range []struct{ key, value string }{
+		{"maintenance.auto", "false"},
+		{"gc.auto", "0"},
+	} {
+		got := strings.TrimSpace(git(t, dir, "config", "--get", want.key))
+		if got != want.value {
+			t.Errorf("%s = %q, want %q — a detached maintenance run can race the cleanup again", want.key, got, want.value)
+		}
+	}
+}
