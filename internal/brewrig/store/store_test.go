@@ -378,7 +378,7 @@ func TestConcurrentWritesOnOneMachineDoNotClash(t *testing.T) {
 	s := openAt(t, filepath.Join(dir, "clone"), remote)
 
 	var wg sync.WaitGroup
-	errs := make([]error, 8)
+	errs := make([]error, 32)
 	for i := range errs {
 		wg.Add(1)
 		go func(i int) {

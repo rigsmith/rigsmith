@@ -8,13 +8,15 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
@@ -205,12 +207,16 @@ func (s *Store) Write(m *inventory.Machine) error {
 	// would delete the first's file out from under it, so one of them renames
 	// or cleans up something that is not theirs.
 	//
+	// The randomness has to be real. A first attempt used the pid and
+	// time.Now().UnixNano(), which is unique across processes and NOT within
+	// one: concurrent goroutines share the pid and can read the same
+	// nanosecond, and the concurrency test caught it with "file exists".
+	//
 	// Nothing sweeps temp files left by a crash, on purpose: a sweep is the
 	// deterministic-name problem again. They are harmless instead — Machines
-	// only reads *.json, and .gitignore (written by EnsureReadme) keeps them
+	// reads only *.json, and .gitignore (written by EnsureReadme) keeps them
 	// out of the commit.
-	tmp := path.Join("machines", fmt.Sprintf(".%s.json.tmp%d-%d", m.Name, os.Getpid(), time.Now().UnixNano()))
-	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, tmp, err := createTemp(root, m.Name)
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", rel, err)
 	}
@@ -286,6 +292,27 @@ func (s *Store) ensureBranch(ctx context.Context) error {
 		return err
 	}
 	return s.repo.Checkout(ctx, s.branch, true)
+}
+
+// createTemp opens a uniquely named temp file inside the clone's machines/
+// directory, retrying on the vanishingly unlikely collision rather than
+// assuming one cannot happen.
+func createTemp(root *os.Root, machine string) (*os.File, string, error) {
+	for attempt := 0; attempt < 10; attempt++ {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return nil, "", err
+		}
+		name := path.Join("machines", fmt.Sprintf(".%s.json.tmp%x", machine, b))
+		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			return f, name, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, "", err
+		}
+	}
+	return nil, "", errors.New("could not create a temp file in machines/ after 10 attempts")
 }
 
 // gitignoreBody keeps in-flight temp files out of the shared repo. A crashed
