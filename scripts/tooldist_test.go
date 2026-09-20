@@ -47,6 +47,15 @@ type surface struct {
 	windowsOnly bool
 }
 
+// notACommand is the set of names that legitimately appear on a distribution
+// surface without being a tool under cmd/: the combined bundle, and the window,
+// which ships as a signed .app rather than a CLI.
+var notACommand = map[string]bool{
+	"rigsmith":     true,
+	"clauderig-ui": true,
+	"all":          true,
+}
+
 var distSurfaces = []surface{
 	{file: "install.sh", list: regexp.MustCompile(`install_binary ([\w-]+)`)},
 	{file: "install.ps1", windowsOnly: true, section: regexp.MustCompile(`(?m)^\s*\$binaries = @\(.*\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
@@ -63,7 +72,13 @@ var distSurfaces = []surface{
 	// `homebrew_casks` and `scoops` each decide separately whether it reaches
 	// anyone, and a tool can be built and then shipped by none of them.
 	{file: filepath.Join("..", ".goreleaser.yaml"), what: "archives", list: regexp.MustCompile(`name_template: "([\w-]+)_\{\{ \.Version`)},
-	{file: filepath.Join("..", ".goreleaser.yaml"), what: "casks and scoops", list: regexp.MustCompile(`(?m)^\s+- name: ([\w-]+)$`)},
+	// Scoped to those two sections. Unscoped, `- name:` also picked up the
+	// winget block's capitalised package names (Rig, ChangeRig, …), which the
+	// containment check tolerated because extra names cannot make it fail —
+	// it only showed up once unknown names became an error in their own right.
+	{file: filepath.Join("..", ".goreleaser.yaml"), what: "casks and scoops",
+		section: regexp.MustCompile(`(?s)\n(?:homebrew_casks|scoops):\n(.*?)\n[a-z_]+:`),
+		list:    regexp.MustCompile(`(?m)^\s+- name: ([\w-]+)$`)},
 
 	// `curl rigsmith.sh/<tool> | sh` is a public installer route, and the edge
 	// function gates it on a list written out by hand: a tool missing from TOOLS
@@ -98,6 +113,11 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	knownTools := map[string]bool{}
+	for _, tool := range tools {
+		knownTools[tool.Name] = true
+	}
+
 	for _, s := range distSurfaces {
 		raw, err := os.ReadFile(s.file)
 		if err != nil {
@@ -124,6 +144,24 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 				missing = append(missing, tool.Name)
 			}
 		}
+		// A name on a distribution surface that is not a cmd/ tool is either a
+		// typo or a tool that has been removed, and either way it promises a
+		// package that is never built. The bundle and the window are the known
+		// exceptions: real entries that are not cmd/ tools.
+		var unknown []string
+		for name := range listed {
+			if knownTools[name] || notACommand[name] {
+				continue
+			}
+			unknown = append(unknown, name)
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			t.Errorf("%s lists %s, which is neither a tool under cmd/ nor one of the known "+
+				"non-tool entries (%s) — a name here promises a package that is never built",
+				s.label(), strings.Join(unknown, ", "), strings.Join(sortedKeys(notACommand), ", "))
+		}
+
 		if len(unshippable) > 0 {
 			sort.Strings(unshippable)
 			t.Errorf("%s lists %s, which has no Windows build in .goreleaser.yaml — "+
