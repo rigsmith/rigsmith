@@ -144,15 +144,26 @@ jobs:
       # The one-way cancel. On a failure above, stop the whole run so the
       # expensive tiers do not finish a push that is already red. This job's
       # own failure is already recorded when the cancel lands, so the PR still
-      # shows which step broke — and the action leaves an annotation and a run
-      # summary saying which job stopped the run, because the run's own
-      # conclusion is only ever "cancelled" and that reads as an infra fault.
+      # shows which step broke.
+      #
+      # Deliberately an inline `run:` and not a local composite action. A
+      # `uses: ./…` step cannot load without a successful checkout, so a
+      # checkout failure would leave the expensive tiers running — the one
+      # case this rule exists for. The four copies are held identical by
+      # TestEveryCancelStepCarriesTheSameMarker in scripts/.
       - if: failure()
         name: stop the expensive tiers
-        uses: ./.github/actions/stop-run
-        with:
-          job: test (linux)
-          token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB: test (linux)
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so the rest of this run was cancelled on purpose, to save the macOS and Windows tiers. The run's conclusion is 'cancelled', but the runners and the concurrency group are fine - the failure is in the ${JOB} job." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   test:
     # The expensive tiers: the platforms rigsmith ships for, and the ones a
@@ -247,10 +258,17 @@ jobs:
           ~/.local/bin/gitleaks git --no-banner -v -c .gitleaks.toml
       - if: failure()
         name: stop the expensive tiers
-        uses: ./.github/actions/stop-run
-        with:
-          job: gitleaks
-          token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB: gitleaks
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so the rest of this run was cancelled on purpose, to save the macOS and Windows tiers. The run's conclusion is 'cancelled', but the runners and the concurrency group are fine - the failure is in the ${JOB} job." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   vulncheck:
     name: govulncheck
@@ -299,10 +317,17 @@ jobs:
         run: govulncheck ./...
       - if: failure()
         name: stop the expensive tiers
-        uses: ./.github/actions/stop-run
-        with:
-          job: govulncheck
-          token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB: govulncheck
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so the rest of this run was cancelled on purpose, to save the macOS and Windows tiers. The run's conclusion is 'cancelled', but the runners and the concurrency group are fine - the failure is in the ${JOB} job." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   lint:
     name: vet + gofmt
@@ -342,7 +367,14 @@ jobs:
           fi
       - if: failure()
         name: stop the expensive tiers
-        uses: ./.github/actions/stop-run
-        with:
-          job: vet + gofmt
-          token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB: vet + gofmt
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so the rest of this run was cancelled on purpose, to save the macOS and Windows tiers. The run's conclusion is 'cancelled', but the runners and the concurrency group are fine - the failure is in the ${JOB} job." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
