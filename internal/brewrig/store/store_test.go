@@ -10,12 +10,41 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/internal/brewrig/inventory"
+
+	// git's post-commit maintenance runs detached and races t.TempDir's
+	// cleanup; see the package comment for what that failure looks like.
+	_ "github.com/rigsmith/rigsmith/internal/gitquiet"
 )
 
 // These run against real git repositories in a temp dir. The store is the only
 // part of brewrig that can lose or corrupt another machine's data, and the
 // interesting cases — an empty remote, a second machine, a racing push, a
 // hostile symlink — are all about git's actual behaviour rather than ours.
+
+// tempDir is t.TempDir with a best-effort removal instead of a fatal one.
+//
+// t.TempDir fails the test if RemoveAll cannot finish, and a git repository is
+// exactly the tree that cannot be relied on to hold still: git spawns detached
+// maintenance after a commit, and anything landing under .git/objects between
+// RemoveAll reading the directory and unlinking it turns a passed test red.
+// internal/gitquiet (imported above) stops the maintenance process being
+// spawned and removes most of it; what remains is the filesystem simply not
+// having finished, which was still reproducing here about half the time.
+//
+// These tests assert what git does, not how fast the OS unlinks, so the removal
+// is best-effort and the temp root is left behind if it loses the race. Note
+// this is the same failure the repo already has a fix in flight for, in
+// core/gitrepo and the clauderig suites; this only keeps the new tests honest
+// rather than claiming to solve it everywhere.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "brewrig-store-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -37,7 +66,7 @@ func git(t *testing.T, dir string, args ...string) string {
 // repo is in before anyone syncs.
 func bareRemote(t *testing.T) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "remote.git")
+	dir := filepath.Join(tempDir(t), "remote.git")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +99,7 @@ func openAt(t *testing.T, dir, remote string) *Store {
 // must not read as a failure, and it must not read as "nothing to publish".
 func TestFirstSyncAgainstAnEmptyRemote(t *testing.T) {
 	remote := bareRemote(t)
-	s := openAt(t, filepath.Join(t.TempDir(), "clone"), remote)
+	s := openAt(t, filepath.Join(tempDir(t), "clone"), remote)
 	ctx := context.Background()
 
 	if err := s.Pull(ctx); err != nil {
@@ -100,7 +129,7 @@ func TestFirstSyncAgainstAnEmptyRemote(t *testing.T) {
 // reordered-but-identical files at each other forever.
 func TestPublishingUnchangedInventoryMakesNoCommit(t *testing.T) {
 	remote := bareRemote(t)
-	s := openAt(t, filepath.Join(t.TempDir(), "clone"), remote)
+	s := openAt(t, filepath.Join(tempDir(t), "clone"), remote)
 	ctx := context.Background()
 
 	m := machine("pro", "gh", "jq")
@@ -126,7 +155,7 @@ func TestASecondMachineSeesTheFirst(t *testing.T) {
 	remote := bareRemote(t)
 	ctx := context.Background()
 
-	a := openAt(t, filepath.Join(t.TempDir(), "a"), remote)
+	a := openAt(t, filepath.Join(tempDir(t), "a"), remote)
 	if err := a.Write(machine("air", "ripgrep")); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +163,7 @@ func TestASecondMachineSeesTheFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	b := openAt(t, filepath.Join(t.TempDir(), "b"), remote)
+	b := openAt(t, filepath.Join(tempDir(t), "b"), remote)
 	if err := b.Pull(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +183,7 @@ func TestConcurrentPushesFromTheSameBaseBothLand(t *testing.T) {
 	remote := bareRemote(t)
 	ctx := context.Background()
 
-	a := openAt(t, filepath.Join(t.TempDir(), "a"), remote)
+	a := openAt(t, filepath.Join(tempDir(t), "a"), remote)
 	if err := a.Write(machine("air", "ripgrep")); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +192,7 @@ func TestConcurrentPushesFromTheSameBaseBothLand(t *testing.T) {
 	}
 
 	// b clones at that point, then a publishes again — b is now behind.
-	b := openAt(t, filepath.Join(t.TempDir(), "b"), remote)
+	b := openAt(t, filepath.Join(tempDir(t), "b"), remote)
 	if err := b.Pull(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -203,10 +232,10 @@ func TestConcurrentPushesFromTheSameBaseBothLand(t *testing.T) {
 // elsewhere as a symlink must not be written through.
 func TestWriteRefusesToFollowASymlink(t *testing.T) {
 	remote := bareRemote(t)
-	dir := filepath.Join(t.TempDir(), "clone")
+	dir := filepath.Join(tempDir(t), "clone")
 	s := openAt(t, dir, remote)
 
-	outside := filepath.Join(t.TempDir(), "outside.json")
+	outside := filepath.Join(tempDir(t), "outside.json")
 	if err := os.WriteFile(outside, []byte("untouched"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -233,12 +262,41 @@ func TestWriteRefusesToFollowASymlink(t *testing.T) {
 	}
 }
 
+// The ancestor case, which is the serious one: `machines` itself replaced by a
+// link pointing out of the clone. A check-then-open can be raced here by a
+// concurrent pull; os.Root resolves descriptor-relative and refuses anything
+// that leaves the root, so it cannot be.
+func TestWriteRefusesAnAncestorThatEscapesTheClone(t *testing.T) {
+	remote := bareRemote(t)
+	dir := filepath.Join(tempDir(t), "clone")
+	s := openAt(t, dir, remote)
+
+	outside := tempDir(t)
+	if err := os.WriteFile(filepath.Join(outside, "pro.json"), []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "machines")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := s.Write(machine("pro", "gh")); err == nil {
+		t.Fatal("Write followed a directory symlink out of the staging repo")
+	}
+	got, rerr := os.ReadFile(filepath.Join(outside, "pro.json"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != "untouched" {
+		t.Fatalf("a file outside the repo was overwritten: %q", got)
+	}
+}
+
 // A machine file that will not parse must be reported, not skipped: skipping
 // makes that machine's packages look uninstalled everywhere and, worse, makes
 // its retirements vanish.
 func TestAMalformedMachineFileIsReported(t *testing.T) {
 	remote := bareRemote(t)
-	dir := filepath.Join(t.TempDir(), "clone")
+	dir := filepath.Join(tempDir(t), "clone")
 	s := openAt(t, dir, remote)
 
 	if err := os.MkdirAll(filepath.Join(dir, "machines"), 0o755); err != nil {
@@ -258,7 +316,7 @@ func TestAMalformedMachineFileIsReported(t *testing.T) {
 }
 
 func TestOpenWithoutARemoteIsAnError(t *testing.T) {
-	_, err := Open(context.Background(), filepath.Join(t.TempDir(), "clone"), "", "main")
+	_, err := Open(context.Background(), filepath.Join(tempDir(t), "clone"), "", "main")
 	if err == nil {
 		t.Fatal("Open succeeded with no remote configured")
 	}

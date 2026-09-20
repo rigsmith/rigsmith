@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -94,8 +95,11 @@ func runApply(ctx context.Context, out io.Writer, dryRun, yes bool) error {
 	// Homebrew here had already moved, so the other machine would re-propose
 	// packages this one now has.
 	if res.Any() {
-		if rerr := republish(ctx, s, out); rerr != nil && err == nil {
-			err = rerr
+		// Join rather than prefer one: an action failure and a republish
+		// failure are different problems, and dropping the republish error
+		// hides that Homebrew moved while the shared inventory did not.
+		if rerr := republish(ctx, s, out); rerr != nil {
+			err = errors.Join(err, rerr)
 		}
 	}
 	return err

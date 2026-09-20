@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -150,25 +151,46 @@ func (s *Store) Load(name string) (*inventory.Machine, bool, error) {
 
 // Write saves this machine's inventory into the clone. It does not commit.
 //
-// The destination comes out of a repository other machines write to, and
-// os.WriteFile follows symlinks. Another clone could commit
-// machines/<this-machine>.json as a link to somewhere outside the staging repo
-// and have the next sync write through it, so every component is checked first
-// and the file is opened without following a final link.
+// The destination comes out of a repository other machines write to, so it is
+// not trusted input. Two distinct things can go wrong and both are guarded:
+//
+//   - A component replaced by a symlink pointing OUT of the clone, which would
+//     have the next sync write through it to somewhere else entirely. os.Root
+//     confines every lookup below the clone directory and refuses a link that
+//     leaves it. It resolves descriptor-relative, so unlike a check followed by
+//     an open it cannot be raced by a concurrent pull swapping a directory
+//     after the check and before the write.
+//   - A machine file that IS a symlink, pointing somewhere inside the clone —
+//     another machine's inventory, say. os.Root would follow that quite
+//     happily, since it never leaves the root, so it is refused explicitly.
+//
+// The second check is a check-then-use and could in principle be raced. The
+// residual is bounded and recoverable: the worst case is clobbering another
+// machine's file inside a git clone, which shows up in the diff and can be
+// restored. The unbounded case — writing outside the clone — is the one
+// os.Root closes properly.
 func (s *Store) Write(m *inventory.Machine) error {
 	b, err := inventory.Marshal(m)
 	if err != nil {
 		return err
 	}
-	rel := inventory.FileName(m.Name)
-	p := filepath.Join(s.dir, rel)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	rel := path.Join("machines", m.Name+".json")
+
+	root, err := os.OpenRoot(s.dir)
+	if err != nil {
 		return err
 	}
-	if err := refuseSymlinks(s.dir, rel); err != nil {
+	defer root.Close()
+
+	if err := root.MkdirAll("machines", 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscallNoFollow, 0o644)
+	if fi, lerr := root.Lstat(rel); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing to write %s: it is a symbolic link, and the repository "+
+			"it came from is written by other machines", rel)
+	}
+
+	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", rel, err)
 	}
@@ -177,33 +199,6 @@ func (s *Store) Write(m *inventory.Machine) error {
 		return err
 	}
 	return f.Close()
-}
-
-// refuseSymlinks rejects a path any of whose components inside the clone is a
-// symbolic link.
-func refuseSymlinks(root, rel string) error {
-	cur := root
-	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
-		if part == "" || part == "." {
-			continue
-		}
-		if part == ".." {
-			return fmt.Errorf("refusing to write through %q: it climbs out of the staging repo", rel)
-		}
-		cur = filepath.Join(cur, part)
-		fi, err := os.Lstat(cur)
-		if os.IsNotExist(err) {
-			return nil // nothing left to follow
-		}
-		if err != nil {
-			return err
-		}
-		if fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to write through %q: %s is a symbolic link, and the "+
-				"repository it came from is written by other machines", rel, part)
-		}
-	}
-	return nil
 }
 
 // Publish commits and pushes whatever Write left in the tree. It reports

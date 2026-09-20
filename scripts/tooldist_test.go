@@ -204,6 +204,9 @@ func toolsBuiltForWindows(goreleaser string) (map[string]bool, error) {
 
 	mainRe := regexp.MustCompile(`main: \./cmd/([\w-]+)`)
 	winRe := regexp.MustCompile(`(?m)^\s+- windows$`)
+	goosRe := regexp.MustCompile(`(?m)^\s+goos:$`)
+	targetsRe := regexp.MustCompile(`(?m)^\s+targets:$`)
+	winTargetRe := regexp.MustCompile(`(?m)^\s+- windows[_-]`)
 	out := map[string]bool{}
 	for i, block := range strings.Split(rest, "\n  - id:")[1:] {
 		m := mainRe.FindStringSubmatch(block)
@@ -215,7 +218,22 @@ func toolsBuiltForWindows(goreleaser string) (map[string]bool, error) {
 				"`main: ./cmd/<tool>`; this test would then exempt its tool from the "+
 				"Windows distribution checks without saying so", i+1)
 		}
-		tool, windows := m[1], winRe.MatchString(block)
+		// GoReleaser's defaults matter here, and both of them fail toward
+		// "no Windows build" if read naively — which silently exempts a tool
+		// from every Windows distribution surface.
+		//
+		//   - an omitted `goos` defaults to darwin, linux AND windows
+		//   - an explicit `targets` list overrides `goos` entirely
+		tool := m[1]
+		var windows bool
+		switch {
+		case targetsRe.MatchString(block):
+			windows = winTargetRe.MatchString(block)
+		case goosRe.MatchString(block):
+			windows = winRe.MatchString(block)
+		default:
+			windows = true // GoReleaser's default includes windows
+		}
 		if prev, seen := out[tool]; seen && prev != windows {
 			return nil, fmt.Errorf("two build blocks for ./cmd/%s disagree about a windows "+
 				"target; the later one would silently win", tool)
