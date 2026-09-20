@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -115,12 +116,17 @@ func CreatePrivate(ctx context.Context, name string) (httpsURL string, err error
 	return strings.TrimSpace(url), nil
 }
 
-// safeRemote strips any user:password@ from a remote before it is rendered.
+// SafeRemote strips any user:password@ from a remote before it is rendered.
+//
+// Exported because every tool that stores a remote eventually prints one — in
+// an error, a status line, a health check — and an HTTPS remote can carry a
+// token in its userinfo. One implementation, so a caller cannot forget to
+// redact by writing its own.
 // A git remote may legitimately carry a token that way, and both messages below
 // quote the remote back — into a terminal, a journal entry, and whatever CI log
 // is capturing them. The host and path are what make the message useful; the
 // userinfo never is.
-func safeRemote(remote string) string {
+func SafeRemote(remote string) string {
 	trimmed := strings.TrimSpace(remote)
 	scheme, rest, ok := strings.Cut(trimmed, "://")
 	if !ok {
@@ -132,13 +138,31 @@ func safeRemote(remote string) string {
 	return scheme + "://" + rest
 }
 
+// ErrUnsupportedRemote is wrapped by EnsurePrivate when the remote is not a
+// GitHub or GitLab repo URL at all — a local path, a self-hosted host, anything
+// outside what gh and glab can speak to.
+//
+// ErrVerifierUnavailable is wrapped when the remote IS supported but the CLI or
+// token needed to ask is missing.
+//
+// Both exist so a caller can tell "cannot check" apart from "checked, and it is
+// public". They are different answers, and reporting the first as the second is
+// how a health check ends up telling someone their local path is a public repo.
+// EnsurePrivate itself treats every one of them as a refusal, which is the
+// point of the gate; only callers that REPORT rather than enforce need to
+// distinguish them.
+var (
+	ErrUnsupportedRemote   = errors.New("not a github.com or gitlab.com repo URL")
+	ErrVerifierUnavailable = errors.New("no CLI or token available to verify the repo")
+)
+
 // EnsurePrivate is the enforcement gate: remote must be a GitHub or GitLab repo
 // that the matching CLI confirms is private. gh/glab absent, unsupported host, or
 // a public/unverifiable repo are all errors — no path to a non-private remote.
 func EnsurePrivate(ctx context.Context, remote string) error {
 	host, slug, ok := parseRemote(remote)
 	if !ok {
-		return fmt.Errorf("cannot parse %q as a github.com or gitlab.com repo URL", safeRemote(remote))
+		return fmt.Errorf("cannot parse %q as a github.com or gitlab.com repo URL: %w", SafeRemote(remote), ErrUnsupportedRemote)
 	}
 	switch host {
 	case "github.com":
@@ -148,7 +172,7 @@ func EnsurePrivate(ctx context.Context, remote string) error {
 		if tok := firstEnv("GITHUB_TOKEN", "GH_TOKEN"); tok != "" {
 			return verify(ctx, slug, func(c context.Context, s string) (bool, error) { return apiPrivateGitHub(c, s, tok) })
 		}
-		return fmt.Errorf("verifying %s needs the gh CLI or a GITHUB_TOKEN env var", slug)
+		return fmt.Errorf("verifying %s needs the gh CLI or a GITHUB_TOKEN env var: %w", slug, ErrVerifierUnavailable)
 	case "gitlab.com":
 		if have("glab") {
 			return verify(ctx, slug, isPrivateGitLab)
@@ -156,9 +180,9 @@ func EnsurePrivate(ctx context.Context, remote string) error {
 		if tok := firstEnv("GITLAB_TOKEN", "GL_TOKEN"); tok != "" {
 			return verify(ctx, slug, func(c context.Context, s string) (bool, error) { return apiPrivateGitLab(c, s, tok) })
 		}
-		return fmt.Errorf("verifying %s needs the glab CLI or a GITLAB_TOKEN env var", slug)
+		return fmt.Errorf("verifying %s needs the glab CLI or a GITLAB_TOKEN env var: %w", slug, ErrVerifierUnavailable)
 	default:
-		return fmt.Errorf("private repos are verified on github.com and gitlab.com only; %q (%s) is unsupported", safeRemote(remote), host)
+		return fmt.Errorf("private repos are verified on github.com and gitlab.com only; %q (%s) is unsupported: %w", SafeRemote(remote), host, ErrUnsupportedRemote)
 	}
 }
 
@@ -228,7 +252,13 @@ func apiPrivateGitLab(ctx context.Context, slug, token string) (bool, error) {
 func verify(ctx context.Context, slug string, check func(context.Context, string) (bool, error)) error {
 	priv, err := check(ctx, slug)
 	if err != nil {
-		return fmt.Errorf("could not verify %s is private (does it exist? are you logged in?): %w", slug, err)
+		// The checker ran and could not answer — an expired gh/glab login, an
+		// API error, a repo that is not visible to this account. That is
+		// "cannot verify", not "verified public", and the two must stay
+		// distinguishable: a caller that REPORTS would otherwise tell someone
+		// their private repo is public because their token expired.
+		return fmt.Errorf("could not verify %s is private (does it exist? are you logged in?): %w: %w",
+			slug, err, ErrVerifierUnavailable)
 	}
 	if !priv {
 		return fmt.Errorf("%s is not private — a sync remote must be a private repo, no exceptions", slug)

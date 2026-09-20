@@ -11,6 +11,7 @@
 //	shipRig    green   AccentShip
 //	claudeRig  amber   AccentClaude
 //	codexRig   cyan    AccentCodex
+//	brewRig    magenta AccentBrew
 //
 // Pass a tool's accent to Theme / ColorSchemeFunc; the status colors stay
 // common. This is lifted from cli's old internal theme so all four binaries
@@ -36,15 +37,16 @@ import (
 // same hue dropped to ~0.50 lightness so it keeps contrast on a white terminal.
 // lipgloss picks per the terminal's detected background.
 var (
-	Blue   = lipgloss.AdaptiveColor{Dark: "#4BA3F7", Light: "#006BBB"} // rig — core accent
-	Violet = lipgloss.AdaptiveColor{Dark: "#AD87ED", Light: "#7750B1"} // change
-	Green  = lipgloss.AdaptiveColor{Dark: "#4CB86A", Light: "#007329"} // ship / success
-	Amber  = lipgloss.AdaptiveColor{Dark: "#E48233", Light: "#A74A00"} // claude
-	Cyan   = lipgloss.AdaptiveColor{Dark: "#5DCBD1", Light: "#00747A"} // info / verbs
-	Yellow = lipgloss.AdaptiveColor{Dark: "#E4B750", Light: "#9D7200"} // warn
-	Red    = lipgloss.AdaptiveColor{Dark: "#EF6661", Light: "#B63132"} // error
-	Muted  = lipgloss.AdaptiveColor{Dark: "#8A8A96", Light: "#5A5E63"} // secondary text
-	Paper  = lipgloss.AdaptiveColor{Dark: "#ECECEE", Light: "#0E0E12"} // foreground (paper on dark, ink on light)
+	Blue    = lipgloss.AdaptiveColor{Dark: "#4BA3F7", Light: "#006BBB"} // rig — core accent
+	Violet  = lipgloss.AdaptiveColor{Dark: "#AD87ED", Light: "#7750B1"} // change
+	Green   = lipgloss.AdaptiveColor{Dark: "#4CB86A", Light: "#007329"} // ship / success
+	Amber   = lipgloss.AdaptiveColor{Dark: "#E48233", Light: "#A74A00"} // claude
+	Cyan    = lipgloss.AdaptiveColor{Dark: "#5DCBD1", Light: "#00747A"} // info / verbs
+	Yellow  = lipgloss.AdaptiveColor{Dark: "#E4B750", Light: "#9D7200"} // warn
+	Red     = lipgloss.AdaptiveColor{Dark: "#EF6661", Light: "#B63132"} // error
+	Magenta = lipgloss.AdaptiveColor{Dark: "#D983C4", Light: "#9C3D87"} // brew
+	Muted   = lipgloss.AdaptiveColor{Dark: "#8A8A96", Light: "#5A5E63"} // secondary text
+	Paper   = lipgloss.AdaptiveColor{Dark: "#ECECEE", Light: "#0E0E12"} // foreground (paper on dark, ink on light)
 )
 
 // Per-tool accents. Each binary passes its own to Theme / ColorSchemeFunc; the
@@ -55,6 +57,10 @@ var (
 	AccentShip   = Green  // shipRig / release
 	AccentClaude = Amber  // claudeRig
 	AccentCodex  = Cyan   // codexRig
+	// AccentBrew is magenta rather than another warm tone: Homebrew's own
+	// identity is amber, but claudeRig already owns Amber and two oranges in
+	// the same banner set are exactly the pair a person misreads at a glance.
+	AccentBrew = Magenta // brewRig
 )
 
 // AccentFor returns a tool's accent by its binary name, defaulting to rig's blue
@@ -71,6 +77,8 @@ func AccentFor(tool string) lipgloss.AdaptiveColor {
 		return AccentClaude
 	case "codexrig":
 		return AccentCodex
+	case "brewrig":
+		return AccentBrew
 	default:
 		return AccentRig
 	}

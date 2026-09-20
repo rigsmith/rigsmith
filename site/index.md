@@ -26,8 +26,8 @@ features:
       Node — install with winget, Homebrew, Scoop, curl | sh, or PowerShell.
   - title: Cross-platform
     details: >-
-      macOS, Linux, and Windows, on Intel and Arm alike. Every release ships all
-      six builds of all four tools, so no platform trails the others.
+      macOS, Linux, and Windows, on Intel and Arm alike. Every release builds every
+      tool for every platform it can run on, so none trails the others.
   - title: Convention-first
     details: >-
       The same verb works across .NET, Node, Go, and Rust. rig detects your

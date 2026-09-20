@@ -21,6 +21,7 @@ func TestBannerContent(t *testing.T) {
 		{"ship", ShipBanner, "↑", "shipRig", "release front door"},
 		{"claude", ClaudeBanner, "✳︎", "claudeRig", "Claude Code setup sync"},
 		{"codex", CodexBanner, "◆︎", "codexRig", "Codex CLI setup sync"},
+		{"brew", BrewBanner, "◉", "brewRig", "Homebrew sync across machines"},
 	}
 
 	for _, tc := range cases {

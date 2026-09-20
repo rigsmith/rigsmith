@@ -1,0 +1,414 @@
+package engine
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/rigsmith/rigsmith/internal/brewrig/brew"
+	"github.com/rigsmith/rigsmith/internal/brewrig/inventory"
+	"github.com/rigsmith/rigsmith/internal/brewrig/plan"
+)
+
+// stub is a brew Runner that reports a fixed set of requested formulae, and
+// records the mutating calls it was asked to make.
+type stub struct {
+	formulae []string
+	// deps are installed but NOT installed_on_request — brew still has them,
+	// they are simply no longer something the user asked for.
+	deps  []string
+	fail  map[string]error
+	calls []string
+}
+
+func (s *stub) Run(_ context.Context, args ...string) ([]byte, error) {
+	switch args[0] {
+	case "info":
+		out := `{"formulae":[`
+		first := true
+		emit := func(n string, onRequest bool) {
+			if !first {
+				out += ","
+			}
+			first = false
+			req := "false"
+			if onRequest {
+				req = "true"
+			}
+			out += `{"name":"` + n + `","full_name":"` + n + `","tap":"homebrew/core","installed":[{"version":"1.0","installed_on_request":` + req + `,"time":100}]}`
+		}
+		for _, n := range s.formulae {
+			emit(n, true)
+		}
+		for _, n := range s.deps {
+			emit(n, false)
+		}
+		return []byte(out + `],"casks":[]}`), nil
+	case "tap":
+		if len(args) == 1 {
+			return []byte("homebrew/core\n"), nil
+		}
+	case "--version":
+		return []byte("Homebrew 7.0.4\n"), nil
+	case "--prefix":
+		return []byte("/opt/homebrew\n"), nil
+	}
+	call := args[0]
+	for _, a := range args[1:] {
+		call += " " + a
+	}
+	s.calls = append(s.calls, call)
+	if err, ok := s.fail[call]; ok {
+		return nil, err
+	}
+	return nil, nil
+}
+
+func client(formulae ...string) (*brew.Client, *stub) {
+	s := &stub{formulae: formulae, fail: map[string]error{}}
+	return &brew.Client{R: s}, s
+}
+
+// clientWithDeps builds a client where `deps` are installed but were not asked
+// for — brew still has them, they are just absent from the published inventory.
+func clientWithDeps(requested []string, deps []string) (*brew.Client, *stub) {
+	s := &stub{formulae: requested, deps: deps, fail: map[string]error{}}
+	return &brew.Client{R: s}, s
+}
+
+func ref(n string) inventory.Ref { return inventory.Ref{Kind: inventory.Formula, Name: n} }
+
+// The core of sync: a package that was published last time and is gone now was
+// deliberately uninstalled, and that intent has to be recorded or it is lost.
+func TestSnapshotRecordsADeliberateUninstall(t *testing.T) {
+	c, _ := client("gh")
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}, {Name: "wget"}}}
+	prev.Normalize()
+	now := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+
+	cur, retired, err := Snapshot(context.Background(), c, "pro", "macos", prev, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(retired) != 1 || retired[0].Name != "wget" {
+		t.Fatalf("retired = %v, want [wget]", retired)
+	}
+	at, ok := cur.RetiredAt(ref("wget"))
+	if !ok {
+		t.Fatal("the retirement was not written to the published inventory")
+	}
+	if !at.Equal(now) {
+		t.Errorf("retired at %v, want %v", at, now)
+	}
+}
+
+func TestFirstSnapshotRetiresNothing(t *testing.T) {
+	c, _ := client("gh")
+
+	cur, retired, err := Snapshot(context.Background(), c, "pro", "macos", nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retired) != 0 {
+		t.Fatalf("retired = %v, want none on a first sync — there is nothing to compare against", retired)
+	}
+	if len(cur.Retired) != 0 {
+		t.Errorf("Retired = %v, want empty", cur.Retired)
+	}
+}
+
+// Reinstalling something this machine dropped is a change of mind, and it has
+// to clear the machine's own stale record or the package can never come back.
+func TestReinstallClearsThisMachinesOwnRetirement(t *testing.T) {
+	c, _ := client("gh", "wget")
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}}}
+	prev.Retire(ref("wget"), time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))
+	prev.Normalize()
+
+	cur, _, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cur.RetiredAt(ref("wget")); ok {
+		t.Fatal("wget is installed again but still marked retired")
+	}
+}
+
+// Re-observing the same absence must not push the stamp forward, or a retire
+// would keep overtaking an older reinstall on the other machine.
+func TestRetireStampDoesNotDriftForward(t *testing.T) {
+	c, _ := client("gh")
+	first := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}}}
+	prev.Retire(ref("wget"), first)
+	prev.Normalize()
+
+	later := first.Add(72 * time.Hour)
+	cur, retired, err := Snapshot(context.Background(), c, "pro", "macos", prev, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(retired) != 0 {
+		t.Errorf("retired = %v, want none — it was already retired, not newly so", retired)
+	}
+	at, _ := cur.RetiredAt(ref("wget"))
+	if !at.Equal(first) {
+		t.Fatalf("retire stamp moved to %v, want it pinned at %v", at, first)
+	}
+}
+
+func TestSnapshotCarriesOptOutsForward(t *testing.T) {
+	c, _ := client("gh")
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}}}
+	prev.OptOut.Formulae = []string{"libreoffice"}
+	prev.Normalize()
+
+	cur, _, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cur.OptOut.Formulae) != 1 || cur.OptOut.Formulae[0] != "libreoffice" {
+		t.Fatalf("OptOut = %v, want it preserved across syncs", cur.OptOut.Formulae)
+	}
+}
+
+// Installing something you previously skipped is the more recent, more explicit
+// act, so the stale opt-out has to go with it.
+func TestInstallingAnOptedOutPackageClearsTheOptOut(t *testing.T) {
+	c, _ := client("gh", "libreoffice")
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}}}
+	prev.OptOut.Formulae = []string{"libreoffice"}
+	prev.Normalize()
+
+	cur, _, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cur.OptOut.Formulae) != 0 {
+		t.Fatalf("OptOut = %v, want cleared once the package is installed", cur.OptOut.Formulae)
+	}
+}
+
+func TestApplyInstallsAndTapsFirst(t *testing.T) {
+	c, s := client()
+	p := &plan.Plan{
+		Taps:    []string{"depot/tap"},
+		Install: []plan.Install{{Ref: ref("depot/tap/depot"), Tap: "depot/tap"}},
+	}
+
+	res := Apply(context.Background(), c, p, nil)
+
+	if len(res.Failed) != 0 {
+		t.Fatalf("failed = %v", res.Failed)
+	}
+	if len(s.calls) != 2 || s.calls[0] != "tap depot/tap" {
+		t.Fatalf("calls = %v, want the tap before the install", s.calls)
+	}
+}
+
+// brew cannot roll back, so one bad package must not silently abandon the rest
+// of a long run.
+func TestApplyContinuesPastAFailureAndReportsIt(t *testing.T) {
+	c, s := client()
+	s.fail["install --formula bad"] = errNope
+	p := &plan.Plan{Install: []plan.Install{
+		{Ref: ref("bad")}, {Ref: ref("good")},
+	}}
+
+	res := Apply(context.Background(), c, p, nil)
+
+	if len(res.Installed) != 1 || res.Installed[0].Name != "good" {
+		t.Fatalf("installed = %v, want the later package to still be attempted", res.Installed)
+	}
+	if len(res.Failed) != 1 || res.Failed[0].Ref.Name != "bad" {
+		t.Fatalf("failed = %v, want the failure reported", res.Failed)
+	}
+}
+
+// A failed tap explains every install that depended on it; attempting them
+// anyway produces a wall of identical, misleading "no such formula" errors.
+func TestPackagesFromAFailedTapAreSkippedWithThatReason(t *testing.T) {
+	c, s := client()
+	s.fail["tap depot/tap"] = errNope
+	p := &plan.Plan{
+		Taps:    []string{"depot/tap"},
+		Install: []plan.Install{{Ref: ref("depot/tap/depot"), Tap: "depot/tap"}},
+	}
+
+	res := Apply(context.Background(), c, p, nil)
+
+	for _, call := range s.calls {
+		if call == "install --formula depot/tap/depot" {
+			t.Fatal("installed from a tap that could not be added")
+		}
+	}
+	if len(res.Failed) != 2 {
+		t.Fatalf("failed = %v, want both the tap and the package it blocked", res.Failed)
+	}
+}
+
+var errNope = &stubErr{}
+
+type stubErr struct{}
+
+func (e *stubErr) Error() string { return "nope" }
+
+// A package that is still installed but has stopped being installed_on_request
+// — because something else now depends on it — must NOT be recorded as
+// deliberately removed. Retirement is the only thing that makes brewrig offer
+// an uninstall, so getting this wrong offers to delete software nobody touched.
+func TestSomethingStillInstalledAsADependencyIsNotRetired(t *testing.T) {
+	// ffmpeg was asked for last time; now brew reports it installed but not on
+	// request. This is the real case: on the machine brewrig was built against,
+	// ffmpeg and python@3.14 are both in exactly this state.
+	c, _ := clientWithDeps([]string{"gh"}, []string{"ffmpeg"})
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}, {Name: "ffmpeg"}}}
+	prev.Normalize()
+
+	cur, retired, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(retired) != 0 {
+		t.Fatalf("retired = %v, want none — ffmpeg is still installed, just not on request", retired)
+	}
+	if _, ok := cur.RetiredAt(ref("ffmpeg")); ok {
+		t.Fatal("ffmpeg was recorded as deliberately removed while brew still has it installed; " +
+			"the other machine would be offered an uninstall of software nobody removed")
+	}
+}
+
+// The control for the test above: a package brew no longer has at all IS a
+// deliberate removal, and must still be recorded. Without this, the fix for
+// the dependency case could simply stop retiring anything.
+func TestSomethingBrewNoLongerHasAtAllIsStillRetired(t *testing.T) {
+	c, _ := clientWithDeps([]string{"gh"}, []string{"ffmpeg"})
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}, {Name: "wget"}}}
+	prev.Normalize()
+
+	cur, retired, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(retired) != 1 || retired[0].Name != "wget" {
+		t.Fatalf("retired = %v, want [wget] — brew does not have it at all", retired)
+	}
+	if _, ok := cur.RetiredAt(ref("wget")); !ok {
+		t.Fatal("a genuine uninstall was not recorded")
+	}
+}
+
+// A malformed key must be dropped, not coerced. Turning "wget" into
+// "formula:wget" invents a retirement for a real package.
+func TestMalformedRetiredKeyIsDroppedNotCoerced(t *testing.T) {
+	c, _ := client("gh")
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}}}
+	prev.Retired = map[string]time.Time{"wget": time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}
+	prev.Normalize()
+
+	cur, _, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := cur.RetiredAt(ref("wget")); ok {
+		t.Fatal("a malformed key was coerced into a real formula retirement, which would " +
+			"offer to uninstall wget on the other machine")
+	}
+	if _, ok := cur.Retired["wget"]; ok {
+		t.Error("the malformed key was carried forward; it should be dropped")
+	}
+}
+
+// The property the file format depends on, tested the way it actually fails:
+// two snapshots taken at DIFFERENT times from identical brew state must
+// marshal identically. The store-level test missed this because it wrote one
+// object twice, so syncedAt never moved and every real sync was committing.
+func TestTwoSnapshotsOfUnchangedStateAreByteIdentical(t *testing.T) {
+	c, _ := client("gh", "jq")
+	t0 := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+
+	first, _, err := Snapshot(context.Background(), c, "pro", "macos", nil, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := Snapshot(context.Background(), c, "pro", "macos", first, t0.Add(37*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := inventory.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := inventory.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != string(b) {
+		t.Fatalf("an unchanged inventory marshalled differently, so every sync commits:\n%s\n---\n%s", a, b)
+	}
+}
+
+// And the control: a real change must move the timestamp, or "last changed"
+// would be frozen forever.
+func TestARealChangeMovesTheTimestamp(t *testing.T) {
+	t0 := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	c1, _ := client("gh")
+	first, _, err := Snapshot(context.Background(), c1, "pro", "macos", nil, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c2, _ := client("gh", "jq") // jq newly installed
+	later := t0.Add(time.Hour)
+	second, _, err := Snapshot(context.Background(), c2, "pro", "macos", first, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !second.ChangedAt.Equal(later) {
+		t.Errorf("ChangedAt = %v, want it moved to %v now the inventory changed", second.ChangedAt, later)
+	}
+}
+
+// A published file with no usable timestamp — one written before the field
+// existed, or hand-edited — must not pin the machine at the zero time forever.
+//
+// prev is built by taking a real Snapshot and zeroing only the timestamp. An
+// earlier version of this test hand-rolled prev and left out the version and
+// tap that a real snapshot carries, so prev never matched cur, the freeze never
+// ran, and the test passed with the guard absent — while the actual tool sat at
+// year 1.
+func TestAnAbsentTimestampIsNotFrozenIn(t *testing.T) {
+	c, _ := client("gh")
+	ctx := context.Background()
+
+	prev, _, err := Snapshot(ctx, c, "pro", "macos", nil, time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev.ChangedAt = time.Time{} // as an older or hand-edited file unmarshals
+
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	cur, _, err := Snapshot(ctx, c, "pro", "macos", prev, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Precondition: the two really are otherwise identical, so the freeze is
+	// reachable and this test is testing the guard rather than a mismatch.
+	if !sameExceptChangedAt(prev, cur) {
+		t.Fatal("prev and cur differ apart from the timestamp, so the freeze never runs " +
+			"and this test proves nothing")
+	}
+	if cur.ChangedAt.IsZero() {
+		t.Fatal("the machine kept a zero timestamp, so status shows year 1 forever")
+	}
+	if !cur.ChangedAt.Equal(now) {
+		t.Errorf("ChangedAt = %v, want %v", cur.ChangedAt, now)
+	}
+}

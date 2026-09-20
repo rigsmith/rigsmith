@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rigsmith.dev/schemas/brewrig.json",
+  "title": "brewrig config",
+  "description": "Configuration for brewrig (~/.brewrig/config.json): the private sync remote, this machine's name, and how sync and update behave.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "description": "Config schema version."
+    },
+    "remote": {
+      "type": "string",
+      "description": "The private git remote holding machines/*.json. brewrig verifies it is private and refuses a public one."
+    },
+    "machine": {
+      "type": "string",
+      "description": "This machine's name: the stem of the file it publishes, and the name other machines see in a prompt. Stored rather than derived each run, so renaming the Mac does not orphan its inventory."
+    },
+    "branch": {
+      "type": "string",
+      "description": "Branch published to. Defaults to main.",
+      "default": "main"
+    },
+    "greedyCasks": {
+      "type": "boolean",
+      "description": "Let `update` also upgrade casks that auto-update themselves. Off by default: upgrading one can restart a running app.",
+      "default": false
+    },
+    "autoApply": {
+      "type": "boolean",
+      "description": "Let `sync` install what is missing in the same run. Removals are never automatic regardless of this.",
+      "default": false
+    }
+  }
+}

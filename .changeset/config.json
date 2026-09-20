@@ -13,7 +13,8 @@
     "rig",
     "clauderig",
     "clauderig-ui",
-    "codexrig"
+    "codexrig",
+    "brewrig"
   ],
   "access": "restricted",
   "updateInternalDependencies": "patch",

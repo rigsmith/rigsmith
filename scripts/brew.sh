@@ -31,11 +31,11 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 case "$what" in
-  all|rigsmith) cask="rigsmith" ;;                       # the bundle: all four CLIs
-  rig|changerig|shiprig|clauderig|codexrig|clauderig-ui) cask="$what" ;;
+  all|rigsmith) cask="rigsmith" ;;                       # the bundle: every CLI for this platform
+  rig|changerig|shiprig|clauderig|codexrig|brewrig|clauderig-ui) cask="$what" ;;
   *)
     echo "unknown package: $what" >&2
-    echo "try: rigsmith (all five), rig, changerig, shiprig, clauderig, codexrig, clauderig-ui" >&2
+    echo "try: rigsmith (the whole toolchain), rig, changerig, shiprig, clauderig, codexrig, brewrig, clauderig-ui" >&2
     exit 1
     ;;
 esac
