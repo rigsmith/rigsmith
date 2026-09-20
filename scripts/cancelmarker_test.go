@@ -110,7 +110,9 @@ func TestTheMarkerExplainsWhatCancelledMeans(t *testing.T) {
 	}
 	body := steps[0].body
 
-	for _, want := range []string{"::error title=", "on purpose", "cancelled", "the log to read"} {
+	// Forward-looking: the annotation is written before `gh run cancel`, and
+	// that request can fail.
+	for _, want := range []string{"::error title=", "on purpose", "is being cancelled", "the log to read"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the cancel marker no longer mentions %q:\n%s", want, body)
 		}
@@ -121,6 +123,16 @@ func TestTheMarkerExplainsWhatCancelledMeans(t *testing.T) {
 			t.Errorf("the cancel marker claims the infrastructure is healthy (%q), but "+
 				"failure() also fires on checkout, cache, toolchain and network failures:\n%s",
 				banned, body)
+		}
+	}
+
+	// The marker is written before the cancel is requested, so it must not
+	// report the cancel as already done: `gh run cancel` can fail, and the
+	// annotation would then be describing something that never happened.
+	for _, banned := range []string{"was cancelled", "were cancelled", "and cancelled the rest"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("the cancel marker states the cancellation as complete (%q), but it runs "+
+				"BEFORE `gh run cancel` and that request can fail:\n%s", banned, body)
 		}
 	}
 }

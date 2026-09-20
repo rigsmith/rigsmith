@@ -163,11 +163,13 @@ jobs:
           # that names the culprit — but it must never be able to stop the
           # cancel below, which is the part that saves the money.
           #
-          # It says where to look and nothing about what is healthy. `failure()`
-          # also fires on a checkout, cache, toolchain or network failure, so a
-          # marker that asserted the runners were fine would be confidently
-          # wrong about exactly the class of problem it exists to clarify.
-          echo "::error title=Run stopped by ${JOB}::${JOB} failed, and cancelled the rest of this run on purpose, to save the macOS and Windows tiers. Every other job here reports 'cancelled' for that reason alone, and so does the run - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
           gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   test:
@@ -273,11 +275,13 @@ jobs:
           # that names the culprit — but it must never be able to stop the
           # cancel below, which is the part that saves the money.
           #
-          # It says where to look and nothing about what is healthy. `failure()`
-          # also fires on a checkout, cache, toolchain or network failure, so a
-          # marker that asserted the runners were fine would be confidently
-          # wrong about exactly the class of problem it exists to clarify.
-          echo "::error title=Run stopped by ${JOB}::${JOB} failed, and cancelled the rest of this run on purpose, to save the macOS and Windows tiers. Every other job here reports 'cancelled' for that reason alone, and so does the run - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
           gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   vulncheck:
@@ -337,11 +341,13 @@ jobs:
           # that names the culprit — but it must never be able to stop the
           # cancel below, which is the part that saves the money.
           #
-          # It says where to look and nothing about what is healthy. `failure()`
-          # also fires on a checkout, cache, toolchain or network failure, so a
-          # marker that asserted the runners were fine would be confidently
-          # wrong about exactly the class of problem it exists to clarify.
-          echo "::error title=Run stopped by ${JOB}::${JOB} failed, and cancelled the rest of this run on purpose, to save the macOS and Windows tiers. Every other job here reports 'cancelled' for that reason alone, and so does the run - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
           gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   lint:
@@ -392,9 +398,11 @@ jobs:
           # that names the culprit — but it must never be able to stop the
           # cancel below, which is the part that saves the money.
           #
-          # It says where to look and nothing about what is healthy. `failure()`
-          # also fires on a checkout, cache, toolchain or network failure, so a
-          # marker that asserted the runners were fine would be confidently
-          # wrong about exactly the class of problem it exists to clarify.
-          echo "::error title=Run stopped by ${JOB}::${JOB} failed, and cancelled the rest of this run on purpose, to save the macOS and Windows tiers. Every other job here reports 'cancelled' for that reason alone, and so does the run - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
           gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
