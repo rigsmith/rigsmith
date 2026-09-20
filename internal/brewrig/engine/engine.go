@@ -5,6 +5,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -79,8 +80,38 @@ func Snapshot(ctx context.Context, c *brew.Client, machine, osName string, prev 
 
 	cur.SyncedAt = now.UTC()
 	cur.Normalize()
+
+	// If nothing else moved, keep the previous timestamp. Otherwise syncedAt
+	// alone makes every snapshot a new file, every sync a commit, and the
+	// "an unchanged inventory produces no commit" property a fiction — two
+	// machines would publish timestamp churn at each other forever. Verified
+	// the hard way: two no-op syncs produced two commits whose only diff was
+	// this field.
+	//
+	// It therefore means "when this inventory last changed", which is the more
+	// useful of the two readings anyway; how recently a machine checked in is
+	// the git history's job, and `status` reads it from there.
+	if prev != nil && sameExceptSyncedAt(prev, cur) {
+		cur.SyncedAt = prev.SyncedAt
+	}
 	inventory.SortRefs(retired)
 	return cur, retired, nil
+}
+
+// sameExceptSyncedAt compares two inventories ignoring the timestamp, by the
+// same marshalling the store writes — so "the same" here means exactly "would
+// produce an identical file", rather than a field list that goes stale the
+// next time one is added.
+func sameExceptSyncedAt(a, b *inventory.Machine) bool {
+	ac, bc := *a, *b
+	ac.SyncedAt = time.Time{}
+	bc.SyncedAt = time.Time{}
+	ab, aerr := inventory.Marshal(&ac)
+	bb, berr := inventory.Marshal(&bc)
+	if aerr != nil || berr != nil {
+		return false
+	}
+	return bytes.Equal(ab, bb)
 }
 
 func keepNotInstalled(m *inventory.Machine, k inventory.Kind, names []string) []string {

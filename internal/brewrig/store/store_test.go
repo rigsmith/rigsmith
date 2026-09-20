@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -347,7 +348,7 @@ func TestATempFileLeftByACrashIsHarmless(t *testing.T) {
 	if err := s.EnsureReadme(); err != nil {
 		t.Fatal(err)
 	}
-	stale := filepath.Join(clone, "machines", ".pro.json.tmp99999-1")
+	stale := filepath.Join(clone, "machines", ".tmpdeadbeefdeadbeef")
 	if err := os.WriteFile(stale, []byte("{partial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +364,7 @@ func TestATempFileLeftByACrashIsHarmless(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracked := git(t, clone, "ls-files")
-	if strings.Contains(tracked, ".json.tmp") {
+	if strings.Contains(tracked, "/.tmp") {
 		t.Errorf("a temp file was committed to the shared repo:\n%s", tracked)
 	}
 }
@@ -432,5 +433,62 @@ func TestOpenWithoutARemoteIsAnError(t *testing.T) {
 	_, err := Open(context.Background(), filepath.Join(tempDir(t), "clone"), "", "main")
 	if err == nil {
 		t.Fatal("Open succeeded with no remote configured")
+	}
+}
+
+// Atomic rename stops a half-written file being seen; it does nothing about a
+// lost update. Two processes can each snapshot and the one that renames LAST
+// wins, even holding older state — and a `retired` or `acknowledged` entry
+// written by the loser would be gone for good. That must be refused, not
+// performed.
+func TestWriteRefusesToReplaceStateItDidNotRead(t *testing.T) {
+	remote := bareRemote(t)
+	dir := tempDir(t)
+	clone := filepath.Join(dir, "clone")
+	a := openAt(t, clone, remote)
+
+	if err := a.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	// What this process believes it is replacing.
+	if _, _, err := a.Load("pro"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another writer replaces the file in between — a second brewrig process
+	// on the same machine, which shares the clone but not the Store.
+	other := &inventory.Machine{Schema: 1, Name: "pro", OS: "macos"}
+	other.Formulae = []inventory.Package{{Name: "somethingelse"}}
+	other.Normalize()
+	raw, err := inventory.Marshal(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, "machines", "pro.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err = a.Write(machine("pro", "gh", "jq"))
+	if err == nil {
+		t.Fatal("Write silently replaced an inventory it had never read")
+	}
+	if !errors.Is(err, ErrStaleBase) {
+		t.Errorf("err = %v, want ErrStaleBase so the caller can say what to do", err)
+	}
+
+	// And the other writer's state survived intact.
+	got, rerr := os.ReadFile(filepath.Join(clone, "machines", "pro.json"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != string(raw) {
+		t.Error("the other writer's inventory was overwritten anyway")
+	}
+	// No temp file left behind by the refusal.
+	entries, _ := os.ReadDir(filepath.Join(clone, "machines"))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".tmp") {
+			t.Errorf("a temp file was left behind after the refusal: %s", e.Name())
+		}
 	}
 }

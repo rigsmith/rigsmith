@@ -322,3 +322,55 @@ func TestMalformedRetiredKeyIsDroppedNotCoerced(t *testing.T) {
 		t.Error("the malformed key was carried forward; it should be dropped")
 	}
 }
+
+// The property the file format depends on, tested the way it actually fails:
+// two snapshots taken at DIFFERENT times from identical brew state must
+// marshal identically. The store-level test missed this because it wrote one
+// object twice, so syncedAt never moved and every real sync was committing.
+func TestTwoSnapshotsOfUnchangedStateAreByteIdentical(t *testing.T) {
+	c, _ := client("gh", "jq")
+	t0 := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+
+	first, _, err := Snapshot(context.Background(), c, "pro", "macos", nil, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := Snapshot(context.Background(), c, "pro", "macos", first, t0.Add(37*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a, err := inventory.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := inventory.Marshal(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(a) != string(b) {
+		t.Fatalf("an unchanged inventory marshalled differently, so every sync commits:\n%s\n---\n%s", a, b)
+	}
+}
+
+// And the control: a real change must move the timestamp, or "last changed"
+// would be frozen forever.
+func TestARealChangeMovesTheTimestamp(t *testing.T) {
+	t0 := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	c1, _ := client("gh")
+	first, _, err := Snapshot(context.Background(), c1, "pro", "macos", nil, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c2, _ := client("gh", "jq") // jq newly installed
+	later := t0.Add(time.Hour)
+	second, _, err := Snapshot(context.Background(), c2, "pro", "macos", first, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !second.SyncedAt.Equal(later) {
+		t.Errorf("SyncedAt = %v, want it moved to %v now the inventory changed", second.SyncedAt, later)
+	}
+}

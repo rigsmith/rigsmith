@@ -9,6 +9,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
@@ -29,6 +31,58 @@ type Store struct {
 	dir    string
 	remote string
 	branch string
+
+	// base records, per machine, a digest of the published file as this
+	// process last saw it. Write refuses to replace a destination that no
+	// longer matches — see ErrStaleBase.
+	mu   sync.Mutex
+	base map[string][32]byte
+}
+
+// ErrStaleBase is returned by Write when the published file changed after this
+// process read it.
+//
+// The rename itself is atomic, which protects the file from being seen
+// half-written and does nothing about a lost update: two brewrig processes on
+// one machine can each snapshot, and the one that renames LAST wins even if it
+// captured the older state. The published inventory would self-correct on the
+// next sync, but a `retired` or `acknowledged` entry written by the loser would
+// be gone for good — and a "keep" decision quietly forgotten is exactly what
+// this PR spent its time fixing elsewhere.
+//
+// So the overwrite is refused rather than performed. Retrying automatically
+// would be better still; serialising the whole snapshot-write-publish
+// transaction better again. Neither is here: this converts a silent loss into a
+// legible error, and the rest is honest follow-up work.
+var ErrStaleBase = errors.New("the published inventory changed while this run was preparing its own; run brewrig again")
+
+// digestOf is the recorded form of a file's contents, with a distinct value for
+// "the file was not there", so a file appearing under us is caught too.
+func digestOf(b []byte, exists bool) [32]byte {
+	if !exists {
+		return [32]byte{}
+	}
+	d := sha256.Sum256(b)
+	if d == ([32]byte{}) { // unreachable in practice; keeps "absent" unambiguous
+		d[0] = 1
+	}
+	return d
+}
+
+func (s *Store) recordBase(machine string, b []byte, exists bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.base == nil {
+		s.base = map[string][32]byte{}
+	}
+	s.base[machine] = digestOf(b, exists)
+}
+
+func (s *Store) expectedBase(machine string) ([32]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, ok := s.base[machine]
+	return d, ok
 }
 
 // Dir is the clone's path on disk.
@@ -140,11 +194,13 @@ func (s *Store) Machines(ctx context.Context) ([]*inventory.Machine, error) {
 func (s *Store) Load(name string) (*inventory.Machine, bool, error) {
 	b, err := os.ReadFile(filepath.Join(s.dir, inventory.FileName(name)))
 	if os.IsNotExist(err) {
+		s.recordBase(name, nil, false)
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
+	s.recordBase(name, b, true)
 	m, err := inventory.Unmarshal(b)
 	if err != nil {
 		return nil, false, err
@@ -216,7 +272,7 @@ func (s *Store) Write(m *inventory.Machine) error {
 	// deterministic-name problem again. They are harmless instead — Machines
 	// reads only *.json, and .gitignore (written by EnsureReadme) keeps them
 	// out of the commit.
-	f, tmp, err := createTemp(root, m.Name)
+	f, tmp, err := createTemp(root)
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", rel, err)
 	}
@@ -229,10 +285,27 @@ func (s *Store) Write(m *inventory.Machine) error {
 		_ = root.Remove(tmp)
 		return err
 	}
+	// Refuse to replace something that changed after we read it. Checked as
+	// late as possible, immediately before the rename, so the window is as
+	// small as this design can make it — it is a check-then-act and does not
+	// pretend otherwise.
+	if want, ok := s.expectedBase(m.Name); ok {
+		cur, rerr := root.ReadFile(rel)
+		switch {
+		case rerr != nil && !errors.Is(rerr, fs.ErrNotExist):
+			_ = root.Remove(tmp)
+			return rerr
+		case digestOf(cur, rerr == nil) != want:
+			_ = root.Remove(tmp)
+			return fmt.Errorf("not replacing %s: %w", rel, ErrStaleBase)
+		}
+	}
+
 	if err := root.Rename(tmp, rel); err != nil {
 		_ = root.Remove(tmp)
 		return fmt.Errorf("replacing %s: %w", rel, err)
 	}
+	s.recordBase(m.Name, b, true)
 	return nil
 }
 
@@ -297,13 +370,19 @@ func (s *Store) ensureBranch(ctx context.Context) error {
 // createTemp opens a uniquely named temp file inside the clone's machines/
 // directory, retrying on the vanishingly unlikely collision rather than
 // assuming one cannot happen.
-func createTemp(root *os.Root, machine string) (*os.File, string, error) {
+//
+// The name is opaque and does not embed the machine's. A machine name is only
+// bounded by what config.Load accepts, so `.<machine>.json.tmp<16 hex>` could
+// exceed the filesystem's component limit for a name whose own
+// `machines/<machine>.json` fits — the write would fail for a file that is
+// otherwise perfectly legal.
+func createTemp(root *os.Root) (*os.File, string, error) {
 	for attempt := 0; attempt < 10; attempt++ {
 		var b [8]byte
 		if _, err := rand.Read(b[:]); err != nil {
 			return nil, "", err
 		}
-		name := path.Join("machines", fmt.Sprintf(".%s.json.tmp%x", machine, b))
+		name := path.Join("machines", fmt.Sprintf(".tmp%x", b))
 		f, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err == nil {
 			return f, name, nil
@@ -317,7 +396,7 @@ func createTemp(root *os.Root, machine string) (*os.File, string, error) {
 
 // gitignoreBody keeps in-flight temp files out of the shared repo. A crashed
 // write leaves one behind and the next Publish stages everything.
-const gitignoreBody = "machines/.*.json.tmp*\n"
+const gitignoreBody = "machines/.tmp*\n"
 
 // EnsureReadme writes the orientation file on first publish. A private repo
 // full of JSON with no explanation is a puzzle when it resurfaces in two years.
@@ -361,7 +440,7 @@ func (s *Store) ensureGitignore() error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if strings.Contains(string(cur), "machines/.*.json.tmp") {
+	if strings.Contains(string(cur), "machines/.tmp") {
 		return nil
 	}
 	out := string(cur)

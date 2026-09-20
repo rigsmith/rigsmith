@@ -94,10 +94,15 @@ type OptOut struct {
 // Machine is one machine's published inventory — the whole contents of
 // machines/<name>.json.
 type Machine struct {
-	Schema   int       `json:"schema"`
-	Name     string    `json:"machine"`
-	OS       string    `json:"os"`
-	Arch     string    `json:"arch,omitempty"`
+	Schema int    `json:"schema"`
+	Name   string `json:"machine"`
+	OS     string `json:"os"`
+	Arch   string `json:"arch,omitempty"`
+	// SyncedAt is when this inventory last CHANGED, not when the machine last
+	// ran a sync. A timestamp that moved on every run would make every sync a
+	// commit and defeat the no-op-produces-no-diff property the whole file
+	// format depends on. How recently a machine checked in is answered by the
+	// git history instead.
 	SyncedAt time.Time `json:"syncedAt"`
 
 	// BrewVersion and Prefix are diagnostic: an Intel Mac on /usr/local and an
