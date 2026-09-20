@@ -1,0 +1,23 @@
+.changeset/pem-header-needs-a-key.md
+  s_6564ed37f1c1c3::t_da0c32699ed2ee 21-23
+internal/agentrig/redact/pem_test.go
+  s_6564ed37f1c1c3::t_1176a3bfbc2fb5 179-231
+internal/agentrig/redact/text.go
+  s_6564ed37f1c1c3::t_8821ef131d4500 235-236,238-239,259-267,274-285
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a8f536110925344b871b8094b2621b7ac15fe0e2",
+  "prompts": {},
+  "sessions": {
+    "s_6564ed37f1c1c3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "39203511-c0e8-4b86-b49e-8a465676a25c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
