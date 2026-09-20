@@ -232,8 +232,11 @@ const pemLookahead = 4096
 // or — as environment variables hold them — straight on after a space; a quoted
 // header continues with the quote or bracket that closed the string literal,
 // which is no kind of base64. That is what clears the bundled-library case.
+// Running out of window is not an answer, and is never read as one: see the
+// return at the end.
 func keyBodyFollows(rest []byte) bool {
-	if len(rest) > pemLookahead {
+	truncated := len(rest) > pemLookahead
+	if truncated {
 		rest = rest[:pemLookahead]
 	}
 	// A key inside a JSON string — a transcript, a sourcemap, a .env — carries
@@ -253,14 +256,33 @@ func keyBodyFollows(rest []byte) bool {
 	// redundant: a key with more attribute lines than the cap allowed came back
 	// "no material" and published, which is the one direction this must never
 	// fail in.
-	for _, line := range strings.Split(s[1:], "\n") {
+	lines := strings.Split(s[1:], "\n")
+	// The last line of a truncated read ends where the window did, not where the
+	// content does. Judging it decides the whole question on a fragment — and it
+	// decided it wrongly, because a body line cut short still looks like base64
+	// while an attribute line cut short does not.
+	if truncated && len(lines) > 0 {
+		lines = lines[:len(lines)-1]
+	}
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || pemAttr.MatchString(line) {
 			continue
 		}
 		return pemBody.MatchString(line)
 	}
-	return false
+	// Nothing but attribute and blank lines, all the way to the end of what was
+	// read. If that end was the window rather than the content, the body may be
+	// just past it, and the honest answer is "unknown".
+	//
+	// Unknown has to mean yes. A bounded look is only safe while running out of
+	// room cannot be mistaken for an answer: a key can be pushed past any fixed
+	// window by padding the space after its header with attribute-shaped lines,
+	// and reading that as "no material" published it. The cost of the other
+	// choice is a refusal on a file that put four kilobytes of `Name: value`
+	// after a PEM header and no key, which nothing sane produces — and a
+	// refusal names the file and stops, where a miss is silent.
+	return truncated
 }
 
 // firstToken is s up to the first space or line break.

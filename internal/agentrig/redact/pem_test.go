@@ -176,3 +176,56 @@ func TestPEMDetectionAndRemovalAgree(t *testing.T) {
 		}
 	}
 }
+
+// The lookahead is a bound on work, and a bound on work must never be readable
+// as a verdict.
+//
+// This is the hazard the window introduced. The rule it replaced matched a
+// header anywhere in a file with no window at all, so it could not be evaded;
+// a bounded look can be, by padding the space after a header with the
+// attribute-shaped lines the search is willing to skip until the body falls
+// outside it. Read as "no material", that publishes the key.
+func TestKeyMaterialPastTheLookaheadIsNotReadAsClean(t *testing.T) {
+	pad := func(n int) string {
+		return strings.Repeat("X-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", n)
+	}
+	key := func(padding string) string {
+		return "-----BEGIN RSA PRIVATE KEY-----\n" + padding + "\n" + body + "\n-----END RSA PRIVATE KEY-----\n"
+	}
+
+	// Inside the window: seen directly.
+	if in := key(pad(10)); !HasPrivateKeyMaterial([]byte(in)) {
+		t.Error("a key a few attribute lines below the header was missed")
+	}
+	// Past it: the search runs out of room without reaching a deciding line, and
+	// that is not permission to publish.
+	padded := key(pad(120))
+	if len(padded) <= pemLookahead {
+		t.Fatalf("fixture no longer exceeds the window (%d bytes) — it is not testing anything", pemLookahead)
+	}
+	if !HasPrivateKeyMaterial([]byte(padded)) {
+		t.Error("a key pushed past the lookahead was read as clean — it would be published")
+	}
+	if got := ScanFile("skills/s/notes.txt", []byte(padded)); len(got) != 1 || got[0].Kind != "private-key" {
+		t.Errorf("ScanFile = %+v, want one private-key finding", got)
+	}
+	// And it is removable, so the refusal is not permanent: the scrubber's
+	// grammar spans attribute lines however many there are.
+	if _, _, changed := RedactText([]byte(padded)); !changed {
+		t.Error("detected past the window but not removable — the sync would refuse for ever")
+	}
+
+	// The cost of failing closed, stated so it is a decision and not a surprise:
+	// content that puts more attribute-shaped padding than the window holds
+	// after a header, with no key at all, is refused. Nothing sane produces it,
+	// a refusal names the file and stops, and the alternative is a silent miss.
+	noKey := "-----BEGIN RSA PRIVATE KEY-----\n" + pad(120) + "\nplain prose, no key here\n"
+	if !HasPrivateKeyMaterial([]byte(noKey)) {
+		t.Error("undecided at the window boundary must fail closed")
+	}
+	// Short enough to reach the end of the content: now the answer is real, and
+	// the answer is no.
+	if short := "-----BEGIN RSA PRIVATE KEY-----\n" + pad(2) + "\nplain prose, no key here\n"; HasPrivateKeyMaterial([]byte(short)) {
+		t.Error("a decided read with no body must not fail closed")
+	}
+}
