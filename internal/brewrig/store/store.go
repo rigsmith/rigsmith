@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
@@ -198,8 +199,17 @@ func (s *Store) Write(m *inventory.Machine) error {
 	// at the destination cannot be written through: it replaces the link
 	// rather than following it. The explicit check above stays anyway, so the
 	// refusal is a clear error rather than a silently vanished link.
-	tmp := path.Join("machines", "."+m.Name+".json.tmp")
-	_ = root.Remove(tmp) // a previous crash may have left one
+	// A unique temp path per writer, not a deterministic one. Two brewrig
+	// processes can run at once on the same machine — a scheduled sync and a
+	// manual one — and with a shared name the second writer's O_EXCL create
+	// would delete the first's file out from under it, so one of them renames
+	// or cleans up something that is not theirs.
+	//
+	// Nothing sweeps temp files left by a crash, on purpose: a sweep is the
+	// deterministic-name problem again. They are harmless instead — Machines
+	// only reads *.json, and .gitignore (written by EnsureReadme) keeps them
+	// out of the commit.
+	tmp := path.Join("machines", fmt.Sprintf(".%s.json.tmp%d-%d", m.Name, os.Getpid(), time.Now().UnixNano()))
 	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", rel, err)
@@ -278,6 +288,10 @@ func (s *Store) ensureBranch(ctx context.Context) error {
 	return s.repo.Checkout(ctx, s.branch, true)
 }
 
+// gitignoreBody keeps in-flight temp files out of the shared repo. A crashed
+// write leaves one behind and the next Publish stages everything.
+const gitignoreBody = "machines/.*.json.tmp*\n"
+
 // EnsureReadme writes the orientation file on first publish. A private repo
 // full of JSON with no explanation is a puzzle when it resurfaces in two years.
 func (s *Store) EnsureReadme() error {
@@ -306,7 +320,28 @@ from a file by hand reads as "never installed", not as "uninstall it elsewhere".
 Uninstalling with ` + "`brew uninstall`" + ` and running ` + "`brewrig sync`" + ` is
 what records the intent to remove.
 `
-	return os.WriteFile(p, []byte(body), 0o644)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		return err
+	}
+	return s.ensureGitignore()
+}
+
+// ensureGitignore makes sure the temp-file rule is present, adding it to an
+// existing file rather than replacing one someone else wrote.
+func (s *Store) ensureGitignore() error {
+	p := filepath.Join(s.dir, ".gitignore")
+	cur, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if strings.Contains(string(cur), "machines/.*.json.tmp") {
+		return nil
+	}
+	out := string(cur)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return os.WriteFile(p, []byte(out+gitignoreBody), 0o644)
 }
 
 // LastSync reports the most recent commit in the clone.

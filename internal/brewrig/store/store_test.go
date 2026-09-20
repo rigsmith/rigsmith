@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -329,21 +330,24 @@ func TestWriteLeavesNoPartialFileBehind(t *testing.T) {
 	}
 }
 
-// A crash between creating the temp file and renaming it leaves the temp file
-// behind. The next sync must clear it rather than fail on O_EXCL forever —
-// otherwise the write is atomic and permanently stuck, which is worse than the
-// truncating version it replaced.
-func TestWriteRecoversFromATempFileLeftByACrash(t *testing.T) {
+// A crash between create and rename leaves a temp file behind. Nothing sweeps
+// it — a sweep would be the shared-name problem again — so it has to be
+// harmless instead: it must not block the next write, must not be read as an
+// inventory, and must not reach the shared repo.
+func TestATempFileLeftByACrashIsHarmless(t *testing.T) {
 	remote := bareRemote(t)
 	dir := tempDir(t)
 	clone := filepath.Join(dir, "clone")
 	s := openAt(t, clone, remote)
+	ctx := context.Background()
 
 	if err := s.Write(machine("pro", "gh")); err != nil {
 		t.Fatal(err)
 	}
-	// Exactly what an interrupted Write leaves.
-	stale := filepath.Join(clone, "machines", ".pro.json.tmp")
+	if err := s.EnsureReadme(); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(clone, "machines", ".pro.json.tmp99999-1")
 	if err := os.WriteFile(stale, []byte("{partial"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -351,12 +355,50 @@ func TestWriteRecoversFromATempFileLeftByACrash(t *testing.T) {
 	if err := s.Write(machine("pro", "gh", "jq")); err != nil {
 		t.Fatalf("a temp file left by a crash blocked the next write: %v", err)
 	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Errorf("the stale temp file is still there (%v); Machines would report it as a "+
-			"malformed inventory on the next run", err)
+	if _, err := s.Machines(ctx); err != nil {
+		t.Errorf("a stale temp file was read as an inventory: %v", err)
 	}
-	if _, err := s.Machines(context.Background()); err != nil {
-		t.Errorf("the clone no longer reads cleanly: %v", err)
+
+	if _, err := s.Publish(ctx, "pro: after a crash"); err != nil {
+		t.Fatal(err)
+	}
+	tracked := git(t, clone, "ls-files")
+	if strings.Contains(tracked, ".json.tmp") {
+		t.Errorf("a temp file was committed to the shared repo:\n%s", tracked)
+	}
+}
+
+// Two writers on one machine — a scheduled sync and a manual one — must not
+// delete each other's temp file. With a shared temp name the second writer's
+// create removes the first's, and one of them renames something that is not
+// theirs.
+func TestConcurrentWritesOnOneMachineDoNotClash(t *testing.T) {
+	remote := bareRemote(t)
+	dir := tempDir(t)
+	s := openAt(t, filepath.Join(dir, "clone"), remote)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 8)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = s.Write(machine("pro", "gh", "jq"))
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("concurrent writer %d failed: %v", i, err)
+		}
+	}
+	all, err := s.Machines(context.Background())
+	if err != nil {
+		t.Fatalf("the inventory does not parse after concurrent writes: %v", err)
+	}
+	if len(all) != 1 || len(all[0].Formulae) != 2 {
+		t.Fatalf("read back %d machine(s), want one with 2 formulae", len(all))
 	}
 }
 

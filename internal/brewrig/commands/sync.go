@@ -2,7 +2,6 @@ package commands
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -94,13 +93,5 @@ func runSync(ctx context.Context, out io.Writer, o syncOpts) error {
 	// Republish before returning, including when some actions failed —
 	// whatever DID install is real, and leaving the shared copy behind makes
 	// the other machine re-propose it.
-	if res.Any() {
-		// Join rather than prefer one: an action failure and a republish
-		// failure are different problems, and dropping the republish error
-		// hides that Homebrew moved while the shared inventory did not.
-		if rerr := republish(ctx, s, out); rerr != nil {
-			err = errors.Join(err, rerr)
-		}
-	}
-	return err
+	return finishMutation(res, err, func() error { return republish(ctx, s, out) })
 }

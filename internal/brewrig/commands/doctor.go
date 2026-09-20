@@ -98,7 +98,19 @@ func runDoctor(ctx context.Context, out io.Writer, version string, fix bool) err
 				add(check{name: "remote privacy", detail: "not a github.com or gitlab.com remote", status: "warn",
 					hint: "privacy cannot be verified here; make sure it is not readable by anyone else"})
 			case errors.Is(err, ghrepo.ErrVerifierUnavailable):
-				add(check{name: "remote privacy", detail: "not verified", status: "warn", hint: err.Error()})
+				// A FAILURE, not a warning, and deliberately so. brewrig's
+				// rule is that the remote must be private; a supported remote
+				// whose privacy cannot be confirmed — expired login, API
+				// error, repo not visible — means that rule is unverified
+				// right now, and it is fixable. Warning here would also have
+				// silently changed doctor's exit code, which used to be
+				// non-zero for exactly this case.
+				//
+				// The unsupported-remote branch above stays a warning because
+				// it is a permanent property of the remote you chose, not
+				// something a login can fix.
+				add(check{name: "remote privacy", detail: err.Error(), status: "fail",
+					hint: "cannot confirm the repo is private; fix the login or token and re-run"})
 			default:
 				add(check{name: "remote privacy", detail: err.Error(), status: "fail",
 					hint: "a public repo would publish your package list; make it private again"})

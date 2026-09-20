@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -107,6 +108,33 @@ func (s *session) planNow(ctx context.Context, now time.Time) (*inventory.Machin
 		merged = append(merged, self)
 	}
 	return self, plan.Build(self, merged), nil
+}
+
+// finishMutation is the contract every command that changes Homebrew has to
+// honour: if anything actually changed, the shared inventory must be
+// republished before returning, and a failure to do so must not be swallowed by
+// whatever the actions themselves reported.
+//
+// It takes the republish as a function purely so the contract can be tested.
+// Both halves went wrong once already — `sync --apply` did not republish at
+// all, and `apply` returned on the first action error before republishing —
+// and the second time the republish error was being dropped in favour of the
+// action error. Those are three different mistakes in one four-line shape,
+// which is a good sign it should exist once and be tested rather than be
+// written out at each call site.
+func finishMutation(res *engine.Result, actionErr error, republish func() error) error {
+	if res == nil || !res.Any() {
+		// Nothing changed, so the published inventory is still accurate and
+		// there is nothing to say.
+		return actionErr
+	}
+	if rerr := republish(); rerr != nil {
+		// Both, not one: an action failure and a republish failure are
+		// different problems, and the republish failure is the one that says
+		// Homebrew moved while the shared copy did not.
+		return errors.Join(actionErr, rerr)
+	}
+	return actionErr
 }
 
 // stepPrinter reports each brew action as it starts.
