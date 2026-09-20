@@ -19,11 +19,16 @@ func git(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-func repo(t *testing.T) string {
+func needGit(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
 	}
+}
+
+func repo(t *testing.T) string {
+	t.Helper()
+	needGit(t)
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", "-b", "main", ".")
 	return dir
@@ -206,6 +211,7 @@ func TestACommitNeedsNoIdentityFromTheMachine(t *testing.T) {
 // itself rather than going through gitrepo.Init would land on whatever this
 // git's built-in default is.
 func TestANewRepoIsOnMain(t *testing.T) {
+	needGit(t)
 	dir := t.TempDir()
 	git(t, dir, "init", "-q", ".")
 	if got := strings.TrimSpace(git(t, dir, "branch", "--show-current")); got != "main" {
@@ -247,5 +253,37 @@ func TestBinariesStartingTogetherAllGetTheDirectory(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Errorf("the config they left has no %s in it:\n%s", want, body)
 		}
+	}
+}
+
+// The directory is checked for symlinks; the three files inside it have to be
+// too. A link whose target happens to hold what we would write is not our file,
+// and leaving it there lets whoever made it keep choosing what git reads —
+// core.hooksPath among other things.
+func TestASymlinkedConfigFileIsReplacedNotAccepted(t *testing.T) {
+	hold(t)
+	root := t.TempDir()
+	dir := filepath.Join(root, "rigsmith-hermetic-git")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Whatever configure would write, planted behind a link.
+	theirs := filepath.Join(root, "theirs")
+	if err := os.WriteFile(theirs, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "ignore") // configure writes this one empty
+	if err := os.Symlink(theirs, link); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if err := configure(root); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Error("a symlink holding the right contents was left in place for git to read through")
 	}
 }

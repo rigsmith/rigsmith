@@ -218,6 +218,23 @@ func value(path string) (string, error) {
 	return `"` + esc.Replace(filepath.ToSlash(path)) + `"`, nil
 }
 
+// settled reports whether path is already a file of ours saying what we would
+// say — the test that lets forty binaries leave each other's work alone.
+//
+// Lstat, not ReadFile: content equality through a symlink says the link's
+// TARGET matches, and returning early there would leave the link in place, so
+// whoever made it keeps choosing what git reads. The directory is checked for
+// that; these three files have to be too. A link is not settled, so the rename
+// below replaces the link itself.
+func settled(path, body string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	current, err := os.ReadFile(path)
+	return err == nil && string(current) == body
+}
+
 // write replaces path atomically. `go test ./...` starts these binaries at once,
 // and a git reading the config file while another binary rewrote it in place
 // would see half of one.
@@ -229,7 +246,7 @@ func value(path string) (string, error) {
 // config at the wrong moment is enough — where on Unix it simply succeeds. If
 // the file ends up right anyway, whoever put it there did our work.
 func write(path, body string) error {
-	if current, err := os.ReadFile(path); err == nil && string(current) == body {
+	if settled(path, body) {
 		return nil
 	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
@@ -251,7 +268,7 @@ func write(path, body string) error {
 		if err == nil {
 			return nil
 		}
-		if current, rerr := os.ReadFile(path); rerr == nil && string(current) == body {
+		if settled(path, body) {
 			os.Remove(tmp)
 			return nil
 		}
