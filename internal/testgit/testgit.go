@@ -43,14 +43,7 @@ func init() {
 	if !testing.Testing() {
 		return
 	}
-	// Trace2 targets are read from the environment as well as from config, so
-	// this — not the config files below — is what silences a subscriber, and it
-	// is set first so it holds even if the rest cannot be written.
-	for _, k := range []string{"GIT_TRACE2", "GIT_TRACE2_EVENT", "GIT_TRACE2_PERF"} {
-		_ = os.Setenv(k, "0")
-	}
-	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-
+	detach()
 	if err := configure(os.TempDir()); err != nil {
 		// Not a warning. Carrying on here would run the tests against this
 		// machine's git configuration while looking exactly like a run that did
@@ -60,6 +53,39 @@ func init() {
 		fmt.Fprintf(os.Stderr, "testgit: cannot make git hermetic: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// detach closes the channels that reach git through the environment rather than
+// through a config file, before anything is written.
+func detach() {
+	// Trace2 targets are read from the environment as well as from config, so
+	// this — not the config files below — is what silences a subscriber, and it
+	// is set first so it holds even if the rest cannot be written.
+	for _, k := range []string{"GIT_TRACE2", "GIT_TRACE2_EVENT", "GIT_TRACE2_PERF"} {
+		_ = os.Setenv(k, "0")
+	}
+	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// The system attributes file is not named by any config key, so the config
+	// below cannot reach it.
+	_ = os.Setenv("GIT_ATTR_NOSYSTEM", "1")
+	// Two channels outrank every config file: the ones git itself uses to pass
+	// `-c` down to the commands it spawns. They arrive here whenever the test
+	// run was started by git — from a hook, or a `git rebase --exec` — and they
+	// would quietly put back the excludesFile or hooksPath the config below is
+	// removing. Verified: with GIT_CONFIG_PARAMETERS set, git reports the
+	// ambient core.excludesFile and not ours.
+	//
+	// The rest name which repository git acts on. Inherited from a hook they
+	// point at the repo the hook is running in, so a test that means to work in
+	// its own temp repo would be reading, and writing, this one.
+	for _, k := range []string{
+		"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+		"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NAMESPACE",
+		"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR",
+	} {
+		_ = os.Unsetenv(k)
+	}
+
 }
 
 // configure points git at a configuration of our own, written under root.

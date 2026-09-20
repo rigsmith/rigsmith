@@ -34,7 +34,11 @@ func repo(t *testing.T) string {
 // the variables being set is not the same as git honouring them.
 func TestNoConfigComesFromOutside(t *testing.T) {
 	dir := repo(t)
-	hermetic := filepath.Join(os.TempDir(), "rigsmith-hermetic-git")
+	// Compared against the path we handed git rather than one rebuilt from
+	// os.TempDir: on Windows git reports origins with forward slashes, and the
+	// temp directory can come back in its short form, so a reconstructed path
+	// would not match its own config file and the test would call ours foreign.
+	ours := filepath.ToSlash(os.Getenv("GIT_CONFIG_GLOBAL"))
 	out := git(t, dir, "config", "--list", "--show-origin")
 	var stray []string
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
@@ -42,14 +46,16 @@ func TestNoConfigComesFromOutside(t *testing.T) {
 		if !ok {
 			continue
 		}
-		path := strings.TrimPrefix(origin, "file:")
+		path, isFile := strings.CutPrefix(origin, "file:")
 		switch {
-		case path == origin:
-			continue // command line or environment, not a file
+		case !isFile:
+			// `command line:` is what git calls GIT_CONFIG_PARAMETERS and
+			// GIT_CONFIG_COUNT as well as a literal -c, and it outranks every
+			// file below it. Nothing here passes -c, so this is ambient.
 		case !filepath.IsAbs(path):
 			continue // relative to the repo, so the repo's own
-		case strings.HasPrefix(path, hermetic):
-			continue // one of ours
+		case ours != "" && filepath.ToSlash(path) == ours:
+			continue // the config this package wrote
 		}
 		stray = append(stray, line)
 	}
@@ -99,5 +105,32 @@ func TestSetupFailureIsReported(t *testing.T) {
 	}
 	if got := os.Getenv("GIT_CONFIG_GLOBAL"); got != before {
 		t.Errorf("a failed setup still moved GIT_CONFIG_GLOBAL: %q → %q", before, got)
+	}
+}
+
+// Two environment channels outrank every config file, and git itself sets them
+// when it spawns a command — so a test run started from a hook or a
+// `git rebase --exec` arrives carrying them. The rest name which repository git
+// acts on, which from a hook is this one rather than the test's temp repo.
+func TestInheritedEnvironmentChannelsAreDropped(t *testing.T) {
+	carried := map[string]string{
+		"GIT_CONFIG_PARAMETERS":            "'core.excludesFile=/nowhere/ignore'",
+		"GIT_CONFIG_COUNT":                 "1",
+		"GIT_DIR":                          "/nowhere/.git",
+		"GIT_WORK_TREE":                    "/nowhere",
+		"GIT_INDEX_FILE":                   "/nowhere/index",
+		"GIT_NAMESPACE":                    "nowhere",
+		"GIT_OBJECT_DIRECTORY":             "/nowhere/objects",
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES": "/nowhere/alt",
+		"GIT_COMMON_DIR":                   "/nowhere/common",
+	}
+	for k, v := range carried {
+		t.Setenv(k, v)
+	}
+	detach()
+	for k := range carried {
+		if v, ok := os.LookupEnv(k); ok {
+			t.Errorf("%s survived into the test run as %q", k, v)
+		}
 	}
 }
