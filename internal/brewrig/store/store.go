@@ -433,9 +433,16 @@ func lockMachines(root *os.Root) (release func(), held func() bool, err error) {
 					_ = root.RemoveAll(lockDir)
 				}
 			}, func() bool { return owner() == mine }, nil
-		case !errors.Is(mkErr, fs.ErrExist):
+		case !errors.Is(mkErr, fs.ErrExist) && !errors.Is(mkErr, fs.ErrPermission):
 			return nil, nil, mkErr
 		}
+
+		// ErrPermission is contention too, not a real refusal. Windows marks a
+		// directory pending-delete while any handle to it is open — reading
+		// the owner token is enough — and a create against that name fails
+		// with "Access is denied" until the handle closes. Treating it as
+		// fatal made the loser of a race fail outright instead of waiting;
+		// the deadline below still bounds how long that can go on.
 
 		if fi, serr := root.Stat(lockDir); serr == nil && time.Since(fi.ModTime()) > lockStale {
 			_ = root.RemoveAll(lockDir)
