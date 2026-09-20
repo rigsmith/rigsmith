@@ -145,11 +145,32 @@ jobs:
       # expensive tiers do not finish a push that is already red. This job's
       # own failure is already recorded when the cancel lands, so the PR still
       # shows which step broke.
+      #
+      # Deliberately an inline `run:` and not a local composite action. A
+      # `uses: ./…` step cannot load without a successful checkout, so a
+      # checkout failure would leave the expensive tiers running — the one
+      # case this rule exists for. The four copies are held identical by
+      # TestEveryCancelStepCarriesTheSameMarker in scripts/.
       - if: failure()
         name: stop the expensive tiers
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+          JOB: test (linux)
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          #
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   test:
     # The expensive tiers: the platforms rigsmith ships for, and the ones a
@@ -246,7 +267,22 @@ jobs:
         name: stop the expensive tiers
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+          JOB: gitleaks
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          #
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   vulncheck:
     name: govulncheck
@@ -297,7 +333,22 @@ jobs:
         name: stop the expensive tiers
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+          JOB: govulncheck
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          #
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
 
   lint:
     name: vet + gofmt
@@ -339,4 +390,19 @@ jobs:
         name: stop the expensive tiers
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+          JOB: vet + gofmt
+        run: |
+          # The annotation goes first, and is best-effort. The run's own
+          # conclusion is only ever "cancelled", which reads as a runner or
+          # concurrency fault, so this line is the only thing on the run page
+          # that names the culprit — but it must never be able to stop the
+          # cancel below, which is the part that saves the money.
+          #
+          # It says where to look, and claims nothing it cannot know. It runs
+          # BEFORE the cancel, so it cannot report the cancel as done — the
+          # request can fail. And `failure()` also fires on a checkout, cache,
+          # toolchain or network failure, so asserting the runners were fine
+          # would be confidently wrong about the very class of problem the
+          # marker exists to clarify.
+          echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
+          gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}

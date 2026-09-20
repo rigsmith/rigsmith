@@ -22,26 +22,44 @@ regexes = [
 # contain provider token prefixes (xoxb-, AKIA…), PEM headers and AWS's public
 # example key, because detecting them is the module's entire job. There is no way
 # to write a credential detector whose sources do not look like credentials, so
-# these four files are allowed wholesale.
+# the package is allowed wholesale.
 #
-# The trade-off is real and worth stating: a genuine secret committed into one of
-# these files would not be reported. They are listed individually, and scoped to
-# this one package, so that stays a small and reviewable surface — a blanket
-# `*_test.go` rule is how a token pasted into an unrelated test slips through.
+# The trade-off is real and worth stating: a genuine secret committed into this
+# package would not be reported. It stays scoped to the one package, and the
+# pattern matches only files directly inside it — never a subdirectory — so the
+# surface is small and reviewable. A blanket `*_test.go` rule is how a token
+# pasted into an unrelated test slips through.
 #
-# NOTE: these paths must track the tree. They previously read
-# `clauderig/internal/redact/…` and silently matched nothing after the layout
-# moved to `internal/clauderig/…`, leaving the module unprotected by an allowlist
-# everyone assumed was in force.
+# NOTE: this path has now gone stale TWICE, and both times the module was left
+# unprotected by an allowlist everyone assumed was in force. It first read
+# `clauderig/internal/redact/…`, was repointed to `internal/clauderig/…`, and
+# then matched nothing again once the module moved to `internal/agentrig/`.
+# The second staleness is what took CI down for every PR in the repo: gitleaks
+# scans the whole object graph, so unallowed fixtures on ONE branch fail the
+# scan on ALL of them.
+#
+# Hence one directory pattern per location rather than the file-by-file list
+# this used to carry. Every file in this package is part of the credential
+# detector by definition, so enumerating them bought no real narrowing — it only
+# added a list that silently stopped matching whenever the tree moved.
+#
+# BOTH locations are listed, and the old one is not dead weight. `gitleaks git`
+# walks the history, not the working tree, so the commits where this package
+# lived at `internal/clauderig/redact/` are still scanned and still need to be
+# allowed. A path allowlist here can never be *repointed* on a move — it has to
+# accumulate, or the module's whole past goes unallowed. Repointing it was tried
+# first and left seven findings standing.
 [[allowlists]]
 description = "Redaction scanner's own detection patterns and fixtures"
+#
+# Both patterns are anchored at both ends. gitleaks matches `paths` as an
+# unanchored regex, so without `^` a copy under `testdata/` would be allowed,
+# and without `$` the `.go` would match as a substring and allow
+# `…/credential.go.bak`. Both were verified to slip through before anchoring.
 paths = [
-  '''internal/clauderig/redact/scan\.go''',
-  '''internal/clauderig/redact/scan_test\.go''',
-  '''internal/clauderig/redact/scanfile\.go''',
-  '''internal/clauderig/redact/scanfile_test\.go''',
-  '''internal/clauderig/redact/text\.go''',
-  '''internal/clauderig/redact/text_test\.go''',
+  '''^internal/agentrig/redact/[^/]+\.go$''',
+  # Where the same package lived before the agentrig move; still in history.
+  '''^internal/clauderig/redact/[^/]+\.go$''',
 ]
 
 # The transcript scrub tests need fixtures that carry a PEM block, because
@@ -72,4 +90,37 @@ regexes = [
 description = "jwt.io's published sample token, in the stream scanner tests"
 regexes = [
   '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk''',
+]
+
+# A synthetic PEM block used outside the scanner package, by the tests that prove
+# a journal entry carrying key material is refused. The body is a fabricated
+# 64-character string with a visible letter/digit cadence; a real RSA-2048 body
+# is roughly 1600 characters.
+#
+# By VALUE, with no `paths` entry, for the reason given at the top of this file.
+[[allowlists]]
+description = "Fabricated PEM body in the refusal tests"
+regexes = [
+  '''MIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0''',
+]
+
+# A transcript fixture that quotes PROSE about detecting keys — source that calls
+# `pkcs8.indexOf('-----BEGIN PRIVATE KEY-----')` and a user asking about it. It
+# carries PEM headers with no key body at all, which is the point: the test
+# covers scrubbing a transcript that merely discusses key formats.
+#
+# Matched on the fixture's own prose rather than the PEM header, because the bare
+# header IS the private-key rule and allowing it by value would switch that rule
+# off across the whole repo.
+#
+# By VALUE, with no `paths` entry, for the reason given at the top of this file.
+# A `paths` entry was tried here together with `condition = "AND"`, on the theory
+# that it would narrow the allowance to this one file. It does the opposite:
+# gitleaks did not honour the condition, fell back to OR, and allowed the entire
+# file — verified by pasting a `ghp_…` token into it and watching the scan stay
+# green while the same token in an unallowlisted file was caught as `github-pat`.
+[[allowlists]]
+description = "Transcript fixture quoting key-detection prose, not a key"
+regexes = [
+  '''to sniff the format''',
 ]
