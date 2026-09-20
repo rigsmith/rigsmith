@@ -68,3 +68,40 @@ func TestMissingVerifierIsItsOwnAnswer(t *testing.T) {
 		t.Error("a missing verifier was reported as an unsupported remote")
 	}
 }
+
+// The checker running and failing is a third answer, distinct from both "no
+// checker" and "checked, it is public". An expired gh login must not be
+// reported as a public repo.
+func TestAFailingCheckerIsUnavailableNotPublic(t *testing.T) {
+	boom := errors.New("gh: authentication token expired")
+	err := verify(context.Background(), "you/repo", func(context.Context, string) (bool, error) {
+		return false, boom
+	})
+
+	if err == nil {
+		t.Fatal("verify succeeded although the checker failed")
+	}
+	if !errors.Is(err, ErrVerifierUnavailable) {
+		t.Errorf("err = %v, want it to wrap ErrVerifierUnavailable; otherwise a reporter "+
+			"tells the user their private repo is public because their login expired", err)
+	}
+	if !errors.Is(err, boom) {
+		t.Errorf("err = %v, want the underlying cause preserved too", err)
+	}
+}
+
+// The control: a checker that successfully determines the repo is public is a
+// genuine failure and must NOT be softened into "cannot verify".
+func TestAConfirmedPublicRepoIsNotUnavailable(t *testing.T) {
+	err := verify(context.Background(), "you/repo", func(context.Context, string) (bool, error) {
+		return false, nil
+	})
+
+	if err == nil {
+		t.Fatal("verify accepted a public repo")
+	}
+	if errors.Is(err, ErrVerifierUnavailable) {
+		t.Errorf("a confirmed-public repo was reported as unverifiable (%v), which would "+
+			"downgrade the one case the check exists for", err)
+	}
+}

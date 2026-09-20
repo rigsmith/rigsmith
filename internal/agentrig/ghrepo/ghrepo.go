@@ -252,7 +252,13 @@ func apiPrivateGitLab(ctx context.Context, slug, token string) (bool, error) {
 func verify(ctx context.Context, slug string, check func(context.Context, string) (bool, error)) error {
 	priv, err := check(ctx, slug)
 	if err != nil {
-		return fmt.Errorf("could not verify %s is private (does it exist? are you logged in?): %w", slug, err)
+		// The checker ran and could not answer — an expired gh/glab login, an
+		// API error, a repo that is not visible to this account. That is
+		// "cannot verify", not "verified public", and the two must stay
+		// distinguishable: a caller that REPORTS would otherwise tell someone
+		// their private repo is public because their token expired.
+		return fmt.Errorf("could not verify %s is private (does it exist? are you logged in?): %w: %w",
+			slug, err, ErrVerifierUnavailable)
 	}
 	if !priv {
 		return fmt.Errorf("%s is not private — a sync remote must be a private repo, no exceptions", slug)
