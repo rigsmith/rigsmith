@@ -7,8 +7,10 @@
 #
 # Env:
 #   WINGET_TAG       the release holding the archives (default v<version>)
-#   WINGET_PACKAGES  identifier:archive-prefix lines (default: the four CLIs
-#                    and the bundle). The claudeRig UI release passes its own.
+#   WINGET_PACKAGES  identifier:archive-prefix lines (default: every CLI with a
+#                    Windows build, plus the bundle). The claudeRig UI release
+#                    passes its own. Counting them here goes stale — it said
+#                    "the four CLIs" through codexrig's whole life.
 #   OUTPUT_DIR       where manifests are generated (default dist/winget)
 #
 # Why komac rather than GoReleaser's winget publisher, which we used for 1.5.0
@@ -38,9 +40,9 @@ submit="${2:-}"
 out="${OUTPUT_DIR:-dist/winget}"
 
 # WINGET_TAG is the release the archives live in. It defaults to the CLIs'
-# convention, v<version>, because that is the case with four callers; the window
-# overrides it, since it ships on its own tag (ui/vX.Y.Z) at its own version and
-# neither number can be derived from the other.
+# convention, v<version>, because that is the case for every caller but one; the
+# window overrides it, since it ships on its own tag (ui/vX.Y.Z) at its own
+# version and neither number can be derived from the other.
 tag="${WINGET_TAG:-v${version}}"
 base="https://github.com/rigsmith/rigsmith/releases/download/${tag}"
 
