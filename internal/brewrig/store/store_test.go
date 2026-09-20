@@ -291,6 +291,77 @@ func TestWriteRefusesAnAncestorThatEscapesTheClone(t *testing.T) {
 	}
 }
 
+// The inventory is read back by this machine's own next sync, so a partial
+// write would block the run that was going to repair it. The write is
+// therefore a temp file plus a rename, and neither the temp file nor a
+// half-written inventory may be left lying around.
+func TestWriteLeavesNoPartialFileBehind(t *testing.T) {
+	remote := bareRemote(t)
+	dir := tempDir(t)
+	s := openAt(t, filepath.Join(dir, "clone"), remote)
+
+	if err := s.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write(machine("pro", "gh", "jq", "ripgrep")); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dir, "clone", "machines"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != "pro.json" {
+		t.Fatalf("machines/ holds %v, want only pro.json — a temp file was left behind", names)
+	}
+
+	// And the replacement is whole, not appended to or truncated into.
+	all, err := s.Machines(context.Background())
+	if err != nil {
+		t.Fatalf("the rewritten inventory does not parse: %v", err)
+	}
+	if len(all) != 1 || len(all[0].Formulae) != 3 {
+		t.Fatalf("read back %d machine(s) with %d formulae, want 1 with 3", len(all), len(all[0].Formulae))
+	}
+}
+
+// A crash between creating the temp file and renaming it leaves the temp file
+// behind. The next sync must clear it rather than fail on O_EXCL forever —
+// otherwise the write is atomic and permanently stuck, which is worse than the
+// truncating version it replaced.
+func TestWriteRecoversFromATempFileLeftByACrash(t *testing.T) {
+	remote := bareRemote(t)
+	dir := tempDir(t)
+	clone := filepath.Join(dir, "clone")
+	s := openAt(t, clone, remote)
+
+	if err := s.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	// Exactly what an interrupted Write leaves.
+	stale := filepath.Join(clone, "machines", ".pro.json.tmp")
+	if err := os.WriteFile(stale, []byte("{partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.Write(machine("pro", "gh", "jq")); err != nil {
+		t.Fatalf("a temp file left by a crash blocked the next write: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("the stale temp file is still there (%v); Machines would report it as a "+
+			"malformed inventory on the next run", err)
+	}
+	if _, err := s.Machines(context.Background()); err != nil {
+		t.Errorf("the clone no longer reads cleanly: %v", err)
+	}
+}
+
+// Rename replaces a symlink rather than following it, but the explicit refusal
+// stays so the failure is a clear error instead of a quietly deleted link.
 // A machine file that will not parse must be reported, not skipped: skipping
 // makes that machine's packages look uninstalled everywhere and, worse, makes
 // its retirements vanish.

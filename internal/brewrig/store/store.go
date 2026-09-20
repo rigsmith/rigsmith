@@ -190,15 +190,34 @@ func (s *Store) Write(m *inventory.Machine) error {
 			"it came from is written by other machines", rel)
 	}
 
-	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	// Written to a temporary file and renamed into place. A truncating write
+	// can leave partial JSON behind if it fails, and that file is read back by
+	// this machine's own next sync (Snapshot loads it to carry retirements
+	// forward) — so a half-written inventory would not just be wrong, it would
+	// block the run that was going to repair it. Rename is also why a symlink
+	// at the destination cannot be written through: it replaces the link
+	// rather than following it. The explicit check above stays anyway, so the
+	// refusal is a clear error rather than a silently vanished link.
+	tmp := path.Join("machines", "."+m.Name+".json.tmp")
+	_ = root.Remove(tmp) // a previous crash may have left one
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", rel, err)
 	}
 	if _, err := f.Write(b); err != nil {
 		f.Close()
+		_ = root.Remove(tmp)
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		_ = root.Remove(tmp)
+		return err
+	}
+	if err := root.Rename(tmp, rel); err != nil {
+		_ = root.Remove(tmp)
+		return fmt.Errorf("replacing %s: %w", rel, err)
+	}
+	return nil
 }
 
 // Publish commits and pushes whatever Write left in the tree. It reports
