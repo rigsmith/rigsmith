@@ -1,0 +1,67 @@
+docs/BREWRIG-DESIGN.md
+  s_9b4d118d1134f2::t_c50239eb919366 75,78-79
+site/guide/installation.md
+  s_9b4d118d1134f2::t_c50239eb919366 4-10
+  s_9b4d118d1134f2::t_344ad22c2d67c1 21-24
+scripts/npm/build-packages.mjs
+  s_9b4d118d1134f2::t_dc13efcc894d84 257-263,267-269,271-274
+  s_9b4d118d1134f2::t_fb9f29f21470be 73-81
+internal/brewrig/engine/engine_test.go
+  s_9b4d118d1134f2::t_a96b82345df1a3 17-21,28-30,33-44,72-78,256-324
+internal/brewrig/commands/doctor.go
+  s_9b4d118d1134f2::t_311652f353ba7d 79-101
+  s_9b4d118d1134f2::t_316bbab40c1ad8 10,76,78
+internal/brewrig/plan/plan_test.go
+  s_9b4d118d1134f2::t_2eff3315b2915c 258-297
+internal/brewrig/store/nofollow_unix.go
+  s_9b4d118d1134f2::t_d92548b11626ba 1-11
+site/index.md
+  s_9b4d118d1134f2::t_344ad22c2d67c1 29-30
+internal/agentrig/ghrepo/ghrepo.go
+  s_9b4d118d1134f2::t_a4e6c9e1a915f4 166
+  s_9b4d118d1134f2::t_316bbab40c1ad8 118-123,128,146
+internal/brewrig/config/config.go
+  s_9b4d118d1134f2::t_46879c971c46c9 14,165,192-198,217-242
+internal/brewrig/engine/engine.go
+  s_9b4d118d1134f2::t_f15be95b2f39a9 45-52,55-60
+  s_9b4d118d1134f2::t_338cc04465b791 32-43
+internal/brewrig/store/store_test.go
+  s_9b4d118d1134f2::t_da4907a4f81f38 1-265
+internal/brewrig/commands/status.go
+  s_9b4d118d1134f2::t_316bbab40c1ad8 11,50
+internal/brewrig/inventory/inventory.go
+  s_9b4d118d1134f2::t_f15be95b2f39a9 145-151
+  s_9b4d118d1134f2::t_4c1b38265ff09f 120-127,225-242,262-266
+internal/brewrig/commands/apply.go
+  s_9b4d118d1134f2::t_338cc04465b791 135-139
+  s_9b4d118d1134f2::t_fb9f29f21470be 90,92-101
+scripts/tooldist_test.go
+  s_9b4d118d1134f2::t_a2bdd883e06dc7 5,112,115-121,127-132,168,170,173-183,185
+internal/brewrig/commands/init.go
+  s_9b4d118d1134f2::t_46879c971c46c9 5,45-51
+internal/brewrig/plan/plan.go
+  s_9b4d118d1134f2::t_4c1b38265ff09f 111-116,144-149
+internal/brewrig/commands/sync.go
+  s_9b4d118d1134f2::t_fb9f29f21470be 91-101
+internal/brewrig/store/store.go
+  s_9b4d118d1134f2::t_d92548b11626ba 74-82,92-101,152-157,163-164,168-206,224-235,240-253
+  s_9b4d118d1134f2::t_316bbab40c1ad8 18,63
+internal/brewrig/commands/common.go
+  s_9b4d118d1134f2::t_338cc04465b791 144-166,187-192
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "87decf46218b2f59d8d6dae055547ebf682e354f",
+  "prompts": {},
+  "sessions": {
+    "s_9b4d118d1134f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc66e1a9-dbd7-4034-9769-2c2fd926f89a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
