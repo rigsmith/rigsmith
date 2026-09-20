@@ -1,0 +1,25 @@
+internal/testgit/testgit.go
+  s_3c3b3d9834b123::t_0444e6f8dafca0 128-134,142-143
+internal/brewrig/commands/hermeticgit_test.go
+  s_3c3b3d9834b123::t_76f97706bf1594 1-6
+internal/testgit/testgit_test.go
+  s_3c3b3d9834b123::t_d4e7ff4172c55e 290-310
+internal/brewrig/store/hermeticgit_test.go
+  s_3c3b3d9834b123::t_76f97706bf1594 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "840e6ac96fec0feb2b97ab3f1ee17c93225a5e86",
+  "prompts": {},
+  "sessions": {
+    "s_3c3b3d9834b123": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b635c44c-3984-4192-a8a8-7da51be01d40",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
