@@ -187,3 +187,65 @@ func TestALineBreakInThePathIsRefused(t *testing.T) {
 		t.Error("a path with a line break was accepted as a config value")
 	}
 }
+
+// CI configured a global identity for the tests, and this package takes the
+// global config away, so it has to bring one. useConfigOnly is what makes this
+// test mean anything off Linux: without it git invents an identity from the
+// username and hostname, which is exactly why eight failures on Linux CI had
+// passed on every developer machine.
+func TestACommitNeedsNoIdentityFromTheMachine(t *testing.T) {
+	dir := repo(t)
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, dir, "add", "-A")
+	git(t, dir, "-c", "user.useConfigOnly=true", "commit", "-qm", "one")
+}
+
+// init.defaultBranch came from the same place, so a test that runs `git init`
+// itself rather than going through gitrepo.Init would land on whatever this
+// git's built-in default is.
+func TestANewRepoIsOnMain(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", ".")
+	if got := strings.TrimSpace(git(t, dir, "branch", "--show-current")); got != "main" {
+		t.Errorf("a fresh repo is on %q, want main", got)
+	}
+}
+
+// `go test ./...` starts one of these binaries per package, all at once, all
+// reaching for the same directory. Whoever loses the race to create it used to
+// be killed by init for its trouble — so a cold machine's first run would lose
+// a scattering of test binaries to a directory that was, by then, perfectly
+// fine.
+func TestBinariesStartingTogetherAllGetTheDirectory(t *testing.T) {
+	hold(t)
+	root := t.TempDir()
+	const racers = 24
+	errs := make(chan error, racers)
+	start := make(chan struct{})
+	for i := 0; i < racers; i++ {
+		go func() {
+			<-start
+			errs <- configure(root)
+		}()
+	}
+	close(start)
+	for i := 0; i < racers; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("a binary that started alongside the others was turned away: %v", err)
+		}
+	}
+	// And what they left behind is a config, not a torn one: every one of them
+	// wrote the same three files over each other while git could have been
+	// reading them.
+	body, err := os.ReadFile(filepath.Join(root, "rigsmith-hermetic-git", "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"excludesFile", "attributesFile", "useConfigOnly", "defaultBranch"} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("the config they left has no %s in it:\n%s", want, body)
+		}
+	}
+}

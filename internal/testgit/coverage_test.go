@@ -137,7 +137,13 @@ func directCallers(t *testing.T, root string) map[string]bool {
 		if rerr != nil {
 			return nil
 		}
-		found[module+"/"+filepath.ToSlash(rel)] = true
+		// A test file at the module root is `module`, not `module + "/."`, which
+		// would match no test binary and quietly excuse the package.
+		if rel == "." {
+			found[module] = true
+		} else {
+			found[module+"/"+filepath.ToSlash(rel)] = true
+		}
 		return nil
 	})
 	if err != nil {

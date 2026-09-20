@@ -38,6 +38,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func init() {
@@ -112,7 +113,26 @@ func configure(root string) error {
 	if err != nil {
 		return err
 	}
-	cfg := "[core]\n\texcludesFile = " + excludes + "\n\tattributesFile = " + attributes + "\n"
+	// The identity and the default branch are not hygiene, they are things the
+	// tests need and were getting from the machine: CI configured all three
+	// globally, and taking the global config away took them too. Linux git then
+	// refuses to invent an author — "Author identity unknown", eight tests, the
+	// first CI run that got far enough to say so — while macOS git guesses one
+	// from the username and hostname and carries on, which is why nothing local
+	// noticed.
+	//
+	// The identity matches the one gitrepo.Init falls back to, so a repo made
+	// through Init and a repo made by a test running `git init` itself are
+	// authored the same.
+	//
+	// useConfigOnly is what stops the guessing, and it is the reason this is
+	// here rather than only in CI's setup: without it macOS and Windows quietly
+	// author commits as whoever is logged in, on whatever the machine calls
+	// itself, and a missing identity is a Linux-only failure discovered in CI.
+	// With it, every platform fails the same way in the same place.
+	cfg := "[core]\n\texcludesFile = " + excludes + "\n\tattributesFile = " + attributes + "\n" +
+		"[user]\n\tname = rigsmith\n\temail = rigsmith@localhost\n\tuseConfigOnly = true\n" +
+		"[init]\n\tdefaultBranch = main\n"
 	path := filepath.Join(dir, "config")
 	for _, f := range []struct{ path, body string }{
 		{path, cfg}, {ignore, ""}, {attrs, ""},
@@ -137,10 +157,34 @@ func configure(root string) error {
 // that is theirs and private simply fails the writes that follow, which now
 // stops the run rather than being shrugged off.
 func claim(dir string) error {
+	for attempt := 0; ; attempt++ {
+		if err := claimOnce(dir, attempt); err != errRaced {
+			return err
+		}
+	}
+}
+
+// errRaced says another test binary created the directory between this one's
+// look and its own attempt. `go test ./...` starts forty of these at once, so
+// that is ordinary rather than a failure: go round and check what the winner
+// made. Killing the binary over it, which is what returning the error did,
+// turns a cold machine's first run into a scattering of dead test binaries.
+var errRaced = errors.New("another binary created the directory first")
+
+func claimOnce(dir string, attempt int) error {
 	info, err := os.Lstat(dir)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		return os.Mkdir(dir, 0o700)
+		err := os.Mkdir(dir, 0o700)
+		switch {
+		case err == nil:
+			return nil
+		case !errors.Is(err, fs.ErrExist):
+			return err
+		case attempt > 0:
+			return fmt.Errorf("%s keeps being created and removed underneath us", dir)
+		}
+		return errRaced
 	case err != nil:
 		return err
 	case info.Mode()&fs.ModeSymlink != 0:
@@ -177,7 +221,17 @@ func value(path string) (string, error) {
 // write replaces path atomically. `go test ./...` starts these binaries at once,
 // and a git reading the config file while another binary rewrote it in place
 // would see half of one.
+//
+// Two things follow from forty binaries wanting the same three files. A file
+// that already says what we would say is left alone, so only the first run on a
+// machine writes anything at all. And the rename is retried, because on Windows
+// replacing a file another process holds open fails — one git reading the
+// config at the wrong moment is enough — where on Unix it simply succeeds. If
+// the file ends up right anyway, whoever put it there did our work.
 func write(path, body string) error {
+	if current, err := os.ReadFile(path); err == nil && string(current) == body {
+		return nil
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
@@ -192,9 +246,19 @@ func write(path, body string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
+	for attempt := 0; ; attempt++ {
+		err := os.Rename(tmp, path)
+		if err == nil {
+			return nil
+		}
+		if current, rerr := os.ReadFile(path); rerr == nil && string(current) == body {
+			os.Remove(tmp)
+			return nil
+		}
+		if attempt >= 4 {
+			os.Remove(tmp)
+			return err
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	return nil
 }
