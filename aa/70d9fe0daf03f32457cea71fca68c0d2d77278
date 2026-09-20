@@ -1,0 +1,20 @@
+scripts/tooldist_test.go
+  s_9b4d118d1134f2::t_9dac56cca58bdc 75-81
+  s_9b4d118d1134f2::t_4cede480714ded 50-58,116-120,147-164
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "aa70d9fe0daf03f32457cea71fca68c0d2d77278",
+  "prompts": {},
+  "sessions": {
+    "s_9b4d118d1134f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc66e1a9-dbd7-4034-9769-2c2fd926f89a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
