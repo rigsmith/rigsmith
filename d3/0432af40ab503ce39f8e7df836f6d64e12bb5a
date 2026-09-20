@@ -1,0 +1,15 @@
+CHANGELOG.md
+  ai_agent 3-135
+ui/go.mod
+  ai_agent 10
+ui/CHANGELOG.md
+  ai_agent 3-17
+go.mod
+  ai_agent 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d30432af40ab503ce39f8e7df836f6d64e12bb5a",
+  "prompts": {}
+}
