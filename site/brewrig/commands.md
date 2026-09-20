@@ -65,6 +65,25 @@ and publishes the decision so it stops being proposed. `--cask` for a cask.
 
 Undo it by installing the package normally.
 
+## Two runs at once
+
+Two brewrig processes on one machine share a clone, so they are serialised.
+
+If a run loses that race it stops with *"the published inventory changed while
+this run was preparing its own; run brewrig again"* and changes nothing. Running
+it again is the fix — the next run reads the new state and proceeds. It is
+deliberately not automatic: the alternative to refusing is silently replacing
+the other run's work, and a "keep" decision is exactly the kind of thing that
+would vanish.
+
+Waiting for the other run gives up after five seconds and names the lock
+(`machines/.lock` inside the staging clone). A lock left behind by a crash is
+taken over automatically after two minutes; there is nothing to clean up by
+hand.
+
+Two separate *machines* never hit any of this — they write different files, and
+git settles the push.
+
 ## `brewrig doctor`
 
 Checks Homebrew, git, `gh`, the config, the remote's reachability, and how many

@@ -127,6 +127,32 @@ Homebrew does not run on Windows, so brewrig ships **darwin and linux only** —
 first rig that is not on all three, and that is a property of Homebrew, not a gap
 to fill later.
 
+## Two brewrig runs at once
+
+Sharding by machine means two MACHINES never write the same file, so git has
+nothing to merge. It says nothing about two runs on one machine — a scheduled
+sync and a manual one — which share a clone and can interleave.
+
+Those are serialised, and the rules are worth knowing because one of them is
+visible:
+
+- **A write is refused if the published file changed after this run read it.**
+  The message says to run brewrig again, and running it again is the whole fix:
+  the next run reads the new state and proceeds. The alternative is silently
+  replacing the other run's work, and what does not survive that is a `retired`
+  or `acknowledged` entry — a "keep" decision quietly forgotten.
+- **Compare-and-replace happens under a lock**, taken with `mkdir` because that
+  is atomic on every filesystem worth caring about. A pull takes the same lock
+  for its merge, since a merge rewrites the same files; the fetch stays outside
+  it, so the lock never waits on the network.
+- **Waiting for the lock gives up after five seconds**, with a message naming
+  the lock. That is a long time for a critical section of a few syscalls, so in
+  practice it means something is wrong rather than something is busy.
+- **A lock older than two minutes is assumed abandoned and taken over.** It
+  carries a random owner token, so the original holder — slow rather than dead —
+  cannot then release someone else's lock or write over them; it is refused like
+  any other stale run.
+
 ## Safety
 
 - The remote must be a **private** repo, verified through `gh` — a package list

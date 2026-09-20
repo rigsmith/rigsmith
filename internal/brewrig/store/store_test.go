@@ -743,3 +743,51 @@ func TestAWriterThatLosesTheLockMidWriteDoesNotLand(t *testing.T) {
 		t.Error("the inventory was replaced by a writer that no longer held the lock")
 	}
 }
+
+// A pull rewrites machines/*.json, so it must not be able to land between a
+// writer's digest check and its rename. Both take the same lock; this asserts
+// the resulting contract from the caller's side — after a pull changes the
+// file, a writer holding the older digest is refused rather than silently
+// replacing what the pull brought in.
+func TestAWriteAfterAPullThatChangedTheFileIsRefused(t *testing.T) {
+	remote := bareRemote(t)
+	ctx := context.Background()
+
+	// Machine air publishes first.
+	air := openAt(t, filepath.Join(tempDir(t), "air"), remote)
+	if err := air.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := air.Publish(ctx, "air: seed"); err != nil {
+		t.Fatal(err)
+	}
+
+	// pro clones and reads what is there.
+	pro := openAt(t, filepath.Join(tempDir(t), "pro"), remote)
+	if err := pro.Pull(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := pro.Load("pro"); err != nil {
+		t.Fatal(err)
+	}
+
+	// air changes it and publishes again; pro pulls that in.
+	if err := air.Write(machine("pro", "gh", "jq")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := air.Publish(ctx, "air: second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := pro.Pull(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// pro now writes from the state it read BEFORE the pull.
+	err := pro.Write(machine("pro", "gh", "ripgrep"))
+	if err == nil {
+		t.Fatal("the write replaced an inventory the pull had just brought in")
+	}
+	if !errors.Is(err, ErrStaleBase) {
+		t.Errorf("err = %v, want ErrStaleBase", err)
+	}
+}

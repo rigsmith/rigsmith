@@ -142,9 +142,41 @@ func (s *Store) Pull(ctx context.Context) error {
 			return nil
 		}
 	}
+	// Fetch outside the lock — it is the slow, network-bound half and touches
+	// nothing in the working tree.
+	if err := s.repo.Fetch(ctx, "origin", s.branch); err != nil {
+		return fmt.Errorf("fetching %s: %w", s.branch, err)
+	}
+
+	// Merge inside it. A pull rewrites machines/*.json, so an unlocked one can
+	// land between a concurrent writer's digest check and its rename, and that
+	// writer then replaces the inventory the pull just brought in — the same
+	// lost update the check exists to prevent, arriving from the other side.
+	//
+	// Only the merge is held, so the lock is never waiting on the network. The
+	// second fetch inside s.repo.Pull is a no-op against objects we already
+	// have.
+	root, err := os.OpenRoot(s.dir)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	unlock, _, err := lockMachines(root)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	if err := s.repo.Pull(ctx, "origin", s.branch); err != nil {
 		return fmt.Errorf("pulling %s: %w", s.branch, err)
 	}
+	// Recorded digests are deliberately NOT cleared here. Clearing them looks
+	// tidy — the merge may have replaced what we read — but it removes the
+	// check rather than the staleness: a later Write would find no base and
+	// replace whatever is there. Keeping the old digest makes that same Write
+	// refuse with ErrStaleBase instead, which is the safe direction. In the
+	// ordinary flow it never fires, because every caller snapshots (and so
+	// Loads) after pulling.
 	return nil
 }
 
