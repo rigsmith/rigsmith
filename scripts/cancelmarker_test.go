@@ -96,9 +96,13 @@ func TestEveryCancelStepNamesItsOwnJob(t *testing.T) {
 	}
 }
 
-// The marker has one job: stop a reader concluding that "cancelled" means the
-// runners or the concurrency group. If that sentence goes, the marker is
-// decoration.
+// The marker has one job: stop a reader concluding that a "cancelled" run means
+// something is wrong with the runners, and send them to the job that actually
+// failed. If that goes, the marker is decoration.
+//
+// It must NOT claim the infrastructure is healthy. `failure()` also fires on a
+// checkout, cache, toolchain or network failure, so such a claim would be
+// confidently wrong about the very class of problem the marker is for.
 func TestTheMarkerExplainsWhatCancelledMeans(t *testing.T) {
 	steps := readCancelSteps(t)
 	if len(steps) == 0 {
@@ -106,9 +110,17 @@ func TestTheMarkerExplainsWhatCancelledMeans(t *testing.T) {
 	}
 	body := steps[0].body
 
-	for _, want := range []string{"::error title=", "concurrency group", "cancelled"} {
+	for _, want := range []string{"::error title=", "on purpose", "cancelled", "the log to read"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the cancel marker no longer mentions %q:\n%s", want, body)
+		}
+	}
+
+	for _, banned := range []string{"runners and the concurrency group are fine", "runners are fine"} {
+		if strings.Contains(body, banned) {
+			t.Errorf("the cancel marker claims the infrastructure is healthy (%q), but "+
+				"failure() also fires on checkout, cache, toolchain and network failures:\n%s",
+				banned, body)
 		}
 	}
 }
