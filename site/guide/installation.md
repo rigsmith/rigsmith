@@ -15,10 +15,15 @@ others.
 Winget, Homebrew, the install scripts, and direct downloads offer the same choice:
 install the whole family or just one tool. Scoop provides the family bundle.
 
+`brewrig` is the one exception to "every tool, every platform": it ships for
+macOS and Linux only, because Homebrew does not run on Windows. It is absent
+from the winget and Scoop lanes for that reason, and the install script skips it
+there rather than failing.
+
 ## winget (Windows)
 
 ```powershell
-winget install RigSmith.Rigsmith    # all four tools
+winget install RigSmith.Rigsmith    # the whole family
 winget install RigSmith.Rig         # just rig
 winget install RigSmith.ChangeRig   # just changerig
 winget install RigSmith.ShipRig     # just shiprig
@@ -33,7 +38,7 @@ Arm64 installers are published for every package.
 
 ```powershell
 scoop bucket add rigsmith https://github.com/rigsmith/scoop-bucket
-scoop install rigsmith             # all four tools
+scoop install rigsmith             # the whole family (no brewrig — see above)
 ```
 
 ## PowerShell (Windows)
@@ -53,19 +58,21 @@ up. Same URL as curl: PowerShell gets the `.ps1`, a shell gets the `.sh`.
 ## Homebrew (macOS)
 
 ```sh
-curl -fsSL rigsmith.sh/brew | sh                 # all four tools
+curl -fsSL rigsmith.sh/brew | sh                 # the whole family
 curl -fsSL rigsmith.sh/brew/clauderig | sh       # just clauderig
+curl -fsSL rigsmith.sh/brew/brewrig | sh         # just brewrig
 curl -fsSL rigsmith.sh/brew/clauderig-ui | sh    # the menu bar app
 ```
 
 Or run brew yourself:
 
 ```sh
-brew install --cask rigsmith/tap/rigsmith      # all four tools
+brew install --cask rigsmith/tap/rigsmith      # the whole family
 brew install --cask rigsmith/tap/rig           # just rig
 brew install --cask rigsmith/tap/changerig     # just changerig
 brew install --cask rigsmith/tap/shiprig       # just shiprig
 brew install --cask rigsmith/tap/clauderig     # just clauderig
+brew install --cask rigsmith/tap/brewrig       # just brewrig
 brew install --cask rigsmith/tap/clauderig-ui  # the menu bar app
 ```
 

@@ -30,9 +30,10 @@ var (
 	claudeBanner = banner{AccentClaude, "✳︎", "claude", "Rig", "Claude Code setup sync"}
 	// U+FE0E for the same reason: a bare diamond is emoji-presentation on Windows.
 	codexBanner = banner{AccentCodex, "◆︎", "codex", "Rig", "Codex CLI setup sync"}
+	brewBanner  = banner{AccentBrew, "◉", "brew", "Rig", "Homebrew sync across machines"}
 )
 
-// RigBanner, ChangeBanner, ShipBanner, ClaudeBanner and CodexBanner render a
+// RigBanner, ChangeBanner, ShipBanner, ClaudeBanner, CodexBanner and BrewBanner render a
 // tool's header
 // for a given version string. Pass one straight to fang:
 //
@@ -42,6 +43,7 @@ func ChangeBanner(version string) string { return changeBanner.render(version) }
 func ShipBanner(version string) string   { return shipBanner.render(version) }
 func ClaudeBanner(version string) string { return claudeBanner.render(version) }
 func CodexBanner(version string) string  { return codexBanner.render(version) }
+func BrewBanner(version string) string   { return brewBanner.render(version) }
 
 // render lays out the three-line header: the accent bracket box on the left, the
 // wordmark + version on the middle row, and the tagline on the bottom row.

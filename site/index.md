@@ -27,7 +27,7 @@ features:
   - title: Cross-platform
     details: >-
       macOS, Linux, and Windows, on Intel and Arm alike. Every release ships all
-      six builds of all four tools, so no platform trails the others.
+      every tool built for every platform it can run on, so none trails the others.
   - title: Convention-first
     details: >-
       The same verb works across .NET, Node, Go, and Rust. rig detects your

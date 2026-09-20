@@ -67,6 +67,9 @@ const TOOLS = {
   changerig: 'Changesets: capture intent, then version across every ecosystem',
   clauderig: 'Sync your Claude Code configuration across machines, path-correct on restore',
   codexrig: 'Sync your Codex CLI configuration across machines, and run several logins side by side',
+  // brewrig has no win32 build; the loop below only emits the platform
+  // packages that actually have an archive, so it needs no special case here.
+  brewrig: 'Keep several machines on the same Homebrew software, and the same versions of it',
 }
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'))
@@ -266,7 +269,7 @@ process.exit(res.status === null ? 1 : res.status)
   writeJson(dir, {
     name: 'rigsmith',
     version,
-    description: 'The rigsmith CLI family: rig, shiprig, changerig, clauderig, codexrig',
+    description: 'The rigsmith CLI family: rig, shiprig, changerig, clauderig, codexrig, brewrig',
     license: LICENSE,
     homepage: HOMEPAGE,
     bin: { rigsmith: 'bin/rigsmith.js' },

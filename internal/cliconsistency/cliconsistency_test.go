@@ -21,6 +21,7 @@ import (
 	yaml "go.yaml.in/yaml/v3"
 
 	"github.com/rigsmith/rigsmith/core/cliguard"
+	brewrig "github.com/rigsmith/rigsmith/internal/brewrig/commands"
 	changerig "github.com/rigsmith/rigsmith/internal/changerig/commands"
 	clauderig "github.com/rigsmith/rigsmith/internal/clauderig/commands"
 	codexrig "github.com/rigsmith/rigsmith/internal/codexrig/commands"
@@ -42,6 +43,7 @@ func roots() []*cobra.Command {
 		changerig.NewRootCmd(),
 		clauderig.NewRootCmd("dev"),
 		codexrig.NewRootCmd("dev"),
+		brewrig.NewRootCmd("dev"),
 	}
 }
 

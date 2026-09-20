@@ -15,7 +15,7 @@
 #     curl -fsSL https://rigsmith.sh | sh -s shiprig # just shiprig
 #
 # Usage:
-#     install.sh [rig|shiprig|clauderig|codexrig|changerig|all]   (default: all)
+#     install.sh [rig|shiprig|clauderig|codexrig|changerig|brewrig|all]   (default: all)
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME/.local) -> bin/ underneath
@@ -70,7 +70,7 @@ resolve_version() {
 }
 
 # --- install a single binary -------------------------------------------------
-# $1 = binary name (rig|shiprig|clauderig|codexrig|changerig), $2 = tag, $3 = os, $4 = arch
+# $1 = binary name (rig|shiprig|clauderig|codexrig|changerig|brewrig), $2 = tag, $3 = os, $4 = arch
 install_binary() {
   bin="$1"
   tag="$2"
@@ -128,13 +128,20 @@ main() {
 
   target="${1:-all}"
   case "$target" in
-    rig | shiprig | clauderig | codexrig | changerig | all) ;;
-    *) error "unknown binary '$target' (expected: rig, shiprig, clauderig, codexrig, changerig, or omit for all)" ;;
+    rig | shiprig | clauderig | codexrig | changerig | brewrig | all) ;;
+    *) error "unknown binary '$target' (expected: rig, shiprig, clauderig, codexrig, changerig, brewrig, or omit for all)" ;;
   esac
 
   os="$(detect_os)"
   arch="$(detect_arch)"
   tag="$(resolve_version)"
+
+  # brewrig only exists where Homebrew does. Asked for by name on Windows that
+  # is an error worth stating; under `all` it is simply skipped, so one missing
+  # platform does not fail the whole install.
+  if [ "$target" = "brewrig" ] && [ "$os" = "windows" ]; then
+    error "brewrig is darwin/linux only — Homebrew does not run on Windows"
+  fi
 
   case "$target" in
     rig)       install_binary rig       "$tag" "$os" "$arch" ;;
@@ -142,12 +149,14 @@ main() {
     clauderig) install_binary clauderig "$tag" "$os" "$arch" ;;
     codexrig) install_binary codexrig "$tag" "$os" "$arch" ;;
     changerig) install_binary changerig "$tag" "$os" "$arch" ;;
+    brewrig)   install_binary brewrig   "$tag" "$os" "$arch" ;;
     all)
       install_binary rig       "$tag" "$os" "$arch"
       install_binary shiprig   "$tag" "$os" "$arch"
       install_binary clauderig "$tag" "$os" "$arch"
       install_binary codexrig "$tag" "$os" "$arch"
       install_binary changerig "$tag" "$os" "$arch"
+      [ "$os" = "windows" ] || install_binary brewrig "$tag" "$os" "$arch"
       ;;
   esac
 
