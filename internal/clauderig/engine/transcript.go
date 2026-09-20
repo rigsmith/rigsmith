@@ -139,9 +139,9 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 			// for one rejected the very files this was meant to clear.
 			//
 			// Anything else is raw text, where the body runs on into lines this
-			// loop copies through untouched and the scanner (which matches only
-			// the header) would not notice. Still refused.
-			if redact.HasPrivateKey(line) && !isJSONRecord(line) {
+			// loop copies through untouched and a per-line check would not
+			// notice. The header alone is the whole signal there. Still refused.
+			if redact.HasPrivateKeyHeader(line) && !isJSONRecord(line) {
 				return nil, errPrivateKeyInTranscript
 			}
 			out, found, changed := redact.RedactText(line)
@@ -149,10 +149,17 @@ func redactTranscript(dst, src string, mtime time.Time) (hits []redact.TextHit, 
 				hits = append(hits, found...)
 				line = out
 			}
-			// Belt and braces on the case just allowed through: if a marker
-			// survived the rewrite, the rule did not span what it looked like
-			// it spanned, and the rest of the key may still be here.
-			if redact.HasPrivateKey(line) {
+			// Belt and braces on the case just allowed through: if key material
+			// survived the rewrite, the rule did not span what it looked like it
+			// spanned, and the rest of the key may still be here.
+			//
+			// Material, not the marker. Only a JSON record reaches this line —
+			// raw text carrying a header returned above, and a rewrite cannot
+			// introduce one — so the whole value is on the line and can be
+			// judged. Refusing on the marker meant a transcript that merely
+			// DISCUSSED a PEM header could not be scrubbed and blocked the sync
+			// for ever, which is the bug one layer up, restated here.
+			if redact.HasPrivateKeyMaterial(line) {
 				return nil, errPrivateKeyInTranscript
 			}
 			if _, werr := w.Write(line); werr != nil {

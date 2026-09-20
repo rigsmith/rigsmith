@@ -150,3 +150,29 @@ func TestSync_ScrubsStagedTranscriptWhoseSourceIsGone(t *testing.T) {
 		t.Errorf("orphan not scrubbed: %s", got)
 	}
 }
+
+// A transcript that talks ABOUT a PEM header — a runbook pasted into a session,
+// a library's source quoted by a grep, this project's own tests — is not a key.
+// It used to be unscrubbable: nothing in the line needed rewriting, the marker
+// therefore survived the rewrite, and the belt-and-braces check read a surviving
+// marker as a key the rule had failed to span. The sync then refused with the
+// scrubber already on and nothing left for its owner to try.
+func TestRedactTranscript_KeepsATranscriptThatOnlyMentionsAPEMHeader(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "s.jsonl",
+		`{"type":"user","text":"octokit does privateKey.includes(\"-----BEGIN RSA PRIVATE KEY-----\") to sniff the format"}`+"\n"+
+			`{"type":"user","text":"and jose checks pkcs8.indexOf('-----BEGIN PRIVATE KEY-----') !== 0"}`+"\n")
+
+	dst := filepath.Join(dir, "out.jsonl")
+	if _, err := redactTranscript(dst, filepath.Join(dir, "s.jsonl"), time.Now()); err != nil {
+		t.Fatalf("a mention of a header refused the scrub: %v", err)
+	}
+	got := read(t, dst)
+	// The prose is the point: nothing here is a credential, so nothing should
+	// have been rewritten.
+	for _, want := range []string{"octokit does privateKey.includes", "to sniff the format", "jose checks pkcs8.indexOf"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prose was rewritten, want %q in: %s", want, got)
+		}
+	}
+}

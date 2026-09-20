@@ -127,6 +127,20 @@ impossible rather than merely noisy:
   closing `-----END-----` marker is *not* a usable proxy: a key quoted in a
   conversation is usually truncated and has no footer at all.
 
+- **A detector that fired on the word for the thing.** The tripwire matched a
+  PEM header and stopped there, so the header alone counted as key material —
+  and that verdict is about the FILE, the one class of finding no scrubber can
+  clear. A cached tool result holding a grep over a JS project tripped it on
+  bundled library source that compares against the header text; deleting the
+  file bought exactly one run, because the transcript that discussed the
+  incident refused the next one. The invariant above cannot save a detector
+  that is wrong about what a credential *is*: a rule the scrubber could satisfy
+  only by rewriting the sentence around the word. Detection now requires
+  material after the header — a break or a space, then base64, allowing an
+  encrypted key's RFC 1421 attributes first. The header alone remains the
+  signal in exactly one place, raw text read a line at a time, where the body
+  is on lines the reader has not got.
+
 - **Progress that a refusal threw away.** The marker recording what a run
   scrubbed was written past the tripwire, so a refused run never recorded it and
   every later run re-scrubbed the whole tree before refusing again. It is

@@ -219,8 +219,12 @@ func TestScrubberCanRemoveEverythingTheScannerDetects(t *testing.T) {
 		// The one that was blocking a real machine: no separator between the
 		// escape and the token, so the header sits behind a word character.
 		{"jwt after an escape", `{"t":"https://db.turso.io\n` + jwt + `"}`},
-		{"pem, whole block", `{"t":"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----"}`},
-		{"pem, header only", `{"t":"it printed -----BEGIN OPENSSH PRIVATE KEY----- and stopped"}`},
+		{"pem, whole block", `{"t":"-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0\n-----END RSA PRIVATE KEY-----"}`},
+		// A header with no key after it used to belong here, because the scanner
+		// detected one and the scrubber therefore had to remove one. It is not a
+		// credential and is no longer detected, so the invariant has nothing to
+		// say about it — TestHasPrivateKeyMaterial_HeaderWithoutKeyIsNotKeyMaterial
+		// is what holds that line now.
 		{"anthropic key", `{"t":"sk-ant-api03-` + strings.Repeat("Aa1", 20) + `"}`},
 		{"aws key", `{"t":"AKIA` + strings.Repeat("A", 16) + `"}`},
 		{"github token", `{"t":"ghp_` + strings.Repeat("a1", 18) + `"}`},
@@ -246,12 +250,12 @@ func TestScrubberCanRemoveEverythingTheScannerDetects(t *testing.T) {
 // Scrubbing a PEM block must not take the rest of the record with it: the
 // bound is the quote that closes the string, so the JSON survives.
 func TestRedactText_PEMStopsAtTheStringItIsIn(t *testing.T) {
-	in := []byte(`{"t":"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIB\n-----END RSA PRIVATE KEY-----","keep":"me"}`)
+	in := []byte(`{"t":"-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0\n-----END RSA PRIVATE KEY-----","keep":"me"}`)
 	out, _, changed := RedactText(in)
 	if !changed {
 		t.Fatal("the key was left in place")
 	}
-	if bytes.Contains(out, []byte("MIIEowIB")) {
+	if bytes.Contains(out, []byte("MIIEpAIBAAKCAQEAvJ8kL2mN4pQ6rS8tU0vW2xY4zA6bC8dE0fG2hI4jK6lM8nO0")) {
 		t.Error("key material survived")
 	}
 	if !bytes.Contains(out, []byte(`"keep":"me"`)) {

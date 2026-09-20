@@ -85,7 +85,10 @@ func scrubInto(dst, src string, mod time.Time) ([]redact.TextHit, error) {
 	for {
 		line, rerr := readBoundedLine(r)
 		if len(line) > 0 {
-			if redact.HasPrivateKey(line) {
+			// Material, not the marker: a rollout line is one JSON record, so
+			// the whole value is here to judge. Refusing on the header alone
+			// meant a session that merely DISCUSSED one could never be staged.
+			if redact.HasPrivateKeyMaterial(line) {
 				tmp.Close()
 				return nil, errPrivateKey
 			}
