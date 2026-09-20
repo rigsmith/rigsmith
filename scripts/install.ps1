@@ -13,7 +13,7 @@
 #     irm https://rigsmith.sh/shiprig | iex    # just shiprig
 #
 # The install edge function bakes the requested tool in as $RigsmithTool; run
-# directly it defaults to all four.
+# directly it defaults to the whole family.
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME\.local) -> bin\ underneath
@@ -31,6 +31,13 @@ $version = if ($env:RIGSMITH_VERSION) { $env:RIGSMITH_VERSION } else { 'latest' 
 
 function Info($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 function Fail($m) { Write-Host "error: $m" -ForegroundColor Red; exit 1 }
+
+# brewrig is a real tool, just not one that exists here: Homebrew has no Windows
+# build. Say that, rather than letting it fall through to "unknown target",
+# which reads as a typo.
+if ($target -eq 'brewrig') {
+    Fail "brewrig is macOS/Linux only — Homebrew does not run on Windows"
+}
 
 $known = @('rig', 'shiprig', 'clauderig', 'codexrig', 'changerig', 'all')
 if ($known -notcontains $target) {
@@ -61,7 +68,7 @@ function Resolve-Tag {
 $tag = Resolve-Tag
 $ver = $tag.TrimStart('v')
 
-# The bundle zip carries all four binaries; a single tool has its own zip.
+# The bundle zip carries every Windows binary; a single tool has its own zip.
 if ($target -eq 'all') {
     $binaries = @('rig', 'changerig', 'shiprig', 'clauderig', 'codexrig')
     $archive = "rigsmith_${ver}_windows_${arch}.zip"

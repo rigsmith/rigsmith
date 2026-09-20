@@ -36,17 +36,25 @@ type surface struct {
 	// `for`, `tool`, `in` and `do` out of the extracted names.
 	section *regexp.Regexp
 	list    *regexp.Regexp
+	// windowsOnly marks a surface that only ever ships Windows artifacts. A
+	// tool with no Windows build cannot reach it, and demanding that it does
+	// would be demanding a binary that cannot exist.
+	//
+	// Which tools that exempts is NOT written down here — it is read out of
+	// .goreleaser.yaml's goos lists. Hardcoding a name would quietly keep
+	// exempting it after someone added the Windows build.
+	windowsOnly bool
 }
 
 var distSurfaces = []surface{
 	{file: "install.sh", list: regexp.MustCompile(`install_binary ([\w-]+)`)},
-	{file: "install.ps1", section: regexp.MustCompile(`(?m)^\s*\$binaries = @\(.*\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
+	{file: "install.ps1", windowsOnly: true, section: regexp.MustCompile(`(?m)^\s*\$binaries = @\(.*\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
 	{file: "brew.sh", section: regexp.MustCompile(`(?m)^\s*[\w|-]+\) cask=`), list: regexp.MustCompile(`([\w-]+)[|)]`)},
-	{file: "winres.sh", section: regexp.MustCompile(`(?m)^\s*for tool in (.*); do$`), list: regexp.MustCompile(`([\w-]+)`)},
+	{file: "winres.sh", windowsOnly: true, section: regexp.MustCompile(`(?m)^\s*for tool in (.*); do$`), list: regexp.MustCompile(`([\w-]+)`)},
 	// No ^ anchor: the first entry shares its line with `packages="${WINGET_PACKAGES:-`.
 	// The bundle's line ends in `}"` rather than the name, so it falls out here, which
 	// is right — `rigsmith` is not a cmd/ tool.
-	{file: "winget-submit.sh", list: regexp.MustCompile(`(?m)RigSmith\.\w+:([\w-]+)$`)},
+	{file: "winget-submit.sh", windowsOnly: true, list: regexp.MustCompile(`(?m)RigSmith\.\w+:([\w-]+)$`)},
 	{file: filepath.Join("npm", "build-packages.mjs"), section: regexp.MustCompile(`(?s)const TOOLS = \{.*?\n\}`), list: regexp.MustCompile(`(?m)^\s*'?([\w-]+)'?:`)},
 	{file: filepath.Join("..", ".goreleaser.yaml"), what: "builds", list: regexp.MustCompile(`main: \./cmd/([\w-]+)`)},
 
@@ -84,6 +92,11 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 		t.Fatal("no tools discovered under cmd/ — this test would pass vacuously")
 	}
 
+	onWindows, err := toolsBuiltForWindows(filepath.Join("..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, s := range distSurfaces {
 		raw, err := os.ReadFile(s.file)
 		if err != nil {
@@ -97,6 +110,9 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 		}
 		var missing []string
 		for _, tool := range tools {
+			if s.windowsOnly && !onWindows[tool.Name] {
+				continue // no Windows binary exists to ship here
+			}
 			if !listed[tool.Name] {
 				missing = append(missing, tool.Name)
 			}
@@ -108,6 +124,46 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 				s.label(), strings.Join(missing, ", "), strings.Join(sortedKeys(listed), ", "))
 		}
 	}
+}
+
+// toolsBuiltForWindows reads .goreleaser.yaml's builds and reports which cmd/
+// tools are compiled for Windows at all.
+//
+// The Windows-only surfaces are exempted against this rather than a list of
+// names, so the exemption is a consequence of the build config instead of a
+// second place to keep in step: add `windows` to a build's goos and that tool
+// is immediately required on winget, winres and install.ps1 again.
+func toolsBuiltForWindows(goreleaser string) (map[string]bool, error) {
+	raw, err := os.ReadFile(goreleaser)
+	if err != nil {
+		return nil, err
+	}
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	start := strings.Index(text, "\nbuilds:\n")
+	if start < 0 {
+		return nil, errors.New("no builds: section in .goreleaser.yaml — fix this test rather than deleting it")
+	}
+	// Ends at the next top-level key, so later sections that also list tool
+	// names (notarize, archives) cannot leak in.
+	rest := text[start+1:]
+	end := regexp.MustCompile(`(?m)^[a-z_]+:`).FindAllStringIndex(rest, 2)
+	if len(end) > 1 {
+		rest = rest[:end[1][0]]
+	}
+
+	mainRe := regexp.MustCompile(`main: \./cmd/([\w-]+)`)
+	out := map[string]bool{}
+	for _, block := range strings.Split(rest, "\n  - id:")[1:] {
+		m := mainRe.FindStringSubmatch(block)
+		if m == nil {
+			continue
+		}
+		out[m[1]] = regexp.MustCompile(`(?m)^\s+- windows$`).MatchString(block)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("no builds parsed out of .goreleaser.yaml — fix this test's patterns")
+	}
+	return out, nil
 }
 
 // toolsListed reads one surface's own list out of its bytes.

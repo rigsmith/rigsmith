@@ -1,10 +1,10 @@
 # Installation
 
 Every RigSmith tool is a single, statically-linked Go binary — no .NET runtime,
-no Node. The same four tools run natively on **macOS, Linux, and Windows**, on
-both x86-64 and Arm64 (Apple Silicon, Windows on Arm, arm64 Linux). Every
-release ships all six builds of every tool at once, so no platform trails the
-others.
+no Node. The family — `rig`, `changerig`, `shiprig`, `clauderig`, `codexrig` and
+`brewrig` — runs natively on **macOS, Linux, and Windows**, on both x86-64 and
+Arm64 (Apple Silicon, Windows on Arm, arm64 Linux). Every release ships all six
+builds at once, so no platform trails the others.
 
 | Your platform | Install with |
 | --- | --- |
@@ -15,10 +15,10 @@ others.
 Winget, Homebrew, the install scripts, and direct downloads offer the same choice:
 install the whole family or just one tool. Scoop provides the family bundle.
 
-`brewrig` is the one exception to "every tool, every platform": it ships for
-macOS and Linux only, because Homebrew does not run on Windows. It is absent
-from the winget and Scoop lanes for that reason, and the install script skips it
-there rather than failing.
+`brewrig` is the one exception: it ships for macOS and Linux only, because
+Homebrew does not run on Windows. It is absent from the winget and Scoop lanes
+for that reason. The install scripts leave it out of a whole-family install on
+Windows rather than failing, and say why if you ask for it by name.
 
 ## winget (Windows)
 
@@ -28,6 +28,7 @@ winget install RigSmith.Rig         # just rig
 winget install RigSmith.ChangeRig   # just changerig
 winget install RigSmith.ShipRig     # just shiprig
 winget install RigSmith.ClaudeRig   # just clauderig
+winget install RigSmith.CodexRig    # just codexrig
 ```
 
 These are portable packages — winget unpacks the `.exe`s and registers each one
@@ -49,6 +50,7 @@ irm https://rigsmith.sh/rig | iex         # just rig
 irm https://rigsmith.sh/changerig | iex   # just changerig
 irm https://rigsmith.sh/shiprig | iex     # just shiprig
 irm https://rigsmith.sh/clauderig | iex   # just clauderig
+irm https://rigsmith.sh/codexrig | iex    # just codexrig
 ```
 
 Binaries install to `$HOME\.local\bin` (override with `RIGSMITH_INSTALL`); the
@@ -60,6 +62,7 @@ up. Same URL as curl: PowerShell gets the `.ps1`, a shell gets the `.sh`.
 ```sh
 curl -fsSL rigsmith.sh/brew | sh                 # the whole family
 curl -fsSL rigsmith.sh/brew/clauderig | sh       # just clauderig
+curl -fsSL rigsmith.sh/brew/codexrig | sh        # just codexrig
 curl -fsSL rigsmith.sh/brew/brewrig | sh         # just brewrig
 curl -fsSL rigsmith.sh/brew/clauderig-ui | sh    # the menu bar app
 ```
@@ -72,6 +75,7 @@ brew install --cask rigsmith/tap/rig           # just rig
 brew install --cask rigsmith/tap/changerig     # just changerig
 brew install --cask rigsmith/tap/shiprig       # just shiprig
 brew install --cask rigsmith/tap/clauderig     # just clauderig
+brew install --cask rigsmith/tap/codexrig      # just codexrig
 brew install --cask rigsmith/tap/brewrig       # just brewrig
 brew install --cask rigsmith/tap/clauderig-ui  # the menu bar app
 ```
@@ -92,6 +96,8 @@ curl -fsSL https://rigsmith.sh/rig | sh        # just rig
 curl -fsSL https://rigsmith.sh/changerig | sh  # just changerig
 curl -fsSL https://rigsmith.sh/shiprig | sh    # just shiprig
 curl -fsSL https://rigsmith.sh/clauderig | sh  # just clauderig
+curl -fsSL https://rigsmith.sh/codexrig | sh   # just codexrig
+curl -fsSL https://rigsmith.sh/brewrig | sh    # just brewrig (macOS / Linux)
 ```
 
 Binaries install to `~/.local/bin` by default (override with `RIGSMITH_INSTALL`).
@@ -107,20 +113,24 @@ browser to read it before piping it to a shell.
 Every [GitHub release](https://github.com/JohnCampionJr/rigsmith/releases)
 attaches a per-tool archive and a combined `rigsmith_<version>_<os>_<arch>`
 archive for each of the six targets — `darwin`, `linux`, and `windows` × `amd64`
-and `arm64` — plus a `checksums.txt`. Unpack and put the binaries on your `PATH`.
+and `arm64` — plus a `checksums.txt`. (`brewrig` has four: no `windows`, and the
+Windows bundle omits it.) Unpack and put the binaries on your `PATH`.
 
 ## From source
 
-The repo is a single Go module (`github.com/rigsmith/rigsmith`) — the four
-binaries live under `cmd/`, the shared engine under `core/`. Build any binary
-from the repo root, on any OS Go supports:
+The repo is a single Go module (`github.com/rigsmith/rigsmith`) — the binaries
+live under `cmd/`, the shared engine under `core/`. Build any binary from the
+repo root, on any OS Go supports:
 
 ```sh
 go build -o bin/rig       ./cmd/rig
 go build -o bin/changerig ./cmd/changerig
 go build -o bin/shiprig   ./cmd/shiprig
 go build -o bin/clauderig ./cmd/clauderig
+go build -o bin/codexrig  ./cmd/codexrig
+go build -o bin/brewrig   ./cmd/brewrig   # macOS / Linux
 ```
 
-`clauderig` additionally needs `git` and an authenticated GitHub CLI (`gh`) for
-its private-repo gate.
+`clauderig`, `codexrig` and `brewrig` additionally need `git` and an
+authenticated GitHub CLI (`gh`) for their private-repo gate. `brewrig` needs
+Homebrew itself, which is also why it has no Windows build.

@@ -21,7 +21,11 @@ const INSTALL_HOSTS: Record<string, string> = {
 
 // Tools the installer can fetch. All four ship a release archive for every
 // platform, and scripts/install.{sh,ps1} accept all four by name.
-const TOOLS = new Set(['rig', 'changerig', 'shiprig', 'clauderig', 'codexrig'])
+// brewrig is here despite having no Windows build: this list gates which tool
+// names the installer route serves at all, and install.sh itself is what
+// decides a Windows request for it is an error. Leaving it out would redirect
+// `rigsmith.sh/brewrig` to the docs on every platform, macOS included.
+const TOOLS = new Set(['rig', 'changerig', 'shiprig', 'clauderig', 'codexrig', 'brewrig'])
 
 // Packages installable with Homebrew. A superset of TOOLS: `rigsmith` is the
 // bundle cask, and `clauderig-ui` is the window, which the direct installer does
@@ -36,6 +40,7 @@ const DOCS_PATH: Record<string, string> = {
   shiprig: '/shiprig/',
   clauderig: '/clauderig/',
   codexrig: '/codexrig/',
+  brewrig: '/brewrig/',
   all: '/guide/installation',
 }
 
