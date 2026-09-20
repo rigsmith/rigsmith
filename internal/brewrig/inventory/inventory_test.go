@@ -41,11 +41,11 @@ func TestCaskLabelIsMarked(t *testing.T) {
 // noise, so an unchanged inventory has to marshal byte-identically.
 func TestMarshalIsStableRegardlessOfInputOrder(t *testing.T) {
 	now := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
-	a := &Machine{Name: "pro", SyncedAt: now,
+	a := &Machine{Name: "pro", ChangedAt: now,
 		Formulae: []Package{{Name: "jq"}, {Name: "gh"}},
 		Casks:    []Package{{Name: "kitty"}},
 		Taps:     []string{"z/tap", "a/tap"}}
-	b := &Machine{Name: "pro", SyncedAt: now,
+	b := &Machine{Name: "pro", ChangedAt: now,
 		Formulae: []Package{{Name: "gh"}, {Name: "jq"}},
 		Casks:    []Package{{Name: "kitty"}},
 		Taps:     []string{"a/tap", "z/tap"}}
@@ -64,7 +64,7 @@ func TestMarshalIsStableRegardlessOfInputOrder(t *testing.T) {
 }
 
 func TestMarshalUnmarshalRoundTrip(t *testing.T) {
-	m := &Machine{Name: "pro", OS: "macos", SyncedAt: time.Now(),
+	m := &Machine{Name: "pro", OS: "macos", ChangedAt: time.Now(),
 		Formulae: []Package{{Name: "gh", Version: "2.45.0", InstalledAt: 100, Tap: "homebrew/core"}},
 		Casks:    []Package{{Name: "kitty", Version: "0.35"}}}
 	m.Retire(Ref{Kind: Formula, Name: "wget"}, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC))

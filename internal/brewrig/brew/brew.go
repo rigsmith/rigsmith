@@ -151,11 +151,11 @@ func (c *Client) Inventory(ctx context.Context, machine, osName string) (*invent
 	}
 
 	m := &inventory.Machine{
-		Schema:   inventory.SchemaVersion,
-		Name:     machine,
-		OS:       osName,
-		Arch:     runtime.GOARCH,
-		SyncedAt: time.Now().UTC(),
+		Schema:    inventory.SchemaVersion,
+		Name:      machine,
+		OS:        osName,
+		Arch:      runtime.GOARCH,
+		ChangedAt: time.Now().UTC(),
 	}
 
 	m.Present = map[string]bool{}

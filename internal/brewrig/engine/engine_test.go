@@ -370,7 +370,45 @@ func TestARealChangeMovesTheTimestamp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !second.SyncedAt.Equal(later) {
-		t.Errorf("SyncedAt = %v, want it moved to %v now the inventory changed", second.SyncedAt, later)
+	if !second.ChangedAt.Equal(later) {
+		t.Errorf("ChangedAt = %v, want it moved to %v now the inventory changed", second.ChangedAt, later)
+	}
+}
+
+// A published file with no usable timestamp — one written before the field
+// existed, or hand-edited — must not pin the machine at the zero time forever.
+//
+// prev is built by taking a real Snapshot and zeroing only the timestamp. An
+// earlier version of this test hand-rolled prev and left out the version and
+// tap that a real snapshot carries, so prev never matched cur, the freeze never
+// ran, and the test passed with the guard absent — while the actual tool sat at
+// year 1.
+func TestAnAbsentTimestampIsNotFrozenIn(t *testing.T) {
+	c, _ := client("gh")
+	ctx := context.Background()
+
+	prev, _, err := Snapshot(ctx, c, "pro", "macos", nil, time.Date(2026, 9, 1, 9, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev.ChangedAt = time.Time{} // as an older or hand-edited file unmarshals
+
+	now := time.Date(2026, 9, 20, 12, 0, 0, 0, time.UTC)
+	cur, _, err := Snapshot(ctx, c, "pro", "macos", prev, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Precondition: the two really are otherwise identical, so the freeze is
+	// reachable and this test is testing the guard rather than a mismatch.
+	if !sameExceptChangedAt(prev, cur) {
+		t.Fatal("prev and cur differ apart from the timestamp, so the freeze never runs " +
+			"and this test proves nothing")
+	}
+	if cur.ChangedAt.IsZero() {
+		t.Fatal("the machine kept a zero timestamp, so status shows year 1 forever")
+	}
+	if !cur.ChangedAt.Equal(now) {
+		t.Errorf("ChangedAt = %v, want %v", cur.ChangedAt, now)
 	}
 }

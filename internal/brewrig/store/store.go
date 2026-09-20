@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
@@ -285,10 +286,17 @@ func (s *Store) Write(m *inventory.Machine) error {
 		_ = root.Remove(tmp)
 		return err
 	}
-	// Refuse to replace something that changed after we read it. Checked as
-	// late as possible, immediately before the rename, so the window is as
-	// small as this design can make it — it is a check-then-act and does not
-	// pretend otherwise.
+	// Compare-and-replace, under a lock so the two are one step. Without it
+	// the check is a check-then-act: two Stores can read the same digest, both
+	// pass, and the second silently overwrites the first while reporting
+	// success — which is the lost update the digest was added to prevent.
+	unlock, err := lockMachines(root)
+	if err != nil {
+		_ = root.Remove(tmp)
+		return err
+	}
+	defer unlock()
+
 	if want, ok := s.expectedBase(m.Name); ok {
 		cur, rerr := root.ReadFile(rel)
 		switch {
@@ -301,12 +309,67 @@ func (s *Store) Write(m *inventory.Machine) error {
 		}
 	}
 
+	// A seam for the concurrency test, and only that. The window between the
+	// check and the rename is a few microseconds wide, so a test cannot hit it
+	// by racing goroutines — it passes with or without the lock, which makes
+	// it evidence of nothing. Widening the window here lets the test show that
+	// the lock is what closes it, since inside the lock a slow critical
+	// section is merely slow.
+	afterStaleCheck()
+
 	if err := root.Rename(tmp, rel); err != nil {
 		_ = root.Remove(tmp)
 		return fmt.Errorf("replacing %s: %w", rel, err)
 	}
 	s.recordBase(m.Name, b, true)
 	return nil
+}
+
+// afterStaleCheck runs between the stale-base check and the rename. It is a
+// no-op outside tests.
+var afterStaleCheck = func() {}
+
+// lockDir is the mutual-exclusion point for compare-and-replace inside a clone.
+const lockDir = "machines/.lock"
+
+// lockStale is how old a lock must be before it is broken. The critical section
+// is two syscalls, so a lock this old means the holder died rather than that it
+// is slow — and leaving a dead holder's lock forever would wedge every future
+// sync on the machine.
+const lockStale = 2 * time.Minute
+
+// lockMachines takes the clone's write lock, waiting briefly for another
+// process to finish.
+//
+// mkdir, because it is the one create-or-fail primitive that is atomic on every
+// filesystem worth caring about — O_EXCL on a file is too, but a directory
+// leaves nothing to mistake for content, and `Machines` already ignores
+// anything that is not *.json.
+//
+// This serialises writers sharing a clone, which is the case that exists: two
+// brewrig processes on one machine. Two machines do not share a clone, and
+// their races are settled by git on push.
+func lockMachines(root *os.Root) (func(), error) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := root.Mkdir(lockDir, 0o755)
+		if err == nil {
+			return func() { _ = root.Remove(lockDir) }, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+		if fi, serr := root.Stat(lockDir); serr == nil && time.Since(fi.ModTime()) > lockStale {
+			// Its holder is gone. Removing and retrying is safe: whoever wins
+			// the next Mkdir holds it.
+			_ = root.Remove(lockDir)
+			continue
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("another brewrig is writing to %s and did not finish within 5s", lockDir)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // Publish commits and pushes whatever Write left in the tree. It reports
@@ -440,8 +503,13 @@ func (s *Store) ensureGitignore() error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if strings.Contains(string(cur), "machines/.tmp") {
-		return nil
+	// Whole lines, not a substring: a comment mentioning the pattern, or an
+	// unrelated rule containing it, would otherwise count as the rule being
+	// present and leave temp files stageable.
+	for _, line := range strings.Split(string(cur), "\n") {
+		if strings.TrimSpace(line) == strings.TrimSpace(gitignoreBody) {
+			return nil
+		}
 	}
 	out := string(cur)
 	if out != "" && !strings.HasSuffix(out, "\n") {

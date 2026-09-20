@@ -98,12 +98,22 @@ type Machine struct {
 	Name   string `json:"machine"`
 	OS     string `json:"os"`
 	Arch   string `json:"arch,omitempty"`
-	// SyncedAt is when this inventory last CHANGED, not when the machine last
-	// ran a sync. A timestamp that moved on every run would make every sync a
-	// commit and defeat the no-op-produces-no-diff property the whole file
-	// format depends on. How recently a machine checked in is answered by the
-	// git history instead.
-	SyncedAt time.Time `json:"syncedAt"`
+	// ChangedAt is when this inventory last changed — NOT when the machine
+	// last ran a sync, which is what the earlier `syncedAt` name was taken to
+	// mean.
+	//
+	// The two cannot be one field. A timestamp that moves on every run makes
+	// every no-op sync a commit, and two machines then publish timestamp churn
+	// at each other forever; the per-machine file format depends on an
+	// unchanged inventory producing an identical file. The name says which of
+	// the two this is, rather than leaving a reader of the JSON to assume the
+	// other. brewrig has not shipped, so the key was renamed outright instead
+	// of versioning a changed meaning onto the old one.
+	//
+	// How recently a machine checked in is a real question with a different
+	// answer: the git history, which `brewrig status` reads from the last
+	// commit.
+	ChangedAt time.Time `json:"changedAt"`
 
 	// BrewVersion and Prefix are diagnostic: an Intel Mac on /usr/local and an
 	// Apple Silicon one on /opt/homebrew is the usual explanation for a cask
@@ -257,7 +267,7 @@ func (m *Machine) Normalize() {
 	sort.Strings(m.OptOut.Casks)
 	sortPackages(m.Formulae)
 	sortPackages(m.Casks)
-	m.SyncedAt = m.SyncedAt.UTC().Truncate(time.Second)
+	m.ChangedAt = m.ChangedAt.UTC().Truncate(time.Second)
 	for k, v := range m.Retired {
 		m.Retired[k] = v.UTC().Truncate(time.Second)
 	}

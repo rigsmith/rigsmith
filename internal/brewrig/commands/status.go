@@ -64,7 +64,7 @@ func runStatus(ctx context.Context, out io.Writer, offline bool) error {
 		}
 		fmt.Fprintf(out, "  %s %-24s %3d formulae  %3d casks  %s\n",
 			marker, m.Name, len(m.Formulae), len(m.Casks),
-			DimStyle.Render(m.SyncedAt.Local().Format("2 Jan 15:04")))
+			DimStyle.Render(m.ChangedAt.Local().Format("2 Jan 15:04")))
 	}
 	if len(all) < 2 {
 		fmt.Fprintf(out, "\n%s\n", DimStyle.Render("only one machine has published — run `brewrig init` on the other Mac"))

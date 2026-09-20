@@ -78,7 +78,7 @@ func Snapshot(ctx context.Context, c *brew.Client, machine, osName string, prev 
 	cur.OptOut.Formulae = keepNotInstalled(cur, inventory.Formula, cur.OptOut.Formulae)
 	cur.OptOut.Casks = keepNotInstalled(cur, inventory.Cask, cur.OptOut.Casks)
 
-	cur.SyncedAt = now.UTC()
+	cur.ChangedAt = now.UTC()
 	cur.Normalize()
 
 	// If nothing else moved, keep the previous timestamp. Otherwise syncedAt
@@ -91,21 +91,27 @@ func Snapshot(ctx context.Context, c *brew.Client, machine, osName string, prev 
 	// It therefore means "when this inventory last changed", which is the more
 	// useful of the two readings anyway; how recently a machine checked in is
 	// the git history's job, and `status` reads it from there.
-	if prev != nil && sameExceptSyncedAt(prev, cur) {
-		cur.SyncedAt = prev.SyncedAt
+	// Never freeze onto a zero time. A published file written before this
+	// field existed — or hand-edited without it — unmarshals as zero, and
+	// carrying that forward pins the machine at year 1 for good. That is not
+	// hypothetical: renaming the key stranded the old value under the old
+	// name, every later sync then froze the zero back in, and `status` showed
+	// "31 Dec 19:03" until this guard went in.
+	if prev != nil && !prev.ChangedAt.IsZero() && sameExceptChangedAt(prev, cur) {
+		cur.ChangedAt = prev.ChangedAt
 	}
 	inventory.SortRefs(retired)
 	return cur, retired, nil
 }
 
-// sameExceptSyncedAt compares two inventories ignoring the timestamp, by the
+// sameExceptChangedAt compares two inventories ignoring the timestamp, by the
 // same marshalling the store writes — so "the same" here means exactly "would
 // produce an identical file", rather than a field list that goes stale the
 // next time one is added.
-func sameExceptSyncedAt(a, b *inventory.Machine) bool {
+func sameExceptChangedAt(a, b *inventory.Machine) bool {
 	ac, bc := *a, *b
-	ac.SyncedAt = time.Time{}
-	bc.SyncedAt = time.Time{}
+	ac.ChangedAt = time.Time{}
+	bc.ChangedAt = time.Time{}
 	ab, aerr := inventory.Marshal(&ac)
 	bb, berr := inventory.Marshal(&bc)
 	if aerr != nil || berr != nil {

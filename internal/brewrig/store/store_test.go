@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,7 +78,7 @@ func bareRemote(t *testing.T) string {
 }
 
 func machine(name string, formulae ...string) *inventory.Machine {
-	m := &inventory.Machine{Schema: 1, Name: name, OS: "macos", SyncedAt: time.Now().UTC()}
+	m := &inventory.Machine{Schema: 1, Name: name, OS: "macos", ChangedAt: time.Now().UTC()}
 	for _, f := range formulae {
 		m.Formulae = append(m.Formulae, inventory.Package{Name: f})
 	}
@@ -490,5 +491,153 @@ func TestWriteRefusesToReplaceStateItDidNotRead(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".tmp") {
 			t.Errorf("a temp file was left behind after the refusal: %s", e.Name())
 		}
+	}
+}
+
+// The ignore rule has to be a real entry. A comment that merely mentions the
+// pattern is not one, and treating it as one leaves temp files stageable —
+// which is the whole reason the rule exists.
+func TestAMentionOfTheIgnoreRuleIsNotTheRule(t *testing.T) {
+	remote := bareRemote(t)
+	dir := tempDir(t)
+	clone := filepath.Join(dir, "clone")
+	s := openAt(t, clone, remote)
+
+	// A .gitignore that talks about the pattern without applying it.
+	pre := "# machines/.tmp files are transient\n*.log\n"
+	if err := os.WriteFile(filepath.Join(clone, ".gitignore"), []byte(pre), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnsureReadme(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(clone, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, line := range strings.Split(string(got), "\n") {
+		if strings.TrimSpace(line) == "machines/.tmp*" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the ignore rule was not added; a comment was mistaken for it:\n%s", got)
+	}
+	if !strings.Contains(string(got), "*.log") {
+		t.Errorf("the existing .gitignore was clobbered:\n%s", got)
+	}
+
+	// And it really does keep a temp file out of a commit.
+	if err := s.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, "machines", ".tmpdeadbeef"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Publish(context.Background(), "pro: first"); err != nil {
+		t.Fatal(err)
+	}
+	if tracked := git(t, clone, "ls-files"); strings.Contains(tracked, "/.tmp") {
+		t.Errorf("a temp file was committed:\n%s", tracked)
+	}
+}
+
+// The race the digest alone did not close: separate Stores, DIFFERENT payloads,
+// all writing at once. Each write must either land or be refused with
+// ErrStaleBase — never report success while quietly discarding another
+// writer's inventory — and whatever ends up on disk must be exactly one of the
+// payloads, whole.
+func TestConcurrentStoresNeverSilentlyLoseAnUpdate(t *testing.T) {
+	remote := bareRemote(t)
+	dir := tempDir(t)
+	clone := filepath.Join(dir, "clone")
+	seed := openAt(t, clone, remote)
+	if err := seed.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Widen the check-to-rename window so the race is actually reachable.
+	// Without this the test passes with or without the lock, which would make
+	// it evidence for nothing; with it, removing the lock fails the test.
+	afterStaleCheck = func() { time.Sleep(20 * time.Millisecond) }
+	t.Cleanup(func() { afterStaleCheck = func() {} })
+
+	const writers = 12
+
+	// Every writer opens its own Store and reads the SAME base before any of
+	// them writes. Interleaving the reads with the writes — which an earlier
+	// version of this test did, by starting each goroutine inside the setup
+	// loop — lets later writers legitimately load a base that already includes
+	// an earlier write, and they then succeed for entirely correct reasons.
+	stores := make([]*Store, writers)
+	machines := make([]*inventory.Machine, writers)
+	payloads := make([]string, writers)
+	for i := 0; i < writers; i++ {
+		st, err := Open(context.Background(), clone, remote, "main")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := st.Load("pro"); err != nil {
+			t.Fatal(err)
+		}
+		m := machine("pro", "gh", fmt.Sprintf("pkg%02d", i))
+		raw, err := inventory.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stores[i], machines[i], payloads[i] = st, m, string(raw)
+	}
+
+	var wg sync.WaitGroup
+	results := make([]error, writers)
+	start := make(chan struct{})
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			results[i] = stores[i].Write(machines[i])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	landed := 0
+	for i, err := range results {
+		switch {
+		case err == nil:
+			landed++
+		case errors.Is(err, ErrStaleBase):
+			// Correct: refused rather than silently overwriting.
+		default:
+			t.Errorf("writer %d failed for the wrong reason: %v", i, err)
+		}
+	}
+	// Exactly one. They all loaded the same base, so at most one of them can
+	// legitimately replace it; a second success means that writer was told its
+	// inventory landed while another overwrote it — the silent lost update.
+	if landed != 1 {
+		t.Fatalf("%d writers reported success, want exactly 1 — the others were told their "+
+			"inventory landed while it was being overwritten", landed)
+	}
+
+	// Exactly one payload is on disk, intact — not a blend, not a truncation.
+	got, err := os.ReadFile(filepath.Join(clone, "machines", "pro.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	matched := false
+	for _, p := range payloads {
+		if string(got) == p {
+			matched = true
+		}
+	}
+	if !matched {
+		t.Fatalf("what is on disk is not any writer's payload:\n%s", got)
+	}
+	if _, err := seed.Machines(context.Background()); err != nil {
+		t.Errorf("the clone no longer parses: %v", err)
 	}
 }
