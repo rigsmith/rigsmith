@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -82,19 +83,22 @@ func runDoctor(ctx context.Context, out io.Writer, version string, fix bool) err
 			// machine — so re-verify here, where a slow network call is the
 			// point of the command.
 			// "Cannot verify" and "verified public" are different answers and
-			// must not share a verdict. A local path or a self-hosted host is
-			// simply outside what gh can speak to; reporting that as a public
-			// repo would be confidently wrong, which is worse than silent.
-			_, _, parseable := ghrepo.ParseSlug(cfg.Remote)
+			// must not share a verdict. A local path is not a public repo, and
+			// saying so would be confidently wrong — but the reverse matters
+			// more: a repo that IS public must not be softened into a warning.
+			//
+			// Which is why this asks the error and not the URL. Gating on
+			// ParseSlug looked equivalent and was not: it is GitHub-only, so
+			// every gitlab.com remote took the "cannot verify" path and a
+			// verifiably public GitLab repo was reported as a warning.
 			switch err := ghrepo.EnsurePrivate(ctx, cfg.Remote); {
 			case err == nil:
 				add(check{name: "remote privacy", detail: "private", status: "ok"})
-			case !parseable:
+			case errors.Is(err, ghrepo.ErrUnsupportedRemote):
 				add(check{name: "remote privacy", detail: "not a github.com or gitlab.com remote", status: "warn",
 					hint: "privacy cannot be verified here; make sure it is not readable by anyone else"})
-			case !ghrepo.Available():
-				add(check{name: "remote privacy", detail: "not verified", status: "warn",
-					hint: "gh is needed to confirm the repo is still private"})
+			case errors.Is(err, ghrepo.ErrVerifierUnavailable):
+				add(check{name: "remote privacy", detail: "not verified", status: "warn", hint: err.Error()})
 			default:
 				add(check{name: "remote privacy", detail: err.Error(), status: "fail",
 					hint: "a public repo would publish your package list; make it private again"})

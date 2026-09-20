@@ -81,6 +81,25 @@ does). A hand-written bare name does not parse and is dropped.
 `retired` is what produces the only uninstall brewrig will ever propose, and it
 is **always confirmed, one package at a time, never in a non-interactive run**.
 
+Declining is recorded too, in `acknowledged`, stamped with the retirement it
+answered:
+
+```json
+"acknowledged": { "formula:cloc": "2026-09-18T09:00:00Z" }
+```
+
+Not an opt-out, which is the obvious-looking choice and the wrong one. An
+opt-out means "do not install this here", and a snapshot clears it the moment
+the package is installed — which it is, that being the whole reason a removal
+was offered. Recorded as an opt-out, the refusal was forgotten before the next
+run and the prompt came back every time, against a message that promises it
+will not. A destructive prompt that reappears is how someone learns to dismiss
+the one prompt that matters without reading it.
+
+Keeping the stamp rather than a bare flag is what lets the question be asked
+again when it is genuinely a new one: a later, separate retirement of the same
+package is a different decision from the one already declined.
+
 Reinstalling beats retiring, by timestamp. If B still wants the package it
 reinstalls, and brew's own `installed[].time` is later than A's retire stamp, so
 B's inventory wins and the entry stops being offered. Without that comparison the

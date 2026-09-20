@@ -47,8 +47,9 @@ disjoint paths.
   something the other hasn't caught up on.
 - **One removal case, always confirmed.** A package you deliberately uninstalled
   is recorded as `retired` and offered on the other machine — one prompt per
-  package, never in a non-interactive run. Say no and it is remembered, so you
-  are not asked again.
+  package, never in a non-interactive run. Say no and that refusal is published,
+  stamped with the retirement it answered, so you are not asked again — and a
+  later, separate retirement of the same package still is.
 - **A reinstall beats a retirement**, by timestamp. Without that the two machines
   deadlock: A uninstalls, B reinstalls, A uninstalls, forever.
 - **Versions are reported separately from packages.** `missing` → `apply`;

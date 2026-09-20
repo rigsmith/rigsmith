@@ -54,8 +54,9 @@ reinstalls it.
 So a drop is recorded as intent. A sync that notices a package you published
 before and no longer have writes it to `retired` with a timestamp, and the other
 machine offers it — **one prompt per package, naming who removed it and when, and
-never in a non-interactive run**. Answer "keep" and that is remembered, so you
-are not asked again.
+never in a non-interactive run**. Answer "keep" and that refusal is published,
+stamped with the retirement it answered, so you are not asked again — while a
+later, separate retirement of the same package still is.
 
 A reinstall beats a retirement, by timestamp. Without that comparison the two
 machines deadlock: A uninstalls, B still has it, B reinstalls it on A, A
