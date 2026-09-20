@@ -160,3 +160,29 @@ func settle(t *testing.T, root string, rels ...string) {
 		}
 	}
 }
+
+// The probe reports how fast its own loop runs whenever the filesystem's clock
+// is finer than that — on an APFS Mac, 110µs one run and 220µs the next, for a
+// filesystem that records nanoseconds. Believing such a number narrows the
+// window in trusts to less than one kernel tick, and a file written inside the
+// tick the last run started in is then trusted when its mtime says nothing
+// about its contents. That is how a same-size rewrite fails to reach the repo.
+func TestProbeMtimeTickClaimsNothingFinerThanAKernelTick(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		if got := probeMtimeTick(t.TempDir()); got < finestTick {
+			t.Errorf("tick = %v, finer than any kernel tick (%v) — that is the loop's own pace, not the clock's", got, finestTick)
+		}
+	}
+}
+
+// The floor is a floor, not a replacement: a filesystem that really does record
+// whole seconds still has to be reported as such, or every sync trusts mtimes
+// inside a second it should not.
+func TestACoarseClockIsStillReportedCoarse(t *testing.T) {
+	if got := probeMtimeTick(filepath.Join(t.TempDir(), "no", "such", "dir")); got != coarseTick {
+		t.Errorf("unusable directory gave %v, want %v", got, coarseTick)
+	}
+	if finestTick >= coarseTick {
+		t.Fatalf("the floor %v has swallowed the coarse assumption %v", finestTick, coarseTick)
+	}
+}

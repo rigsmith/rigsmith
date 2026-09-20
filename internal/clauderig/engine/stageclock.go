@@ -134,6 +134,24 @@ func writeStageClock(staging string, started time.Time) {
 // already covers the case this exists for.
 const coarseTick = time.Second
 
+// finestTick is the finest tick a measurement is allowed to claim.
+//
+// The probe below cannot tell a filesystem whose clock is fine from one whose
+// clock is coarse but whose writes it outran. On an APFS Mac it reports 110µs
+// one run and 220µs the next, which is no property of APFS — that records
+// nanoseconds — but the time the loop takes to go round. Linux is worse than
+// unhelpful here: its coarse clock steps once a kernel tick, 1ms to 10ms by
+// configuration, and stat-ing a file between writes can persuade a recent
+// kernel to stamp it finely, so measuring changes the answer.
+//
+// The two directions of error are not equal. Over-stating the tick widens the
+// window in which a file is restaged instead of trusted, which costs a copy.
+// Under-stating it trusts a file whose mtime does not identify its contents,
+// which stages the wrong bytes — a same-size rewrite that never reaches the
+// repo, found on Linux CI as "staged copy not refreshed". So a measurement
+// finer than any kernel tick is not believed.
+const finestTick = 10 * time.Millisecond
+
 // probeMtimeTick measures how finely dir's filesystem records modification
 // times, which is the width of the window above.
 //
@@ -185,6 +203,9 @@ var probeMtimeTick = func(dir string) time.Duration {
 	}
 	if best <= 0 || best > coarseTick {
 		return coarseTick
+	}
+	if best < finestTick {
+		return finestTick
 	}
 	return best
 }
