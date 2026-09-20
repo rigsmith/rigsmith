@@ -134,3 +134,56 @@ func TestInheritedEnvironmentChannelsAreDropped(t *testing.T) {
 		}
 	}
 }
+
+// hold keeps the live hermetic environment across a test that calls configure
+// for itself: t.Setenv restores what was there when the test ends.
+func hold(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM"} {
+		t.Setenv(k, os.Getenv(k))
+	}
+}
+
+// The directory's name is predictable and the temp directory is shared on some
+// machines, so it could be there already as somebody else's symlink — pointing
+// git at their config, and a config can name core.hooksPath.
+func TestASymlinkWhereOurDirectoryGoesIsRefused(t *testing.T) {
+	hold(t)
+	root := t.TempDir()
+	target := filepath.Join(root, "theirs")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "rigsmith-hermetic-git")); err != nil {
+		t.Skipf("no symlinks here: %v", err)
+	}
+	if err := configure(root); err == nil {
+		t.Error("configure adopted a symlinked directory")
+	}
+}
+
+// A quote in the path used to produce a config file git refuses outright, which
+// would have been reported as a hermetic run that was not one.
+func TestAPathGitsParserWouldChokeOnIsStillWritten(t *testing.T) {
+	hold(t)
+	root := filepath.Join(t.TempDir(), `aw"kward\path`)
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Skipf("this filesystem will not hold the name: %v", err)
+	}
+	if err := configure(root); err != nil {
+		t.Fatal(err)
+	}
+	dir := repo(t)
+	got := strings.TrimSpace(git(t, dir, "config", "--get", "core.excludesFile"))
+	want := filepath.ToSlash(filepath.Join(root, "rigsmith-hermetic-git", "ignore"))
+	if got != want {
+		t.Errorf("core.excludesFile = %q, want %q", got, want)
+	}
+}
+
+// A line break cannot be escaped into a single-line config value at all.
+func TestALineBreakInThePathIsRefused(t *testing.T) {
+	if _, err := value("/tmp/two\nlines/ignore"); err == nil {
+		t.Error("a path with a line break was accepted as a config value")
+	}
+}

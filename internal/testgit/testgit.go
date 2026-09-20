@@ -30,9 +30,13 @@
 package testgit
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -95,15 +99,20 @@ func detach() {
 // forty of them per `go test ./...` would be forty leaks.
 func configure(root string) error {
 	dir := filepath.Join(root, "rigsmith-hermetic-git")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := claim(dir); err != nil {
 		return err
 	}
 	ignore := filepath.Join(dir, "ignore")
 	attrs := filepath.Join(dir, "attributes")
-	// Forward slashes and quotes: a backslash escapes inside a config value, so a
-	// Windows temp path written raw would not survive the parser.
-	cfg := "[core]\n\texcludesFile = \"" + filepath.ToSlash(ignore) + "\"\n" +
-		"\tattributesFile = \"" + filepath.ToSlash(attrs) + "\"\n"
+	excludes, err := value(ignore)
+	if err != nil {
+		return err
+	}
+	attributes, err := value(attrs)
+	if err != nil {
+		return err
+	}
+	cfg := "[core]\n\texcludesFile = " + excludes + "\n\tattributesFile = " + attributes + "\n"
 	path := filepath.Join(dir, "config")
 	for _, f := range []struct{ path, body string }{
 		{path, cfg}, {ignore, ""}, {attrs, ""},
@@ -116,6 +125,53 @@ func configure(root string) error {
 		return err
 	}
 	return os.Setenv("GIT_CONFIG_SYSTEM", path)
+}
+
+// claim makes the directory ours or says why it is not.
+//
+// The name is predictable, and the temp directory is shared on some machines,
+// so it could already be there as somebody else's symlink — which would point
+// git at their config, and a config can name core.hooksPath. Checked rather
+// than made unique: a unique directory per test binary is forty of them per
+// `go test ./...`, since an init has nowhere to hang a cleanup. A directory
+// that is theirs and private simply fails the writes that follow, which now
+// stops the run rather than being shrugged off.
+func claim(dir string) error {
+	info, err := os.Lstat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return os.Mkdir(dir, 0o700)
+	case err != nil:
+		return err
+	case info.Mode()&fs.ModeSymlink != 0:
+		return fmt.Errorf("%s is a symlink, not a directory we made", dir)
+	case !info.IsDir():
+		return fmt.Errorf("%s is not a directory", dir)
+	case runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0:
+		// Tightened rather than refused, because the repair and the check are
+		// the same question: chmod succeeds only for the owner, so a directory
+		// that closes here was always ours — and one that is not ours fails,
+		// which is the answer we wanted anyway. Earlier runs of this package
+		// made the directory 0755, so without this every machine that has run
+		// the tests once would need a human to delete it.
+		return os.Chmod(dir, 0o700)
+	}
+	return nil
+}
+
+// value renders path as a git config value.
+//
+// Quoted, with the two characters git's parser reads inside quotes escaped: a
+// temp directory carrying either would otherwise produce a file git refuses
+// outright — verified, `fatal: bad config line 2` — or, worse, one that parses
+// into something else. A newline cannot be escaped into a single-line value at
+// all, so it is refused here.
+func value(path string) (string, error) {
+	if strings.ContainsAny(path, "\n\r") {
+		return "", fmt.Errorf("temp directory path contains a line break: %q", path)
+	}
+	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + esc.Replace(filepath.ToSlash(path)) + `"`, nil
 }
 
 // write replaces path atomically. `go test ./...` starts these binaries at once,
