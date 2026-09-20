@@ -1,0 +1,29 @@
+internal/brewrig/commands/sync.go
+  s_9b4d118d1134f2::t_778e6aac31a423 5,98-102
+scripts/tooldist_test.go
+  s_9b4d118d1134f2::t_4ecb36bb2cb81a 207-209,221-236
+internal/brewrig/store/store_test.go
+  s_9b4d118d1134f2::t_778e6aac31a423 265-270,272-273,275-293
+  s_9b4d118d1134f2::t_7af7ece13f704e 13-16
+  s_9b4d118d1134f2::t_d4f59469179776 24-48,69,102,132,158,166,186,195,235,238,271,274,299,319
+internal/brewrig/store/store.go
+  s_9b4d118d1134f2::t_4329e35f5ee307 13,154-171,177-180,183-185,188-193
+internal/brewrig/commands/apply.go
+  s_9b4d118d1134f2::t_778e6aac31a423 5,98-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4770a6d5c725284f1004f12e3de71500f83ba69b",
+  "prompts": {},
+  "sessions": {
+    "s_9b4d118d1134f2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cc66e1a9-dbd7-4034-9769-2c2fd926f89a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
