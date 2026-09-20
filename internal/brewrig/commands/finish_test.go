@@ -2,7 +2,9 @@ package commands
 
 import (
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/brewrig/engine"
 	"github.com/rigsmith/rigsmith/internal/brewrig/inventory"
@@ -81,5 +83,26 @@ func TestARepublishFailureAloneIsReported(t *testing.T) {
 
 	if !errors.Is(err, pubErr) {
 		t.Errorf("err = %v, want the republish error", err)
+	}
+}
+
+// A peer whose inventory carries no timestamp must not be shown a date. The
+// zero time formats as "31 Dec 19:03", which reads as a real reading from a
+// machine that has never reported one — and invites the conclusion that a peer
+// has gone quiet when it simply predates the field.
+func TestAZeroChangedTimeIsShownAsUnknown(t *testing.T) {
+	if got := changedCell(time.Time{}); got != "changed unknown" {
+		t.Errorf("changedCell(zero) = %q, want %q", got, "changed unknown")
+	}
+}
+
+func TestARealChangedTimeIsShownAsADate(t *testing.T) {
+	when := time.Date(2026, 9, 20, 14, 5, 0, 0, time.UTC)
+	got := changedCell(when)
+	if got == "changed unknown" {
+		t.Fatalf("changedCell(%v) = %q, want a formatted date", when, got)
+	}
+	if !strings.HasPrefix(got, "changed ") || len(got) <= len("changed ") {
+		t.Errorf("changedCell(%v) = %q, want a formatted date", when, got)
 	}
 }

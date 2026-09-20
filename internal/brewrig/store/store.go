@@ -290,7 +290,7 @@ func (s *Store) Write(m *inventory.Machine) error {
 	// the check is a check-then-act: two Stores can read the same digest, both
 	// pass, and the second silently overwrites the first while reporting
 	// success — which is the lost update the digest was added to prevent.
-	unlock, err := lockMachines(root)
+	unlock, stillHeld, err := lockMachines(root)
 	if err != nil {
 		_ = root.Remove(tmp)
 		return err
@@ -317,6 +317,14 @@ func (s *Store) Write(m *inventory.Machine) error {
 	// section is merely slow.
 	afterStaleCheck()
 
+	// Re-check ownership immediately before the rename. If the lock was broken
+	// as stale while this run was inside it, another writer is in there now and
+	// this write must not land on top of theirs.
+	if !stillHeld() {
+		_ = root.Remove(tmp)
+		return fmt.Errorf("not replacing %s: %w", rel, ErrStaleBase)
+	}
+
 	if err := root.Rename(tmp, rel); err != nil {
 		_ = root.Remove(tmp)
 		return fmt.Errorf("replacing %s: %w", rel, err)
@@ -329,44 +337,80 @@ func (s *Store) Write(m *inventory.Machine) error {
 // no-op outside tests.
 var afterStaleCheck = func() {}
 
-// lockDir is the mutual-exclusion point for compare-and-replace inside a clone.
-const lockDir = "machines/.lock"
+// lockDir is the mutual-exclusion point for compare-and-replace inside a clone,
+// and lockOwner names the token file that says who holds it.
+const (
+	lockDir   = "machines/.lock"
+	lockOwner = "machines/.lock/owner"
+)
 
 // lockStale is how old a lock must be before it is broken. The critical section
-// is two syscalls, so a lock this old means the holder died rather than that it
-// is slow — and leaving a dead holder's lock forever would wedge every future
-// sync on the machine.
+// is a handful of syscalls, so a lock this old means the holder died rather
+// than that it is slow — and leaving a dead holder's lock forever would wedge
+// every future sync on the machine.
 const lockStale = 2 * time.Minute
 
 // lockMachines takes the clone's write lock, waiting briefly for another
-// process to finish.
+// process to finish. It returns a release that only releases what it took, and
+// a predicate for re-checking that the lock is still ours.
 //
 // mkdir, because it is the one create-or-fail primitive that is atomic on every
-// filesystem worth caring about — O_EXCL on a file is too, but a directory
-// leaves nothing to mistake for content, and `Machines` already ignores
-// anything that is not *.json.
+// filesystem worth caring about. The token inside is what makes breaking a
+// stale lock safe: without it, taking over by age alone means the original
+// holder — slow rather than dead — carries on, and its deferred release deletes
+// the SUCCESSOR's live lock, handing the directory to a third writer while two
+// are already inside. Identity turns that release into a no-op instead.
 //
 // This serialises writers sharing a clone, which is the case that exists: two
 // brewrig processes on one machine. Two machines do not share a clone, and
 // their races are settled by git on push.
-func lockMachines(root *os.Root) (func(), error) {
+func lockMachines(root *os.Root) (release func(), held func() bool, err error) {
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return nil, nil, err
+	}
+	mine := fmt.Sprintf("%x", token)
+
+	owner := func() string {
+		b, err := root.ReadFile(lockOwner)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		err := root.Mkdir(lockDir, 0o755)
-		if err == nil {
-			return func() { _ = root.Remove(lockDir) }, nil
+		switch mkErr := root.Mkdir(lockDir, 0o755); {
+		case mkErr == nil:
+			f, cerr := root.OpenFile(lockOwner, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+			if cerr == nil {
+				_, cerr = f.WriteString(mine)
+				if closeErr := f.Close(); cerr == nil {
+					cerr = closeErr
+				}
+			}
+			if cerr != nil {
+				_ = root.RemoveAll(lockDir)
+				return nil, nil, cerr
+			}
+			return func() {
+				// Only ever remove a lock still marked as ours. If it was
+				// broken as stale while we ran, it is someone else's now.
+				if owner() == mine {
+					_ = root.RemoveAll(lockDir)
+				}
+			}, func() bool { return owner() == mine }, nil
+		case !errors.Is(mkErr, fs.ErrExist):
+			return nil, nil, mkErr
 		}
-		if !errors.Is(err, fs.ErrExist) {
-			return nil, err
-		}
+
 		if fi, serr := root.Stat(lockDir); serr == nil && time.Since(fi.ModTime()) > lockStale {
-			// Its holder is gone. Removing and retrying is safe: whoever wins
-			// the next Mkdir holds it.
-			_ = root.Remove(lockDir)
+			_ = root.RemoveAll(lockDir)
 			continue
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("another brewrig is writing to %s and did not finish within 5s", lockDir)
+			return nil, nil, fmt.Errorf("another brewrig is writing to %s and did not finish within 5s", lockDir)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -459,7 +503,7 @@ func createTemp(root *os.Root) (*os.File, string, error) {
 
 // gitignoreBody keeps in-flight temp files out of the shared repo. A crashed
 // write leaves one behind and the next Publish stages everything.
-const gitignoreBody = "machines/.tmp*\n"
+const gitignoreBody = "machines/.tmp*\nmachines/.lock/\n"
 
 // EnsureReadme writes the orientation file on first publish. A private repo
 // full of JSON with no explanation is a puzzle when it resurfaces in two years.
@@ -506,16 +550,24 @@ func (s *Store) ensureGitignore() error {
 	// Whole lines, not a substring: a comment mentioning the pattern, or an
 	// unrelated rule containing it, would otherwise count as the rule being
 	// present and leave temp files stageable.
+	have := map[string]bool{}
 	for _, line := range strings.Split(string(cur), "\n") {
-		if strings.TrimSpace(line) == strings.TrimSpace(gitignoreBody) {
-			return nil
+		have[strings.TrimSpace(line)] = true
+	}
+	var missing string
+	for _, want := range strings.Split(strings.TrimSpace(gitignoreBody), "\n") {
+		if !have[want] {
+			missing += want + "\n"
 		}
+	}
+	if missing == "" {
+		return nil
 	}
 	out := string(cur)
 	if out != "" && !strings.HasSuffix(out, "\n") {
 		out += "\n"
 	}
-	return os.WriteFile(p, []byte(out+gitignoreBody), 0o644)
+	return os.WriteFile(p, []byte(out+missing), 0o644)
 }
 
 // LastSync reports the most recent commit in the clone.

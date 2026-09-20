@@ -100,6 +100,20 @@ func runStatus(ctx context.Context, out io.Writer, offline bool) error {
 	return nil
 }
 
+// changedCell renders a machine's last-changed time for the status table.
+//
+// A zero time is "unknown", not a date. An inventory written without the field
+// — by a hand edit, or by a brewrig older than it — unmarshals as zero, and
+// formatting that produces "31 Dec 19:03", which reads as a real date from a
+// machine that has simply never reported one. A wrong date is worse than no
+// date: it invites someone to conclude a peer has gone quiet.
+func changedCell(t time.Time) string {
+	if t.IsZero() {
+		return "changed unknown"
+	}
+	return "changed " + t.Local().Format("2 Jan 15:04")
+}
+
 // printPlan renders the plan's three lists. Kept in one place so `sync`,
 // `apply` and `status` describe the same situation the same way.
 func printPlan(out io.Writer, p *plan.Plan) {

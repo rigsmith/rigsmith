@@ -641,3 +641,105 @@ func TestConcurrentStoresNeverSilentlyLoseAnUpdate(t *testing.T) {
 		t.Errorf("the clone no longer parses: %v", err)
 	}
 }
+
+// Breaking a stale lock by age alone is not enough. The original holder may be
+// slow rather than dead, and if it is, its release must not delete the
+// successor's live lock — that hands the directory to a third writer while two
+// are already inside.
+func TestAStaleTakeoverDoesNotLetTheOldHolderReleaseTheNewLock(t *testing.T) {
+	dir := tempDir(t)
+	if err := os.MkdirAll(filepath.Join(dir, "machines"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	first, firstHeld, err := lockMachines(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !firstHeld() {
+		t.Fatal("the first holder does not think it holds its own lock")
+	}
+
+	// Age it past lockStale, as a crashed holder's lock would look.
+	old := time.Now().Add(-2 * lockStale)
+	if err := os.Chtimes(filepath.Join(dir, lockDir), old, old); err != nil {
+		t.Skipf("cannot age the lock on this filesystem: %v", err)
+	}
+
+	second, secondHeld, err := lockMachines(root)
+	if err != nil {
+		t.Fatalf("a stale lock was not broken: %v", err)
+	}
+	if !secondHeld() {
+		t.Fatal("the successor does not hold the lock it just took")
+	}
+	if firstHeld() {
+		t.Error("the original holder still believes it holds the lock after takeover; " +
+			"it would rename on top of the successor's write")
+	}
+
+	// The slow original now finishes and releases. That must not disturb the
+	// successor.
+	first()
+	if !secondHeld() {
+		t.Fatal("the original holder's release deleted the successor's live lock")
+	}
+
+	second()
+	if _, err := os.Stat(filepath.Join(dir, lockDir)); !os.IsNotExist(err) {
+		t.Errorf("the lock survived its real owner's release: %v", err)
+	}
+}
+
+// And the other half of the takeover: if the lock is broken while this writer
+// is inside its critical section, the write must be refused rather than land on
+// top of whoever holds it now. Uses the same seam the concurrency test does,
+// to be inside the window when the lock disappears.
+func TestAWriterThatLosesTheLockMidWriteDoesNotLand(t *testing.T) {
+	remote := bareRemote(t)
+	dir := tempDir(t)
+	clone := filepath.Join(dir, "clone")
+	s := openAt(t, clone, remote)
+
+	if err := s.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(clone, "machines", "pro.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Load("pro"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a stale takeover landing while we are between check and rename:
+	// someone else breaks our lock and claims it.
+	afterStaleCheck = func() {
+		_ = os.RemoveAll(filepath.Join(clone, lockDir))
+		if err := os.MkdirAll(filepath.Join(clone, lockDir), 0o755); err == nil {
+			_ = os.WriteFile(filepath.Join(clone, lockOwner), []byte("someone-else"), 0o644)
+		}
+	}
+	t.Cleanup(func() { afterStaleCheck = func() {} })
+
+	err = s.Write(machine("pro", "gh", "jq"))
+	if err == nil {
+		t.Fatal("the write landed although the lock had been taken away mid-write")
+	}
+	if !errors.Is(err, ErrStaleBase) {
+		t.Errorf("err = %v, want ErrStaleBase", err)
+	}
+
+	after, rerr := os.ReadFile(filepath.Join(clone, "machines", "pro.json"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(after) != string(before) {
+		t.Error("the inventory was replaced by a writer that no longer held the lock")
+	}
+}
