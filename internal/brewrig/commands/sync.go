@@ -88,5 +88,15 @@ func runSync(ctx context.Context, out io.Writer, o syncOpts) error {
 	// Removals are deliberately not part of --apply: they need a confirmation
 	// per package, which `apply` handles on a terminal.
 	res := engine.Apply(ctx, s.mut, p, stepPrinter())
-	return reportResult(res)
+	err = reportResult(res)
+	// Homebrew changed, so the inventory just published is already stale.
+	// Republish before returning, including when some actions failed —
+	// whatever DID install is real, and leaving the shared copy behind makes
+	// the other machine re-propose it.
+	if res.Any() {
+		if rerr := republish(ctx, s, out); rerr != nil && err == nil {
+			err = rerr
+		}
+	}
+	return err
 }

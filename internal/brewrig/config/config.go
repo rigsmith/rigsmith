@@ -11,6 +11,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -161,7 +162,7 @@ func Path() (string, error) {
 }
 
 // ErrNotConfigured is returned when brewrig has never been set up here.
-var ErrNotConfigured = fmt.Errorf("brewrig is not set up on this machine — run `brewrig init`")
+var ErrNotConfigured = errors.New("brewrig is not set up on this machine — run `brewrig init`")
 
 // Load reads config.json. A missing file is ErrNotConfigured; a present but
 // unreadable one is surfaced rather than silently replaced with defaults,
@@ -188,6 +189,13 @@ func Load() (*Config, error) {
 	if c.Machine == "" {
 		return nil, fmt.Errorf("%s has no machine name — run `brewrig init`", p)
 	}
+	// The name is joined into machines/<name>.json, so a hand-edited value is
+	// a path. Rejecting anything Sanitize would have changed is stricter than
+	// silently sanitizing: a config that says one thing while brewrig
+	// publishes under another is worse than an error.
+	if clean := SanitizeMachineName(c.Machine); clean != c.Machine {
+		return nil, fmt.Errorf("%s has an unusable machine name %q (it becomes a file name; %q would be the usable form)", p, c.Machine, clean)
+	}
 	return &c, nil
 }
 
@@ -206,5 +214,30 @@ func Save(c *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o644)
+	// 0600, and written via a temp file in the same directory then renamed.
+	// The remote can carry a token in its userinfo, so this is credential-
+	// bearing; and an interrupted write must not leave a half-written config,
+	// which Load would reject and which would strand the machine.
+	tmp, err := os.CreateTemp(filepath.Dir(p), ".config.json.*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), p); err != nil {
+		return err
+	}
+	// An existing file keeps its own mode through a rename onto it on some
+	// systems, so tighten explicitly.
+	return os.Chmod(p, 0o600)
 }

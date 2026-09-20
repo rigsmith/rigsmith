@@ -14,19 +14,34 @@ import (
 // records the mutating calls it was asked to make.
 type stub struct {
 	formulae []string
-	fail     map[string]error
-	calls    []string
+	// deps are installed but NOT installed_on_request — brew still has them,
+	// they are simply no longer something the user asked for.
+	deps  []string
+	fail  map[string]error
+	calls []string
 }
 
 func (s *stub) Run(_ context.Context, args ...string) ([]byte, error) {
 	switch args[0] {
 	case "info":
 		out := `{"formulae":[`
-		for i, n := range s.formulae {
-			if i > 0 {
+		first := true
+		emit := func(n string, onRequest bool) {
+			if !first {
 				out += ","
 			}
-			out += `{"name":"` + n + `","full_name":"` + n + `","tap":"homebrew/core","installed":[{"version":"1.0","installed_on_request":true,"time":100}]}`
+			first = false
+			req := "false"
+			if onRequest {
+				req = "true"
+			}
+			out += `{"name":"` + n + `","full_name":"` + n + `","tap":"homebrew/core","installed":[{"version":"1.0","installed_on_request":` + req + `,"time":100}]}`
+		}
+		for _, n := range s.formulae {
+			emit(n, true)
+		}
+		for _, n := range s.deps {
+			emit(n, false)
 		}
 		return []byte(out + `],"casks":[]}`), nil
 	case "tap":
@@ -51,6 +66,13 @@ func (s *stub) Run(_ context.Context, args ...string) ([]byte, error) {
 
 func client(formulae ...string) (*brew.Client, *stub) {
 	s := &stub{formulae: formulae, fail: map[string]error{}}
+	return &brew.Client{R: s}, s
+}
+
+// clientWithDeps builds a client where `deps` are installed but were not asked
+// for — brew still has them, they are just absent from the published inventory.
+func clientWithDeps(requested []string, deps []string) (*brew.Client, *stub) {
+	s := &stub{formulae: requested, deps: deps, fail: map[string]error{}}
 	return &brew.Client{R: s}, s
 }
 
@@ -231,3 +253,72 @@ var errNope = &stubErr{}
 type stubErr struct{}
 
 func (e *stubErr) Error() string { return "nope" }
+
+// A package that is still installed but has stopped being installed_on_request
+// — because something else now depends on it — must NOT be recorded as
+// deliberately removed. Retirement is the only thing that makes brewrig offer
+// an uninstall, so getting this wrong offers to delete software nobody touched.
+func TestSomethingStillInstalledAsADependencyIsNotRetired(t *testing.T) {
+	// ffmpeg was asked for last time; now brew reports it installed but not on
+	// request. This is the real case: on the machine brewrig was built against,
+	// ffmpeg and python@3.14 are both in exactly this state.
+	c, _ := clientWithDeps([]string{"gh"}, []string{"ffmpeg"})
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}, {Name: "ffmpeg"}}}
+	prev.Normalize()
+
+	cur, retired, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(retired) != 0 {
+		t.Fatalf("retired = %v, want none — ffmpeg is still installed, just not on request", retired)
+	}
+	if _, ok := cur.RetiredAt(ref("ffmpeg")); ok {
+		t.Fatal("ffmpeg was recorded as deliberately removed while brew still has it installed; " +
+			"the other machine would be offered an uninstall of software nobody removed")
+	}
+}
+
+// The control for the test above: a package brew no longer has at all IS a
+// deliberate removal, and must still be recorded. Without this, the fix for
+// the dependency case could simply stop retiring anything.
+func TestSomethingBrewNoLongerHasAtAllIsStillRetired(t *testing.T) {
+	c, _ := clientWithDeps([]string{"gh"}, []string{"ffmpeg"})
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}, {Name: "wget"}}}
+	prev.Normalize()
+
+	cur, retired, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(retired) != 1 || retired[0].Name != "wget" {
+		t.Fatalf("retired = %v, want [wget] — brew does not have it at all", retired)
+	}
+	if _, ok := cur.RetiredAt(ref("wget")); !ok {
+		t.Fatal("a genuine uninstall was not recorded")
+	}
+}
+
+// A malformed key must be dropped, not coerced. Turning "wget" into
+// "formula:wget" invents a retirement for a real package.
+func TestMalformedRetiredKeyIsDroppedNotCoerced(t *testing.T) {
+	c, _ := client("gh")
+	prev := &inventory.Machine{Name: "pro", Formulae: []inventory.Package{{Name: "gh"}}}
+	prev.Retired = map[string]time.Time{"wget": time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}
+	prev.Normalize()
+
+	cur, _, err := Snapshot(context.Background(), c, "pro", "macos", prev, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := cur.RetiredAt(ref("wget")); ok {
+		t.Fatal("a malformed key was coerced into a real formula retirement, which would " +
+			"offer to uninstall wget on the other machine")
+	}
+	if _, ok := cur.Retired["wget"]; ok {
+		t.Error("the malformed key was carried forward; it should be dropped")
+	}
+}

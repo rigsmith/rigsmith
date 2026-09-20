@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/brewrig/inventory"
 )
 
@@ -59,7 +60,7 @@ func Open(ctx context.Context, dir, remote, branch string) (*Store, error) {
 	}
 	r, err := gitrepo.Clone(ctx, remote, dir)
 	if err != nil {
-		return nil, fmt.Errorf("cloning %s: %w", remote, err)
+		return nil, fmt.Errorf("cloning %s: %w", ghrepo.SafeRemote(remote), err)
 	}
 	s.repo = r
 	return s, nil
@@ -70,8 +71,15 @@ func Open(ctx context.Context, dir, remote, branch string) (*Store, error) {
 func (s *Store) Pull(ctx context.Context) error {
 	if s.repo.Unborn(ctx) {
 		if err := s.repo.Fetch(ctx, "origin", s.branch); err != nil {
-			// Nothing published yet: the remote has no such branch. The next
-			// Publish creates it.
+			// A brand-new shared repo genuinely has no branch to fetch, and
+			// that is not an error — this is the first machine to sync. But it
+			// is the ONLY case worth swallowing: returning nil for every
+			// failure hides an unreachable host, a bad credential or a
+			// cancelled context, and sync then commits locally and reports
+			// success while nothing has been shared.
+			if !s.remoteLacksBranch(ctx) {
+				return fmt.Errorf("fetching %s: %w", s.branch, err)
+			}
 			return nil
 		}
 	}
@@ -79,6 +87,16 @@ func (s *Store) Pull(ctx context.Context) error {
 		return fmt.Errorf("pulling %s: %w", s.branch, err)
 	}
 	return nil
+}
+
+// remoteLacksBranch reports whether the remote answers but simply has no such
+// branch yet, which is what a freshly created empty repo looks like.
+func (s *Store) remoteLacksBranch(ctx context.Context) bool {
+	refs, err := s.repo.LsRemoteRefs(ctx, "origin", nil, "refs/heads/"+s.branch)
+	if err != nil {
+		return false // could not ask, so do not assume the benign case
+	}
+	return len(refs) == 0
 }
 
 // Machines reads every published inventory, newest-named first by machine name.
@@ -131,16 +149,61 @@ func (s *Store) Load(name string) (*inventory.Machine, bool, error) {
 }
 
 // Write saves this machine's inventory into the clone. It does not commit.
+//
+// The destination comes out of a repository other machines write to, and
+// os.WriteFile follows symlinks. Another clone could commit
+// machines/<this-machine>.json as a link to somewhere outside the staging repo
+// and have the next sync write through it, so every component is checked first
+// and the file is opened without following a final link.
 func (s *Store) Write(m *inventory.Machine) error {
 	b, err := inventory.Marshal(m)
 	if err != nil {
 		return err
 	}
-	p := filepath.Join(s.dir, inventory.FileName(m.Name))
+	rel := inventory.FileName(m.Name)
+	p := filepath.Join(s.dir, rel)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o644)
+	if err := refuseSymlinks(s.dir, rel); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|syscallNoFollow, 0o644)
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", rel, err)
+	}
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+// refuseSymlinks rejects a path any of whose components inside the clone is a
+// symbolic link.
+func refuseSymlinks(root, rel string) error {
+	cur := root
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		if part == ".." {
+			return fmt.Errorf("refusing to write through %q: it climbs out of the staging repo", rel)
+		}
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if os.IsNotExist(err) {
+			return nil // nothing left to follow
+		}
+		if err != nil {
+			return err
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to write through %q: %s is a symbolic link, and the "+
+				"repository it came from is written by other machines", rel, part)
+		}
+	}
+	return nil
 }
 
 // Publish commits and pushes whatever Write left in the tree. It reports
@@ -158,9 +221,36 @@ func (s *Store) Publish(ctx context.Context, msg string) (bool, error) {
 		return false, err
 	}
 	if err := s.repo.Push(ctx, "origin", s.branch); err != nil {
-		return true, fmt.Errorf("pushing to %s: %w", s.remote, err)
+		// Sharding by machine keeps the CONTENT disjoint, which is not the
+		// same as keeping the push safe: two machines committing from the same
+		// base still race, and the loser is rejected as non-fast-forward. Left
+		// there the clone stays diverged and every later ff-only Pull fails
+		// too, so the machine silently stops syncing. Reconcile and retry once.
+		if merr := s.reconcile(ctx); merr != nil {
+			return true, fmt.Errorf("pushing to %s: %w (and reconciling the remote failed: %v)",
+				ghrepo.SafeRemote(s.remote), err, merr)
+		}
+		if err := s.repo.Push(ctx, "origin", s.branch); err != nil {
+			return true, fmt.Errorf("pushing to %s after reconciling: %w", ghrepo.SafeRemote(s.remote), err)
+		}
 	}
 	return true, nil
+}
+
+// reconcile merges whatever the remote gained since this clone last looked.
+// Machine files are disjoint, so this is ordinarily a trivial merge; a genuine
+// conflict is surfaced rather than resolved, because it means two machines
+// wrote the same file and brewrig cannot know which is right.
+func (s *Store) reconcile(ctx context.Context) error {
+	conflicted, err := s.repo.FetchMerge(ctx, "origin", s.branch)
+	if err != nil {
+		return err
+	}
+	if conflicted {
+		return fmt.Errorf("the shared repo and this clone both changed the same file; "+
+			"resolve it in %s and run sync again", s.dir)
+	}
+	return nil
 }
 
 // ensureBranch puts the clone on the configured branch. A repo cloned while

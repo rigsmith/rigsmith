@@ -115,12 +115,17 @@ func CreatePrivate(ctx context.Context, name string) (httpsURL string, err error
 	return strings.TrimSpace(url), nil
 }
 
-// safeRemote strips any user:password@ from a remote before it is rendered.
+// SafeRemote strips any user:password@ from a remote before it is rendered.
+//
+// Exported because every tool that stores a remote eventually prints one — in
+// an error, a status line, a health check — and an HTTPS remote can carry a
+// token in its userinfo. One implementation, so a caller cannot forget to
+// redact by writing its own.
 // A git remote may legitimately carry a token that way, and both messages below
 // quote the remote back — into a terminal, a journal entry, and whatever CI log
 // is capturing them. The host and path are what make the message useful; the
 // userinfo never is.
-func safeRemote(remote string) string {
+func SafeRemote(remote string) string {
 	trimmed := strings.TrimSpace(remote)
 	scheme, rest, ok := strings.Cut(trimmed, "://")
 	if !ok {
@@ -138,7 +143,7 @@ func safeRemote(remote string) string {
 func EnsurePrivate(ctx context.Context, remote string) error {
 	host, slug, ok := parseRemote(remote)
 	if !ok {
-		return fmt.Errorf("cannot parse %q as a github.com or gitlab.com repo URL", safeRemote(remote))
+		return fmt.Errorf("cannot parse %q as a github.com or gitlab.com repo URL", SafeRemote(remote))
 	}
 	switch host {
 	case "github.com":
@@ -158,7 +163,7 @@ func EnsurePrivate(ctx context.Context, remote string) error {
 		}
 		return fmt.Errorf("verifying %s needs the glab CLI or a GITLAB_TOKEN env var", slug)
 	default:
-		return fmt.Errorf("private repos are verified on github.com and gitlab.com only; %q (%s) is unsupported", safeRemote(remote), host)
+		return fmt.Errorf("private repos are verified on github.com and gitlab.com only; %q (%s) is unsupported", SafeRemote(remote), host)
 	}
 }
 

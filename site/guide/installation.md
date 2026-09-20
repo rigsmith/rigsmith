@@ -1,10 +1,13 @@
 # Installation
 
 Every RigSmith tool is a single, statically-linked Go binary — no .NET runtime,
-no Node. The family — `rig`, `changerig`, `shiprig`, `clauderig`, `codexrig` and
-`brewrig` — runs natively on **macOS, Linux, and Windows**, on both x86-64 and
-Arm64 (Apple Silicon, Windows on Arm, arm64 Linux). Every release ships all six
-builds at once, so no platform trails the others.
+no Node. `rig`, `changerig`, `shiprig`, `clauderig` and `codexrig` run natively
+on **macOS, Linux, and Windows**, on both x86-64 and Arm64 (Apple Silicon,
+Windows on Arm, arm64 Linux), and every release ships all six builds of each at
+once so no platform trails the others.
+
+`brewrig` is the exception: **macOS and Linux only**, four builds, because
+Homebrew does not run on Windows.
 
 | Your platform | Install with |
 | --- | --- |
@@ -15,10 +18,10 @@ builds at once, so no platform trails the others.
 Winget, Homebrew, the install scripts, and direct downloads offer the same choice:
 install the whole family or just one tool. Scoop provides the family bundle.
 
-`brewrig` is the one exception: it ships for macOS and Linux only, because
-Homebrew does not run on Windows. It is absent from the winget and Scoop lanes
-for that reason. The install scripts leave it out of a whole-family install on
-Windows rather than failing, and say why if you ask for it by name.
+Being macOS/Linux only, `brewrig` is absent from the winget and Scoop lanes. The
+install scripts leave it out of a whole-family install on Windows rather than
+failing, and say why if you ask for it by name; so does `rigsmith brewrig` from
+the npm meta package.
 
 ## winget (Windows)
 

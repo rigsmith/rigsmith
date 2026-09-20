@@ -1,0 +1,265 @@
+package store
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/rigsmith/rigsmith/internal/brewrig/inventory"
+)
+
+// These run against real git repositories in a temp dir. The store is the only
+// part of brewrig that can lose or corrupt another machine's data, and the
+// interesting cases — an empty remote, a second machine, a racing push, a
+// hostile symlink — are all about git's actual behaviour rather than ours.
+
+func git(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
+}
+
+// bareRemote makes an empty shared repo, the state a freshly created private
+// repo is in before anyone syncs.
+func bareRemote(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "remote.git")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, filepath.Dir(dir), "init", "--bare", "-q", "-b", "main", dir)
+	return dir
+}
+
+func machine(name string, formulae ...string) *inventory.Machine {
+	m := &inventory.Machine{Schema: 1, Name: name, OS: "macos", SyncedAt: time.Now().UTC()}
+	for _, f := range formulae {
+		m.Formulae = append(m.Formulae, inventory.Package{Name: f})
+	}
+	m.Normalize()
+	return m
+}
+
+func openAt(t *testing.T, dir, remote string) *Store {
+	t.Helper()
+	s, err := Open(context.Background(), dir, remote, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Identity for commits made through the store.
+	git(t, dir, "config", "user.name", "t")
+	git(t, dir, "config", "user.email", "t@t")
+	return s
+}
+
+// The first machine to sync meets a repo with no commits and no branch. That
+// must not read as a failure, and it must not read as "nothing to publish".
+func TestFirstSyncAgainstAnEmptyRemote(t *testing.T) {
+	remote := bareRemote(t)
+	s := openAt(t, filepath.Join(t.TempDir(), "clone"), remote)
+	ctx := context.Background()
+
+	if err := s.Pull(ctx); err != nil {
+		t.Fatalf("Pull against an empty remote should be a no-op, got %v", err)
+	}
+	if err := s.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	pushed, err := s.Publish(ctx, "pro: first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pushed {
+		t.Fatal("Publish reported nothing to push on a first sync")
+	}
+
+	all, err := s.Machines(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].Name != "pro" {
+		t.Fatalf("Machines = %v, want just pro", all)
+	}
+}
+
+// A sync that changed nothing must not commit, or two machines publish
+// reordered-but-identical files at each other forever.
+func TestPublishingUnchangedInventoryMakesNoCommit(t *testing.T) {
+	remote := bareRemote(t)
+	s := openAt(t, filepath.Join(t.TempDir(), "clone"), remote)
+	ctx := context.Background()
+
+	m := machine("pro", "gh", "jq")
+	for _, step := range []string{"first", "second"} {
+		if err := s.Write(m); err != nil {
+			t.Fatal(err)
+		}
+		pushed, err := s.Publish(ctx, "pro: "+step)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if step == "first" && !pushed {
+			t.Fatal("the first publish committed nothing")
+		}
+		if step == "second" && pushed {
+			t.Fatal("an unchanged inventory produced a second commit")
+		}
+	}
+}
+
+// Two machines, disjoint files: the second must see the first's inventory.
+func TestASecondMachineSeesTheFirst(t *testing.T) {
+	remote := bareRemote(t)
+	ctx := context.Background()
+
+	a := openAt(t, filepath.Join(t.TempDir(), "a"), remote)
+	if err := a.Write(machine("air", "ripgrep")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Publish(ctx, "air"); err != nil {
+		t.Fatal(err)
+	}
+
+	b := openAt(t, filepath.Join(t.TempDir(), "b"), remote)
+	if err := b.Pull(ctx); err != nil {
+		t.Fatal(err)
+	}
+	all, err := b.Machines(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 || all[0].Name != "air" {
+		t.Fatalf("second clone sees %v, want air", all)
+	}
+}
+
+// The race the "disjoint files" argument does NOT cover: both machines commit
+// from the same base, so the second push is rejected as non-fast-forward. It
+// has to reconcile and land, not leave the clone permanently diverged.
+func TestConcurrentPushesFromTheSameBaseBothLand(t *testing.T) {
+	remote := bareRemote(t)
+	ctx := context.Background()
+
+	a := openAt(t, filepath.Join(t.TempDir(), "a"), remote)
+	if err := a.Write(machine("air", "ripgrep")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Publish(ctx, "air: first"); err != nil {
+		t.Fatal(err)
+	}
+
+	// b clones at that point, then a publishes again — b is now behind.
+	b := openAt(t, filepath.Join(t.TempDir(), "b"), remote)
+	if err := b.Pull(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Write(machine("air", "ripgrep", "fd")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Publish(ctx, "air: second"); err != nil {
+		t.Fatal(err)
+	}
+
+	// b publishes its own file from the stale base.
+	if err := b.Write(machine("pro", "gh")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Publish(ctx, "pro: first"); err != nil {
+		t.Fatalf("a push from a stale base must reconcile and land, got %v", err)
+	}
+
+	// Both machines' inventories survive, and b can still pull afterwards.
+	if err := b.Pull(ctx); err != nil {
+		t.Fatalf("clone left diverged after the racing push: %v", err)
+	}
+	all, err := b.Machines(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, m := range all {
+		names[m.Name] = true
+	}
+	if !names["air"] || !names["pro"] {
+		t.Fatalf("machines = %v, want both air and pro", names)
+	}
+}
+
+// The shared repo is written by other machines. A machine file committed
+// elsewhere as a symlink must not be written through.
+func TestWriteRefusesToFollowASymlink(t *testing.T) {
+	remote := bareRemote(t)
+	dir := filepath.Join(t.TempDir(), "clone")
+	s := openAt(t, dir, remote)
+
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte("untouched"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "machines"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "machines", "pro.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	err := s.Write(machine("pro", "gh"))
+	if err == nil {
+		t.Fatal("Write followed a symlink out of the staging repo")
+	}
+	if !strings.Contains(err.Error(), "symbolic link") {
+		t.Errorf("error should name the cause, got %v", err)
+	}
+	got, rerr := os.ReadFile(outside)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if string(got) != "untouched" {
+		t.Fatalf("the file outside the repo was overwritten: %q", got)
+	}
+}
+
+// A machine file that will not parse must be reported, not skipped: skipping
+// makes that machine's packages look uninstalled everywhere and, worse, makes
+// its retirements vanish.
+func TestAMalformedMachineFileIsReported(t *testing.T) {
+	remote := bareRemote(t)
+	dir := filepath.Join(t.TempDir(), "clone")
+	s := openAt(t, dir, remote)
+
+	if err := os.MkdirAll(filepath.Join(dir, "machines"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "machines", "broken.json"), []byte("{nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.Machines(context.Background())
+	if err == nil {
+		t.Fatal("a malformed machine file was silently skipped")
+	}
+	if !strings.Contains(err.Error(), "broken.json") {
+		t.Errorf("error should name the file, got %v", err)
+	}
+}
+
+func TestOpenWithoutARemoteIsAnError(t *testing.T) {
+	_, err := Open(context.Background(), filepath.Join(t.TempDir(), "clone"), "", "main")
+	if err == nil {
+		t.Fatal("Open succeeded with no remote configured")
+	}
+}

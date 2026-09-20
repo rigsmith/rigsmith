@@ -72,8 +72,11 @@ published last time and no longer has installed, it writes it to `retired` with 
 timestamp:
 
 ```json
-"retired": { "libreoffice": "2026-09-20T14:02:11Z" }
+"retired": { "cask:libreoffice": "2026-09-20T14:02:11Z" }
 ```
+
+The key is `kind:name`, because a formula and a cask can share one (`docker`
+does). A hand-written bare name does not parse and is dropped.
 
 `retired` is what produces the only uninstall brewrig will ever propose, and it
 is **always confirmed, one package at a time, never in a non-interactive run**.

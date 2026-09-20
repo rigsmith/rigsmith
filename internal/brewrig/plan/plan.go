@@ -108,7 +108,12 @@ func Build(self *inventory.Machine, all []*inventory.Machine) *Plan {
 		case retired[r].retired:
 			// Retired wins over presence: skip the install, and if this
 			// machine still has it, that is the one removal case.
-			if self.Has(r) && retired[r].by != self.Name {
+			//
+			// Unless this machine was already offered THIS retirement and said
+			// no. A destructive prompt that reappears every run is how someone
+			// learns to dismiss it unread, and `apply` promises in as many
+			// words that it will not be offered again.
+			if self.Has(r) && retired[r].by != self.Name && !declined(self, r, retired[r].at) {
 				p.Remove = append(p.Remove, Remove{Ref: r, By: retired[r].by, At: retired[r].at})
 			}
 		case self.OptedOut(r):
@@ -134,6 +139,14 @@ func Build(self *inventory.Machine, all []*inventory.Machine) *Plan {
 	sort.Slice(p.Skew, func(i, j int) bool { return less(p.Skew[i].Ref, p.Skew[j].Ref) })
 	inventory.SortRefs(p.OptedOut)
 	return p
+}
+
+// declined reports whether this machine already answered no to this exact
+// retirement. A newer retirement of the same package is a separate decision and
+// is offered again.
+func declined(self *inventory.Machine, r inventory.Ref, at time.Time) bool {
+	ackd, ok := self.AcknowledgedAt(r)
+	return ok && !at.After(ackd)
 }
 
 type retirement struct {

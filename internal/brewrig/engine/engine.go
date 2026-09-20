@@ -29,11 +29,35 @@ func Snapshot(ctx context.Context, c *brew.Client, machine, osName string, prev 
 	var retired []inventory.Ref
 	if prev != nil {
 		cur.OptOut = prev.OptOut
+		for k, v := range prev.Acknowledged {
+			r, err := inventory.ParseRef(k)
+			if err != nil {
+				continue
+			}
+			// Only worth carrying while the package is still here to remove.
+			// Once brew no longer has it the question is moot, and keeping the
+			// record would silence a genuine future offer.
+			if cur.BrewHas(r) {
+				cur.Acknowledge(r, v)
+			}
+		}
 		for k, v := range prev.Retired {
-			cur.Retire(mustRef(k), v)
+			r, err := inventory.ParseRef(k)
+			if err != nil {
+				// Drop it rather than guess. Coercing "wget" into
+				// "formula:wget" would invent a retirement for a real package
+				// and offer to uninstall it on the other machine.
+				continue
+			}
+			cur.Retire(r, v)
 		}
 		for _, r := range prev.Installed() {
-			if !cur.Has(r) {
+			// Absent from the published inventory is NOT the same as removed.
+			// A package stops being installed_on_request as soon as something
+			// else depends on it, and brew still has it. Retirement is the
+			// only thing that makes brewrig offer an uninstall, so it has to
+			// mean "brew does not have this any more" and nothing looser.
+			if !cur.BrewHas(r) {
 				cur.Retire(r, now)
 				retired = append(retired, r)
 			}
@@ -67,17 +91,6 @@ func keepNotInstalled(m *inventory.Machine, k inventory.Kind, names []string) []
 		}
 	}
 	return out
-}
-
-// mustRef parses a retired key, falling back to a formula ref for a malformed
-// one. Snapshot only ever re-reads keys it wrote, and a bad key here costs at
-// most a re-proposed install — plan.retirements drops what it cannot parse.
-func mustRef(k string) inventory.Ref {
-	r, err := inventory.ParseRef(k)
-	if err != nil {
-		return inventory.Ref{Kind: inventory.Formula, Name: k}
-	}
-	return r
 }
 
 // Result records what an apply actually did, including what it could not do.

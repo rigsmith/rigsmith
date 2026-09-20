@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -41,6 +42,13 @@ func runInit(ctx context.Context, out io.Writer, remote, machine string) error {
 
 	cfg, err := config.Load()
 	if err != nil {
+		// Only a missing config starts from defaults. A present-but-unreadable
+		// one must not: Save would then overwrite the stored remote and machine
+		// name, and the machine would publish under a new name and orphan its
+		// inventory — the exact outcome config.Load refuses to cause.
+		if !errors.Is(err, config.ErrNotConfigured) {
+			return fmt.Errorf("%w\n\nFix or delete it, then run `brewrig init` again", err)
+		}
 		cfg = config.Default()
 	}
 	if machine != "" {

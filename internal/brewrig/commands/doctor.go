@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/brewrig/brew"
 	"github.com/rigsmith/rigsmith/internal/brewrig/config"
 	"github.com/rigsmith/rigsmith/internal/brewrig/store"
@@ -72,9 +73,32 @@ func runDoctor(ctx context.Context, out io.Writer, version string, fix bool) err
 		if cfg.Remote == "" {
 			add(check{name: "remote", detail: "none configured", status: "fail", hint: "run `brewrig init`"})
 		} else if !store.Reachable(ctx, cfg.Remote) {
-			add(check{name: "remote", detail: cfg.Remote, status: "fail", hint: "check network / gh auth status"})
+			add(check{name: "remote", detail: ghrepo.SafeRemote(cfg.Remote), status: "fail", hint: "check network / gh auth status"})
 		} else {
-			add(check{name: "remote", detail: cfg.Remote, status: "ok"})
+			add(check{name: "remote", detail: ghrepo.SafeRemote(cfg.Remote), status: "ok"})
+			// Privacy is verified at `init`, but a repo can be flipped to
+			// public afterwards and nothing would notice. Reachable is not the
+			// same as still private, and a package list is a decent map of the
+			// machine — so re-verify here, where a slow network call is the
+			// point of the command.
+			// "Cannot verify" and "verified public" are different answers and
+			// must not share a verdict. A local path or a self-hosted host is
+			// simply outside what gh can speak to; reporting that as a public
+			// repo would be confidently wrong, which is worse than silent.
+			_, _, parseable := ghrepo.ParseSlug(cfg.Remote)
+			switch err := ghrepo.EnsurePrivate(ctx, cfg.Remote); {
+			case err == nil:
+				add(check{name: "remote privacy", detail: "private", status: "ok"})
+			case !parseable:
+				add(check{name: "remote privacy", detail: "not a github.com or gitlab.com remote", status: "warn",
+					hint: "privacy cannot be verified here; make sure it is not readable by anyone else"})
+			case !ghrepo.Available():
+				add(check{name: "remote privacy", detail: "not verified", status: "warn",
+					hint: "gh is needed to confirm the repo is still private"})
+			default:
+				add(check{name: "remote privacy", detail: err.Error(), status: "fail",
+					hint: "a public repo would publish your package list; make it private again"})
+			}
 		}
 
 		if dir, derr := config.StagingDir(); derr == nil {

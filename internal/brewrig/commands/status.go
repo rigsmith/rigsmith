@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
 	"github.com/rigsmith/rigsmith/internal/brewrig/plan"
 	"github.com/rigsmith/rigsmith/internal/brewrig/store"
 	"github.com/spf13/cobra"
@@ -46,7 +47,7 @@ func runStatus(ctx context.Context, out io.Writer, offline bool) error {
 		} else if !store.Reachable(ctx, s.cfg.Remote) {
 			reach = ErrStyle.Render("unreachable")
 		}
-		fmt.Fprintf(out, "  remote   %s  %s\n", s.cfg.Remote, reach)
+		fmt.Fprintf(out, "  remote   %s  %s\n", ghrepo.SafeRemote(s.cfg.Remote), reach)
 	}
 	if subject, when, ok := s.store.LastSync(ctx); ok {
 		fmt.Fprintf(out, "  last     %s  %s\n", when, DimStyle.Render(subject))

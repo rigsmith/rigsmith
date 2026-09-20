@@ -87,14 +87,18 @@ func runApply(ctx context.Context, out io.Writer, dryRun, yes bool) error {
 		return nil
 	}
 	fmt.Fprintln(out)
-	if err := reportResult(res); err != nil {
-		return err
-	}
+	err = reportResult(res)
 
-	// Republish: this machine's inventory just changed, and leaving the shared
-	// copy stale would make the next run on the other machine re-propose
-	// everything that was just installed.
-	return republish(ctx, s, out)
+	// Republish whenever anything actually changed, including a partial run.
+	// Returning on the first failure would leave the shared copy stale while
+	// Homebrew here had already moved, so the other machine would re-propose
+	// packages this one now has.
+	if res.Any() {
+		if rerr := republish(ctx, s, out); rerr != nil && err == nil {
+			err = rerr
+		}
+	}
+	return err
 }
 
 // confirmRemovals asks about each proposed uninstall separately.
@@ -128,10 +132,11 @@ func confirmRemovals(ctx context.Context, out io.Writer, s *session, p *plan.Pla
 		if yes {
 			confirmed = append(confirmed, rm.Ref)
 		} else {
-			// Keeping it is a decision, not a deferral. Recording the opt-out
-			// stops the same prompt appearing on every future run — which is
-			// what would otherwise train you to dismiss it without reading.
-			if err := s.optOut(ctx, rm.Ref); err != nil {
+			// Keeping it is a decision, not a deferral. Recording it stops the
+			// same prompt appearing on every future run — which is what would
+			// otherwise train you to dismiss it without reading. A later,
+			// separate retirement of the same package is still offered.
+			if err := s.acknowledge(ctx, rm.Ref, rm.At); err != nil {
 				return nil, err
 			}
 			fmt.Fprintf(out, "  %s keeping %s — noted, it won't be offered again\n",

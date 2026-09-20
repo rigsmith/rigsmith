@@ -117,6 +117,14 @@ type Machine struct {
 	// source of a proposed uninstall anywhere in brewrig.
 	Retired map[string]time.Time `json:"retired,omitempty"`
 
+	// Acknowledged records retirements this machine was offered and declined,
+	// keyed by package and valued by the retire stamp that was declined.
+	//
+	// Keeping the stamp rather than a bare flag is what lets a later, separate
+	// decision to remove the same package be offered again: the answer is tied
+	// to the retirement it answered, not to the package forever.
+	Acknowledged map[string]time.Time `json:"acknowledged,omitempty"`
+
 	// Present is everything brew has installed here, including the dependency
 	// closure — local only, never published (`json:"-"`), because publishing
 	// the closure is exactly what the design rejects.
@@ -133,6 +141,13 @@ type Machine struct {
 func (m *Machine) PresentAsDependency(r Ref) bool {
 	return m.Present[r.String()] && !m.Has(r)
 }
+
+// BrewHas reports whether Homebrew has the package installed at all, asked for
+// or not. It is what "did you actually remove this?" has to be answered with:
+// Has alone is false the moment a package stops being installed_on_request,
+// which happens when something else starts depending on it — no uninstall
+// involved.
+func (m *Machine) BrewHas(r Ref) bool { return m.Present[r.String()] }
 
 // Has reports whether the machine currently has the package installed.
 func (m *Machine) Has(r Ref) bool {
@@ -207,6 +222,24 @@ func (m *Machine) Retire(r Ref, at time.Time) {
 // Unretire drops the record, for when the package is installed here again.
 func (m *Machine) Unretire(r Ref) { delete(m.Retired, r.String()) }
 
+// Acknowledge records that this machine was offered a removal for `r`, arising
+// from a retirement stamped `retiredAt`, and declined it.
+func (m *Machine) Acknowledge(r Ref, retiredAt time.Time) {
+	if m.Acknowledged == nil {
+		m.Acknowledged = map[string]time.Time{}
+	}
+	m.Acknowledged[r.String()] = retiredAt.UTC().Truncate(time.Second)
+}
+
+// AcknowledgedAt returns the retire stamp this machine declined for `r`.
+func (m *Machine) AcknowledgedAt(r Ref) (time.Time, bool) {
+	t, ok := m.Acknowledged[r.String()]
+	return t, ok
+}
+
+// Unacknowledge drops the record.
+func (m *Machine) Unacknowledge(r Ref) { delete(m.Acknowledged, r.String()) }
+
 // Normalize sorts every list and fills defaults, so a sync that changed nothing
 // produces a byte-identical file and therefore no commit. Without this the two
 // machines would commit reordered noise at each other forever.
@@ -225,6 +258,12 @@ func (m *Machine) Normalize() {
 	}
 	if len(m.Retired) == 0 {
 		m.Retired = nil
+	}
+	for k, v := range m.Acknowledged {
+		m.Acknowledged[k] = v.UTC().Truncate(time.Second)
+	}
+	if len(m.Acknowledged) == 0 {
+		m.Acknowledged = nil
 	}
 	if m.Formulae == nil {
 		m.Formulae = []Package{}

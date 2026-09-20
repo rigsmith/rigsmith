@@ -67,10 +67,18 @@ const TOOLS = {
   changerig: 'Changesets: capture intent, then version across every ecosystem',
   clauderig: 'Sync your Claude Code configuration across machines, path-correct on restore',
   codexrig: 'Sync your Codex CLI configuration across machines, and run several logins side by side',
-  // brewrig has no win32 build; the loop below only emits the platform
-  // packages that actually have an archive, so it needs no special case here.
   brewrig: 'Keep several machines on the same Homebrew software, and the same versions of it',
 }
+
+// Tools with no build for a platform. The per-tool packages already follow the
+// archives that exist, but the meta package and its dispatcher are written from
+// TOOLS, so without this a Windows install of `rigsmith` would depend on a
+// @scope/brewrig that has no win32 binary and `rigsmith brewrig` would fail
+// inside binaryPath().
+const UNSUPPORTED = { brewrig: new Set(['win32']) }
+
+const supportedOn = (tool, npmos) => !(UNSUPPORTED[tool]?.has(npmos))
+const toolsFor = (npmos) => Object.keys(TOOLS).filter((t) => supportedOn(t, npmos))
 
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'))
 const writeJson = (dir, obj) => {
@@ -246,12 +254,24 @@ for (const [tool, description] of Object.entries(TOOLS)) {
   })
 }
 
-// 3. Meta package — installs all four; `rigsmith <tool>` dispatches to each shim.
+// 3. Meta package — installs the family; `rigsmith <tool>` dispatches to each shim.
+//
+// The tool list is filtered at RUN time, not build time: the meta package is one
+// package installed on every platform, so its dependency list cannot be
+// platform-conditional. Without the filter, `rigsmith brewrig` on Windows would
+// reach a shim with no binary and fail inside binaryPath() with nothing to
+// explain it — brewrig has no Windows build because Homebrew has none.
 const metaLauncher = `#!/usr/bin/env node
 'use strict'
 const { spawnSync } = require('node:child_process')
-const TOOLS = ${JSON.stringify(Object.keys(TOOLS))}
+const ALL = ${JSON.stringify(Object.keys(TOOLS))}
+const UNSUPPORTED = ${JSON.stringify(Object.fromEntries(Object.entries({'brewrig': ['win32']})))}
+const TOOLS = ALL.filter((t) => !(UNSUPPORTED[t] || []).includes(process.platform))
 const [tool, ...rest] = process.argv.slice(2)
+if (tool && ALL.includes(tool) && !TOOLS.includes(tool)) {
+  console.error(tool + ' has no build for ' + process.platform + '. It ships for macOS and Linux only.')
+  process.exit(1)
+}
 if (!tool || !TOOLS.includes(tool)) {
   console.log('rigsmith — the CLI family: ' + TOOLS.join(', '))
   console.log('Usage: rigsmith <tool> [args]   (each tool is also installed on its own, e.g. \\\`rig\\\`)')

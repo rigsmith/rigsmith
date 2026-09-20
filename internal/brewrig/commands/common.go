@@ -141,6 +141,29 @@ func reportResult(res *engine.Result) error {
 	return nil
 }
 
+// acknowledge records that this machine was offered a removal and declined it,
+// and publishes that so the offer is not repeated.
+//
+// Deliberately NOT an opt-out. An opt-out means "do not install this here", and
+// Snapshot clears it the moment the package is installed — which it is, that
+// being the whole reason a removal was offered. Recording the refusal as an
+// opt-out therefore forgot it immediately and re-prompted on the next run.
+func (s *session) acknowledge(ctx context.Context, r inventory.Ref, retiredAt time.Time) error {
+	self, _, err := s.snapshot(ctx, nowUTC())
+	if err != nil {
+		return err
+	}
+	if at, ok := self.AcknowledgedAt(r); ok && !retiredAt.After(at) {
+		return nil
+	}
+	self.Acknowledge(r, retiredAt)
+	if err := s.store.Write(self); err != nil {
+		return err
+	}
+	_, err = s.store.Publish(ctx, fmt.Sprintf("%s: keep %s", self.Name, r.Label()))
+	return err
+}
+
 // optOut records that this machine deliberately declines a package, and
 // publishes the decision so the other machines stop proposing it.
 //
@@ -161,6 +184,12 @@ func (s *session) optOut(ctx context.Context, r inventory.Ref) error {
 	default:
 		self.OptOut.Formulae = append(self.OptOut.Formulae, r.Name)
 	}
+	// Skipping is local divergence: "not on this machine". If this machine had
+	// also retired the package — which is what an earlier `brew uninstall` plus
+	// sync records — that retirement says the opposite, "remove it everywhere".
+	// Leaving both published would propagate an uninstall to the other machine
+	// off the back of a decision that was explicitly about this one.
+	self.Unretire(r)
 	if err := s.store.Write(self); err != nil {
 		return err
 	}

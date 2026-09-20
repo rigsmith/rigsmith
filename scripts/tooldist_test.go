@@ -2,6 +2,7 @@ package scripts
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -108,14 +109,26 @@ func TestEveryToolReachesEveryDistributionSurface(t *testing.T) {
 			t.Errorf("%s: %v", s.label(), err)
 			continue
 		}
-		var missing []string
+		var missing, unshippable []string
 		for _, tool := range tools {
 			if s.windowsOnly && !onWindows[tool.Name] {
-				continue // no Windows binary exists to ship here
+				// No Windows binary exists to ship here, so absence is
+				// correct — but PRESENCE is then a bug, and the exemption
+				// must not quietly permit it.
+				if listed[tool.Name] {
+					unshippable = append(unshippable, tool.Name)
+				}
+				continue
 			}
 			if !listed[tool.Name] {
 				missing = append(missing, tool.Name)
 			}
+		}
+		if len(unshippable) > 0 {
+			sort.Strings(unshippable)
+			t.Errorf("%s lists %s, which has no Windows build in .goreleaser.yaml — "+
+				"this surface only ships Windows artifacts, so the entry promises a binary "+
+				"that is never produced", s.label(), strings.Join(unshippable, ", "))
 		}
 		if len(missing) > 0 {
 			sort.Strings(missing)
@@ -152,13 +165,24 @@ func toolsBuiltForWindows(goreleaser string) (map[string]bool, error) {
 	}
 
 	mainRe := regexp.MustCompile(`main: \./cmd/([\w-]+)`)
+	winRe := regexp.MustCompile(`(?m)^\s+- windows$`)
 	out := map[string]bool{}
-	for _, block := range strings.Split(rest, "\n  - id:")[1:] {
+	for i, block := range strings.Split(rest, "\n  - id:")[1:] {
 		m := mainRe.FindStringSubmatch(block)
 		if m == nil {
-			continue
+			// Not skippable. A build block this cannot read leaves its tool
+			// absent from the map, and an absent tool reads as "no Windows
+			// build" — which silently exempts it from every Windows surface.
+			return nil, fmt.Errorf("build block %d in .goreleaser.yaml has no recognizable "+
+				"`main: ./cmd/<tool>`; this test would then exempt its tool from the "+
+				"Windows distribution checks without saying so", i+1)
 		}
-		out[m[1]] = regexp.MustCompile(`(?m)^\s+- windows$`).MatchString(block)
+		tool, windows := m[1], winRe.MatchString(block)
+		if prev, seen := out[tool]; seen && prev != windows {
+			return nil, fmt.Errorf("two build blocks for ./cmd/%s disagree about a windows "+
+				"target; the later one would silently win", tool)
+		}
+		out[tool] = windows
 	}
 	if len(out) == 0 {
 		return nil, errors.New("no builds parsed out of .goreleaser.yaml — fix this test's patterns")
