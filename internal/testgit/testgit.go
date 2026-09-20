@@ -125,6 +125,13 @@ func configure(root string) error {
 	// through Init and a repo made by a test running `git init` itself are
 	// authored the same.
 	//
+	// maintenance.auto and gc.auto belong here for a sharper reason: gitquiet
+	// turns those off through GIT_CONFIG_COUNT, and detach() above clears that
+	// channel, so whichever init ran last decided whether `git maintenance run
+	// --detach` was spawned. Settings this package needs cannot live somewhere
+	// this package empties. In the config they hold whatever the order was, and
+	// gitquiet re-adding them afterwards is harmless.
+	//
 	// useConfigOnly is what stops the guessing, and it is the reason this is
 	// here rather than only in CI's setup: without it macOS and Windows quietly
 	// author commits as whoever is logged in, on whatever the machine calls
@@ -132,7 +139,8 @@ func configure(root string) error {
 	// With it, every platform fails the same way in the same place.
 	cfg := "[core]\n\texcludesFile = " + excludes + "\n\tattributesFile = " + attributes + "\n" +
 		"[user]\n\tname = rigsmith\n\temail = rigsmith@localhost\n\tuseConfigOnly = true\n" +
-		"[init]\n\tdefaultBranch = main\n"
+		"[init]\n\tdefaultBranch = main\n" +
+		"[maintenance]\n\tauto = false\n[gc]\n\tauto = 0\n"
 	path := filepath.Join(dir, "config")
 	for _, f := range []struct{ path, body string }{
 		{path, cfg}, {ignore, ""}, {attrs, ""},
