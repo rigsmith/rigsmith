@@ -1,0 +1,21 @@
+internal/testgit/testgit.go
+  s_3c3b3d9834b123::t_666e92c72ca519 33,54-73,82-90,92
+internal/testgit/testgit_test.go
+  s_3c3b3d9834b123::t_3f2bff7d4dff30 85-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f2c11e61249d4f5d158a2bd6aab7030261a024ba",
+  "prompts": {},
+  "sessions": {
+    "s_3c3b3d9834b123": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b635c44c-3984-4192-a8a8-7da51be01d40",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
