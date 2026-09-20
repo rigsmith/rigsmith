@@ -6,6 +6,11 @@ the five per-tool packages plus the `RigSmith.Rigsmith` bundle — through komac
 configured; `RigSmith.CodexRig` is the newest and is not published upstream yet,
 so releases currently open five until its first submission is made by hand.
 
+Not every tool has a package here: brewrig is darwin/linux only, so no Windows
+archive exists to submit. `scripts/tooldist_test.go` fails if it ever appears in
+`winget-submit.sh`, and would demand it back the moment `.goreleaser.yaml` grew
+a Windows build for it.
+
 They are the slowest part of a release, but not uniformly: the 1.4.0 batch —
 five packages, before codexrig existed — ranged from **same-day to 23 days**,
 all five submitted within minutes of each other.
@@ -119,8 +124,8 @@ WINGET_PACKAGES=RigSmith.ClaudeRigUi:claudeRigUi \
   sh scripts/winget-submit.sh 0.2.0 --submit
 ```
 
-Defaults are unchanged — `v<version>` and the four CLIs plus the bundle — so the
-CLI release calls it exactly as before.
+Defaults are unchanged — `v<version>` and every CLI with a Windows build plus
+the bundle — so the CLI release calls it exactly as before.
 
 **The first submission is a `komac new`, done by hand.** Everything here is
 built on komac *updating* a published manifest, which is the whole reason this
