@@ -4,6 +4,7 @@
 //
 //   node scripts/npm/trust-publishers.mjs --dry-run   # print what it would do
 //   node scripts/npm/trust-publishers.mjs             # register
+//   node scripts/npm/trust-publishers.mjs --otp 123456 # ...without the browser
 //   node scripts/npm/trust-publishers.mjs --list      # what the registry holds
 //
 // Trusted publishing lets the workflow mint a short-lived credential from its
@@ -24,6 +25,12 @@
 // none of which can publish via OIDC until registered. It is one more
 // distribution surface to forget, alongside those scripts/tooldist_test.go
 // guards, so the check below refuses to run against a stale npm/dist.
+//
+// EXPECT A BROWSER. npm requires two-factor authentication for a trust
+// operation: the first call prints a URL, waits while you authorize it, and
+// then skips 2FA for about five minutes — which is the window the whole run
+// has to finish inside, and what the pacing is sized against. `--otp <code>`
+// does the same thing without leaving the terminal.
 //
 // Requires `npm login` first: this writes to the registry as the package owner.
 // A package that does not exist yet cannot be registered — publish it once with
@@ -51,6 +58,13 @@ const MIN_NPM = [11, 15, 0]
 const CALL_SPACING_MS = 2000
 
 const DRY_RUN = process.argv.includes('--dry-run')
+// `--otp 123456` skips the browser round trip for the first call. A code lasts
+// 30 seconds and the 2FA skip window that follows lasts five minutes, so one
+// code covers the whole run.
+const OTP = (() => {
+  const i = process.argv.indexOf('--otp')
+  return i >= 0 ? process.argv[i + 1] : ''
+})()
 const LIST = process.argv.includes('--list')
 
 function fail(msg) {
@@ -150,6 +164,18 @@ function refuseStaleBuild(names) {
   }
 }
 
+// failureKind decides what a failed registration means by reading the registry,
+// since the command's own output goes to the terminal rather than to us:
+// "ours" (already registered for this workflow — success), "other" (the single
+// configuration a package may have is held by something else), or "error".
+function failureKind(name) {
+  const held = registeredWorkflows(name)
+  if (held === null) return 'error'
+  if (held.some((w) => w.endsWith(WORKFLOW))) return 'ours'
+  if (held.length > 0) return 'other'
+  return 'error'
+}
+
 // registeredWorkflows returns the workflow filenames the registry already holds
 // for a package, so an existing configuration is judged rather than assumed.
 function registeredWorkflows(name) {
@@ -192,35 +218,43 @@ for (const [i, name] of names.entries()) {
     '--repo', REPOSITORY,
     '--allow-publish',
     '--yes']
+  if (OTP) args.push('--otp', OTP)
   if (DRY_RUN) {
     console.log(`would: npm ${args.join(' ')}`)
     continue
   }
   if (i > 0) sleep(CALL_SPACING_MS)
   try {
-    execFileSync('npm', args, { stdio: 'pipe' })
+    // stdio is INHERITED, not captured. npm requires two-factor authentication
+    // for a trust operation and does it in the browser: it prints a URL, waits,
+    // and polls. Capturing the output hides that URL and leaves npm without a
+    // terminal to wait on, so every package fails with EOTP — "This operation
+    // requires a one-time password" — and the instructions for fixing it are in
+    // the text that was swallowed.
+    //
+    // Only the first call is interactive. npm then skips 2FA for about five
+    // minutes, which is what the pacing below is sized against.
+    execFileSync('npm', args, { stdio: 'inherit' })
     console.log(`✓ ${name}`)
     done++
   } catch (err) {
-    const out = `${err.stdout || ''}${err.stderr || ''}`
+    // Nothing was captured to classify by, so ask the registry what it holds.
+    const out = failureKind(name)
     // "Already exists" is only success if what exists is what we wanted. The
     // registry allows one configuration per package, so this same message
     // appears when a DIFFERENT workflow holds the slot — counting that as
     // registered would report a package as publishable by a workflow that
     // cannot publish it.
-    if (/already exists|already configured|duplicate|409/i.test(out)) {
-      const held = registeredWorkflows(name)
-      if (held === null) {
-        mismatched.push(`${name} (already configured; could not read what holds it)`)
-      } else if (held.some((w) => w.endsWith(WORKFLOW))) {
-        console.log(`· ${name} (already registered for ${WORKFLOW})`)
-        done++
-      } else {
-        mismatched.push(`${name} (held by ${held.join(', ') || 'an unreadable entry'})`)
-      }
+    if (out === 'ours') {
+      console.log(`· ${name} (already registered for ${WORKFLOW})`)
+      done++
       continue
     }
-    console.error(`✗ ${name}: ${out.trim().split('\n').slice(-2).join(' ')}`)
+    if (out === 'other') {
+      mismatched.push(name)
+      continue
+    }
+    console.error(`✗ ${name} — see npm's output above`)
     failures.push(name)
   }
 }
