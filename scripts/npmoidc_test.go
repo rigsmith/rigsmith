@@ -165,3 +165,41 @@ func TestPublishingWorkflowUpgradesNpm(t *testing.T) {
 			"first thing to meet a new npm")
 	}
 }
+
+// Publishing is tokenless: every wrapper package has a trusted publisher for
+// this workflow, so npm mints a credential from the job's own OIDC identity.
+//
+// A NODE_AUTH_TOKEN reappearing would not fail anything — npm would simply use
+// it, quietly, and the trusted publishers would stop being exercised. The way
+// that gets noticed is a token expiring a month later and taking the release
+// with it, which is what started this whole migration.
+func TestPublishingWorkflowCarriesNoNpmToken(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("../.github/workflows", publishingWorkflow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Env   map[string]string `yaml:"env"`
+			Steps []struct {
+				Name string            `yaml:"name"`
+				Env  map[string]string `yaml:"env"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatal(err)
+	}
+	for jobName, job := range wf.Jobs {
+		if _, ok := job.Env["NODE_AUTH_TOKEN"]; ok {
+			t.Errorf("job %q sets NODE_AUTH_TOKEN; npm would use it instead of the trusted "+
+				"publisher, and the OIDC path would stop being exercised", jobName)
+		}
+		for _, step := range job.Steps {
+			if _, ok := step.Env["NODE_AUTH_TOKEN"]; ok {
+				t.Errorf("step %q in job %q sets NODE_AUTH_TOKEN; publishing is tokenless — npm "+
+					"mints a credential from the job's OIDC identity", step.Name, jobName)
+			}
+		}
+	}
+}
