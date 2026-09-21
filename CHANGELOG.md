@@ -1,5 +1,138 @@
 # github.com/rigsmith/rigsmith
 
+## 1.19.0
+### 🚀 Enhancements
+
+- **clauderig:** `mcp list` and `mcp get` now say whether each MCP server will exist on your other machine, and the answer is more often "no" than people expect.
+  
+  Every place Claude Code stores an MCP server is outside the tree clauderig syncs. User- and local-scope servers live in `~/.claude.json`, which sits *beside* `~/.claude` rather than inside it — so a backup that has run nightly for a year carries none of them, and nothing has ever said so. Project-scope servers do travel, but through your own repository rather than through the backup; what does not travel with them is the approval, which is recorded in the gitignored `.claude/settings.local.json`, so a fresh clone is asked again.
+  
+  A `TRAVELS` column carries the verdict, with the details below it: which env or header values are committed to your repo in plain text, and which absolute paths are spelled for this machine only and will fail to start elsewhere. `mcp list --json` emits the same as records for a script to gate on.
+  
+  `recent --json` is new alongside it, matching `search --json`.
+  
+  Two smaller fixes: a file the publication audit condemns is now taken back out of the staging tree instead of being left there, one permissive run from being committed; and the dashboard's shortcut legend is derived from the actions actually on screen, so it can no longer name a key that does nothing.
+- **clauderig:** `clauderig account prepare <account>` readies an account's session profile and prints its `CLAUDE_CONFIG_DIR`, for programs that launch `claude` themselves. It does everything `run` does short of starting Claude Code and never touches your machine-wide login. `--json` returns one object, and on refusal a stable `reason` a launcher can branch on: `no-such-account`, `ambiguous-account`, `unmapped-directory`, `no-tokens`, `session-unknown`, `profile-desync` (the profile was re-logged as a different account inside a session), or `failed`. A success always reports `session: ok`.
+  
+  Two resolution fixes that reach every `account` command: an exact email stored for two organizations is now refused as ambiguous with the ids to use, instead of silently picking one; and a directory mapped to an account that no longer exists is reported as such, instead of as "not mapped".
+- **codexrig:** sync your Codex CLI configuration across machines, and run several Codex logins side by side.
+  
+  The fifth rig does for the Codex CLI what claudeRig does for Claude Code. It copies your setup — `config.toml` and any named profile overlays, `AGENTS.md`, skills, prompts, rules — into a private git repo of your own, rewrites machine-specific paths so it lands correctly on a computer laid out differently, and refuses to publish anything that still looks like a credential.
+  
+  ```sh
+  codexrig init            # a private remote, and the hooks that keep it current
+  codexrig global trust    # let Codex actually run them
+  codexrig sync
+  ```
+  
+  Your login is never in the backup. `auth.json` is excluded, and a value that looks like a token — anything under an `[mcp_servers.*.env]` table, for instance — is replaced with a sentinel that a restore swaps back for the machine's own value. A restored machine runs `codex login` once for itself.
+  
+  **Your conversations are not backed up unless you ask.** `codexrig config set syncSessions true` turns rollouts on. They are large, and resuming one on another machine is not a proven round trip yet, so carrying them is a backup rather than portability — and every surface says which mode the machine is in, so nobody assumes otherwise.
+  
+  **Several logins on one machine.** `codexrig account add` tracks the login you are signed in as; `codexrig account run work` starts Codex as that one without disturbing the others, each in its own `CODEX_HOME`, with your setup shared in so they differ only in who they are. `codexrig account switch` changes which login a plain `codex` uses, and refuses while Codex is running — a live session holds the credential it started with, and swapping underneath it leaves it unable to refresh.
+  
+  **One thing to know about the hooks.** Codex will not run a hook until its hash is recorded in `config.toml`, and it says nothing at all when it declines. That makes installed-but-untrusted the quietest possible way for a backup tool to stop backing anything up, which is why `install` tells you to run `trust` every time and `codexrig doctor` asks Codex directly rather than checking that a file exists.
+  
+  Three things differ from claudeRig because Codex differs, and each would have failed quietly if ported straight across. Codex writes absolute paths as TOML table *keys* (`[projects."/Users/you/Git/thing"]`), so a rewriter that walks only values leaves a restored config trusting a directory that does not exist. Codex's configuration is TOML, so it goes through a real codec rather than a second suffix test — a raw-file path would carry `config.toml` past field-level redaction entirely. And a rollout records its working directory *inside* the conversation, so codexRig never rewrites one: `codex resume --cd` is the answer when a directory moved.
+  
+  **Large conversations.** A rollout past 8 MiB is stored in the repo as content-addressed parts rather than as one blob, so adding a turn costs a chunk instead of a copy. This matters more than it sounds: the biggest rollout on the machine this was built against is 172 MB, which is over the default per-file cap — so without it, the longest conversation you have is the one thing never backed up. Chunked, it becomes 44 parts and a 4 KB index, and one more turn rewrites one of them.
+  
+  `codexrig peek` reads another machine's session straight out of the repo without restoring anything, and `peek get` copies just that one session onto this machine. `codexrig ledger` remembers a session after its body ages out of the retention window, so a search for an old conversation says "this existed, and here is the command that recovers it" rather than nothing. `codexrig repo status` says what the backup holds by category, because a byte total on its own points at the wrong lever.
+  
+  `codexrig account map <account>` binds a directory, so a bare `account run` anywhere under it picks that login.
+  
+  `codexrig doctor` is where the quiet failures become sentences, and `docs/CODEXRIG-PARITY.md` lists, feature by feature, what is built and what is not.
+- **brewrig:** keep several machines on the same Homebrew software, and the same versions of it.
+  
+  The sixth rig. Each machine publishes what it has *deliberately* installed to your own private git repo, and installs whatever the others have that it doesn't. `brewrig init` on both Macs is the whole setup.
+  
+  It deliberately does not sync a Brewfile. `brew bundle dump` into a shared folder is the obvious answer and it fails in three specific ways: a single file is last-writer-wins, so the other machine's ad-hoc installs are invisible until they are overwritten; `--cleanup` is the only removal story and it uninstalls everything not listed; and a flat list cannot tell "the other machine hasn't installed this yet" from "the other machine deliberately removed it", which are the two cases that need opposite responses. So each machine writes only `machines/<name>.json` and the union is derived — which also means two machines syncing at once touch disjoint paths, so git has nothing to merge. That is about content, not about writes: two brewrig processes on ONE machine share a clone, and they are serialised by a lock. A run that loses that race is refused with a clear message and succeeds when you run it again, rather than quietly replacing the other one's work.
+  
+  What gets published is `installed_on_request`, not the dependency closure and not `brew leaves`. The closure would turn every upstream dependency change into drift. `leaves` is subtly wrong in the other direction: it means "nothing depends on this", so it drops a tool you installed on purpose the moment anything else picks it up as a dependency — on the machine this was built against it silently omits `ffmpeg` and `python@3.14`, 39 packages where 41 were asked for.
+  
+  Nothing is uninstalled to make machines match: a package only one Mac has is not drift, it is something the other has not caught up on. The single exception is a package you deliberately removed, which is recorded as `retired` with a timestamp and offered on the other machine one prompt at a time, naming who removed it and when — never in a non-interactive run, where it reports the count and changes nothing. Answer "keep" and that refusal is published as an `acknowledged` entry stamped with the retirement it answered, so you are not asked again — while a later, separate retirement of the same package still is. (It is deliberately not an opt-out: an opt-out means "do not install this here", and it is cleared the moment the package is installed, which it is.) A reinstall outranks a retirement by timestamp, which is what stops the two machines deadlocking: A uninstalls, B reinstalls it on A, A uninstalls again, forever.
+  
+  `status` separates three things that a Brewfile collapses into one, because they have three different fixes: **missing** here (`apply`), **outdated** against upstream (`update`), and **skew** — the machines on different versions of the same package (`update` on whichever is behind). Skew is the usual reason two Macs "have the same things installed" and still behave differently, and it is invisible to a dumped Brewfile.
+  
+  Unlike its siblings brewrig ships for macOS and Linux only, since Homebrew does not run on Windows: no winget or Scoop entry, and the install script skips it there instead of failing.
+
+### 🩹 Fixes
+
+- **rig:** The release workflow's dry run builds under the last CLI version again, rather than under the window's tag.
+  
+  GoReleaser takes its version from `git describe` when there is no tag to build from, and since the claudeRig UI started shipping on `ui/vX.Y.Z`, the newest tag in this history is usually the window's. That version is not merely the wrong number — it contains a slash, and the slash goes everywhere the version does: archives came out as `dist/changerig_ui/…`, a directory nobody asked for, and the casks as `version "ui/v0.3.0-SNAPSHOT-…"` pointing at `…/download/ui%2Fv0.3.0/…`.
+  
+  Tag pushes were never affected: the ref is the version. But the dry run is the one run whose whole purpose is to prove packaging works before a real release, and it had quietly stopped proving it. It now names the last `v*` tag explicitly, which passes over the window's tags without having to know anything about them.
+- **rig:** The Homebrew casks no longer strip the macOS quarantine attribute, which also ends the deprecation warning every `brew upgrade` printed.
+  
+  Each cask ran `xattr -dr com.apple.quarantine` over the staged binary after install, from the days when releases were unsigned and Gatekeeper would refuse to run them. They are Developer ID signed and notarized now, so a quarantined binary passes on its own — checked by quarantining a released 1.18.0 binary by hand and running it.
+  
+  That makes the hook a check being disabled on every user's machine for a check that now passes. Homebrew had independently deprecated the `postflight` stanza GoReleaser emits for these hooks, so each upgrade printed a warning naming our tap; GoReleaser has no way to emit the replacement, its cask hooks being pre/post install/uninstall and nothing else. Removing the hook settles both.
+  
+  If a release ever ships unsigned, cask installs will now be blocked rather than quietly working. That is the correct failure: the answer is to sign the release, not to turn Gatekeeper off for everyone who installs it.
+- **clauderig:** The MCP travel verdict now checks whether `.mcp.json` is actually committed, and stops giving absolute paths under your home a pass.
+  
+  "It travels with your repo" is a claim about git, so it is now checked against git: a `.mcp.json` that is gitignored or was never added reads `no`, because a clone does not get it, and if git cannot be asked the column reads `unchecked` rather than guessing.
+  
+  Every absolute path is reported, including one under `$HOME`. Rewriting paths for the next machine is something clauderig does to files it carries, and it does not carry this one — git moves `.mcp.json` byte for byte, so a path under your own home is exactly as broken on a machine with a different home. Arguments are named individually (`args[3]`), and UNC paths (`\\server\share\…`) are recognised as absolute.
+  
+  Also: `recent --json` always emits `query`, matching `search --json`; and a condemned staged file that cannot be deleted is now reported instead of passing silently, because the refusal on its own reads as "nothing left this machine".
+- **clauderig:** A transcript rewritten to the same size reaches the repo again.
+  
+  The sync engine treats a file as unchanged when its mtime and size both match the staged copy's, which is safe only for an mtime that identifies the contents — so it holds that mtime against a measurement of how finely the filesystem records time, and restages anything written close enough to the last run to have shared a tick with it.
+  
+  That measurement was wrong wherever the clock is finer than the loop taking it. It writes a file eight times and calls the smallest gap it sees the tick, so on an APFS Mac it reports 110µs one run and 220µs the next — for a filesystem that records nanoseconds. What it measures there is its own pace.
+  
+  Under-stating the tick is the dangerous direction: it narrows the window and trusts an mtime that says nothing about the bytes behind it, and a transcript rewritten to the same size then never reaches the repo. Over-stating it only restages a file that did not need it. So a measurement finer than any kernel tick — 1ms to 10ms, by configuration — is no longer believed.
+  
+  Found on Linux CI, where the kernel's coarse clock makes it reachable and where stat-ing a file between writes can persuade a recent kernel to stamp it finely, so the act of measuring changed the answer.
+  
+  codexrig's engine carries the same probe and the same floor. It had no test over it at all; it has two now.
+- **clauderig:** A PEM header with no key after it no longer refuses the sync, or gets scrubbed out of the sentence it was mentioned in.
+  
+  The credential tripwire matched `-----BEGIN … PRIVATE KEY-----` and stopped there, so the header alone counted as key material. Because that verdict is about the FILE — credential material, cannot be redacted — anything that merely names the header refused every sync until the file was deleted by hand.
+  
+  Which is not a rare shape. A cached tool result holding a grep over a Nuxt project carried minified sourcemaps of `jose` and `@octokit/auth-app`, whose source compares against the header text: `privateKey.includes("-----BEGIN RSA PRIVATE KEY-----")`. Twelve headers, no key, sync refused. Deleting the file bought one run, because the session transcript that discussed the incident then refused the next one. Any runbook, code sample or conversation about PEM was a sync outage waiting to happen — including this project's own tests.
+  
+  The scan now asks what follows the header: a line break or a space, then PEM base64, allowing for the RFC 1421 attribute lines an encrypted key puts first. Escaped line breaks count, single (`\n`) and doubled (`\\n`) — a transcript records tool output that was itself JSON, so the same break arrives both ways.
+  
+  The text rule the scrubber uses gained the same requirement, and for the same reason. It used to run from the header to the end of the string unconditionally, which existed to keep the scrubber a superset of a scanner that fired on headers — so a mention of one had the rest of the sentence silently rewritten. With the scanner asking for material, that workaround was what remained of the bug.
+  
+  The old rule survives, named `HasPrivateKeyHeader` so the difference cannot be misread, for the one place it is still right: raw text read a line at a time, where the body is on the lines after the header and cannot be seen, so the header alone has to be enough.
+  
+  The two scrubbers were refusing on the marker for the same reason, one layer down: after the rewrite, a surviving header was read as a key the rule had failed to span. Nothing needs rewriting in a sentence that merely names one, so the header always survived and the transcript could not be scrubbed at all. Both now ask for material, which only a JSON record can reach — raw text carrying a header still refuses on the header alone, before the rewrite, because there the body is on lines the loop cannot see.
+  
+  Detection and removal are held to agreeing on every PEM shape, in both directions, because a disagreement either way is a defect: detected-but-unremovable refuses the sync for ever, and removable-but-undetected is prose rewritten on a guess. The grammar both sides use — an optional separator, optional RFC 1421 attribute lines, then twenty base64 characters — is now written once and shared, so they cannot drift apart again. The separator is optional because a key written straight after its header, with nothing between, is a shape the scan accepts and the rewrite therefore has to.
+  
+  The scan looks a bounded distance past each header, and running out of that distance is not an answer: a key can be pushed beyond any fixed window by padding the space after its header with attribute-shaped lines, and reading that as "no material" would publish it. An undecided read is treated as key material, so the bound costs a refusal on content nothing sane produces rather than a silent miss.
+- **clauderig:** Bringing one Claude Desktop window to the front now reaches the window you asked for.
+  
+  Two bugs, stacked. The scan that found a profile's processes matched the `--user-data-dir` flag anywhere in a command line, and every Electron helper inherits it — one profile answered with its main process and a dozen renderers and utilities, and the raise went to whichever the scan happened to list first. A helper has no windows; raising one is a no-op or an error depending on how you ask.
+  
+  Underneath that, the raise itself used System Events to set a process frontmost, which does not work for a second instance of one application: raising the first Claude instance worked and raising the second did nothing at all, silently, with both holding a visible window. Activation is per-application, and two processes sharing a bundle cannot be told apart that way.
+  
+  Raising now goes through `NSRunningApplication`, which takes a process id — reached through JXA, since these binaries build without cgo. It needs no Automation or Accessibility grant, because nothing sends an Apple Event to another application, and a pid that is not an application (every helper) is refused rather than silently accepted.
+  
+  `desktop open <profile>` gained the same precision: it used to activate the application, so with two profiles open it could put the wrong window in front and report success.
+- **clauderig:** A refused sync now says what was caught, in a sentence that agrees with its own count.
+  
+  `clauderig status` reported `Refused to push — 1 value look like credentials`, which is ungrammatical at the commonest count there is, and wrong about what happened: the journal entry for the same event said `1 file(s) are credential material`. One sentence had a plural verb beside a singular noun; the other named a different thing entirely.
+  
+  The distinction is not pedantry. A *value* means the redactor's key rules missed something inside a file worth syncing; a *file* means something is in the allowlist that should not be. They send you to different places, and the summary was naming the wrong one — so the sync report now carries how many findings were whole files, the journal records it, and both front ends render through one helper rather than each writing their own sentence about the same record.
+  
+  The window's activity feed draws the same distinction per finding, not just in the count above them. It listed every finding as `path (kind)`, and `private-key` is what both a PEM block inside a transcript and an `id_rsa` report — so a refusal could say "1 file" over two rows that looked identical. A whole file now reads `cli/skills/s/id_rsa (private-key file)`.
+  
+  Records written before this have no such count and read as values, which is how they were always rendered and the only honest answer for a record that never drew the distinction.
+- **clauderig:** Six guards that had no working test now have one, found by breaking each one on purpose and seeing whether the suite noticed.
+  
+  None of this changes what clauderig does. It changes what would be caught if someone changed it by accident. The ones worth knowing about: a Desktop-only sync could have started deleting sidecars, `restore --dir` could have started writing roots you never named, and the gate that refuses a public backup repo had tests for URL parsing and nothing else.
+  
+  `cmd/clauderig/README.md` now describes the two ways a test ends up unable to fail, and how to sweep for them.
+- **codexrig:** `mcp get --json` emits the same object `mcp list --json` does, and `repo status` counts a chunked rollout once at the conversation's size rather than as a pile of 4 MiB parts. A configured machine's custom folder tokens now reach path portability. The app-server client refuses further calls after a timed-out exchange rather than answering one message behind.
+- A tool that is new to winget no longer holds back everyone else's update.
+  
+  winget's first submission for any package has to be made by hand, because komac updates a published manifest and a package winget has never seen has nothing to update. That failure used to abort the whole submission run before anything was sent — so the next release would have published no winget update at all, for any of the five CLIs, on account of `codexrig` being new. It is now skipped and named in the log, and every published package still goes out.
+
 ## 1.18.0
 ### 🚀 Enhancements
 
