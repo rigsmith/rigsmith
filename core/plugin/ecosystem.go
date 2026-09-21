@@ -23,6 +23,17 @@ type Ecosystem interface {
 	SetVersion(ctx context.Context, req SetVersionRequest) error
 	// Publish publishes a package via its native package manager. Implementations
 	// should be idempotent (skip already-published versions).
+	// Publish pushes one package to its registry.
+	//
+	// A DryRun call must be safe to make CONCURRENTLY for distinct packages:
+	// `shiprig publish --dry-run` probes them in parallel, because a dry run's
+	// cost is almost entirely waiting on a registry and doing that one package at
+	// a time made a 41-package preview take 29 seconds. A dry run is read-only —
+	// no credential is resolved for it — so an adapter satisfies this by keeping
+	// per-call state in the call: the built-in adapters hold no fields and set a
+	// working directory per command rather than changing the process's own.
+	//
+	// A real publish is never called concurrently.
 	Publish(ctx context.Context, req PublishRequest) (PublishResponse, error)
 	// Artifacts builds the package's distributable files into req.OutputDir and
 	// returns them. Separate from Publish: it produces, it does not ship. An

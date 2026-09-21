@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -20,6 +21,30 @@ import (
 // (idempotently — already-published versions are skipped), then creates and
 // pushes a git tag per package. Go modules have no registry push; they are
 // published purely by the tag (module/vX.Y.Z), which the module proxy serves.
+type publishResult struct {
+	pkg     plugin.Package
+	resp    plugin.PublishResponse
+	err     error
+	skipped bool // not ours to publish: ignored, or no ecosystem
+}
+
+// report renders one package's outcome. Both the concurrent and sequential
+// paths call it, so a dry run and the publish it previews cannot drift into
+// different wordings.
+func report(out io.Writer, r publishResult) {
+	if r.skipped {
+		return
+	}
+	switch {
+	case r.resp.Published:
+		fmt.Fprintf(out, "%s %s@%s  %s\n", commands.PatchStyle.Render("published"), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
+	case r.resp.Skipped:
+		fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("skipped  "), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
+	default:
+		fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("·        "), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
+	}
+}
+
 // dryRunProbeLimit bounds how many packages a dry run probes at once. Each
 // probe is one registry round trip; the point is to stop waiting for them one
 // at a time, not to open a connection per package at a registry that has its
@@ -125,13 +150,8 @@ func newPublishCmd() *cobra.Command {
 			// is one round trip per package, and a repo whose release generates
 			// 41 wrapper packages waited 29 seconds at 27% CPU to be told what it
 			// would do. Probing concurrently keeps the answer and drops the wait.
-			type publishResult struct {
-				pkg     plugin.Package
-				resp    plugin.PublishResponse
-				err     error
-				skipped bool // not ours to publish: ignored, or no ecosystem
-			}
 			results := make([]publishResult, len(toPublish))
+			var firstErr error
 
 			// publishOne runs one package through its ecosystem. Credentials are
 			// resolved only for real publishes, which is also what keeps the
@@ -204,28 +224,33 @@ func newPublishCmd() *cobra.Command {
 					// A failed publish stops the run where it happened, rather
 					// than pushing the rest out behind it.
 					if results[i].err != nil {
+						firstErr = results[i].err
 						break
 					}
+					report(out, results[i])
 				}
 			}
 
-			// Reported in workspace order either way, so the output of a dry run
-			// and of the publish it previews read the same.
-			for _, r := range results {
-				if r.err != nil {
-					return r.err
+			// A real publish reports each package as it happens. It is a series
+			// of uploads over a slow link, and the operator watching it needs to
+			// see the one that is taking a while, or where it stopped — buffering
+			// until the end would hold every line behind the next package, and
+			// lose them entirely if that one hangs.
+			//
+			// A dry run has nothing to watch: the probes finish out of order and
+			// take seconds in total, so its lines are printed after the wait, in
+			// workspace order. Both read the same in the end, which is the point
+			// — a preview whose order differs from the publish is worse than a
+			// slow one.
+			if dryRun {
+				for _, r := range results {
+					if r.err != nil {
+						return r.err
+					}
+					report(out, r)
 				}
-				if r.skipped {
-					continue
-				}
-				switch {
-				case r.resp.Published:
-					fmt.Fprintf(out, "%s %s@%s  %s\n", commands.PatchStyle.Render("published"), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
-				case r.resp.Skipped:
-					fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("skipped  "), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
-				default:
-					fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("·        "), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
-				}
+			} else if firstErr != nil {
+				return firstErr
 			}
 
 			// 2. Tagging phase (this is what actually publishes Go modules).

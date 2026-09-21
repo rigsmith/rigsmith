@@ -65,10 +65,19 @@ func probeRepo(t *testing.T) (root, logPath string) {
 	}
 	// Sleeps on `view` (the probe) and on `publish`; logs start/end with the
 	// package directory, so a serial run shows start/end strictly paired.
+	//
+	// probeSlowPkg sleeps several times longer than the rest. Without that the
+	// delays are uniform, completion order tracks start order, and the ordering
+	// test below passes whether or not the report is sorted — a test that cannot
+	// fail for the thing it is named after.
 	fake := "#!/bin/sh\n" +
 		"name=$(basename \"$PWD\")\n" +
 		"printf 'start %s %s\\n' \"$1\" \"$name\" >> \"" + logPath + "\"\n" +
-		"sleep " + strconv.FormatFloat(probeSleep.Seconds(), 'f', -1, 64) + "\n" +
+		"if [ \"$name\" = " + probeSlowPkg + " ]; then\n" +
+		"  sleep " + strconv.FormatFloat(probeSleep.Seconds()*4, 'f', -1, 64) + "\n" +
+		"else\n" +
+		"  sleep " + strconv.FormatFloat(probeSleep.Seconds(), 'f', -1, 64) + "\n" +
+		"fi\n" +
 		"printf 'end %s %s\\n' \"$1\" \"$name\" >> \"" + logPath + "\"\n" +
 		// A non-zero exit from `view` means "not published", which is the state
 		// that makes a dry run report what it would do.
@@ -130,7 +139,8 @@ func TestDryRunProbesConcurrently(t *testing.T) {
 	probeRepo(t)
 	_, elapsed := runPublish(t, "--dry-run", "--no-git-tag", "--yes")
 
-	serial := time.Duration(probePkgs) * probeSleep
+	// Serially: the slow package (4x) plus one each for the rest.
+	serial := time.Duration(probePkgs+3) * probeSleep
 	// Generous: the point is "not one at a time", not a precise speedup, and CI
 	// machines are shared.
 	if elapsed > serial*2/3 {
@@ -173,4 +183,39 @@ func packageNamesIn(line string) []string {
 		}
 	}
 	return nil
+}
+
+// A real publish is a series of uploads over a slow link. Each package is
+// reported as it happens, so the operator sees where it got to — and, when one
+// fails, what already went out. Buffering until the end would hold every line
+// behind the next package and lose them all when that one fails.
+func TestRealPublishReportsWhatShippedBeforeAFailure(t *testing.T) {
+	root, _ := probeRepo(t)
+	// The fake fails `publish` for one package in the middle of the run.
+	bin := filepath.Join(root, "fakebin", "npm")
+	fake, err := os.ReadFile(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	patched := strings.Replace(string(fake), "exit 0\n",
+		"if [ \"$1\" = publish ] && [ \"$name\" = pkg-c ]; then echo 'boom' >&2; exit 1; fi\nexit 0\n", 1)
+	if err := os.WriteFile(bin, []byte(patched), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := newPublishCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--no-git-tag", "--yes"})
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("a failed publish must return an error:\n%s", buf.String())
+	}
+	out := buf.String()
+	// Everything published before the failure has to be visible: those uploads
+	// really happened, and a re-run needs to know it.
+	if !strings.Contains(out, probeSlowPkg) {
+		t.Errorf("the packages published before the failure are missing from the output, so a "+
+			"re-run cannot tell what already shipped:\n%s", out)
+	}
 }
