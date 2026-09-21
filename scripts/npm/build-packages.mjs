@@ -89,9 +89,15 @@ const writeJson = (dir, obj) => {
   // the artifact, so anything else publishing it (shiprig, a person with npm
   // publish, a re-publish from a downloaded tarball) gets it right too. npm
   // reads publishConfig.access natively. Unscoped packages are public already.
-  const withAccess = obj.name?.startsWith('@')
-    ? { ...obj, publishConfig: { access: 'public' } }
-    : obj
+  // `repository` is not decoration: publishing through OIDC generates a
+  // provenance attestation automatically for a public repo, and provenance
+  // requires the manifest to say which repository built it. Without this the
+  // tokenless publish these packages are being migrated to would fail on every
+  // one of them.
+  const withMeta = { ...obj, repository: { type: 'git', url: 'git+https://github.com/rigsmith/rigsmith.git' } }
+  const withAccess = withMeta.name?.startsWith('@')
+    ? { ...withMeta, publishConfig: { access: 'public' } }
+    : withMeta
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(withAccess, null, 2) + '\n')
 }
 
