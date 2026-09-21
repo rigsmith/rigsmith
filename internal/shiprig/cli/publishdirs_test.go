@@ -49,19 +49,19 @@ func TestGeneratedPackagesExpandsGlobs(t *testing.T) {
 	writePkg(t, filepath.Join(root, "npm", "dist", "rig"), "@rigsmith/rig", "1.19.0", false)
 	writePkg(t, filepath.Join(root, "npm", "dist", "rig-darwin-arm64"), "@rigsmith/rig-darwin-arm64", "1.19.0", false)
 
-	pkgs, ecoOf, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pkgs) != 2 {
-		t.Fatalf("got %d package(s), want 2: %+v", len(pkgs), pkgs)
+	if len(gen.Packages) != 2 {
+		t.Fatalf("got %d package(s), want 2: %+v", len(gen.Packages), gen.Packages)
 	}
-	for _, p := range pkgs {
+	for _, p := range gen.Packages {
 		if p.Version != "1.19.0" {
 			t.Errorf("%s: version %q, want 1.19.0", p.Name, p.Version)
 		}
-		if ecoOf[p.Name] != "node" {
-			t.Errorf("%s: ecosystem %q, want node", p.Name, ecoOf[p.Name])
+		if gen.Eco[p.Name] != "node" {
+			t.Errorf("%s: ecosystem %q, want node", p.Name, gen.Eco[p.Name])
 		}
 		if !strings.HasPrefix(p.Dir, "npm/dist/") {
 			t.Errorf("%s: dir %q should be repo-relative under npm/dist", p.Name, p.Dir)
@@ -78,12 +78,12 @@ func TestGeneratedPackagesExpandsGlobs(t *testing.T) {
 // dies.
 func TestGeneratedPackagesMissingDirIsNotAnError(t *testing.T) {
 	root := t.TempDir()
-	pkgs, _, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
 	if err != nil {
 		t.Fatalf("a glob matching nothing must not be an error: %v", err)
 	}
-	if len(pkgs) != 0 {
-		t.Fatalf("got %d package(s), want 0", len(pkgs))
+	if len(gen.Packages) != 0 {
+		t.Fatalf("got %d package(s), want 0", len(gen.Packages))
 	}
 }
 
@@ -95,12 +95,12 @@ func TestGeneratedPackagesSkipsNamesDiscoveryAlreadyFound(t *testing.T) {
 	writePkg(t, filepath.Join(root, "npm", "dist", "shiprig"), "@rigsmith/shiprig", "1.19.0", false)
 
 	known := map[string]bool{"@rigsmith/rig": true}
-	pkgs, _, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), known)
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), known)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pkgs) != 1 || pkgs[0].Name != "@rigsmith/shiprig" {
-		t.Fatalf("got %+v, want only @rigsmith/shiprig", pkgs)
+	if len(gen.Packages) != 1 || gen.Packages[0].Name != "@rigsmith/shiprig" {
+		t.Fatalf("got %+v, want only @rigsmith/shiprig", gen.Packages)
 	}
 }
 
@@ -113,12 +113,12 @@ func TestGeneratedPackagesIgnoresDirsWithoutAManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pkgs, _, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pkgs) != 1 {
-		t.Fatalf("got %d package(s), want 1: %+v", len(pkgs), pkgs)
+	if len(gen.Packages) != 1 {
+		t.Fatalf("got %d package(s), want 1: %+v", len(gen.Packages), gen.Packages)
 	}
 }
 
@@ -128,12 +128,12 @@ func TestGeneratedPackagesCarriesPrivate(t *testing.T) {
 	root := t.TempDir()
 	writePkg(t, filepath.Join(root, "npm", "dist", "internal"), "@rigsmith/internal", "1.19.0", true)
 
-	pkgs, _, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pkgs) != 1 || !pkgs[0].Private {
-		t.Fatalf("got %+v, want one private package", pkgs)
+	if len(gen.Packages) != 1 || !gen.Packages[0].Private {
+		t.Fatalf("got %+v, want one private package", gen.Packages)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestGeneratedPackagesRejectsManifestMissingNameOrVersion(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(tc.body), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, _, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+			_, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
 			if err == nil {
 				t.Fatal("want an error naming the manifest, got nil")
 			}
@@ -172,12 +172,12 @@ func TestGeneratedPackagesNoConfigIsNoOp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkgs, ecoOf, err := generatedPackages(t.TempDir(), cfg, map[string]bool{})
+	gen, err := generatedPackages(t.TempDir(), cfg, map[string]bool{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pkgs) != 0 || len(ecoOf) != 0 {
-		t.Fatalf("got %+v / %+v, want empty", pkgs, ecoOf)
+	if len(gen.Packages) != 0 || len(gen.Eco) != 0 {
+		t.Fatalf("got %+v / %+v, want empty", gen.Packages, gen.Eco)
 	}
 }
 
@@ -190,8 +190,83 @@ func TestGeneratedPackagesRefusesUnimplementedEcosystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = generatedPackages(t.TempDir(), cfg, map[string]bool{})
+	_, err = generatedPackages(t.TempDir(), cfg, map[string]bool{})
 	if err == nil || !strings.Contains(err.Error(), "cargo.publishDirs") {
 		t.Fatalf("want an error naming cargo.publishDirs, got: %v", err)
+	}
+}
+
+// A glob is repo-relative by contract. "../elsewhere/*" would join into a real
+// directory outside the tree, and each package built from it becomes a working
+// directory the publisher runs npm in — so it is refused before expansion,
+// which also means it is refused whether or not the target exists.
+func TestGeneratedPackagesRefusesPatternsThatLeaveTheRepo(t *testing.T) {
+	for _, pattern := range []string{
+		"../other-repo/*",
+		"npm/../../escape/*",
+		"/etc/*",
+		"./../../*",
+	} {
+		t.Run(pattern, func(t *testing.T) {
+			_, err := generatedPackages(t.TempDir(), nodeCfg(t, pattern), map[string]bool{})
+			if err == nil {
+				t.Fatalf("%q escapes the repository and must be refused", pattern)
+			}
+			if !strings.Contains(err.Error(), "repo-relative") {
+				t.Errorf("the error should say the pattern must be repo-relative, got: %v", err)
+			}
+		})
+	}
+}
+
+// A local pattern can still match a symlink pointing out of the tree, which
+// os.Stat happily follows.
+func TestGeneratedPackagesRefusesSymlinkOutOfTheRepo(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writePkg(t, filepath.Join(outside, "evil"), "@rigsmith/evil", "1.19.0", false)
+	if err := os.MkdirAll(filepath.Join(root, "npm", "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "evil"), filepath.Join(root, "npm", "dist", "evil")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err == nil {
+		t.Fatal("a symlink resolving outside the repository must be refused")
+	}
+	if !strings.Contains(err.Error(), "outside the repository") {
+		t.Errorf("the error should say it resolves outside the repository, got: %v", err)
+	}
+}
+
+// The workspace-wide `access` describes the packages in the tree. These wrappers
+// are scoped npm packages that must go out public from a repo configured
+// "restricted", and each manifest says so via npm's own publishConfig.access.
+// Publishing them at the workspace default would publish them privately.
+func TestGeneratedPackagesCarriesDeclaredAccess(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "npm", "dist", "rig")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":"@rigsmith/rig","version":"1.19.0","publishConfig":{"access":"public"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writePkg(t, filepath.Join(root, "npm", "dist", "plain"), "plain-thing", "1.19.0", false)
+
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := gen.Access["@rigsmith/rig"]; got != "public" {
+		t.Errorf("declared access = %q, want public", got)
+	}
+	// A manifest that declares nothing must not invent an access: the caller
+	// falls back to the workspace setting, and a value here would override it.
+	if got, ok := gen.Access["plain-thing"]; ok {
+		t.Errorf("a manifest declaring no access should record none, got %q", got)
 	}
 }

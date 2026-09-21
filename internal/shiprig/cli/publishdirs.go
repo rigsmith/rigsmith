@@ -30,9 +30,8 @@ import (
 // one of those names is skipped rather than published twice — the checked-in
 // package is the one the workspace means, and publishing both would race two
 // uploads of the same name against the registry.
-func generatedPackages(root string, cfg *config.Config, known map[string]bool) ([]plugin.Package, map[string]string, error) {
-	pkgs := []plugin.Package{}
-	ecoOf := map[string]string{}
+func generatedPackages(root string, cfg *config.Config, known map[string]bool) (*generated, error) {
+	out := &generated{Eco: map[string]string{}, Access: map[string]string{}}
 
 	for _, eco := range publishDirEcosystems {
 		globs := cfg.EcoConfig(eco).PublishDirs
@@ -44,12 +43,22 @@ func generatedPackages(root string, cfg *config.Config, known map[string]bool) (
 			// implemented, and silently ignoring the key for another ecosystem
 			// would look exactly like "the build produced nothing" — the one
 			// state this is designed not to treat as an error.
-			return nil, nil, fmt.Errorf("%s.publishDirs: not supported yet — publishDirs is honored for node today", eco)
+			return nil, fmt.Errorf("%s.publishDirs: not supported yet — publishDirs is honored for node today", eco)
 		}
 		for _, glob := range globs {
-			matches, err := filepath.Glob(filepath.Join(root, filepath.FromSlash(glob)))
+			pattern := filepath.FromSlash(glob)
+			// Repo-relative means repo-relative. "../elsewhere/*" or an absolute
+			// path would join into a real directory outside the tree, and every
+			// package built from it becomes a working directory the publisher
+			// runs npm in. Checked lexically, before expansion: the directories
+			// legitimately do not exist yet, so anything resolving a real path
+			// would be deciding on the wrong evidence.
+			if !filepath.IsLocal(pattern) {
+				return nil, fmt.Errorf("%s.publishDirs: %q must be repo-relative and stay inside the repository", eco, glob)
+			}
+			matches, err := filepath.Glob(filepath.Join(root, pattern))
 			if err != nil {
-				return nil, nil, fmt.Errorf("%s.publishDirs: %q: %w", eco, glob, err)
+				return nil, fmt.Errorf("%s.publishDirs: %q: %w", eco, glob, err)
 			}
 			// Deterministic order: Glob sorts, but several globs may overlap and
 			// the run's output should not depend on the order they were written.
@@ -59,20 +68,64 @@ func generatedPackages(root string, cfg *config.Config, known map[string]bool) (
 				if err != nil || !info.IsDir() {
 					continue
 				}
-				pkg, err := readNodePackage(root, dir)
+				// A local pattern can still match a symlink whose target is
+				// outside the repository; os.Stat followed the link to get here.
+				inside, err := withinRepo(root, dir)
 				if err != nil {
-					return nil, nil, fmt.Errorf("%s.publishDirs: %w", eco, err)
+					return nil, fmt.Errorf("%s.publishDirs: %q: %w", eco, glob, err)
+				}
+				if !inside {
+					return nil, fmt.Errorf("%s.publishDirs: %q resolves outside the repository (%s)", eco, glob, dir)
+				}
+				pkg, access, err := readNodePackage(root, dir)
+				if err != nil {
+					return nil, fmt.Errorf("%s.publishDirs: %w", eco, err)
 				}
 				if pkg == nil || known[pkg.Name] {
 					continue
 				}
 				known[pkg.Name] = true
-				pkgs = append(pkgs, *pkg)
-				ecoOf[pkg.Name] = eco
+				out.Packages = append(out.Packages, *pkg)
+				out.Eco[pkg.Name] = eco
+				if access != "" {
+					out.Access[pkg.Name] = access
+				}
 			}
 		}
 	}
-	return pkgs, ecoOf, nil
+	return out, nil
+}
+
+// generated is what the publishDirs globs produced: the packages, the ecosystem
+// each belongs to, and the access any of them declares for itself.
+//
+// Access matters because the workspace-wide `access` is about the packages in
+// the tree. These wrappers are a different population — scoped npm packages that
+// must go out public, in a repo whose own config says "restricted". Publishing
+// them at the workspace default would publish them privately, or fail outright.
+// Each generated manifest says what it needs via npm's own publishConfig.access,
+// and that wins for these packages alone.
+type generated struct {
+	Packages []plugin.Package
+	Eco      map[string]string
+	Access   map[string]string
+}
+
+// withinRepo reports whether path, with symlinks resolved, is inside root.
+func withinRepo(root, path string) (bool, error) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, err
+	}
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(realRoot, realPath)
+	if err != nil {
+		return false, err
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
 }
 
 // publishDirEcosystems is the fixed set of ecosystem ids whose config blocks are
@@ -83,28 +136,31 @@ var publishDirEcosystems = []string{"node", "cargo", "dotnet"}
 // readNodePackage reads a generated package.json. A directory that matched a
 // glob but holds no package.json is not an error — a glob like npm/dist/* also
 // matches whatever else the generator left beside the packages.
-func readNodePackage(root, dir string) (*plugin.Package, error) {
+func readNodePackage(root, dir string) (*plugin.Package, string, error) {
 	manifest := filepath.Join(dir, "package.json")
 	raw, err := os.ReadFile(manifest)
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var m struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-		Private bool   `json:"private"`
+		Name          string `json:"name"`
+		Version       string `json:"version"`
+		Private       bool   `json:"private"`
+		PublishConfig struct {
+			Access string `json:"access"`
+		} `json:"publishConfig"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("%s: %w", rel(root, manifest), err)
+		return nil, "", fmt.Errorf("%s: %w", rel(root, manifest), err)
 	}
 	// Name and version are what the publish is: the registry coordinate and the
 	// thing already built. A manifest missing either is a generator bug, and
 	// publishing it would fail at npm with a worse message than this one.
 	if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.Version) == "" {
-		return nil, fmt.Errorf("%s: name and version are required", rel(root, manifest))
+		return nil, "", fmt.Errorf("%s: name and version are required", rel(root, manifest))
 	}
 	return &plugin.Package{
 		Name:         m.Name,
@@ -112,7 +168,7 @@ func readNodePackage(root, dir string) (*plugin.Package, error) {
 		Dir:          rel(root, dir),
 		ManifestPath: rel(root, manifest),
 		Private:      m.Private,
-	}, nil
+	}, m.PublishConfig.Access, nil
 }
 
 // rel renders a path relative to the repo root, the form plugin.Package uses.

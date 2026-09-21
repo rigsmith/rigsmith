@@ -89,8 +89,16 @@ else
     json=""
     while IFS= read -r line; do
       name=""; version=""
-      if [[ "${line}" =~ ^published[[:space:]]+([^[:space:]@]+)@([^[:space:]]+) ]]; then
-        name="${BASH_REMATCH[1]}"; version="${BASH_REMATCH[2]}"
+      if [[ "${line}" =~ ^published[[:space:]]+([^[:space:]]+) ]]; then
+        # Split the coordinate at its LAST "@", not its first: a scoped package
+        # starts with one. The old pattern excluded "@" from the name, so it
+        # matched nothing at all on "published @scope/pkg@1.2.3" and every
+        # scoped package fell out of publishedPackages — a repo publishing only
+        # scoped packages reported published=false with an empty array.
+        coord="${BASH_REMATCH[1]}"
+        if [[ "${coord}" == *@* && "${coord}" != "${coord%@*}" ]]; then
+          name="${coord%@*}"; version="${coord##*@}"
+        fi
       elif [[ "${line}" =~ ^tagged[+]pushed[[:space:]]+(.+)/v([^[:space:]]+) ]]; then
         name="${BASH_REMATCH[1]}"; version="${BASH_REMATCH[2]}"
       fi

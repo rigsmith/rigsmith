@@ -22,7 +22,7 @@ once per secret).
 
 | | npm | crates.io | NuGet.org |
 |---|---|---|---|
-| config block | `npm` | `cargo` | `dotnet` |
+| config block | `node` | `cargo` | `dotnet` |
 | OIDC switch | `oidc: "auto"｜"off"` | same | same |
 | secret-ref | `auth: "op://…"` | same | same |
 | extra for OIDC | — | — | `user: "<nuget username>"` |
@@ -76,7 +76,7 @@ finds none of them, and `shiprig publish` would publish nothing.
 `publishDirs` names them, per ecosystem, as repo-relative globs:
 
 ```jsonc
-// .changeset/release.jsonc
+// .changeset/config.json
 {
   "node": {
     "publishDirs": ["npm/dist/*"],
@@ -117,9 +117,9 @@ When you publish from a laptop — or any context without a CI OIDC identity —
 point shiprig at a secret instead of exporting a long-lived token. Three schemes:
 
 ```jsonc
-// .changeset/release.jsonc
+// .changeset/config.json
 {
-  "npm":    { "auth": "op://CI/npm/token" },        // 1Password secret reference
+  "node":   { "auth": "op://CI/npm/token" },        // 1Password secret reference (npm = the `node` block)
   "cargo":  { "auth": "env:CARGO_REGISTRY_TOKEN" }, // an environment variable
   "dotnet": { "auth": "cmd:op item get nuget --fields apikey" } // any command's stdout
 }
