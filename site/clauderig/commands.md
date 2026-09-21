@@ -535,12 +535,12 @@ See [rig → Configuration](/rig/configuration#worktree) for the full details.
 When the opener isn't on `PATH`, `new`/`open` print the command to run instead.
 
 ::: tip
-See the [worktree-discipline doc](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/WORKTREE-DISCIPLINE.md)
+See the [worktree-discipline doc](https://github.com/rigsmith/rigsmith/blob/main/docs/WORKTREE-DISCIPLINE.md)
 for the guard rules and the full model.
 :::
 
 ::: tip
-See the [design doc](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/CLAUDERIG-DESIGN.md)
+See the [design doc](https://github.com/rigsmith/rigsmith/blob/main/docs/CLAUDERIG-DESIGN.md)
 for the full picture.
 :::
 

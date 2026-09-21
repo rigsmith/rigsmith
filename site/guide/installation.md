@@ -113,7 +113,7 @@ browser to read it before piping it to a shell.
 
 ## Direct download
 
-Every [GitHub release](https://github.com/JohnCampionJr/rigsmith/releases)
+Every [GitHub release](https://github.com/rigsmith/rigsmith/releases)
 attaches a per-tool archive and a combined `rigsmith_<version>_<os>_<arch>`
 archive for each of the six targets — `darwin`, `linux`, and `windows` × `amd64`
 and `arm64` — plus a `checksums.txt`. (`brewrig` has four: no `windows`, and the

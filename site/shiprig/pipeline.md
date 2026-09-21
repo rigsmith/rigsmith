@@ -263,7 +263,7 @@ ecosystem block in the release config:
 
 Precedence per registry: an explicit `auth` ref wins; otherwise OIDC when a CI
 context is present and not turned off; otherwise the ambient environment. See the
-[publish-auth guide](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md)
+[publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md)
 for the full matrix.
 
 ## Signing (desktop ecosystems)
@@ -542,6 +542,6 @@ too, so it composes the same way and is likewise mutually exclusive with both
 
 ::: tip Implementation
 The pipeline lives in `internal/shiprig/pipeline` + `internal/shiprig/forge`;
-see the [feature-parity audit](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/FEATURE-PARITY.md)
+see the [feature-parity audit](https://github.com/rigsmith/rigsmith/blob/main/docs/FEATURE-PARITY.md)
 for the delivered surface.
 :::
