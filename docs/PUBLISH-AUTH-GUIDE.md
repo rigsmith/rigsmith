@@ -22,13 +22,15 @@ once per secret).
 
 | | npm | crates.io | NuGet.org |
 |---|---|---|---|
-| config block | `npm` | `cargo` | `dotnet` |
+| config block | `node` | `cargo` | `dotnet` |
 | OIDC switch | `oidc: "auto"｜"off"` | same | same |
 | secret-ref | `auth: "op://…"` | same | same |
 | extra for OIDC | — | — | `user: "<nuget username>"` |
 | env fallback | `NPM_TOKEN` | `CARGO_REGISTRY_TOKEN` | `NUGET_API_KEY` |
 
-Config lives in `.changeset/release.jsonc` under the per-ecosystem block.
+Config lives in `.changeset/config.json` under the per-ecosystem block, keyed
+by ecosystem id — `node` for npm packages, not `npm`. A block under an
+unrecognized key is never read and never complains.
 
 ## OIDC trusted publishing (CI)
 
@@ -36,7 +38,13 @@ No stored secret, ephemeral credentials, and (npm, public repos) automatic
 provenance. One-time, register your release workflow as a Trusted Publisher on
 the registry:
 
-- **npm** — npmjs.com → package → Settings → Trusted Publisher
+- **npm** — `npm trust github <package> --file <workflow>.yml --repo <owner>/<repo>
+  --allow-publish` (npm 11.5.1+), or npmjs.com → package → Settings →
+  Trusted publishing. The CLI is what makes this bearable when a release
+  publishes many packages: registering rigsmith's own 41 wrappers is a loop,
+  not 41 web forms. `npm trust list <package>` reads back what is registered.
+  A package can hold up to 10 connections, so several workflows can publish
+  it — but an existing connection cannot be edited, only revoked and remade.
 - **crates.io** — crates.io → crate → Settings → Trusted Publishing
 - **NuGet.org** — nuget.org → account → Trusted Publishing (then set
   `dotnet.user` to the policy creator's username)
@@ -57,6 +65,45 @@ steps:
       # no NPM_TOKEN / CARGO_REGISTRY_TOKEN / NUGET_API_KEY needed
 ```
 
+## Packages a build generates
+
+Some packages do not exist in the tree at all. rigsmith's own npm wrappers are
+written at release time from the archives GoReleaser produced — 41 directories
+under `npm/dist/`, each a `package.json` around one signed binary — and they are
+gone again after a clean. Discovery walks the working tree for manifests, so it
+finds none of them, and `shiprig publish` would publish nothing.
+
+`publishDirs` names them, per ecosystem, as repo-relative globs:
+
+```jsonc
+// .changeset/config.json
+{
+  "node": {
+    "publishDirs": ["npm/dist/*"],
+    "oidc": "auto"
+  }
+}
+```
+
+Three things follow from what these directories are:
+
+- **Published, never versioned.** The generator already stamped each manifest
+  from the release it built. `shiprig version` does not see them, and the
+  cascade never rewrites a build output to disagree with the binary inside it.
+- **A glob matching nothing is not an error.** Before the build that writes
+  them, empty is correct — a publish that ran too early should say it published
+  nothing, not fail.
+- **A name discovery already found wins.** A generated directory carrying the
+  name of a real package in the tree is skipped, rather than racing a second
+  upload of that name at the registry.
+
+Each match must hold a manifest the ecosystem understands (`package.json` for
+node). A directory without one is simply not a package — generators leave other
+things beside their output, and a glob catches those too.
+
+Trusted publishing applies per package, so every generated package needs its own
+registration; see the `npm trust` loop above.
+
 GitLab works too: configure an `id_tokens` entry with
 `aud: npm:registry.npmjs.org` (npm) / the registry's audience and shiprig picks
 up `NPM_ID_TOKEN`. To force a token instead of OIDC, set `<eco>.oidc: "off"`.
@@ -70,9 +117,9 @@ When you publish from a laptop — or any context without a CI OIDC identity —
 point shiprig at a secret instead of exporting a long-lived token. Three schemes:
 
 ```jsonc
-// .changeset/release.jsonc
+// .changeset/config.json
 {
-  "npm":    { "auth": "op://CI/npm/token" },        // 1Password secret reference
+  "node":   { "auth": "op://CI/npm/token" },        // 1Password secret reference (npm = the `node` block)
   "cargo":  { "auth": "env:CARGO_REGISTRY_TOKEN" }, // an environment variable
   "dotnet": { "auth": "cmd:op item get nuget --fields apikey" } // any command's stdout
 }

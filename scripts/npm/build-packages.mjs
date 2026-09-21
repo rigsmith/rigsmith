@@ -83,7 +83,16 @@ const toolsFor = (npmos) => Object.keys(TOOLS).filter((t) => supportedOn(t, npmo
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'))
 const writeJson = (dir, obj) => {
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(obj, null, 2) + '\n')
+  // A scoped package is restricted by default, so every publisher of these has
+  // to say "public" somehow. The publish below passes --access public, but that
+  // only helps the publisher that knows to; the manifest is what travels with
+  // the artifact, so anything else publishing it (shiprig, a person with npm
+  // publish, a re-publish from a downloaded tarball) gets it right too. npm
+  // reads publishConfig.access natively. Unscoped packages are public already.
+  const withAccess = obj.name?.startsWith('@')
+    ? { ...obj, publishConfig: { access: 'public' } }
+    : obj
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(withAccess, null, 2) + '\n')
 }
 
 // Both sources yield the same shape: { version, binaries: [{ tool, goos, goarch, ext, file }] }.

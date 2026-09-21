@@ -51,6 +51,30 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Packages a build generated rather than a person checked in — npm
+			// binary wrappers built from release artifacts, say. Discovery walks
+			// the tree and cannot see them; `publishDirs` names where they land.
+			//
+			// They stay OUT of `pkgs`, which is the workspace's own list and the
+			// one the tagging phase below iterates. A git tag marks a commit as a
+			// released version of something in this repository; a wrapper built
+			// from an archive is not that, and tagging them would push 41 refs
+			// like `@rigsmith/rig@1.19.0` on every release. Only the publish loop
+			// sees them, via toPublish.
+			known := make(map[string]bool, len(pkgs))
+			for _, p := range pkgs {
+				known[p.Name] = true
+			}
+			gen, err := generatedPackages(ws.Root, ws.Config, known)
+			if err != nil {
+				return err
+			}
+			for name, eco := range gen.Eco {
+				ecoOf[name] = eco
+			}
+			toPublish := make([]plugin.Package, 0, len(pkgs)+len(gen.Packages))
+			toPublish = append(toPublish, pkgs...)
+			toPublish = append(toPublish, gen.Packages...)
 			out := cmd.OutOrStdout()
 			acc := access
 			if acc == "" {
@@ -63,7 +87,7 @@ func newPublishCmd() *cobra.Command {
 			if !dryRun && !yes &&
 				term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
 				n := 0
-				for _, p := range pkgs {
+				for _, p := range toPublish {
 					if !ws.Config.IsIgnored(p.Name) {
 						n++
 					}
@@ -81,7 +105,7 @@ func newPublishCmd() *cobra.Command {
 			authCache := map[string]*plugin.AuthCredential{}
 
 			// 1. Registry publish per package (ignored packages are never published).
-			for _, p := range pkgs {
+			for _, p := range toPublish {
 				if ws.Config.IsIgnored(p.Name) {
 					continue
 				}
@@ -100,11 +124,19 @@ func newPublishCmd() *cobra.Command {
 						return fmt.Errorf("auth for %s: %s", p.Name, redactor.Redact(err.Error()))
 					}
 				}
+				// The workspace `access` describes the packages in the tree. A
+				// generated wrapper carries its own: these are scoped npm
+				// packages that must go out public, from a repo whose config
+				// says "restricted".
+				pkgAccess := acc
+				if a, ok := gen.Access[p.Name]; ok && a != "" {
+					pkgAccess = a
+				}
 				resp, err := eco.Publish(cmd.Context(), plugin.PublishRequest{
 					RepoRoot:      ws.Root,
 					Package:       p,
 					PackageSource: packageSourceFor(ws.Config, ecoID),
-					Access:        acc,
+					Access:        pkgAccess,
 					DryRun:        dryRun,
 					Auth:          cred,
 					OIDC:          oidc,
