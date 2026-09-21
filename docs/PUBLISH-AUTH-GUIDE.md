@@ -43,8 +43,14 @@ the registry:
   Trusted publishing. The CLI is what makes this bearable when a release
   publishes many packages: registering rigsmith's own 41 wrappers is a loop,
   not 41 web forms. `npm trust list <package>` reads back what is registered.
-  A package can hold up to 10 connections, so several workflows can publish
-  it — but an existing connection cannot be edited, only revoked and remade.
+  **One configuration per package.** npm's overview page describes several
+  connections per package; the CLI docs for the command that creates them say
+  the opposite and are the ones that hold — "Currently, the registry only
+  supports one configuration per package. If you attempt to create a new trust
+  relationship when one already exists, it will result in an error." An existing
+  connection cannot be edited either: revoke it (`npm trust revoke --id <id>
+  <package>`) and make a new one. So pick the workflow that publishes; any other
+  workflow that needs to publish the same package keeps using a token.
 - **crates.io** — crates.io → crate → Settings → Trusted Publishing
 - **NuGet.org** — nuget.org → account → Trusted Publishing (then set
   `dotnet.user` to the policy creator's username)

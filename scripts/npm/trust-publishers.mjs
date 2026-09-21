@@ -115,6 +115,16 @@ function packageNames() {
     if (typeof parsed.name !== 'string' || parsed.name.trim() === '') {
       fail(`${path.relative(REPO_ROOT, manifest)}: "name" must be a non-empty string`)
     }
+    // The name decides which package on the registry gets a trusted publisher
+    // pointed at this repository, so it is not taken on trust from a file in a
+    // build directory. build-packages.mjs names each directory after the
+    // package it holds; anything else is a stale or tampered manifest, and
+    // registering it would hand publish rights over an unrelated coordinate.
+    const expected = dir === 'rigsmith' ? 'rigsmith' : `${SCOPE}/${dir}`
+    if (parsed.name !== expected) {
+      fail(`${path.relative(REPO_ROOT, manifest)}: names "${parsed.name}" but sits in ${dir}/, ` +
+        `where ${expected} belongs — refusing to register a coordinate the build did not produce`)
+    }
     names.push(parsed.name)
   }
   if (names.length === 0) fail(`${path.relative(REPO_ROOT, OUT)}/ holds no packages`)
