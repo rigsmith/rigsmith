@@ -251,6 +251,7 @@ for npm packages is `node`. An unrecognized key is not an error: the block is
 simply never read, so a `"npm"` block configures nothing at all.
 
 ```jsonc
+// .changeset/config.json
 "node":   { "auth": "op://CI/npm/token" },          // 1Password secret reference
 "cargo":  { "auth": "env:CARGO_REGISTRY_TOKEN" },   // an environment variable
 "dotnet": { "auth": "cmd:op item get nuget --fields apikey", "oidc": "auto" }

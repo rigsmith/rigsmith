@@ -270,3 +270,27 @@ func TestGeneratedPackagesCarriesDeclaredAccess(t *testing.T) {
 		t.Errorf("a manifest declaring no access should record none, got %q", got)
 	}
 }
+
+// npm understands "public" and "restricted". The adapter maps anything else to
+// "restricted", so a typo would publish a package meant to be public privately
+// and report success — refuse it where the manifest can still be named.
+func TestGeneratedPackagesRejectsUnknownAccess(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "npm", "dist", "rig")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":"@rigsmith/rig","version":"1.19.0","publishConfig":{"access":"pubic"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err == nil {
+		t.Fatal("an access value npm does not understand must be refused")
+	}
+	for _, want := range []string{"npm/dist/rig/package.json", "pubic"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got: %v", want, err)
+		}
+	}
+}

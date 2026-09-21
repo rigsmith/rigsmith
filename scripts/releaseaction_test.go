@@ -115,3 +115,16 @@ func TestReleaseActionReportsNothingWhenNothingPublished(t *testing.T) {
 		t.Errorf("publishedPackages = %q, want []", out["publishedPackages"])
 	}
 }
+
+// A coordinate needs both halves. "pkg@" splits into a name and an empty
+// version, which would be reported as a published package carrying no version
+// — and would set published=true on the strength of it.
+func TestReleaseActionIgnoresCoordinatesMissingAHalf(t *testing.T) {
+	out := runReleaseAction(t, `published @rigsmith/rig@  ok\npublished @scope-only\n`)
+	if out["published"] != "false" {
+		t.Errorf("published = %q, want false — neither line carries a usable coordinate", out["published"])
+	}
+	if out["publishedPackages"] != "[]" {
+		t.Errorf("publishedPackages = %q, want []", out["publishedPackages"])
+	}
+}

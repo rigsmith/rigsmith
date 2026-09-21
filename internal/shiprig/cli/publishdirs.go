@@ -162,6 +162,16 @@ func readNodePackage(root, dir string) (*plugin.Package, string, error) {
 	if strings.TrimSpace(m.Name) == "" || strings.TrimSpace(m.Version) == "" {
 		return nil, "", fmt.Errorf("%s: name and version are required", rel(root, manifest))
 	}
+	// npm understands two values here. Anything else — a typo like "pubic", or
+	// a value from some other registry's vocabulary — is mapped to "restricted"
+	// by the adapter, so a scoped package meant to be public would publish
+	// privately and report success. Refuse it where the manifest can be named.
+	switch access := m.PublishConfig.Access; access {
+	case "", "public", "restricted":
+	default:
+		return nil, "", fmt.Errorf("%s: publishConfig.access is %q; npm accepts \"public\" or \"restricted\"",
+			rel(root, manifest), access)
+	}
 	return &plugin.Package{
 		Name:         m.Name,
 		Version:      m.Version,

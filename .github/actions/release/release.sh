@@ -96,8 +96,15 @@ else
         # scoped package fell out of publishedPackages — a repo publishing only
         # scoped packages reported published=false with an empty array.
         coord="${BASH_REMATCH[1]}"
-        if [[ "${coord}" == *@* && "${coord}" != "${coord%@*}" ]]; then
-          name="${coord%@*}"; version="${coord##*@}"
+        # Both halves have to be there. "pkg@" splits into a name and an empty
+        # version, which would otherwise be reported as a published package
+        # carrying no version at all — and set published=true on the strength
+        # of it.
+        if [[ "${coord}" == *@* ]]; then
+          candidate_name="${coord%@*}"; candidate_version="${coord##*@}"
+          if [[ -n "${candidate_name}" && -n "${candidate_version}" ]]; then
+            name="${candidate_name}"; version="${candidate_version}"
+          fi
         fi
       elif [[ "${line}" =~ ^tagged[+]pushed[[:space:]]+(.+)/v([^[:space:]]+) ]]; then
         name="${BASH_REMATCH[1]}"; version="${BASH_REMATCH[2]}"
