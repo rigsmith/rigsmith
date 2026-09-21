@@ -174,7 +174,6 @@ jobs:
           echo "dry run will build as $tag"
 
       - uses: goreleaser/goreleaser-action@v7
-        id: goreleaser
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -253,14 +252,28 @@ jobs:
       # can fail — or any other step between here and there — without deciding
       # whether winget gets its update.
       - name: Submit to winget (komac)
-        if: ${{ !cancelled() && steps.goreleaser.outcome == 'success' && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # The secrets context is not available in a step `if`, so gate here.
           if [ -z "${GITHUB_TOKEN:-}" ]; then
             echo "WINGET_TOKEN unset — skipping the winget submission."
+            exit 0
+          fi
+          # The one thing this step actually depends on: a release with
+          # archives for komac to point at. Asking the GoReleaser step for its
+          # aggregate outcome was the wrong proxy — it fails as a whole when any
+          # part of it does, a Homebrew or Scoop push included, and would skip
+          # winget while the release and its assets sat right there. Checked
+          # before komac is downloaded, so a run with nothing to submit costs
+          # nothing.
+          assets="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json assets -q '.assets | length' 2>/dev/null || echo 0)"
+          if [ "${assets:-0}" -eq 0 ]; then
+            echo "::warning::$GITHUB_REF_NAME has no published assets — nothing for winget to point at, skipping."
             exit 0
           fi
           curl -fsSL -o /tmp/komac.tar.gz \
