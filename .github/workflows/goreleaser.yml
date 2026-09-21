@@ -241,15 +241,39 @@ jobs:
       # Tag pushes only: a manual dry run publishes no release for komac to point
       # winget at. Never fatal — the release itself is already out by now, and a
       # winget submission can be re-run by hand.
+      #
+      # The condition names what this step actually depends on: the release. It
+      # used to say only `startsWith(github.ref, …)`, and `continue-on-error`
+      # looked like enough protection — but that only stops THIS step from
+      # failing the job. A step is still skipped when an EARLIER one failed, so
+      # in 1.19.0 an expired NPM_TOKEN silently took all five winget submissions
+      # with it: the release was out, the manifests were fine, and nothing was
+      # submitted. Asking `steps.goreleaser.outcome` instead means the npm step
+      # can fail — or any other step between here and there — without deciding
+      # whether winget gets its update.
       - name: Submit to winget (komac)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # The secrets context is not available in a step `if`, so gate here.
           if [ -z "${GITHUB_TOKEN:-}" ]; then
             echo "WINGET_TOKEN unset — skipping the winget submission."
+            exit 0
+          fi
+          # The one thing this step actually depends on: a release with
+          # archives for komac to point at. Asking the GoReleaser step for its
+          # aggregate outcome was the wrong proxy — it fails as a whole when any
+          # part of it does, a Homebrew or Scoop push included, and would skip
+          # winget while the release and its assets sat right there. Checked
+          # before komac is downloaded, so a run with nothing to submit costs
+          # nothing.
+          assets="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json assets -q '.assets | length' 2>/dev/null || echo 0)"
+          if [ "${assets:-0}" -eq 0 ]; then
+            echo "::warning::$GITHUB_REF_NAME has no published assets — nothing for winget to point at, skipping."
             exit 0
           fi
           curl -fsSL -o /tmp/komac.tar.gz \
@@ -263,7 +287,7 @@ jobs:
       # (codesign --verify / spctl on the mac binaries, the casks, checksums).
       # Nothing was published.
       - uses: actions/upload-artifact@v7
-        if: github.event_name == 'workflow_dispatch'
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
         with:
           name: dryrun-dist
           path: |

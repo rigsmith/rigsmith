@@ -241,16 +241,30 @@ jobs:
       # UPDATE a package winget already has: the very first submission of
       # RigSmith.ClaudeRigUi is a `komac new`, done once by hand. See
       # docs/WINGET-SUBMISSIONS.md.
+      #
+      # `continue-on-error` stops this from failing the job, and nothing more:
+      # a step is still skipped when an EARLIER one fails. This step follows the
+      # release and the Homebrew cask, so a failed cask push used to take the
+      # winget submission with it silently. It now depends on what it actually
+      # needs — the release and its assets, checked below — and on nothing else.
       - name: Submit to winget (komac)
+        if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           WINGET_TAG: ${{ github.ref_name }}
           WINGET_PACKAGES: RigSmith.ClaudeRigUi:claudeRigUi
         run: |
           # The secrets context is not available in a step `if`, so gate here.
           if [ -z "${GITHUB_TOKEN:-}" ]; then
             echo "WINGET_TOKEN unset — skipping the winget submission."
+            exit 0
+          fi
+          assets="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json assets -q '.assets | length' 2>/dev/null || echo 0)"
+          if [ "${assets:-0}" -eq 0 ]; then
+            echo "::warning::$GITHUB_REF_NAME has no published assets — nothing for winget to point at, skipping."
             exit 0
           fi
           curl -fsSL -o /tmp/komac.tar.gz \
