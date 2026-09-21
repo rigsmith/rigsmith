@@ -4,7 +4,7 @@
 //
 //   node scripts/npm/trust-publishers.mjs --dry-run   # print what it would do
 //   node scripts/npm/trust-publishers.mjs             # register
-//   node scripts/npm/trust-publishers.mjs --otp 123456 # ...without the browser
+//   node scripts/npm/trust-publishers.mjs --otp 123456 # ...without being asked for it
 //   node scripts/npm/trust-publishers.mjs --list      # what the registry holds
 //
 // Trusted publishing lets the workflow mint a short-lived credential from its
@@ -26,16 +26,21 @@
 // distribution surface to forget, alongside those scripts/tooldist_test.go
 // guards, so the check below refuses to run against a stale npm/dist.
 //
-// EXPECT A BROWSER. npm requires two-factor authentication for a trust
-// operation: the first call prints a URL, waits while you authorize it, and
-// then skips 2FA for about five minutes — which is the window the whole run
-// has to finish inside, and what the pacing is sized against. `--otp <code>`
-// does the same thing without leaving the terminal.
+// IT WILL ASK FOR A ONE-TIME PASSWORD. npm requires two-factor authentication
+// for every trust operation, and a code opens a ~5-minute window that covers
+// the calls after it — but only a code does that. Authorizing in the browser
+// authorizes one request, and since each `npm trust` is its own process,
+// nothing carries over and you are sent back to the browser 41 times.
+//
+// A code lasts 30 seconds and the window 5 minutes, while 41 packages take
+// about 82 — so when the window closes mid-run the script asks for another and
+// carries on from where it stopped.
 //
 // Requires `npm login` first: this writes to the registry as the package owner.
 // A package that does not exist yet cannot be registered — publish it once with
 // a token, then run this.
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
+import readline from 'node:readline/promises'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -56,6 +61,12 @@ const MIN_NPM = [11, 15, 0]
 // to avoid rate limiting. With this approach, you can configure approximately
 // 80 packages within the 5-minute two-factor authentication skip window."
 const CALL_SPACING_MS = 2000
+
+// A captured npm call must not wait forever. Without a usable one-time password
+// npm falls back to browser authorization: it prints a URL and polls, and with
+// its output captured there is no URL to see and no way to answer — so the run
+// looks hung rather than failed.
+const NPM_CALL_TIMEOUT_MS = 45_000
 
 const DRY_RUN = process.argv.includes('--dry-run')
 // `--otp 123456` skips the browser round trip for the first call. A code lasts
@@ -164,41 +175,149 @@ function refuseStaleBuild(names) {
   }
 }
 
+// registerArgs builds one registration command.
+//
+// The one-time password is NOT here. `npm trust github` parses positionals
+// strictly and reads `--otp 123456` as a stray argument — "Unknown positional
+// argument: 123456" — so the code never reaches npm and every package fails
+// with EOTP as though none had been given. It goes through the environment
+// instead, which is how npm takes any config and involves no argv parsing.
+function registerArgs(name) {
+  return ['trust', 'github', name,
+    '--file', WORKFLOW,
+    '--repo', REPOSITORY,
+    '--allow-publish',
+    '--yes']
+}
+
+// otpEnv passes a one-time password the way npm reads config from the
+// environment: npm_config_<key>.
+function otpEnv(otp) {
+  return otp ? { ...process.env, npm_config_otp: otp } : process.env
+}
+
+// register makes one attempt.
+//
+// With a code, stderr is captured so an expired one can be told apart from a
+// real failure — nothing needs to be read off the terminal, because there is no
+// browser step. Without a code, everything is inherited: npm prints a URL and
+// waits, and capturing that is what made every package fail with EOTP before.
+function register(name, otp) {
+  const args = registerArgs(name)
+  if (!otp) {
+    const r = spawnSync('npm', args, { stdio: 'inherit' })
+    return { ok: r.status === 0, otpExpired: false, detail: '' }
+  }
+  const r = spawnSync('npm', args, { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
+  if (r.status === 0) return { ok: true, otpExpired: false, detail: '' }
+  const out = `${r.stdout || ''}${r.stderr || ''}`
+  const otpExpired = /EOTP|one-time password|invalid otp|otp required/i.test(out)
+  // The LAST "npm error" line is "A complete log of this run can be found in
+  // …", which says nothing. Take the first that carries a reason.
+  const detail = out.trim().split('\n')
+    .map((l) => l.replace(/^npm error\s*/, '').trim())
+    .filter((l) => l && !/^A complete log|^code E|^$/.test(l))
+    .find((l) => /[a-z]/i.test(l)) || ''
+  return { ok: false, otpExpired, detail }
+}
+
+// promptOTP reads a code from the terminal. Refuses when there is nobody there:
+// a non-interactive run should pass --otp rather than hang.
+async function promptOTP(message) {
+  if (!process.stdin.isTTY) return null
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const answer = await rl.question(message)
+    return answer.trim()
+  } finally {
+    rl.close()
+  }
+}
+
 // failureKind decides what a failed registration means by reading the registry,
 // since the command's own output goes to the terminal rather than to us:
 // "ours" (already registered for this workflow — success), "other" (the single
 // configuration a package may have is held by something else), or "error".
-function failureKind(name) {
-  const held = registeredWorkflows(name)
+function failureKind(name, otp) {
+  const held = registeredWorkflows(name, otp)
   if (held === null) return 'error'
   if (held.some((w) => w.endsWith(WORKFLOW))) return 'ours'
   if (held.length > 0) return 'other'
   return 'error'
 }
 
-// registeredWorkflows returns the workflow filenames the registry already holds
-// for a package, so an existing configuration is judged rather than assumed.
-function registeredWorkflows(name) {
-  const r = spawnSync('npm', ['trust', 'list', name, '--json'], { encoding: 'utf8' })
-  if (r.status !== 0) return null
+// registeredWorkflows returns the workflow filenames the registry holds for a
+// package, so an existing configuration is judged rather than assumed.
+//
+// The shape is what `npm trust list <pkg> --json` actually returns, which is a
+// single object rather than a list — one configuration per package is the rule,
+// so there is nothing to wrap:
+//
+//   { "id": "…", "type": "github", "file": "goreleaser.yml",
+//     "repository": "rigsmith/rigsmith", "permissions": ["createPackage", …] }
+//
+// Guessing an array or a `trustedPublishers` wrapper is how a run that had
+// registered all 41 reported none of them.
+function registeredWorkflows(name, otp) {
+  const r = spawnSync('npm', ['trust', 'list', name, '--json'],
+    { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
+  const body = (r.stdout || '').trim()
+  // A package with no configuration prints nothing rather than an empty list,
+  // and that is an answer — not a failure to read one.
+  if (r.status === 0 && body === '') return []
+  if (r.status !== 0 && body === '') return null
+  let parsed
   try {
-    const parsed = JSON.parse(r.stdout)
-    const rows = Array.isArray(parsed) ? parsed : (parsed?.trustedPublishers ?? parsed?.publishers ?? [])
-    return rows.map((row) => row?.workflow ?? row?.workflowFilename ?? row?.file ?? '').filter(Boolean)
+    parsed = JSON.parse(body)
   } catch {
     return null
   }
+  const rows = Array.isArray(parsed) ? parsed : [parsed]
+  const files = rows
+    .filter((row) => row && typeof row === 'object')
+    .map((row) => row.file ?? row.workflow ?? row.workflowFilename ?? '')
+    .filter(Boolean)
+  // Parsed, but nothing that names a workflow: better to say it could not be
+  // read than to report a registered package as unregistered.
+  if (files.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) return null
+  return files
 }
 
 const npmVersion = requireNpm()
 
 if (LIST) {
-  for (const name of packageNames()) {
-    const r = spawnSync('npm', ['trust', 'list', name], { encoding: 'utf8' })
-    const body = (r.stdout || r.stderr || '').trim().replace(/\n/g, '\n    ')
-    console.log(`${name}\n    ${body || '(none)'}`)
+  // A verdict per package, not raw output: the question this answers is "are all
+  // of them registered for this workflow", and 41 blocks of npm output does not
+  // answer it. Reading the list is itself a 2FA operation, so it wants a code
+  // the same way registering does.
+  if (!OTP && !process.stdin.isTTY) {
+    fail('reading trust configurations needs a one-time password too — pass --otp <code>')
   }
-  process.exit(0)
+  const listOtp = OTP || await promptOTP('npm one-time password (reading the list needs one too): ')
+  const ours = []
+  const other = []
+  const none = []
+  const unreadable = []
+  const all = packageNames()
+  for (const [i, name] of all.entries()) {
+    process.stdout.write(`\r  reading ${i + 1}/${all.length}  ${name.padEnd(34).slice(0, 34)}`)
+    const held = registeredWorkflows(name, listOtp)
+    if (held === null) unreadable.push(name)
+    else if (held.some((w) => w.endsWith(WORKFLOW))) ours.push(name)
+    else if (held.length > 0) other.push(`${name} (${held.join(', ')})`)
+    else none.push(name)
+  }
+  process.stdout.write('\r'.padEnd(60) + '\r')
+  const total = ours.length + other.length + none.length + unreadable.length
+  console.log(`${ours.length}/${total} registered for ${WORKFLOW}`)
+  for (const [label, list] of [
+    ['NOT registered', none],
+    ['registered for a DIFFERENT workflow', other],
+    ['could not be read', unreadable],
+  ]) {
+    if (list.length) console.log(`\n${list.length} ${label}:\n  ${list.join('\n  ')}`)
+  }
+  process.exit(none.length + other.length + unreadable.length > 0 ? 1 : 0)
 }
 
 const names = packageNames()
@@ -212,49 +331,65 @@ if (!DRY_RUN) {
 let done = 0
 const failures = []
 const mismatched = []
+
+// One code, then a window. npm opens a ~5-minute two-factor skip window against
+// the credential that presented a one-time password — so a code has to be PASSED,
+// not authorized in the browser. The browser flow authorizes one request: each
+// `npm trust` is its own process, nothing carries between them, and you are sent
+// back to the browser for all 41.
+//
+// So: ask for a code, use it, and when the window closes — a code lasts 30
+// seconds, the window 5 minutes, and 41 packages take about 82 — ask again and
+// carry on where it stopped.
+let otp = OTP
+if (!DRY_RUN && !otp && !process.stdin.isTTY) {
+  fail('a one-time password is required — pass --otp <code> when there is no terminal to ask at')
+}
+if (!DRY_RUN && !otp) {
+  otp = await promptOTP(
+    'npm requires a one-time password for each trust operation, and a code opens a\n' +
+    '~5-minute window that covers the rest of the run. Leave this empty to authorize\n' +
+    'each package in the browser instead (41 round trips).\n\n' +
+    'npm one-time password: ')
+}
+
 for (const [i, name] of names.entries()) {
-  const args = ['trust', 'github', name,
-    '--file', WORKFLOW,
-    '--repo', REPOSITORY,
-    '--allow-publish',
-    '--yes']
-  if (OTP) args.push('--otp', OTP)
   if (DRY_RUN) {
-    console.log(`would: npm ${args.join(' ')}`)
+    console.log(`would: npm ${registerArgs(name).join(' ')}${otp ? '   (npm_config_otp set)' : ''}`)
     continue
   }
   if (i > 0) sleep(CALL_SPACING_MS)
-  try {
-    // stdio is INHERITED, not captured. npm requires two-factor authentication
-    // for a trust operation and does it in the browser: it prints a URL, waits,
-    // and polls. Capturing the output hides that URL and leaves npm without a
-    // terminal to wait on, so every package fails with EOTP — "This operation
-    // requires a one-time password" — and the instructions for fixing it are in
-    // the text that was swallowed.
-    //
-    // Only the first call is interactive. npm then skips 2FA for about five
-    // minutes, which is what the pacing below is sized against.
-    execFileSync('npm', args, { stdio: 'inherit' })
+
+  let result = register(name, otp)
+  if (result.otpExpired) {
+    // Mid-run, and expected: the window is shorter than a long run.
+    const fresh = await promptOTP(`\nThe two-factor window closed at ${name}. New npm one-time password: `)
+    if (fresh === null) {
+      // No terminal to ask at. Stop where we are and say so — the run is
+      // re-runnable, since a package already registered for this workflow
+      // counts as done rather than as a conflict.
+      console.error(`\nThe two-factor window closed after ${done}/${names.length} packages, ` +
+        `at ${name}, and there is no terminal to ask for another code.\n` +
+        `Re-run with a fresh code to carry on — what is already registered is kept:\n` +
+        `  node scripts/npm/trust-publishers.mjs --otp <code>`)
+      process.exit(1)
+    }
+    otp = fresh
+    result = register(name, otp)
+  }
+  if (result.ok) {
     console.log(`✓ ${name}`)
     done++
-  } catch (err) {
-    // Nothing was captured to classify by, so ask the registry what it holds.
-    const out = failureKind(name)
-    // "Already exists" is only success if what exists is what we wanted. The
-    // registry allows one configuration per package, so this same message
-    // appears when a DIFFERENT workflow holds the slot — counting that as
-    // registered would report a package as publishable by a workflow that
-    // cannot publish it.
-    if (out === 'ours') {
-      console.log(`· ${name} (already registered for ${WORKFLOW})`)
-      done++
-      continue
-    }
-    if (out === 'other') {
-      mismatched.push(name)
-      continue
-    }
-    console.error(`✗ ${name} — see npm's output above`)
+    continue
+  }
+  const kind = failureKind(name, otp)
+  if (kind === 'ours') {
+    console.log(`· ${name} (already registered for ${WORKFLOW})`)
+    done++
+  } else if (kind === 'other') {
+    mismatched.push(name)
+  } else {
+    console.error(`✗ ${name}${result.detail ? `: ${result.detail}` : ' — see npm\'s output above'}`)
     failures.push(name)
   }
 }
