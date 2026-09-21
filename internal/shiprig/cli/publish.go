@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/rigsmith/rigsmith/core/auth"
 	"github.com/rigsmith/rigsmith/core/config"
@@ -19,6 +21,36 @@ import (
 // (idempotently — already-published versions are skipped), then creates and
 // pushes a git tag per package. Go modules have no registry push; they are
 // published purely by the tag (module/vX.Y.Z), which the module proxy serves.
+type publishResult struct {
+	pkg     plugin.Package
+	resp    plugin.PublishResponse
+	err     error
+	skipped bool // not ours to publish: ignored, or no ecosystem
+}
+
+// report renders one package's outcome. Both the concurrent and sequential
+// paths call it, so a dry run and the publish it previews cannot drift into
+// different wordings.
+func report(out io.Writer, r publishResult) {
+	if r.skipped {
+		return
+	}
+	switch {
+	case r.resp.Published:
+		fmt.Fprintf(out, "%s %s@%s  %s\n", commands.PatchStyle.Render("published"), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
+	case r.resp.Skipped:
+		fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("skipped  "), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
+	default:
+		fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("·        "), r.pkg.Name, r.pkg.Version, commands.DimStyle.Render(r.resp.Message))
+	}
+}
+
+// dryRunProbeLimit bounds how many packages a dry run probes at once. Each
+// probe is one registry round trip; the point is to stop waiting for them one
+// at a time, not to open a connection per package at a registry that has its
+// own opinion about that.
+const dryRunProbeLimit = 8
+
 func newPublishCmd() *cobra.Command {
 	var (
 		dryRun   bool
@@ -105,23 +137,45 @@ func newPublishCmd() *cobra.Command {
 			authCache := map[string]*plugin.AuthCredential{}
 
 			// 1. Registry publish per package (ignored packages are never published).
-			for _, p := range toPublish {
+			//
+			// A real publish stays strictly sequential: each one is a side effect
+			// on a registry, they are reported as they happen, and the first
+			// failure stops the rest rather than racing more uploads out.
+			//
+			// A dry run is the opposite. Every adapter's dry-run path is
+			// read-only by contract — no credential is even resolved — and its
+			// cost is almost entirely waiting: the npm adapter asks the registry
+			// whether each version already exists, which is what lets a dry run
+			// say "already published" rather than "would publish". Serially that
+			// is one round trip per package, and a repo whose release generates
+			// 41 wrapper packages waited 29 seconds at 27% CPU to be told what it
+			// would do. Probing concurrently keeps the answer and drops the wait.
+			results := make([]publishResult, len(toPublish))
+			var firstErr error
+
+			// publishOne runs one package through its ecosystem. Credentials are
+			// resolved only for real publishes, which is also what keeps the
+			// concurrent path below safe: the auth cache is never touched there.
+			publishOne := func(i int, p plugin.Package) {
+				results[i] = publishResult{pkg: p}
 				if ws.Config.IsIgnored(p.Name) {
-					continue
+					results[i].skipped = true
+					return
 				}
 				eco, ok := ws.EcosystemFor(ecoOf[p.Name])
 				if !ok {
-					continue
+					results[i].skipped = true
+					return
 				}
 				ecoID := ecoOf[p.Name]
-				// Resolve auth only for real publishes; --dry-run must stay free of
-				// side effects (no secret fetch / prompt / token mint).
 				var cred *plugin.AuthCredential
 				var oidc bool
 				if !dryRun {
-					cred, oidc, err = resolvePublishCreds(cmd.Context(), ws.Config, ecoID, npmAuth, authCache, redactor)
-					if err != nil {
-						return fmt.Errorf("auth for %s: %s", p.Name, redactor.Redact(err.Error()))
+					var credErr error
+					cred, oidc, credErr = resolvePublishCreds(cmd.Context(), ws.Config, ecoID, npmAuth, authCache, redactor)
+					if credErr != nil {
+						results[i].err = fmt.Errorf("auth for %s: %s", p.Name, redactor.Redact(credErr.Error()))
+						return
 					}
 				}
 				// The workspace `access` describes the packages in the tree. A
@@ -132,7 +186,7 @@ func newPublishCmd() *cobra.Command {
 				if a, ok := gen.Access[p.Name]; ok && a != "" {
 					pkgAccess = a
 				}
-				resp, err := eco.Publish(cmd.Context(), plugin.PublishRequest{
+				resp, pubErr := eco.Publish(cmd.Context(), plugin.PublishRequest{
 					RepoRoot:      ws.Root,
 					Package:       p,
 					PackageSource: packageSourceFor(ws.Config, ecoID),
@@ -142,17 +196,61 @@ func newPublishCmd() *cobra.Command {
 					OIDC:          oidc,
 					OIDCUser:      ws.Config.EcoConfig(ecoID).User,
 				})
-				if err != nil {
-					return fmt.Errorf("publish %s: %s", p.Name, redactor.Redact(err.Error()))
+				if pubErr != nil {
+					results[i].err = fmt.Errorf("publish %s: %s", p.Name, redactor.Redact(pubErr.Error()))
+					return
 				}
-				switch {
-				case resp.Published:
-					fmt.Fprintf(out, "%s %s@%s  %s\n", commands.PatchStyle.Render("published"), p.Name, p.Version, commands.DimStyle.Render(resp.Message))
-				case resp.Skipped:
-					fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("skipped  "), p.Name, p.Version, commands.DimStyle.Render(resp.Message))
-				default:
-					fmt.Fprintf(out, "%s %s@%s  %s\n", commands.DimStyle.Render("·        "), p.Name, p.Version, commands.DimStyle.Render(resp.Message))
+				results[i].resp = resp
+			}
+
+			if dryRun {
+				// Bounded, so a large workspace cannot open a connection per
+				// package at a registry that would rather it did not.
+				sem := make(chan struct{}, dryRunProbeLimit)
+				var wg sync.WaitGroup
+				for i, p := range toPublish {
+					wg.Add(1)
+					go func(i int, p plugin.Package) {
+						defer wg.Done()
+						sem <- struct{}{}
+						defer func() { <-sem }()
+						publishOne(i, p)
+					}(i, p)
 				}
+				wg.Wait()
+			} else {
+				for i, p := range toPublish {
+					publishOne(i, p)
+					// A failed publish stops the run where it happened, rather
+					// than pushing the rest out behind it.
+					if results[i].err != nil {
+						firstErr = results[i].err
+						break
+					}
+					report(out, results[i])
+				}
+			}
+
+			// A real publish reports each package as it happens. It is a series
+			// of uploads over a slow link, and the operator watching it needs to
+			// see the one that is taking a while, or where it stopped — buffering
+			// until the end would hold every line behind the next package, and
+			// lose them entirely if that one hangs.
+			//
+			// A dry run has nothing to watch: the probes finish out of order and
+			// take seconds in total, so its lines are printed after the wait, in
+			// workspace order. Both read the same in the end, which is the point
+			// — a preview whose order differs from the publish is worse than a
+			// slow one.
+			if dryRun {
+				for _, r := range results {
+					if r.err != nil {
+						return r.err
+					}
+					report(out, r)
+				}
+			} else if firstErr != nil {
+				return firstErr
 			}
 
 			// 2. Tagging phase (this is what actually publishes Go modules).
