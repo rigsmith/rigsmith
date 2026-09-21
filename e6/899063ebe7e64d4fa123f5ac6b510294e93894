@@ -1,0 +1,21 @@
+scripts/publishauthdocs_test.go
+  s_b39f44bd8c0bf4::t_8c97833b612761 1-48,60-61,68-110
+scripts/releaseaction_test.go
+  s_b39f44bd8c0bf4::t_9da2f918fe9783 1-50,53-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e6899063ebe7e64d4fa123f5ac6b510294e93894",
+  "prompts": {},
+  "sessions": {
+    "s_b39f44bd8c0bf4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "99c30493-530b-4c3d-8413-2e0aef2f6e4e",
+        "model": "claude-opus-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
