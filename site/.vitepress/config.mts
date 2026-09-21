@@ -7,7 +7,7 @@ import { withMermaid } from 'vitepress-plugin-mermaid'
 // convention: `Rig` capitalized in prose (shipRig, changeRig, claudeRig),
 // lowercase in commands/paths. See docs/WEBSITE.md + docs/SHIPRIG-RENAME-PLAN.md.
 
-const GITHUB = 'https://github.com/JohnCampionJr/rigsmith'
+const GITHUB = 'https://github.com/rigsmith/rigsmith'
 
 // `withMermaid` registers the ```mermaid fence and swaps mermaid's own theme
 // when the site's dark toggle flips, so diagrams stay legible in both. Keep

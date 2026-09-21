@@ -64,5 +64,5 @@ stdout:
 ::: tip Full reference
 The complete protocol — every struct, the changelog-generator contract, and the
 reference Node plugin — is in
-[docs/PLUGIN-PROTOCOL.md](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/PLUGIN-PROTOCOL.md).
+[docs/PLUGIN-PROTOCOL.md](https://github.com/rigsmith/rigsmith/blob/main/docs/PLUGIN-PROTOCOL.md).
 :::

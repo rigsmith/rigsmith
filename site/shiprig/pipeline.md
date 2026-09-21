@@ -550,6 +550,6 @@ too, so it composes the same way and is likewise mutually exclusive with both
 
 ::: tip Implementation
 The pipeline lives in `internal/shiprig/pipeline` + `internal/shiprig/forge`;
-see the [feature-parity audit](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/FEATURE-PARITY.md)
+see the [feature-parity audit](https://github.com/rigsmith/rigsmith/blob/main/docs/FEATURE-PARITY.md)
 for the delivered surface.
 :::

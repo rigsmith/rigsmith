@@ -17,7 +17,7 @@ hero:
       link: /guide/installation
     - theme: alt
       text: View on GitHub
-      link: https://github.com/JohnCampionJr/rigsmith
+      link: https://github.com/rigsmith/rigsmith
 
 features:
   - title: Zero runtime
