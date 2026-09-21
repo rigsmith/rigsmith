@@ -400,3 +400,54 @@ func TestGeneratedPackagesAllowsOverlappingGlobs(t *testing.T) {
 		t.Fatalf("got %d package(s), want 1", len(gen.Packages))
 	}
 }
+
+// A configured glob matching nothing stays a non-error — before the build that
+// writes those directories has run, empty is correct. But it must not be
+// silent: a publish that shipped none of the generated packages otherwise looks
+// exactly like one that had none to ship.
+func TestGeneratedPackagesNotesWhenConfiguredGlobsMatchNothing(t *testing.T) {
+	gen, err := generatedPackages(t.TempDir(), nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err != nil {
+		t.Fatalf("a glob matching nothing must not be an error: %v", err)
+	}
+	if len(gen.Packages) != 0 {
+		t.Fatalf("got %d package(s), want 0", len(gen.Packages))
+	}
+	if len(gen.Notes) != 1 {
+		t.Fatalf("want one note saying nothing matched, got %v", gen.Notes)
+	}
+	for _, want := range []string{"node.publishDirs", "npm/dist/*", "matched no packages"} {
+		if !strings.Contains(gen.Notes[0], want) {
+			t.Errorf("the note should mention %q, got: %s", want, gen.Notes[0])
+		}
+	}
+}
+
+// No publishDirs configured means nothing to say — the note exists for the
+// difference between "configured and empty" and "not configured".
+func TestGeneratedPackagesSaysNothingWhenNotConfigured(t *testing.T) {
+	cfg, err := config.Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, err := generatedPackages(t.TempDir(), cfg, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gen.Notes) != 0 {
+		t.Errorf("no publishDirs configured should produce no notes, got %v", gen.Notes)
+	}
+}
+
+// And a glob that DID match says nothing, so the note stays meaningful.
+func TestGeneratedPackagesSaysNothingWhenGlobsMatch(t *testing.T) {
+	root := t.TempDir()
+	writePkg(t, filepath.Join(root, "npm", "dist", "rig"), "@rigsmith/rig", "1.19.0", false)
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gen.Notes) != 0 {
+		t.Errorf("a glob that matched should produce no notes, got %v", gen.Notes)
+	}
+}

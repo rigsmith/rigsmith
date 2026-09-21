@@ -63,6 +63,7 @@ func generatedPackages(root string, cfg *config.Config, known map[string]bool) (
 			// state this is designed not to treat as an error.
 			return nil, fmt.Errorf("%s.publishDirs: not supported yet — publishDirs is honored for node today", eco)
 		}
+		before := len(out.Packages)
 		for _, glob := range globs {
 			pattern := filepath.FromSlash(glob)
 			// Repo-relative means repo-relative. "../elsewhere/*" or an absolute
@@ -134,6 +135,12 @@ func generatedPackages(root string, cfg *config.Config, known map[string]bool) (
 				}
 			}
 		}
+		if len(out.Packages) == before {
+			out.Notes = append(out.Notes, fmt.Sprintf(
+				"%s.publishDirs (%s) matched no packages — nothing generated is being published. "+
+					"If a build should have written them, it has not run yet.",
+				eco, strings.Join(globs, ", ")))
+		}
 	}
 	return out, nil
 }
@@ -151,6 +158,13 @@ type generated struct {
 	Packages []plugin.Package
 	Eco      map[string]string
 	Access   map[string]string
+	// Notes are things worth saying that are not errors. A configured glob
+	// matching nothing is the main one: it is correct before the build that
+	// writes those directories has run, and wrong in every other case, and the
+	// two are indistinguishable from here. Silence would make a publish that
+	// shipped none of the generated packages look exactly like one that had
+	// none to ship.
+	Notes []string
 }
 
 // withinRepo reports whether path, with symlinks resolved, is inside root.

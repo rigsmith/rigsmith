@@ -72,6 +72,12 @@ func newPublishCmd() *cobra.Command {
 			for name, eco := range gen.Eco {
 				ecoOf[name] = eco
 			}
+			// Said out loud rather than inferred from a short list: a publish
+			// that shipped none of the generated packages otherwise looks
+			// exactly like one that had none to ship.
+			for _, note := range gen.Notes {
+				fmt.Fprintln(cmd.OutOrStdout(), commands.DimStyle.Render(note))
+			}
 			toPublish := make([]plugin.Package, 0, len(pkgs)+len(gen.Packages))
 			toPublish = append(toPublish, pkgs...)
 			toPublish = append(toPublish, gen.Packages...)
