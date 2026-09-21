@@ -19,13 +19,39 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch: {} # manual dry run — build + sign, publish nothing
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "What a manual run should do"
+        type: choice
+        default: dry-run
+        options:
+          - dry-run # build + sign everything, publish nothing
+          - republish-npm # re-publish the npm wrappers for an ALREADY published release
+      tag:
+        description: "republish-npm only: the release tag to republish from (e.g. v1.19.0)"
+        type: string
+        required: false
+
+env:
+  # npm 11.5.1 is where trusted publishing arrives; this is newer so the release
+  # is not the first thing to meet a fresh npm.
+  NPM_VERSION: 11.17.0
 
 permissions:
   contents: write # create the GitHub Release and upload assets
+  # Lets a job mint an OIDC token, which npm exchanges for a short-lived publish
+  # credential (trusted publishing). A trusted publisher is bound to a repository
+  # and a WORKFLOW FILENAME, and npm allows one configuration per package — which
+  # is why republishing lives in this file as a second job rather than in a
+  # workflow of its own. A separate file could not publish these packages without
+  # a stored token.
+  id-token: write
 
 jobs:
   goreleaser:
+    # A tag release, or a manual dry run. Republishing npm is the other job.
+    if: ${{ github.event_name == 'push' || inputs.mode == 'dry-run' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       # Fail fast on half-configured Windows signing. scripts/sign-windows.sh
@@ -101,6 +127,13 @@ jobs:
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+      # Node 22 ships npm 10, which knows nothing about trusted publishing. npm
+      # detects the OIDC environment and exchanges the token itself from 11.5.1;
+      # without this upgrade the publish silently falls back to NPM_TOKEN and the
+      # registration is never exercised. Pinned, like the other tools here, so a
+      # release is not the first to meet a new npm.
+      - name: npm with trusted-publishing support
+        run: npm install -g npm@${{ env.NPM_VERSION }}
 
       # Keep the JohnCampionJr/winget-pkgs fork's master current with upstream
       # before the komac submission below. komac hardcodes the fork as
@@ -219,6 +252,10 @@ jobs:
       # validates packaging with `npm publish --dry-run` (packs each, no upload).
       - name: npm wrapper packages
         env:
+          # npm uses the OIDC identity when the package has a trusted publisher
+          # for this workflow, and falls back to this token when it does not.
+          # The token stays until every package is registered and a release has
+          # published without it; then the secret goes, and this line with it.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -297,3 +334,56 @@ jobs:
             dist/homebrew/Casks/*.rb
             npm/dist/**/package.json
           retention-days: 7
+
+  # Re-publish the npm wrappers for a release that already exists.
+  #
+  # The release workflow builds these from GoReleaser's dist/ — the signed
+  # binaries — which lives only on the runner that built them. When that job dies
+  # after GoReleaser but before the npm step (v1.5.0: a manifest check ran too
+  # early; v1.19.0: NPM_TOKEN had expired), npm is left a version behind a release
+  # that otherwise went out fine, and there is no way to recover it from a laptop
+  # without shipping unsigned Windows binaries.
+  #
+  # This republishes from the published release's own archives, checksum-verified,
+  # so npm gets the same bytes as every other channel — without cutting a new
+  # version to fix one channel and dragging the rest along (five more winget PRs,
+  # for one).
+  #
+  # It lives HERE, rather than in a workflow of its own, because a trusted
+  # publisher is bound to a workflow filename and npm allows one per package. As
+  # its own file it could never publish these packages except with a stored
+  # token; as a job in this one it mints its own credential like the release does.
+  republish-npm:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'republish-npm' }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read # read the release's assets
+      id-token: write # mint the OIDC token npm exchanges
+    steps:
+      - name: Require a tag
+        run: |
+          if [ -z "${{ inputs.tag }}" ]; then
+            echo "::error::republish-npm needs the tag of an already-published release (e.g. v1.19.0)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: npm with trusted-publishing support
+        run: npm install -g npm@${{ env.NPM_VERSION }}
+
+      - name: Publish npm wrappers from ${{ inputs.tag }}
+        env:
+          # As in the release job: OIDC when the package has a trusted publisher
+          # for this workflow, this token only until every package has one.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # `gh release download` reads this repository's release assets.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/npm/build-packages.mjs --from-release "${{ inputs.tag }}" --publish
+

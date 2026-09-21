@@ -49,8 +49,13 @@ the registry:
   supports one configuration per package. If you attempt to create a new trust
   relationship when one already exists, it will result in an error." An existing
   connection cannot be edited either: revoke it (`npm trust revoke --id <id>
-  <package>`) and make a new one. So pick the workflow that publishes; any other
-  workflow that needs to publish the same package keeps using a token.
+  <package>`) and make a new one.
+
+  A configuration names a workflow FILE, so the practical consequence is that
+  everything publishing a given package has to live in one file. rigsmith's
+  release and its npm recovery path are two jobs in `goreleaser.yml` for exactly
+  this reason: as separate workflows, the second could never publish without a
+  stored token, which is the thing trusted publishing exists to remove.
 - **crates.io** — crates.io → crate → Settings → Trusted Publishing
 - **NuGet.org** — nuget.org → account → Trusted Publishing (then set
   `dotnet.user` to the policy creator's username)
