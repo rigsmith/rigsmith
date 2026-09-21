@@ -294,3 +294,160 @@ func TestGeneratedPackagesRejectsUnknownAccess(t *testing.T) {
 		}
 	}
 }
+
+// EcoConfig degrades a malformed block to defaults on purpose, so a publishDirs
+// written as a string rather than a list became an empty slice — and the run
+// published none of the generated packages while reporting success. "Absent"
+// and "unreadable" must not look the same for this key.
+func TestGeneratedPackagesRefusesMalformedPublishDirs(t *testing.T) {
+	for _, body := range []string{
+		`{"node":{"publishDirs":"npm/dist/*"}}`,
+		`{"node":{"publishDirs":{"glob":"npm/dist/*"}}}`,
+		`{"node":{"publishDirs":[1,2]}}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			cfg, err := config.Parse([]byte(body))
+			if err != nil {
+				t.Skipf("config refused it earlier, which is also fine: %v", err)
+			}
+			_, err = generatedPackages(t.TempDir(), cfg, map[string]bool{})
+			if err == nil {
+				t.Fatal("a publishDirs that cannot be read as a list of globs must not silently " +
+					"publish nothing")
+			}
+			if !strings.Contains(err.Error(), "publishDirs") {
+				t.Errorf("the error should name the key, got: %v", err)
+			}
+		})
+	}
+}
+
+// A match that cannot be inspected is not the same as one that is not a
+// directory: treating them alike silently shrinks the set of packages
+// published while the run reports success.
+func TestGeneratedPackagesReportsUninspectableMatches(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can stat through a 0000 directory")
+	}
+	root := t.TempDir()
+	dist := filepath.Join(root, "npm", "dist")
+	writePkg(t, filepath.Join(dist, "rig"), "@rigsmith/rig", "1.19.0", false)
+	// A dangling symlink matches the glob and cannot be stat'd.
+	if err := os.Symlink(filepath.Join(root, "nowhere"), filepath.Join(dist, "ghost")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err == nil {
+		t.Fatal("a match that cannot be inspected must be reported, not skipped")
+	}
+}
+
+// The directory is checked, but the manifest inside it is a separate path and
+// can be a symlink of its own pointing at a package.json outside the tree.
+func TestGeneratedPackagesRefusesSymlinkedManifest(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "package.json"),
+		[]byte(`{"name":"@rigsmith/evil","version":"9.9.9"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "npm", "dist", "rig")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "package.json"), filepath.Join(dir, "package.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err == nil {
+		t.Fatal("a manifest resolving outside the repository must be refused")
+	}
+	if !strings.Contains(err.Error(), "outside the repository") {
+		t.Errorf("the error should say it resolves outside the repository, got: %v", err)
+	}
+}
+
+// Two generated directories claiming one package name is a build that produced
+// it twice. Taking whichever sorted first would publish an arbitrary one.
+func TestGeneratedPackagesReportsDuplicateNames(t *testing.T) {
+	root := t.TempDir()
+	writePkg(t, filepath.Join(root, "npm", "dist", "rig"), "@rigsmith/rig", "1.19.0", false)
+	writePkg(t, filepath.Join(root, "npm", "dist", "rig-copy"), "@rigsmith/rig", "1.19.0", false)
+
+	_, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err == nil {
+		t.Fatal("two directories generating one package name must be reported")
+	}
+	for _, want := range []string{"@rigsmith/rig", "npm/dist/rig", "npm/dist/rig-copy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error should name %q, got: %v", want, err)
+		}
+	}
+}
+
+// Overlapping globs matching the SAME directory are harmless and must stay so.
+func TestGeneratedPackagesAllowsOverlappingGlobs(t *testing.T) {
+	root := t.TempDir()
+	writePkg(t, filepath.Join(root, "npm", "dist", "rig"), "@rigsmith/rig", "1.19.0", false)
+
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*", "npm/dist/r*"), map[string]bool{})
+	if err != nil {
+		t.Fatalf("two globs matching one directory is not a conflict: %v", err)
+	}
+	if len(gen.Packages) != 1 {
+		t.Fatalf("got %d package(s), want 1", len(gen.Packages))
+	}
+}
+
+// A configured glob matching nothing stays a non-error — before the build that
+// writes those directories has run, empty is correct. But it must not be
+// silent: a publish that shipped none of the generated packages otherwise looks
+// exactly like one that had none to ship.
+func TestGeneratedPackagesNotesWhenConfiguredGlobsMatchNothing(t *testing.T) {
+	gen, err := generatedPackages(t.TempDir(), nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err != nil {
+		t.Fatalf("a glob matching nothing must not be an error: %v", err)
+	}
+	if len(gen.Packages) != 0 {
+		t.Fatalf("got %d package(s), want 0", len(gen.Packages))
+	}
+	if len(gen.Notes) != 1 {
+		t.Fatalf("want one note saying nothing matched, got %v", gen.Notes)
+	}
+	for _, want := range []string{"node.publishDirs", "npm/dist/*", "matched no packages"} {
+		if !strings.Contains(gen.Notes[0], want) {
+			t.Errorf("the note should mention %q, got: %s", want, gen.Notes[0])
+		}
+	}
+}
+
+// No publishDirs configured means nothing to say — the note exists for the
+// difference between "configured and empty" and "not configured".
+func TestGeneratedPackagesSaysNothingWhenNotConfigured(t *testing.T) {
+	cfg, err := config.Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, err := generatedPackages(t.TempDir(), cfg, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gen.Notes) != 0 {
+		t.Errorf("no publishDirs configured should produce no notes, got %v", gen.Notes)
+	}
+}
+
+// And a glob that DID match says nothing, so the note stays meaningful.
+func TestGeneratedPackagesSaysNothingWhenGlobsMatch(t *testing.T) {
+	root := t.TempDir()
+	writePkg(t, filepath.Join(root, "npm", "dist", "rig"), "@rigsmith/rig", "1.19.0", false)
+	gen, err := generatedPackages(root, nodeCfg(t, "npm/dist/*"), map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gen.Notes) != 0 {
+		t.Errorf("a glob that matched should produce no notes, got %v", gen.Notes)
+	}
+}
