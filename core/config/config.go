@@ -615,6 +615,19 @@ type EcosystemConfig struct {
 	// registries — NuGet keys its trusted-publishing token to the policy
 	// creator's username. Unused by npm/crates.
 	User string `json:"user,omitempty"`
+	// PublishDirs are repo-relative globs naming package directories that do not
+	// exist until a build has produced them — binary wrappers generated from
+	// release artifacts, rather than sources anyone checked in. Discovery walks
+	// the tree and so cannot see them; these are published anyway.
+	//
+	// They are published, never versioned: whatever generated the directory
+	// already stamped the version, and the cascade has no business rewriting a
+	// build output. A glob matching nothing is not an error — before the build
+	// that writes them, that is the correct state, and a publish that ran too
+	// early should say "nothing to publish" rather than fail.
+	//
+	// Honored by node today, where each match must hold a package.json.
+	PublishDirs []string `json:"publishDirs,omitempty"`
 	// VersionStrategy overrides the top-level VersionStrategy for this
 	// ecosystem's packages (net's `dotnet.versionStrategy`); empty inherits it.
 	VersionStrategy VersionStrategy `json:"versionStrategy,omitempty"`

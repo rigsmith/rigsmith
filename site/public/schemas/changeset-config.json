@@ -288,6 +288,13 @@
           "type": "string",
           "description": "Registry account/subject some OIDC exchanges require (e.g. NuGet)."
         },
+        "publishDirs": {
+         "type": "array",
+         "items": {
+          "type": "string"
+         },
+         "description": "Repo-relative globs naming package directories a build generates rather than sources checked in (npm binary wrappers built from release artifacts, e.g. \"npm/dist/*\"). Published, never versioned; a glob matching nothing is not an error. Honored by node."
+        },
         "versionStrategy": {
           "type": "string",
           "enum": [

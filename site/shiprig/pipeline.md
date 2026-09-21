@@ -246,10 +246,12 @@ idempotent.
 ## Publish authentication
 
 Per-ecosystem auth and OIDC trusted publishing are configured under each
-ecosystem block in the release config:
+ecosystem block in `.changeset/config.json` — keyed by **ecosystem id**, which
+for npm packages is `node`. An unrecognized key is not an error: the block is
+simply never read, so a `"npm"` block configures nothing at all.
 
 ```jsonc
-"npm":    { "auth": "op://CI/npm/token" },          // 1Password secret reference
+"node":   { "auth": "op://CI/npm/token" },          // 1Password secret reference
 "cargo":  { "auth": "env:CARGO_REGISTRY_TOKEN" },   // an environment variable
 "dotnet": { "auth": "cmd:op item get nuget --fields apikey", "oidc": "auto" }
 ```
@@ -260,10 +262,15 @@ ecosystem block in the release config:
 - **`oidc`** is `"auto"` (use OIDC trusted publishing when a CI OIDC context is
   present) or `"off"` (force a token). Supported for npm, crates.io, and
   NuGet.org.
+- **`publishDirs`** are repo-relative globs naming package directories a build
+  generates rather than sources anyone checked in — npm binary wrappers built
+  from release artifacts, say. They are published, never versioned, and a glob
+  matching nothing is not an error, since the directories exist only after the
+  build that writes them. Honored by `node`.
 
 Precedence per registry: an explicit `auth` ref wins; otherwise OIDC when a CI
 context is present and not turned off; otherwise the ambient environment. See the
-[publish-auth guide](https://github.com/JohnCampionJr/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md)
+[publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md)
 for the full matrix.
 
 ## Signing (desktop ecosystems)

@@ -51,6 +51,23 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Packages a build generated rather than a person checked in — npm
+			// binary wrappers built from release artifacts, say. Discovery walks
+			// the tree and cannot see them; `publishDirs` names where they land.
+			// Publish-only, and appended after discovery so a generated directory
+			// can never shadow a real package of the same name.
+			known := make(map[string]bool, len(pkgs))
+			for _, p := range pkgs {
+				known[p.Name] = true
+			}
+			genPkgs, genEco, err := generatedPackages(ws.Root, ws.Config, known)
+			if err != nil {
+				return err
+			}
+			pkgs = append(pkgs, genPkgs...)
+			for name, eco := range genEco {
+				ecoOf[name] = eco
+			}
 			out := cmd.OutOrStdout()
 			acc := access
 			if acc == "" {
