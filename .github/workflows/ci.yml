@@ -406,3 +406,52 @@ jobs:
           # marker exists to clarify.
           echo "::error title=Run stopped by ${JOB}::${JOB} failed, so this run is being cancelled on purpose, to save the macOS and Windows tiers. Any job here reporting 'cancelled' was stopped for that reason - whatever actually went wrong is the failed step in ${JOB}, which is the log to read." || true
           gh run cancel ${{ github.run_id }} --repo ${{ github.repository }}
+
+  release-config:
+    name: goreleaser (snapshot)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      # 1.19.0 built every binary, archived every tool, and then failed the
+      # whole release on `archive has different count of binaries for each
+      # platform` — the bundle carries brewrig, which has no Windows build.
+      # Nothing before a tag push could have said so: `goreleaser check`
+      # validates the config's shape and passed throughout, and the snapshot
+      # that would have caught it existed only behind workflow_dispatch, which
+      # is a thing somebody has to remember. This job is that snapshot, run
+      # without being remembered.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          # GoReleaser reads git state; a shallow clone makes it complain rather
+          # than build.
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - id: paths
+        run: |
+          echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.paths.outputs.gocache }}
+            ${{ steps.paths.outputs.gomodcache }}
+          key: go-release-config-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-release-config-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-
+      # Builds and archives every target exactly as a release does, and stops
+      # there: no GitHub release, tap push, npm publish or winget submission.
+      # Signing and notarization are skipped rather than attempted — their
+      # secrets are not exposed here, and scripts/sign-windows.sh no-ops
+      # without them anyway.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish,notarize,announce,sign

@@ -251,8 +251,14 @@ archives:
       - clauderig
       - codexrig
       - changerig
-      # brewrig has no windows build, so the windows bundle simply omits it.
+      # brewrig has no windows build, so the windows bundle carries five
+      # binaries where darwin and linux carry six. GoReleaser treats a differing
+      # count as a mistake — "may cause your users confusion" — and fails the
+      # whole release rather than the one archive, which is how 1.19.0 died
+      # after building everything. Here it is deliberate: Homebrew does not run
+      # on Windows, so there is nothing to put in that slot.
       - brewrig
+    allow_different_binary_count: true
     name_template: "rigsmith_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
