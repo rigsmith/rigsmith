@@ -11,14 +11,14 @@
 // expired mid-month, left 1.19.0's npm packages unpublished, and whose failure
 // then skipped five winget submissions.
 //
-// ONE WORKFLOW, NOT TWO. The registry supports a single trusted-publisher
+// ONE WORKFLOW, BY DESIGN. The registry supports a single trusted-publisher
 // configuration per package ("If you attempt to create a new trust relationship
-// when one already exists, it will result in an error" — npm trust docs), so
-// this registers the release workflow and only that. The consequence is worth
-// knowing: npm-republish.yml, the recovery path that published 1.19.0's npm
-// packages after the release run died, cannot use OIDC and still needs
-// NPM_TOKEN. Removing that secret entirely would mean giving the recovery path
-// a different shape — re-running the release workflow rather than its own.
+// when one already exists, it will result in an error" — npm trust docs), and a
+// configuration names a workflow FILE. So everything that publishes these
+// packages lives in goreleaser.yml: the tag release, and the republish-npm job
+// that recovers a release whose npm step alone failed. That job used to be a
+// workflow of its own, which would have left it needing a stored token forever —
+// folding it in is what makes NPM_TOKEN removable rather than merely reduced.
 //
 // RUN IT AGAIN WHENEVER A TOOL IS ADDED — a new tool means seven new packages,
 // none of which can publish via OIDC until registered. It is one more
