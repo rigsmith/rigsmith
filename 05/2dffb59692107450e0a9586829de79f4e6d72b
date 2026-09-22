@@ -1,0 +1,19 @@
+internal/changerig/cmdtest/shiprig_packages_json_test.go
+  s_df06cc81ca93a0::t_7a9c9746b14ec3 4,6,22-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "052dffb59692107450e0a9586829de79f4e6d72b",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
