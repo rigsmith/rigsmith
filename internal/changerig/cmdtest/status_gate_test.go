@@ -53,3 +53,16 @@ func TestStatusGateIgnoresPackagesThatDoNotVersion(t *testing.T) {
 	code, out := runChangerig(t, dir, "status")
 	assertExitZero(t, code, out)
 }
+
+// An explicit --since that doesn't resolve is an error in commit mode too,
+// not a silently ignored flag.
+func TestStatusSinceInvalidRefFailsInCommitMode(t *testing.T) {
+	dir := gateRepo(t)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "versioning": { "source": "commits" } }`)
+	gitCommitAll(t, dir, "commit mode")
+
+	code, out := runChangerig(t, dir, "status", "--since", "no-such-ref")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, `could not determine changes since "no-such-ref"`)
+}

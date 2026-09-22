@@ -80,11 +80,15 @@ func NewStatusCmd() *cobra.Command {
 			// (mirrors @changesets and net-changesets).
 			var changedFiles []string
 			changesetMode := ws.Config.CommitSource() == config.SourceChangesets
-			if sinceRef != "" && changesetMode {
+			// An explicit ref is validated whatever the source, so a mistyped
+			// one never passes silently in commit mode.
+			if sinceRef != "" {
 				changedFiles, err = gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
 				if err != nil {
 					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
 				}
+			}
+			if sinceRef != "" && changesetMode {
 				ids := since.ChangedChangesetIDs(changedFiles, ws.ChangesetDir)
 				inSince := map[string]bool{}
 				for _, id := range ids {
