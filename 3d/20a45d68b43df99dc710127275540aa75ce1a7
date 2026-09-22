@@ -1,0 +1,30 @@
+internal/shiprig/cli/tagevents.go
+  s_df06cc81ca93a0::t_b2edef064a1b58 1-57
+.changeset/nimble-lemurs-jump.md
+  s_df06cc81ca93a0::t_6bb975e2f9ba6f 1-7
+site/shiprig/index.md
+  s_df06cc81ca93a0::t_6bb975e2f9ba6f 40-45
+internal/shiprig/cli/tag.go
+  s_df06cc81ca93a0::t_a75fe785e841cc 30-33,55-61,77-78,90-94,103
+internal/changerig/cmdtest/shiprig_output_test.go
+  s_df06cc81ca93a0::t_ebfb900fbcaeaf 1-135
+internal/shiprig/cli/publish.go
+  s_df06cc81ca93a0::t_297b162619e59b 273-276,278,281-284,304-321,368
+  s_df06cc81ca93a0::t_12f918f54725f2 56-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3d20a45d68b43df99dc710127275540aa75ce1a7",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
