@@ -3,6 +3,7 @@ package cmdtest
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -39,15 +40,24 @@ func TestShiprigPublishFailureExitsNonZero(t *testing.T) {
 	// A fake npm: the package is not on the registry yet (view → E404), and
 	// the registry then refuses the publish, as in #419.
 	bin := filepath.Join(dir, "fakebin")
-	writeFile(t, filepath.Join(bin, "npm"), `#!/bin/sh
+	if runtime.GOOS == "windows" {
+		// npm resolves through PATHEXT on Windows, and a batch file is what
+		// the real one is too.
+		writeFile(t, filepath.Join(bin, "npm.cmd"), "@echo off\r\n"+
+			"if \"%1\"==\"view\" (echo npm error code E404 1>&2 & exit /b 1)\r\n"+
+			"if \"%1\"==\"publish\" (echo npm error 404 Not Found - PUT https://registry.npmjs.org/@acme%%2fauth 1>&2 & exit /b 1)\r\n"+
+			"exit /b 0\r\n")
+	} else {
+		writeFile(t, filepath.Join(bin, "npm"), `#!/bin/sh
 case "$1" in
   view) echo "npm error code E404" >&2; exit 1 ;;
   publish) echo "npm error 404 Not Found - PUT https://registry.npmjs.org/@acme%2fauth" >&2; exit 1 ;;
   *) exit 0 ;;
 esac
 `)
-	if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
-		t.Fatal(err)
+		if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
