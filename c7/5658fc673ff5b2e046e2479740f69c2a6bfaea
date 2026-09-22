@@ -1,0 +1,34 @@
+internal/changerig/commands/releasepkgs.go
+  s_df06cc81ca93a0::t_87bdc66fc7441c 6,26-29,67-71,73
+.changeset/eager-lemurs-jump.md
+  s_df06cc81ca93a0::t_1449551ff0151b 1-7
+internal/changerig/cmdtest/shiprig_packages_json_test.go
+  s_df06cc81ca93a0::t_0fd828bbd97014 1-68
+site/shiprig/index.md
+  s_df06cc81ca93a0::t_1449551ff0151b 37-39
+internal/changerig/commands/version_stack_test.go
+  s_df06cc81ca93a0::t_fba626898aba78 273-310
+internal/changerig/commands/version.go
+  s_df06cc81ca93a0::t_4a93352d04aeec 347-351,356
+  s_df06cc81ca93a0::t_9fa570d98f12ec 369
+internal/shiprig/cli/packages.go
+  s_df06cc81ca93a0::t_bab589770a736c 4,42-43,47-53,55-67,70-103
+internal/changerig/commands/workspace.go
+  s_df06cc81ca93a0::t_07a5fbd82204fc 15,69-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c75658fc673ff5b2e046e2479740f69c2a6bfaea",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
