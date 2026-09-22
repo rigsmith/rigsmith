@@ -1,0 +1,19 @@
+docs/CHANGERIG-ACTION-ROADMAP.md
+  s_df06cc81ca93a0::t_255568cc1238ed 1-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2d808ffae4929bbea0d214d60efb4688e85f0251",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
