@@ -246,6 +246,42 @@
       "changesets": [{ "file": "c.md", "summary": "A cool change", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
       "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.0" },
       "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
+    },
+    {
+      "_comment": "Peer dependent, in range (Changesets v3): pkg-a's minor stays inside pkg-b's ^1.0.0 peer range, so pkg-b is NOT released and its peer range is untouched. v2 gave the dependent a major here.",
+      "id": "peer-in-range",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "peerDependencies": [{ "name": "pkg-a", "range": "^1.0.0" }] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A peer feature", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.0" },
+      "expectedPeerRanges": { "pkg-b": { "pkg-a": "^1.0.0" } }
+    },
+    {
+      "_comment": "Peer dependent, out of range (Changesets v3): pkg-a's major leaves pkg-b's ^1.0.0 peer range, so pkg-b gets a PATCH (not v2's major) and its peer range is rewritten to ^2.0.0.",
+      "id": "peer-out-of-range-major",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "peerDependencies": [{ "name": "pkg-a", "range": "^1.0.0" }] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A breaking peer change", "releases": [{ "package": "pkg-a", "bump": "major" }] }],
+      "expectedVersions": { "pkg-a": "2.0.0", "pkg-b": "1.0.1" },
+      "expectedPeerRanges": { "pkg-b": { "pkg-a": "^2.0.0" } }
+    },
+    {
+      "_comment": "Peer dependent pinned exactly (Changesets v3): any pkg-a release leaves an exact peer range, so pkg-b patch-bumps and the pin moves to the new version.",
+      "id": "peer-exact-minor",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "peerDependencies": ["pkg-a"] }
+      ],
+      "changesets": [{ "file": "c.md", "summary": "A peer feature", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.1" },
+      "expectedPeerRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
     }
   ]
 }

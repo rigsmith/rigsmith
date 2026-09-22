@@ -33,8 +33,9 @@ node scripts/regen-parity-goldens.mjs --write <id> # freeze a NEW scenario's gol
 ```
 
 It needs the oracle installed (default: the net-changesets demo's
-`node_modules/@changesets/cli/bin.js`, v3.0.0-next.5; override with
-`$CHANGESETS_BIN`). Run it without `--write` after touching the corpus — it
+`node_modules/@changesets/cli/bin.js`; override with `$CHANGESETS_BIN`). The
+goldens are frozen from **`@changesets/cli` 3.0.3**, so the oracle must be on
+3.0.x for a clean verify. Run it without `--write` after touching the corpus — it
 exits non-zero on any drift from live Node, and prints each scenario's resulting
 versions/ranges so a new scenario's expectations can be filled from observation.
 
@@ -86,8 +87,9 @@ else — blank lines between sections, bullet indentation — is significant.
 
 ## Scope (current)
 
-22 scenarios (`fixed`/`linked`/`ignore` config keys are supported in
-`scenarios.json` and written into the materialized config):
+25 scenarios (`fixed`/`linked`/`ignore` config keys and per-package
+`peerDependencies` are supported in `scenarios.json` and written into the
+materialized repo):
 
 - 10 "matching" scenarios (single bumps, combined, multiline, dependency cascade,
   0.x).
@@ -107,6 +109,11 @@ else — blank lines between sections, bullet indentation — is significant.
 - `linked-group` / `linked-group-partial` — releasing members share the highest
   bump from the highest current version; members with no changeset are NOT
   released.
+- `peer-in-range` / `peer-out-of-range-major` / `peer-exact-minor` — the
+  Changesets v3 peer rule: a peer dependent is treated like a regular
+  dependent. In range it is not released and its peer range is untouched; out
+  of range it gets a **patch** (v2 gave it a major) and the range is rewritten
+  (`expectedPeerRanges`). npm-only: excluded from the dotnet tests.
 - `ignored-dependent` — an ignored cascade-dependent becomes a "none" release:
   no version change, no CHANGELOG, but its manifest dep range IS rewritten
   (and it appears in `status --output` with `type: "none"`, like Node).

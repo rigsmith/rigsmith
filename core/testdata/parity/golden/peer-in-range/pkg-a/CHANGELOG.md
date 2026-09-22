@@ -4,4 +4,4 @@
 
 ### Minor Changes
 
-- Root change
+- A peer feature

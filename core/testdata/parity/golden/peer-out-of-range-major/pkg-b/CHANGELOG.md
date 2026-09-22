@@ -5,4 +5,4 @@
 ### Patch Changes
 
 - Updated dependencies
-  - pkg-a@1.1.0
+  - pkg-a@2.0.0
