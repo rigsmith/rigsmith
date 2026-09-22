@@ -133,3 +133,25 @@ func fakeNpmPublishes(t *testing.T, dir string) {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
+
+// A tag whose event can't be written is removed again: left behind, a retry
+// would find it existing, skip it, and never report it to the caller.
+func TestTagRemovesATagItCouldNotReport(t *testing.T) {
+	dir := tagWorkspace(t)
+	unwritable := tempDir(t) // a directory: opening it for append fails
+
+	code, out := runShiprig(t, dir, "tag", "--output", unwritable)
+	assertExitNonZero(t, code, out)
+	// (The message says "tag removed", but the error box wraps it; the tag
+	// list is the evidence.)
+	if tags := tagList(t, dir); len(tags) != 0 {
+		t.Fatalf("an unreported tag was left behind: %v", tags)
+	}
+
+	events := filepath.Join(tempDir(t), "events.ndjson")
+	code, out = runShiprig(t, dir, "tag", "--output", events)
+	assertExitZero(t, code, out)
+	if got := readTagEvents(t, events); len(got) != 2 {
+		t.Errorf("the retry should create and report both tags, got %+v", got)
+	}
+}

@@ -313,8 +313,8 @@ func newPublishCmd() *cobra.Command {
 					if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
 						return fmt.Errorf("tagging %s: %w", p.Name, err)
 					}
-					if err := events.gitTag(tag, p.Name); err != nil {
-						return fmt.Errorf("recording tag %s in %s: %w", tag, events.path, err)
+					if err := events.record(cmd.Context(), ws.Root, tag, p.Name); err != nil {
+						return err
 					}
 					fmt.Fprintf(out, "%s %s %s\n", commands.PatchStyle.Render("tagged"), tag, commands.DimStyle.Render("(local; the caller pushes it)"))
 					continue

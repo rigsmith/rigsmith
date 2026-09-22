@@ -138,6 +138,12 @@ func CreateTag(ctx context.Context, repoRoot, tag, message string) error {
 	return err
 }
 
+// DeleteTag removes a local tag.
+func DeleteTag(ctx context.Context, repoRoot, tag string) error {
+	_, err := runGit(ctx, repoRoot, "tag", "-d", tag)
+	return err
+}
+
 // DefaultRemote returns the repo's first configured remote (preferring "origin"),
 // or "" when there is none.
 func DefaultRemote(ctx context.Context, repoRoot string) string {

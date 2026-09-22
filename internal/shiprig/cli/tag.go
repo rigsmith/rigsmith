@@ -88,8 +88,8 @@ func newTagCmd() *cobra.Command {
 					return fmt.Errorf("tagging %s: %w", p.Name, err)
 				}
 				if events != nil {
-					if err := events.gitTag(tag, p.Name); err != nil {
-						return fmt.Errorf("recording tag %s in %s: %w", tag, events.path, err)
+					if err := events.record(cmd.Context(), ws.Root, tag, p.Name); err != nil {
+						return err
 					}
 				}
 				fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
