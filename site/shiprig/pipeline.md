@@ -11,9 +11,24 @@ shiprig release --dry-build      # build artifacts locally, publish nothing
 shiprig release --local          # run the whole pipeline, but skip every network step
 shiprig release --only build,publish   # run just these steps
 shiprig release --channels osx-arm64   # build one target channel, not the whole matrix
-shiprig release --from publish   # resume at a step after a failure
+shiprig release --from commit    # resume at the step a failed release stopped at
 shiprig release --yes            # approve every confirm gate (CI)
 ```
+
+### Resuming a release
+
+When a release stops partway (a step fails, or a confirm gate is declined),
+shiprig prints `Resume with: shiprig release --from <step>` and records that
+step in the git directory, outside the work tree. A resume has to start there
+or earlier: every later step never ran, and later steps can depend on them.
+`publish` ships what `build` produced, so resuming "from publish" after a
+failure at `commit` would publish packages that were never built.
+
+So a `--from` past the recorded step is refused, naming the steps it would
+skip; `--force` skips them anyway. A run that completes clears the record. Any
+`--from` run also prints the steps it skips (`--from publish skips: commit,
+build`). Runs narrowed with `--only`/`--skip` never clear the record, and
+`--local`, `--rehearse` and `--dry-build` neither read nor write it.
 
 ## Built-in steps
 

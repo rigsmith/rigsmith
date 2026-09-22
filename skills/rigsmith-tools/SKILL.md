@@ -277,6 +277,13 @@ records one.
 > hit live registries. `publish` is idempotent and confirm-gated, but treat it as
 > outward-facing: confirm first.
 
+**Resuming a failed release:** use the step it names (`Resume with: shiprig
+release --from <step>`), never a later one — a `--from` past it is refused,
+because the steps in between never ran (`publish` ships what `build` made).
+Don't reach for `--force` to get past that. And never judge a release by a
+piped exit code: `shiprig release … | tail` always "exits 0" (that was #419);
+use `set -o pipefail` or no pipe.
+
 ## Setting up a repo that has no changeset/versioning config yet
 
 If `.changeset/` is absent (no `changerig`/`shiprig` setup), **ask the user which
