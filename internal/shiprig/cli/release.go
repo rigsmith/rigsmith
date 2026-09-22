@@ -46,6 +46,7 @@ func newReleaseCmd() *cobra.Command {
 		yes        bool
 		gitOnly    bool
 		ui, noUI   bool
+		force      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "release",
@@ -101,6 +102,42 @@ func newReleaseCmd() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+
+			// Resume guard (#420). A rehearsal (--local, --rehearse, --dry-build)
+			// neither reads nor records it: its success says nothing about what
+			// shipped.
+			statePath := ""
+			if !dryBuild && !local && !rehearse {
+				statePath = resumeStatePath(cmd.Context(), ws.Root)
+			}
+			if from != "" {
+				if skipped := skippedByFrom(steps); len(skipped) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "--from %s skips: %s\n", from, strings.Join(skipped, ", "))
+				}
+				if st := readResumeState(statePath); st != nil {
+					if unrun := neverRan(steps, st, from); len(unrun) > 0 {
+						guard := resumeGuardError(cfg.Tool, from, st.Next, unrun)
+						switch {
+						case dryRun:
+							fmt.Fprintln(cmd.OutOrStdout(), "warning: a real run would refuse: "+guard.Error())
+						case !force:
+							cmd.SilenceUsage = true
+							return guard
+						default:
+							fmt.Fprintf(cmd.OutOrStdout(), "--force: skipping %s, which the last release never ran\n", strings.Join(unrun, ", "))
+						}
+					}
+				}
+			}
+			record := func(ran []pipeline.ResolvedStep, ok bool, p *pipeline.Pipeline) {
+				if dryRun || p == nil {
+					return
+				}
+				narrowed := len(only) > 0 || len(skip) > 0
+				if err := recordResumeState(statePath, ran, ok, p.StoppedAt(), to, narrowed); err != nil {
+					fmt.Fprintln(cmd.ErrOrStderr(), "warning: could not record the release's progress: "+err.Error())
+				}
 			}
 
 			if dryBuild {
@@ -358,11 +395,17 @@ func newReleaseCmd() *cobra.Command {
 					// editor's picks apply to this run (empty = every channel).
 					channels = pickedChannels
 				}
+				var ran *pipeline.Pipeline
+				capture := func(r pipeline.Reporter, pr pipeline.Prompter) *pipeline.Pipeline {
+					ran = newPipeline(r, pr)
+					return ran
+				}
 				ok, err := runDashboard(chosen, cfg, cfg.Tool,
-					cmd.InOrStdin(), cmd.OutOrStdout(), masker, newPipeline)
+					cmd.InOrStdin(), cmd.OutOrStdout(), masker, capture)
 				if err != nil {
 					return err
 				}
+				record(chosen, ok, ran)
 				if !ok {
 					return fail()
 				}
@@ -384,7 +427,10 @@ func newReleaseCmd() *cobra.Command {
 				// stops the release rather than guessing.
 				prompter = pipeline.FixedPrompter{Answer: yes}
 			}
-			if !newPipeline(reporter, prompter).Run(steps, cfg, dryRun) {
+			pl := newPipeline(reporter, prompter)
+			ok := pl.Run(steps, cfg, dryRun)
+			record(steps, ok, pl)
+			if !ok {
 				return fail()
 			}
 			return nil
@@ -400,6 +446,7 @@ func newReleaseCmd() *cobra.Command {
 	f.StringSliceVar(&channels, "channels", nil, "build only these target channels, e.g. osx-arm64 (comma-separated; Velopack apps)")
 	f.StringVar(&from, "from", "", "start at this step (resume point)")
 	f.StringVar(&to, "to", "", "stop after this step")
+	f.BoolVarP(&force, "force", "f", false, "with --from, skip steps the last (unfinished) release never ran")
 	f.StringVar(&configPath, "config", "", "release config file (default: auto-detected, e.g. .changeset/release.jsonc)")
 	f.BoolVarP(&yes, "yes", "y", false, "approve all confirm gates (non-interactive)")
 	f.BoolVar(&gitOnly, "git-only", false, "skip forge (GitHub) releases; tags only")

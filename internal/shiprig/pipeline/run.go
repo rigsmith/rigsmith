@@ -64,7 +64,16 @@ type Pipeline struct {
 	// secretResolver resolves a var's "secret" reference; nil uses the shared
 	// credential resolver (op://, env:, cmd:). Tests substitute one.
 	secretResolver func(ref string, masker *SecretMasker) (string, error)
+	// stoppedAt is the step a real run stopped at without completing it (a
+	// failure, an if-condition error, or a declined confirm gate); "" when it
+	// completed or stopped before any step (a global hook or a variable).
+	stoppedAt string
 }
+
+// StoppedAt names the step the last real Run stopped at without completing;
+// "" when every step completed or the run stopped before the first one. A
+// resume has to start there or earlier: every step after it never ran.
+func (p *Pipeline) StoppedAt() string { return p.stoppedAt }
 
 // New builds a Pipeline. env is the layered release environment
 // (.env/.env.local < ambient) used to resolve ${env.NAME} placeholders; nil
@@ -101,6 +110,7 @@ func New(
 // hooks) succeeds.
 func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 	p.baseContext = map[string]string{"tool": toolOf(config)}
+	p.stoppedAt = ""
 	p.scriptCtx = buildScriptCtx(p.relctx, p.env, dryRun)
 	p.scriptDryRun = dryRun
 	scriptEval := func(expr string) (string, error) { return evalScriptString(expr, p.scriptCtx) }
@@ -158,6 +168,7 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 
 		run, reason, ok := p.evalStepIf(step)
 		if !ok {
+			p.stoppedAt = step.Name
 			return p.fail(hooks, fmt.Sprintf("step '%s' if-condition error: %s", step.Name, reason))
 		}
 		if !run {
@@ -168,6 +179,7 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 		p.reporter.StepStarted(step.Name)
 
 		if !p.runCommands(step.Name+" (before)", step.Before) {
+			p.stoppedAt = step.Name
 			return p.fail(hooks, fmt.Sprintf("step '%s' failed", step.Name))
 		}
 
@@ -175,11 +187,13 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 		// inform the decision), before the consequential action. Declining
 		// stops the run without treating it as a failure.
 		if step.Confirm != nil && !p.prompter.Confirm(*step.Confirm) {
+			p.stoppedAt = step.Name
 			p.reporter.StepCancelled(step.Name)
 			return false
 		}
 
 		if !p.runAction(step) || !p.runCommands(step.Name+" (after)", step.After) {
+			p.stoppedAt = step.Name
 			return p.fail(hooks, fmt.Sprintf("step '%s' failed", step.Name))
 		}
 

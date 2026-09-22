@@ -44,6 +44,11 @@ nothing into a member's manifest (the number is recorded in
 pushed. `shiprig version --no-stamp` (or `versioning.stamp: false`) does the
 same anywhere.
 
+A release that stops partway records the step it stopped at, and a later
+`shiprig release --from <step>` past it is refused (`--force` overrides): the
+steps in between never ran, and `publish` ships what `build` produced. See
+[the pipeline docs](../../site/shiprig/pipeline.md#resuming-a-release).
+
 `version` runs the shared engine in `rigsmith/core`: it parses changesets,
 cascades bumps to dependents, applies linked/fixed/lockstep grouping, stamps the
 new versions into each ecosystem's manifest, and writes `CHANGELOG.md`.

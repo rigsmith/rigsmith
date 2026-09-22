@@ -219,6 +219,10 @@ var fusedHistorySteps = []string{"tag", "push", "release"}
 // version step when no release is pending.
 const NothingToVersionSkipReason = "no pending changesets"
 
+// BeforeFromSkipReason is the plan's reason for a step that comes before the
+// --from resume point.
+const BeforeFromSkipReason = "before --from"
+
 // FusedHistorySkipReason is the plan's reason for a built-in step a stackspace
 // leaves out.
 const FusedHistorySkipReason = "stackspace: a fused history is not tagged, pushed or released"
@@ -553,7 +557,7 @@ func skipReasonFor(
 		return reason
 	}
 	if index < fromIndex {
-		return "before --from"
+		return BeforeFromSkipReason
 	}
 	if index > toIndex {
 		return "after --to"
