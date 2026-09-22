@@ -1,7 +1,9 @@
 package cmdtest
 
 import (
+	"bytes"
 	"encoding/json"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -17,8 +19,17 @@ func TestShiprigPackagesListJSON(t *testing.T) {
 	initChangesets(t, dir)
 	writeChangeset(t, dir, "cs", "pkg-a", "minor", "a feature")
 
-	code, out := runShiprig(t, dir, "packages", "list", "--json")
-	assertExitZero(t, code, out)
+	// stdout alone: that is what a script parses, and nothing but the JSON
+	// may be on it.
+	cmd := exec.Command(shiprigBin, "packages", "list", "--json")
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("packages list --json: %v\nstderr:\n%s", err, stderr.String())
+	}
+	out := string(stdout)
 
 	var got struct {
 		Packages []map[string]any `json:"packages"`
