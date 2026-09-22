@@ -1,0 +1,47 @@
+core/testdata/parity/prerelease/step3/pkg-a/CHANGELOG.md
+  s_df06cc81ca93a0::t_4c74ba43d22c05 4,14,20
+core/testdata/parity/golden/peer-out-of-range-major/pkg-b/CHANGELOG.md
+  s_df06cc81ca93a0::t_250aa7c4244874 1-8
+core/testdata/parity/prerelease/step2/pkg-a/CHANGELOG.md
+  s_df06cc81ca93a0::t_4c74ba43d22c05 4,10
+internal/changerig/parity/harness_test.go
+  s_df06cc81ca93a0::t_9d88eb84b8c984 491-492
+  s_df06cc81ca93a0::t_c9b4629512e640 63-66
+  s_df06cc81ca93a0::t_ad47b6a891b851 561-588
+  s_df06cc81ca93a0::t_ef1fd6e29f1dec 192-199
+  s_df06cc81ca93a0::t_b46dd3e268c974 79
+internal/changerig/parity/dotnet_test.go
+  s_df06cc81ca93a0::t_8068dfafbaa54e 29-30,33-35
+core/testdata/parity/golden/peer-exact-minor/pkg-b/CHANGELOG.md
+  s_df06cc81ca93a0::t_250aa7c4244874 1-8
+core/testdata/parity/golden/peer-out-of-range-major/pkg-a/CHANGELOG.md
+  s_df06cc81ca93a0::t_250aa7c4244874 1-7
+core/testdata/parity/prerelease/step1/pkg-a/CHANGELOG.md
+  s_df06cc81ca93a0::t_4c74ba43d22c05 4
+scripts/regen-parity-goldens.mjs
+  s_df06cc81ca93a0::t_08d178e7798fc7 13-15,44,49,54,99-102
+core/testdata/parity/golden/peer-in-range/pkg-a/CHANGELOG.md
+  s_df06cc81ca93a0::t_250aa7c4244874 1-7
+core/testdata/parity/scenarios.json
+  s_df06cc81ca93a0::t_250aa7c4244874 249-284
+core/testdata/parity/golden/peer-exact-minor/pkg-a/CHANGELOG.md
+  s_df06cc81ca93a0::t_250aa7c4244874 1-7
+core/testdata/parity/README.md
+  s_df06cc81ca93a0::t_0859e75a5b9de7 36-38,90-92,112-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "baa69a20becddd55a29f38bec1bcc62044b47a05",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
