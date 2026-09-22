@@ -1,0 +1,40 @@
+internal/shiprig/cli/release.go
+  s_df06cc81ca93a0::t_eb33ee1fc8d2ad 137-138
+  s_df06cc81ca93a0::t_385461fa51cbe3 49,107-136,139-142,398-402,404,408,430-433,449
+site/shiprig/pipeline.md
+  s_df06cc81ca93a0::t_ac6a17b049523b 14,18-31
+.changeset/calm-geckos-wander.md
+  s_df06cc81ca93a0::t_6e67755c407803 1-7
+cmd/shiprig/README.md
+  s_df06cc81ca93a0::t_ac6a17b049523b 47-51
+skills/rigsmith-tools/SKILL.md
+  s_df06cc81ca93a0::t_e4a67a07731cd9 280-286
+internal/shiprig/cli/resume.go
+  s_df06cc81ca93a0::t_eb33ee1fc8d2ad 62-65,83-89,101-111
+  s_df06cc81ca93a0::t_b67910c578a13a 1-61,66-82,90-100,112-160
+internal/shiprig/pipeline/run.go
+  s_df06cc81ca93a0::t_a4ef7c3243cf35 67-70,73-77,171,182,190,196
+  s_df06cc81ca93a0::t_50787016205603 113
+internal/shiprig/cli/resume_test.go
+  s_df06cc81ca93a0::t_6dd93cec2e872e 1-100
+internal/changerig/cmdtest/shiprig_resume_test.go
+  s_df06cc81ca93a0::t_87d65e23975f93 1-81
+internal/shiprig/pipeline/resolve.go
+  s_df06cc81ca93a0::t_2ed713a0186b1b 222-225,560
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0ffaf30ee03e9a82f6a9f8ad8a908a14e4360542",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
