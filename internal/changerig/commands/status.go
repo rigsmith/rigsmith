@@ -105,6 +105,17 @@ func NewStatusCmd() *cobra.Command {
 				changesets = kept
 			}
 
+			// The run after `pre exit` graduates the changesets waiting in
+			// .changeset/pre/, even when none are left at the top level; count
+			// them before deciding there is nothing to report.
+			pre, err := prestate.Read(ws.ChangesetDir)
+			if err != nil {
+				return err
+			}
+			if changesets, err = withGraduating(ws, changesets, pre); err != nil {
+				return err
+			}
+
 			// A missing changeset is a failure in changeset mode, like @changesets
 			// and net-changesets (the CI gate this command exists for). In commit
 			// mode there is no changeset to require — no qualifying commits since

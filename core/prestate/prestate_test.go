@@ -72,7 +72,8 @@ func TestMoveToPreMovesConsumedAndMigratesV2List(t *testing.T) {
 	}
 	ps := &PreState{Mode: ModePre, Tag: "next", Changesets: []string{"old-one"}}
 	// "from-commit" has no file: skipped, not an error.
-	if err := ps.MoveToPre(dir, []string{"new-one", "from-commit"}); err != nil {
+	undo, err := ps.MoveToPre(dir, []string{"new-one", "from-commit"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"old-one", "new-one"} {
@@ -94,6 +95,57 @@ func TestMoveToPreMovesConsumedAndMigratesV2List(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(filepath.Join(dir, "pre.json")); strings.Contains(string(raw), "changesets") {
 		t.Errorf("pre.json should not carry a changesets list after migration:\n%s", raw)
+	}
+
+	// A caller whose later write fails puts everything back.
+	undo()
+	for _, id := range []string{"old-one", "new-one"} {
+		if _, err := os.Stat(filepath.Join(dir, id+".md")); err != nil {
+			t.Errorf("undo should return %s to the top level: %v", id, err)
+		}
+	}
+	if len(ps.Changesets) != 1 || ps.Changesets[0] != "old-one" {
+		t.Errorf("undo should restore the v2 list, got %v", ps.Changesets)
+	}
+}
+
+func TestMoveToPreIsAllOrNothing(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "first.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A directory where "second" would land makes that rename fail.
+	if err := os.WriteFile(filepath.Join(dir, "second.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "pre", "second.md", "blocker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ps := &PreState{Mode: ModePre, Tag: "next"}
+	if _, err := ps.MoveToPre(dir, []string{"first", "second"}); err == nil {
+		t.Fatal("MoveToPre should fail when a file cannot be moved")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "first.md")); err != nil {
+		t.Errorf("a failed MoveToPre must put first.md back: %v", err)
+	}
+}
+
+func TestReturnToTopMovesLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pre"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pre", "kept.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReturnToTop(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "kept.md")); err != nil {
+		t.Errorf("kept.md should be back at the top level: %v", err)
+	}
+	if err := ReturnToTop(t.TempDir()); err != nil {
+		t.Errorf("no pre/ directory is not an error: %v", err)
 	}
 }
 

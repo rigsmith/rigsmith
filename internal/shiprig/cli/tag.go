@@ -56,8 +56,8 @@ func newTagCmd() *cobra.Command {
 			// phase.
 			done := map[string]bool{}
 			for _, p := range pkgs {
-				if ws.Config.IsIgnored(p.Name) {
-					continue // ignored packages are never tagged
+				if ws.Config.SkipsTag(p.Name) {
+					continue // ignored packages, and private ones unless privatePackages.tag, are never tagged
 				}
 				tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo)
 				if done[tag] {

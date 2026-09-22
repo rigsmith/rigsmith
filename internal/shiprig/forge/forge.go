@@ -105,7 +105,9 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 
 	released := make([]plugin.Package, 0, len(packages))
 	for _, pkg := range packages {
-		if cfg != nil && cfg.IsIgnored(pkg.Name) {
+		// A forge release hangs off the package's tag, so a package that gets
+		// no tag (ignored, or private without privatePackages.tag) gets none.
+		if cfg != nil && cfg.SkipsTag(pkg.Name) {
 			continue
 		}
 		released = append(released, pkg)

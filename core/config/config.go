@@ -9,6 +9,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -236,8 +237,9 @@ type Config struct {
 	// packages are versioned and tagged. Unset means neither (v3's default), and
 	// such a package is treated as ignored — see MarkPrivate.
 	PrivatePackages *PrivatePackages `json:"privatePackages,omitempty"`
-	// unversioned holds the private packages MarkPrivate found that this config
-	// does not version. Runtime-only.
+	// private holds the private packages MarkPrivate found; unversioned is
+	// the subset this config does not version. Runtime-only.
+	private     map[string]bool
 	unversioned map[string]bool
 
 	// VersionStrategy controls how a shared version (e.g. a Directory.Build.props
@@ -560,11 +562,15 @@ type PrivatePackages struct {
 	Tag     bool `json:"tag"`
 }
 
-// UnmarshalJSON accepts `false` as well as the object form.
+// UnmarshalJSON accepts `false` as well as the object form. A bare `true` is
+// an error, as in @changesets: it is not clear which of the two it means.
 func (p *PrivatePackages) UnmarshalJSON(b []byte) error {
-	var off bool
-	if err := json.Unmarshal(b, &off); err == nil {
-		*p = PrivatePackages{Version: off, Tag: off}
+	var flag bool
+	if err := json.Unmarshal(b, &flag); err == nil {
+		if flag {
+			return errors.New(`privatePackages: true is not valid; use false or { "version": …, "tag": … }`)
+		}
+		*p = PrivatePackages{}
 		return nil
 	}
 	type plain PrivatePackages
@@ -582,16 +588,22 @@ func (c *Config) VersionsPrivate() bool {
 // a changeset mixing one with a public package is an error, and a dependent's
 // range is still rewritten.
 func (c *Config) MarkPrivate(private []string) {
-	c.unversioned = nil
-	if c.VersionsPrivate() {
-		return
-	}
+	c.private, c.unversioned = map[string]bool{}, map[string]bool{}
 	for _, name := range private {
-		if c.unversioned == nil {
-			c.unversioned = map[string]bool{}
+		c.private[name] = true
+		if !c.VersionsPrivate() {
+			c.unversioned[name] = true
 		}
-		c.unversioned[name] = true
 	}
+}
+
+// SkipsTag reports whether name gets no git tag (and so no forge release):
+// an ignored package, or a private one unless `privatePackages.tag` is set.
+func (c *Config) SkipsTag(name string) bool {
+	if c.IsIgnored(name) {
+		return true
+	}
+	return c.private[name] && (c.PrivatePackages == nil || !c.PrivatePackages.Tag)
 }
 
 // IsIgnored reports whether the package name matches the `ignore` config (by

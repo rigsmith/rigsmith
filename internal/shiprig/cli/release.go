@@ -96,7 +96,8 @@ func newReleaseCmd() *cobra.Command {
 				// A stackspace is a fused history: its members' manifests are not
 				// stamped (the version step knows), and nothing about it is
 				// tagged, pushed or released — those steps are skipped in the plan.
-				FusedHistory: ws.Stackspace != nil,
+				FusedHistory:     ws.Stackspace != nil,
+				NothingToVersion: nothingToVersion(cmd.Context(), ws),
 			})
 			if err != nil {
 				return err
@@ -283,14 +284,14 @@ func newReleaseCmd() *cobra.Command {
 					// dedupe marker) with the tags actually released.
 					tags := make([]string, 0, len(pkgs))
 					tagTemplate := ""
-					var isIgnored func(string) bool
+					var skipsTag func(string) bool
 					if ws.Config != nil {
 						tagTemplate = ws.Config.TagTemplate
-						isIgnored = ws.Config.IsIgnored
+						skipsTag = ws.Config.SkipsTag
 					}
 					solo := singleApp(pkgs)
 					for _, p := range pkgs {
-						if isIgnored != nil && isIgnored(p.Name) {
+						if skipsTag != nil && skipsTag(p.Name) {
 							continue
 						}
 						tags = append(tags, gitutil.RenderTag(tagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo))
@@ -321,6 +322,7 @@ func newReleaseCmd() *cobra.Command {
 				}
 				if ws.Config != nil {
 					relctx.isIgnored = ws.Config.IsIgnored
+					relctx.skipsTag = ws.Config.SkipsTag
 					relctx.tagTemplate = ws.Config.TagTemplate
 				}
 
@@ -503,6 +505,22 @@ func distinctEcosystems(ecoOf map[string]string) []string {
 // status` renders. Packages with no change are absent. It is the source for
 // ${version}/${tag}, so those reflect the version the release is moving *to*
 // even before the version step writes it (and in --dry-run).
+// nothingToVersion reports whether the release plan is empty, so the built-in
+// version step can be skipped. A planning error is not "nothing": the step
+// then runs and reports it.
+func nothingToVersion(ctx context.Context, ws *commands.Workspace) bool {
+	rps, err := commands.ReleasePackages(ctx, ws)
+	if err != nil {
+		return false
+	}
+	for _, rp := range rps {
+		if rp.Releasing() {
+			return false
+		}
+	}
+	return true
+}
+
 func plannedVersions(ctx context.Context, ws *commands.Workspace) (map[string]string, error) {
 	rps, err := commands.ReleasePackages(ctx, ws)
 	if err != nil {
@@ -533,6 +551,7 @@ type hostReleaseContext struct {
 	nextVersions  func() (map[string]string, error) // package name -> bumped version, from the release plan
 	tagTemplate   string                            // config.TagTemplate; "" uses the default name@version / module-path tag
 	isIgnored     func(string) bool
+	skipsTag      func(string) bool // no git tag: ${tag} renders empty
 	repoRoot      string
 	forgeSel      forge.Selection
 	forgeRun      forge.Runner
@@ -574,13 +593,17 @@ func (rc *hostReleaseContext) Packages() []pipeline.ReleasePackage {
 		if n, ok := nexts[p.Name]; ok && n != "" {
 			version = n
 		}
+		tag := gitutil.RenderTag(rc.tagTemplate, eco, p.Dir, p.Name, version, solo)
+		if rc.skipsTag != nil && rc.skipsTag(p.Name) {
+			tag = ""
+		}
 		rc.pkgs = append(rc.pkgs, pipeline.ReleasePackage{
 			Name:        p.Name,
 			Key:         shortPackageKey(p.Name),
 			Ecosystem:   eco,
 			Version:     version,
 			LastVersion: p.Version,
-			Tag:         gitutil.RenderTag(rc.tagTemplate, eco, p.Dir, p.Name, version, solo),
+			Tag:         tag,
 			Changelog:   forge.Notes(p, rc.repoRoot),
 		})
 	}

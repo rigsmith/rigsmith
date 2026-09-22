@@ -465,3 +465,39 @@ func TestPrivatePackagesDefaultToIgnored(t *testing.T) {
 		})
 	}
 }
+
+func TestPrivatePackagesBareTrueIsRejected(t *testing.T) {
+	if _, err := Parse([]byte(`{ "privatePackages": true }`)); err == nil {
+		t.Fatal("privatePackages: true should be rejected (only false or the object form are valid)")
+	}
+}
+
+func TestSkipsTag(t *testing.T) {
+	cases := []struct {
+		name          string
+		json          string
+		private, want bool
+	}{
+		{"public package", `{}`, false, false},
+		{"private, unset", `{}`, true, true},
+		{"private, version only", `{ "privatePackages": { "version": true, "tag": false } }`, true, true},
+		{"private, version and tag", `{ "privatePackages": { "version": true, "tag": true } }`, true, false},
+		{"ignored public package", `{ "ignore": ["pkg"] }`, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tc.json))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.private {
+				cfg.MarkPrivate([]string{"pkg"})
+			} else {
+				cfg.MarkPrivate(nil)
+			}
+			if got := cfg.SkipsTag("pkg"); got != tc.want {
+				t.Errorf("SkipsTag = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
