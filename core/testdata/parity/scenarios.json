@@ -282,6 +282,39 @@
       "changesets": [{ "file": "c.md", "summary": "A peer feature", "releases": [{ "package": "pkg-a", "bump": "minor" }] }],
       "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.1" },
       "expectedPeerRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
+    },
+    {
+      "_comment": "Private packages, v3 default (privatePackages unset): a private package is treated as ignored. pkg-c's own changeset releases nothing and stays on disk; pkg-b, a private dependent of a released package, is a 'none' release: version and CHANGELOG untouched, range rewritten.",
+      "id": "private-not-versioned",
+      "updateInternalDependencies": "patch",
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "private": true, "dependencies": ["pkg-a"] },
+        { "name": "pkg-c", "version": "1.0.0", "private": true }
+      ],
+      "changesets": [
+        { "file": "a.md", "summary": "Public change", "releases": [{ "package": "pkg-a", "bump": "minor" }] },
+        { "file": "c.md", "summary": "Private change", "releases": [{ "package": "pkg-c", "bump": "minor" }] }
+      ],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.0", "pkg-c": "1.0.0" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
+    },
+    {
+      "_comment": "Private packages with privatePackages.version = true: the v2 behavior, private packages version like any other.",
+      "id": "private-versioned",
+      "updateInternalDependencies": "patch",
+      "privatePackages": { "version": true, "tag": false },
+      "packages": [
+        { "name": "pkg-a", "version": "1.0.0" },
+        { "name": "pkg-b", "version": "1.0.0", "private": true, "dependencies": ["pkg-a"] },
+        { "name": "pkg-c", "version": "1.0.0", "private": true }
+      ],
+      "changesets": [
+        { "file": "a.md", "summary": "Public change", "releases": [{ "package": "pkg-a", "bump": "minor" }] },
+        { "file": "c.md", "summary": "Private change", "releases": [{ "package": "pkg-c", "bump": "minor" }] }
+      ],
+      "expectedVersions": { "pkg-a": "1.1.0", "pkg-b": "1.0.1", "pkg-c": "1.1.0" },
+      "expectedRanges": { "pkg-b": { "pkg-a": "1.1.0" } }
     }
   ]
 }

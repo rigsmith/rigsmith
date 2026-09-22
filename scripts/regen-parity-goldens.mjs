@@ -100,6 +100,7 @@ function materialize(root, sc) {
       typeof d === 'string' ? [d, versionOf[d]] : [d.name, d.range || versionOf[d.name]]));
     if (p.dependencies?.length) pj.dependencies = block(p.dependencies);
     if (p.peerDependencies?.length) pj.peerDependencies = block(p.peerDependencies);
+    if (p.private) pj.private = true;
     writeFileSync(join(dir, 'package.json'), JSON.stringify(pj, null, 2));
   }
 
@@ -111,6 +112,7 @@ function materialize(root, sc) {
   if (sc.fixed) cfg.fixed = sc.fixed;
   if (sc.linked) cfg.linked = sc.linked;
   if (sc.ignore) cfg.ignore = sc.ignore;
+  if (sc.privatePackages) cfg.privatePackages = sc.privatePackages;
   writeFileSync(join(root, '.changeset', 'config.json'), JSON.stringify(cfg, null, 2));
 
   for (const cs of sc.changesets) {

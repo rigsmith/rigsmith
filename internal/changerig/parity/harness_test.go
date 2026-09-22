@@ -64,6 +64,7 @@ type pkgSpec struct {
 	Version          string   `json:"version"`
 	Dependencies     []depRef `json:"dependencies"`
 	PeerDependencies []depRef `json:"peerDependencies"`
+	Private          bool     `json:"private"`
 }
 
 type scenario struct {
@@ -72,6 +73,7 @@ type scenario struct {
 	Fixed                      [][]string                   `json:"fixed"`
 	Linked                     [][]string                   `json:"linked"`
 	Ignore                     []string                     `json:"ignore"`
+	PrivatePackages            json.RawMessage              `json:"privatePackages"`
 	Packages                   []pkgSpec                    `json:"packages"`
 	Changesets                 []changesetSpec              `json:"changesets"`
 	ExpectedVersions           map[string]string            `json:"expectedVersions"`
@@ -490,6 +492,9 @@ func writeNodeRepo(t *testing.T, root string, sc scenario) {
 		mkdirAll(t, dir)
 		deps := depBlock("dependencies", p.Dependencies, versionOf) +
 			depBlock("peerDependencies", p.PeerDependencies, versionOf)
+		if p.Private {
+			deps += `, "private": true`
+		}
 		writeFile(t, filepath.Join(dir, "package.json"),
 			fmt.Sprintf(`{ "name": %q, "version": %q%s }`, p.Name, p.Version, deps))
 	}
@@ -503,6 +508,9 @@ func writeNodeRepo(t *testing.T, root string, sc scenario) {
 	}
 	if len(sc.Ignore) > 0 {
 		cfg["ignore"] = sc.Ignore
+	}
+	if len(sc.PrivatePackages) > 0 {
+		cfg["privatePackages"] = sc.PrivatePackages
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {

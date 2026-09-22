@@ -1,14 +1,21 @@
-// Package prestate reads and writes .changeset/pre.json — the prerelease state.
-// The shape mirrors @changesets so the file is shared with the JS tool.
+// Package prestate reads and writes the prerelease state: .changeset/pre.json
+// plus the .changeset/pre/ directory of changesets a prerelease has consumed.
+// The layout mirrors @changesets v3 so both tools share it.
 package prestate
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 )
 
 const fileName = "pre.json"
+
+// DirName is the directory, under .changeset/, that holds the changesets a
+// prerelease `version` run has consumed. They wait there until `pre exit`
+// graduates them into one stable release.
+const DirName = "pre"
 
 // Modes for PreState.Mode.
 const (
@@ -22,10 +29,11 @@ type PreState struct {
 	Mode string `json:"mode"`
 	// Tag is the prerelease tag (e.g. "next", "rc") appended to versions.
 	Tag string `json:"tag"`
-	// InitialVersions is each package's version when pre mode was entered.
-	InitialVersions map[string]string `json:"initialVersions"`
-	// Changesets are the ids already consumed by a prerelease `version` run.
-	Changesets []string `json:"changesets"`
+	// Changesets is the @changesets v2 record of consumed ids, whose files
+	// stayed at the top level of .changeset/. It is read so a prerelease begun
+	// under v2 carries on without consuming them twice, and never written:
+	// MoveToPre moves those files into pre/ and clears it.
+	Changesets []string `json:"changesets,omitempty"`
 }
 
 // Read returns the pre-state, or nil when the file is absent.
@@ -68,7 +76,37 @@ func Has(changesetDir string) bool {
 	return err == nil
 }
 
-// Contains reports whether id is in the consumed-changesets list.
+// Dir returns the consumed-changesets directory for changesetDir.
+func Dir(changesetDir string) string {
+	return filepath.Join(changesetDir, DirName)
+}
+
+// MoveToPre moves each id's changeset file from the top of changesetDir into
+// pre/, plus any a v2 pre.json listed, and clears that list. An id with no
+// file at the top level (already moved, or synthesized from a commit) is
+// skipped.
+func (p *PreState) MoveToPre(changesetDir string, ids []string) error {
+	if err := os.MkdirAll(Dir(changesetDir), 0o755); err != nil {
+		return err
+	}
+	for _, id := range append(append([]string{}, p.Changesets...), ids...) {
+		err := os.Rename(filepath.Join(changesetDir, id+".md"), filepath.Join(Dir(changesetDir), id+".md"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	p.Changesets = nil
+	return nil
+}
+
+// RemoveDir deletes the pre/ directory once it is empty. Anything left in it
+// (a changeset naming only ignored packages) keeps it, as Node leaves those
+// files too.
+func RemoveDir(changesetDir string) {
+	_ = os.Remove(Dir(changesetDir))
+}
+
+// Contains reports whether id is in the v2 consumed-changesets list.
 func (p *PreState) Contains(id string) bool {
 	for _, c := range p.Changesets {
 		if c == id {

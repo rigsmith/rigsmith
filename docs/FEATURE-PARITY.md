@@ -84,7 +84,7 @@ rigsmith is done.
 | `add` (default) | ✅ | ✅ | 🟢 | Adds `--type`/`-t` (conventional) + `--bump` + omittable bump beyond net. | `-m/--message`, `-p/--package`, `--empty`, `--since` (picker preselect), `--open` ($EDITOR on the created changeset), human-id filename. | |
 | `version` | ✅ | ✅ | 🟡 | snapshot-template flag is named `--snapshot-template` (net: `--snapshot-prerelease-template`). | normal/snapshot/pre/exit modes; `--snapshot[=tag]` + template; `--independent` (inline per-package versioning; also a `versionStrategy` config key); changelog enrichment + `format:` pass. | |
 | `status` | ✅ | ✅ | | | `--verbose`, `--since` (changed-without-changeset guard + narrowing), `--output` JSON plan, pre-mode reflection, no-changesets → non-zero exit. (net groups under bump headers — cosmetic.) | |
-| `pre enter`/`exit` | ✅ | ✅ | | | `.changeset/pre.json` shape, counter, graduation — full parity. | |
+| `pre enter`/`exit` | ✅ | ✅ | | | `.changeset/pre.json` + `.changeset/pre/` (@changesets v3 layout), counter, graduation. | |
 | `tag` | ✅ | ✅ | 🟢 | Adds Go module-path tags (`dir/vX.Y.Z`) and `--dry-run` beyond net. | `name@version`, skip existing. | |
 | `publish` | ✅ | ✅ | 🟢 | Adds `--dry-run`/`--no-push`/`--access` and a TTY confirm gate + `--yes` (CI behavior unchanged). | `--no-git-tag`; registry-aware idempotent; honors `ignore`. | |
 | `info` | ✅ | ✅ | | | Config + ecosystems + packages + changeset count. | |
@@ -102,7 +102,7 @@ rigsmith is done.
 | Commit-based versioning (`versioning.source`) | ➖ | ✅ | 🟢 | rigsmith-only (knope-style) — net had no commit inference. Top-level `versioning.source` = `changesets` (default) / `commits` / `both`: `commits` **synthesizes** changesets from the conventional commits since the last release (gitmoji + `BREAKING CHANGE` aware), attributing each to a package via the `versioning.scopes` map then path fallback; `both` unions them with on-disk changesets. | A source adapter only — synthetic changesets feed the same `planner.Plan()`, so cascade / grouping / prerelease / snapshot / changelog are all shared (`core/commitsource`). | |
 | `.net.mkd` interop extension | ✅ | ✅ | 🟡 | Dropped — rigsmith changesets aren't @changesets/`.net.mkd` dual-readable (no Node-interop bridge; deliberate). | | |
 | Semver bump rules + graduation | ✅ | ✅ | | | Faithful port, unit-tested (prerelease graduation, precedence). | |
-| Dependency cascade | ✅ rangeless (always-patch) | ✅ | 🟢 | net is rangeless (always-patch); rigsmith adds range-aware gating — npm `^`/`~`/`workspace:` out-of-range, peer→major, dev = range-only (no release), manifest range rewrites. | Rangeless case + `updateInternalDependencies` threshold both honored. | |
+| Dependency cascade | ✅ rangeless (always-patch) | ✅ | 🟢 | net is rangeless (always-patch); rigsmith adds range-aware gating — npm `^`/`~`/`workspace:` out-of-range, peer = like a regular dependency (@changesets v3), dev = range-only (no release), manifest range rewrites. | Rangeless case + `updateInternalDependencies` threshold both honored. | |
 | Grouping: linked / fixed / lockstep | ✅ | ✅ | | | lockstep via shared `VersionFile` (generalized from `Directory.Build.props`). | |
 | `ignore` (names + globs) | ✅ | ✅ | | | | |
 | `updateInternalDependencies` | ✅ | ✅ | | | patch/minor threshold honored by the cascade. | |

@@ -58,7 +58,7 @@ name the directory; package paths within a tool's section are relative to its
 | `changelog` | changelog-git/-github enrichment (commit/PR/author), the release-line decorator, and the CHANGELOG file writer | `Version/Helpers/ChangelogCommitResolver.cs`, `ChangelogReleaseLine.cs`, `ChangelogFileWriter.cs` |
 | `mdfmt` | the native prettier-equivalent markdown formatter + the `format:` dispatcher (auto-detect, package-manager exec, custom argv) | `Version/Helpers/NativeMarkdownFormatter.cs`, `ChangelogFormatter.cs` |
 | `jsonc` | tolerant JSONC parse (offset-preserving) + the comment-preserving editor | rig's `JsoncEditor.cs` |
-| `gitutil` / `prestate` / `since` / `walkutil` | git tags + merge-base diffs, `.changeset/pre.json`, changed-files→projects mapping, ignore-aware tree walking | `Shared/GitService.cs`, `PreStateRepository.cs`, `SinceChanges.cs` |
+| `gitutil` / `prestate` / `since` / `walkutil` | git tags + merge-base diffs, `.changeset/pre.json` + `pre/`, changed-files→projects mapping, ignore-aware tree walking | `Shared/GitService.cs`, `PreStateRepository.cs`, `SinceChanges.cs` |
 
 ### `cmd/rig/` + `internal/rig/` → `rig`
 

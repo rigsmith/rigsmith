@@ -25,6 +25,20 @@
       },
       "description": "Package names (exact or '*' globs) never released, tagged, or published."
     },
+    "privatePackages": {
+      "description": "Whether private packages (\"private\": true) are versioned and tagged. Unset or false: neither, and a private package is treated as ignored (the @changesets v3 default).",
+      "oneOf": [
+        { "const": false },
+        {
+          "type": "object",
+          "properties": {
+            "version": { "type": "boolean", "description": "Version private packages and write their changelogs." },
+            "tag": { "type": "boolean", "description": "Create git tags for private packages." }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "fixed": {
       "type": "array",
       "items": {

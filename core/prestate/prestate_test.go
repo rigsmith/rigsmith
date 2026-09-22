@@ -20,13 +20,7 @@ func TestReadNoFileReturnsNil(t *testing.T) {
 
 func TestWriteThenReadRoundTrips(t *testing.T) {
 	dir := t.TempDir()
-	in := &PreState{
-		Mode:            ModePre,
-		Tag:             "next",
-		InitialVersions: map[string]string{"pkg-a": "1.0.0", "pkg-b": "2.3.0"},
-		Changesets:      []string{"brave-pandas-smile"},
-	}
-	if err := Write(dir, in); err != nil {
+	if err := Write(dir, &PreState{Mode: ModePre, Tag: "next"}); err != nil {
 		t.Fatal(err)
 	}
 	if !Has(dir) {
@@ -40,30 +34,85 @@ func TestWriteThenReadRoundTrips(t *testing.T) {
 	if out.Mode != ModePre || out.Tag != "next" {
 		t.Errorf("round trip: mode=%q tag=%q", out.Mode, out.Tag)
 	}
-	if out.InitialVersions["pkg-b"] != "2.3.0" {
-		t.Errorf("initialVersions = %v", out.InitialVersions)
-	}
-	if len(out.Changesets) != 1 || out.Changesets[0] != "brave-pandas-smile" {
-		t.Errorf("changesets = %v", out.Changesets)
-	}
-	if !out.Contains("brave-pandas-smile") || out.Contains("other") {
-		t.Error("Contains misreports the consumed list")
-	}
 
-	// The on-disk shape is shared with the JS tool: two-space indent, lowercase
-	// keys, trailing newline.
+	// The on-disk shape is @changesets v3's: only mode and tag, two-space
+	// indent, trailing newline.
 	raw, err := os.ReadFile(filepath.Join(dir, "pre.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(raw)
-	if !strings.HasSuffix(s, "}\n") {
-		t.Error("pre.json should end with a single trailing newline")
+	if want := "{\n  \"mode\": \"pre\",\n  \"tag\": \"next\"\n}\n"; string(raw) != want {
+		t.Errorf("pre.json = %q, want %q", raw, want)
 	}
-	for _, key := range []string{`"mode"`, `"tag"`, `"initialVersions"`, `"changesets"`} {
-		if !strings.Contains(s, "  "+key) {
-			t.Errorf("pre.json should contain two-space-indented %s:\n%s", key, s)
+}
+
+// A pre.json written by @changesets v2 lists consumed ids (and initial
+// versions); it must still read, so a prerelease begun under v2 carries on.
+func TestReadsV2State(t *testing.T) {
+	dir := t.TempDir()
+	v2 := `{ "mode": "pre", "tag": "next", "initialVersions": { "pkg-a": "1.0.0" }, "changesets": ["brave-pandas-smile"] }`
+	if err := os.WriteFile(filepath.Join(dir, "pre.json"), []byte(v2), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Contains("brave-pandas-smile") || out.Contains("other") {
+		t.Errorf("Contains misreports the v2 consumed list %v", out.Changesets)
+	}
+}
+
+func TestMoveToPreMovesConsumedAndMigratesV2List(t *testing.T) {
+	dir := t.TempDir()
+	for _, id := range []string{"old-one", "new-one", "untouched"} {
+		if err := os.WriteFile(filepath.Join(dir, id+".md"), []byte("---\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
 		}
+	}
+	ps := &PreState{Mode: ModePre, Tag: "next", Changesets: []string{"old-one"}}
+	// "from-commit" has no file: skipped, not an error.
+	if err := ps.MoveToPre(dir, []string{"new-one", "from-commit"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"old-one", "new-one"} {
+		if _, err := os.Stat(filepath.Join(dir, "pre", id+".md")); err != nil {
+			t.Errorf("%s should be in pre/: %v", id, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, id+".md")); err == nil {
+			t.Errorf("%s should be gone from the top level", id)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "untouched.md")); err != nil {
+		t.Errorf("an unconsumed changeset must stay put: %v", err)
+	}
+	if ps.Changesets != nil {
+		t.Errorf("the v2 list should be cleared once migrated, got %v", ps.Changesets)
+	}
+	if err := Write(dir, ps); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(dir, "pre.json")); strings.Contains(string(raw), "changesets") {
+		t.Errorf("pre.json should not carry a changesets list after migration:\n%s", raw)
+	}
+}
+
+func TestRemoveDirKeepsANonEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "pre"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pre", "kept.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	RemoveDir(dir)
+	if _, err := os.Stat(filepath.Join(dir, "pre", "kept.md")); err != nil {
+		t.Errorf("a changeset left in pre/ must survive: %v", err)
+	}
+	_ = os.Remove(filepath.Join(dir, "pre", "kept.md"))
+	RemoveDir(dir)
+	if _, err := os.Stat(filepath.Join(dir, "pre")); err == nil {
+		t.Error("an empty pre/ should be removed")
 	}
 }
 

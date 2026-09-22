@@ -246,6 +246,13 @@ stamps every ecosystem's manifest, and renders `CHANGELOG.md`. Editing version
 numbers or changelog entries by hand drifts from this and silently misses
 dependents. Let `version` own them.
 
+changerig matches canonical @changesets (v3) exactly, so two things surprise:
+`version` with no pending changesets **exits 1** (check `status` first in a
+script), and a `"private": true` package is **treated as ignored** — never
+versioned, and a changeset mixing it with a public one fails — unless the config
+sets `"privatePackages": { "version": true }`. An app that is private only to
+stay off npm but still releases (an Electron app) needs that key.
+
 ## shiprig — releases
 
 Everything `changerig` does, plus publish/tag/pre orchestration. Releasing is

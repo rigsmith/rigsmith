@@ -232,6 +232,14 @@ type Config struct {
 	UpdateInternalDependencies UpdateInternalDependencies `json:"updateInternalDependencies,omitempty"`
 	Snapshot                   Snapshot                   `json:"snapshot,omitempty"`
 
+	// PrivatePackages is @changesets' `privatePackages`: whether private
+	// packages are versioned and tagged. Unset means neither (v3's default), and
+	// such a package is treated as ignored — see MarkPrivate.
+	PrivatePackages *PrivatePackages `json:"privatePackages,omitempty"`
+	// unversioned holds the private packages MarkPrivate found that this config
+	// does not version. Runtime-only.
+	unversioned map[string]bool
+
 	// VersionStrategy controls how a shared version (e.g. a Directory.Build.props
 	// <Version>) is written: "lockstep" (default, also "") moves every inheritor
 	// together; "independent" writes an inline version per package, so each
@@ -545,11 +553,56 @@ func bytesTrim(b []byte) []byte {
 	return b[i:j]
 }
 
+// PrivatePackages is the `privatePackages` config. @changesets also accepts a
+// bare `false`, meaning neither.
+type PrivatePackages struct {
+	Version bool `json:"version"`
+	Tag     bool `json:"tag"`
+}
+
+// UnmarshalJSON accepts `false` as well as the object form.
+func (p *PrivatePackages) UnmarshalJSON(b []byte) error {
+	var off bool
+	if err := json.Unmarshal(b, &off); err == nil {
+		*p = PrivatePackages{Version: off, Tag: off}
+		return nil
+	}
+	type plain PrivatePackages
+	return json.Unmarshal(b, (*plain)(p))
+}
+
+// VersionsPrivate reports whether private packages are versioned.
+func (c *Config) VersionsPrivate() bool {
+	return c.PrivatePackages != nil && c.PrivatePackages.Version
+}
+
+// MarkPrivate records the private packages among names. Unless the config
+// versions them, IsIgnored then reports them ignored, which is exactly how
+// @changesets v3 treats them: never released, a changeset naming one is kept,
+// a changeset mixing one with a public package is an error, and a dependent's
+// range is still rewritten.
+func (c *Config) MarkPrivate(private []string) {
+	c.unversioned = nil
+	if c.VersionsPrivate() {
+		return
+	}
+	for _, name := range private {
+		if c.unversioned == nil {
+			c.unversioned = map[string]bool{}
+		}
+		c.unversioned[name] = true
+	}
+}
+
 // IsIgnored reports whether the package name matches the `ignore` config (by
-// exact name or a '*' glob, e.g. "*Bench" / "Acme.*"). Ignored packages are
-// never released, tagged, or published — though their manifest dependency
-// ranges are still rewritten (a "none" release).
+// exact name or a '*' glob, e.g. "*Bench" / "Acme.*"), or is a private package
+// the config does not version (MarkPrivate). Ignored packages are never
+// released, tagged, or published — though their manifest dependency ranges are
+// still rewritten (a "none" release).
 func (c *Config) IsIgnored(name string) bool {
+	if c.unversioned[name] {
+		return true
+	}
 	for _, pat := range c.Ignore {
 		if ignoreGlobMatch(pat, name) {
 			return true

@@ -180,8 +180,9 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 	// declared range (a rangeless reference is always "out of range"). An out-of-range
 	// dependent is always PATCH-bumped — verified against @changesets, which patch-bumps
 	// the dependent (and rewrites its range) regardless of the dependency's own bump size
-	// or updateInternalDependencies. A peer dependency on a minor/major release forces the
-	// dependent to major; devDependencies update the range but do not cause a release.
+	// or updateInternalDependencies. Peer dependencies follow the same rule (@changesets v3;
+	// v2 forced the dependent to major); devDependencies update the range but do not cause
+	// a release.
 	//
 	// Release decisions match @changesets and net-changesets exactly (verified against the
 	// parity corpus + live Node): in-range dependents are never released; out-of-range ones
@@ -209,8 +210,6 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 				inRange := e.rng != "" && semver.SatisfiesString(newVer, e.rng)
 				cand := changeset.BumpNone
 				switch {
-				case e.kind == plugin.DepPeer && (rb == changeset.BumpMinor || rb == changeset.BumpMajor) && !inRange:
-					cand = changeset.BumpMajor
 				case e.kind == plugin.DepDev:
 					// dev dependency out of range: a "none" release — the dependent's
 					// version doesn't change but its manifest range is rewritten, so it
@@ -224,7 +223,7 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 							}
 						}
 					}
-				default: // normal / peer (patch) / build
+				default: // normal / peer / build
 					if !inRange {
 						cand = changeset.BumpPatch
 					}

@@ -9,7 +9,7 @@ import (
 
 // NewPreCmd builds the `pre` command: `pre enter <tag>` enters prerelease mode
 // (writing .changeset/pre.json), `pre exit` marks it for graduation on the next
-// `version` run.
+// `version` run, which folds in the changesets waiting in .changeset/pre/.
 func NewPreCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:       "pre <enter|exit> [tag]",
@@ -32,20 +32,9 @@ func NewPreCmd() *cobra.Command {
 				if existing, _ := prestate.Read(ws.ChangesetDir); existing != nil && existing.Mode == prestate.ModePre {
 					return fmt.Errorf("already in prerelease mode (tag %q)", existing.Tag)
 				}
-				pkgs, _, err := ws.Discover(cmd.Context())
-				if err != nil {
-					return err
-				}
-				initial := map[string]string{}
-				for _, p := range pkgs {
-					initial[p.Name] = p.Version
-				}
-				ps := &prestate.PreState{
-					Mode:            prestate.ModePre,
-					Tag:             tag,
-					InitialVersions: initial,
-					Changesets:      []string{},
-				}
+				// @changesets v3 keeps only the mode and tag here; consumed
+				// changesets are tracked by moving them into .changeset/pre/.
+				ps := &prestate.PreState{Mode: prestate.ModePre, Tag: tag}
 				if err := prestate.Write(ws.ChangesetDir, ps); err != nil {
 					return err
 				}

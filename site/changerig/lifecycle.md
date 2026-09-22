@@ -153,6 +153,15 @@ Consumes the pending changesets and:
 4. stamps the new version into each ecosystem's manifest, and
 5. writes `CHANGELOG.md`.
 
+With no pending changesets it exits 1 ("no unreleased changesets found"), as
+`changeset version` does; a release job should check for changesets first, the
+way the release action does.
+
+Private packages (`"private": true`) are treated as ignored unless the config
+sets `"privatePackages": { "version": true }`: never versioned, a changeset
+naming one is left in place, and one mixing it with a public package is an
+error. This is @changesets v3's default.
+
 Flags: `-n, --dry-run` (plan only), `--snapshot [tag]` and `--snapshot-template`
 (`{tag}`/`{commit}`/`{datetime}`/`{timestamp}` suffix) for snapshot releases,
 `--independent` to version each package separately instead of via a shared
@@ -218,7 +227,11 @@ changerig pre exit           # leave prerelease mode; the next version is a norm
 ```
 
 Prerelease mode makes `version` produce tagged pre-releases (e.g. `-next.N`)
-until you exit. The mode is tracked in `.changeset/pre.json`.
+until you exit. The mode and tag are tracked in `.changeset/pre.json`; each
+changeset a prerelease consumes moves into `.changeset/pre/`, and the `version`
+after `pre exit` folds all of them into one stable release and removes both.
+This is the @changesets v3 layout; a prerelease begun under v2 (consumed ids
+listed in `pre.json`) is migrated on the next `version`.
 
 ## `changelog`
 

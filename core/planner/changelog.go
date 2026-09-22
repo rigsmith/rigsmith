@@ -145,12 +145,16 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s\n", newVersion)
-	for i, section := range order {
-		// @changesets (format:false) puts the first section directly under the
-		// version header and separates later sections with a blank line.
-		if i > 0 {
-			b.WriteByte('\n')
-		}
+	if len(order) == 0 {
+		// A release with nothing of its own to say (a fixed-group member pulled
+		// along without a changeset) gets @changesets v3's placeholder rather
+		// than a bare header.
+		b.WriteString("\n" + noChangesPlaceholder + "\n")
+	}
+	for _, section := range order {
+		// @changesets v3 (format:false) puts a blank line before every section,
+		// the first one included.
+		b.WriteByte('\n')
 		fmt.Fprintf(&b, "### %s\n\n", section)
 		// Scoped bullets first, grouped by scope, so a reader scanning for one
 		// tool finds its lines together; unscoped ones keep their order at the
@@ -184,6 +188,10 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 	}
 	return b.String()
 }
+
+// noChangesPlaceholder is the body @changesets v3 writes under a version header
+// that has no change sections.
+const noChangesPlaceholder = "No changes in this release."
 
 // scopeRank indexes the configured scope order, so a repo can say which tool
 // leads rather than taking whatever alphabetical order hands it. Scopes left

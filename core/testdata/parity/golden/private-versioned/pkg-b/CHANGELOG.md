@@ -1,8 +1,8 @@
-# demo-app
+# pkg-b
 
 ## 1.0.1
 
 ### Patch Changes
 
 - Updated dependencies
-  - demo-client@1.1.0
+  - pkg-a@1.1.0

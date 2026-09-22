@@ -27,10 +27,10 @@ import (
 
 // dotnetApplicable reports whether a scenario is expressible as a csproj tree:
 // every in-repo dependency must be rangeless (a bare ProjectReference), and
-// there must be no peer dependencies (csproj has no such kind).
+// there must be no peer dependencies or private packages (npm-only notions).
 func dotnetApplicable(sc scenario) bool {
 	for _, p := range sc.Packages {
-		if len(p.PeerDependencies) > 0 {
+		if len(p.PeerDependencies) > 0 || p.Private {
 			return false
 		}
 		for _, d := range p.Dependencies {
