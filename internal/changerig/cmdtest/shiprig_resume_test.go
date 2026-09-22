@@ -10,9 +10,10 @@ import (
 // release got to and refuses a --from past it unless forced.
 //
 // The pipeline stands in for the real one: commit fails until a marker
-// exists (the pre-commit hook in the issue), build writes `built`, and
-// publish fails unless `built` exists — so a publish that skipped build is
-// visible as a failure rather than as a hollow success.
+// exists (the pre-commit hook in the issue), build writes `built` (by
+// redirection: the in-process shell has no `touch` on Windows), and publish
+// fails unless `built` exists — so a publish that skipped build is visible as
+// a failure rather than as a hollow success.
 func resumeRepo(t *testing.T) string {
 	t.Helper()
 	dir := newWorkspace(t)
@@ -20,7 +21,7 @@ func resumeRepo(t *testing.T) string {
   "order": ["commit", "build", "publish"],
   "steps": {
     "commit":  { "run": "test -f commit-ok" },
-    "build":   { "run": "touch built" },
+    "build":   { "run": ": > built" },
     "publish": { "run": "test -f built" }
   }
 }`)

@@ -446,7 +446,7 @@ func newReleaseCmd() *cobra.Command {
 	f.StringSliceVar(&channels, "channels", nil, "build only these target channels, e.g. osx-arm64 (comma-separated; Velopack apps)")
 	f.StringVar(&from, "from", "", "start at this step (resume point)")
 	f.StringVar(&to, "to", "", "stop after this step")
-	f.BoolVar(&force, "force", false, "with --from, skip steps the last (unfinished) release never ran")
+	f.BoolVarP(&force, "force", "f", false, "with --from, skip steps the last (unfinished) release never ran")
 	f.StringVar(&configPath, "config", "", "release config file (default: auto-detected, e.g. .changeset/release.jsonc)")
 	f.BoolVarP(&yes, "yes", "y", false, "approve all confirm gates (non-interactive)")
 	f.BoolVar(&gitOnly, "git-only", false, "skip forge (GitHub) releases; tags only")
