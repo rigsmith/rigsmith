@@ -250,13 +250,11 @@ jobs:
       # Build the npm binary-wrapper packages from dist/ (the prebuilt — and on a
       # tag, signed — binaries). A tag publishes them to npm; a manual dry run
       # validates packaging with `npm publish --dry-run` (packs each, no upload).
+      # No NODE_AUTH_TOKEN. Every wrapper package has a trusted publisher for
+      # this workflow, so npm mints a short-lived credential from the job's own
+      # OIDC identity — nothing stored, nothing to expire, and a provenance
+      # attestation attached automatically because this repository is public.
       - name: npm wrapper packages
-        env:
-          # npm uses the OIDC identity when the package has a trusted publisher
-          # for this workflow, and falls back to this token when it does not.
-          # The token stays until every package is registered and a release has
-          # published without it; then the secret goes, and this line with it.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             node scripts/npm/build-packages.mjs --dry-publish
@@ -380,9 +378,9 @@ jobs:
 
       - name: Publish npm wrappers from ${{ inputs.tag }}
         env:
-          # As in the release job: OIDC when the package has a trusted publisher
-          # for this workflow, this token only until every package has one.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # No NODE_AUTH_TOKEN here either — same trusted publisher, because this
+          # job lives in the same workflow file, which is the whole reason it was
+          # moved here.
           # `gh release download` reads this repository's release assets.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/npm/build-packages.mjs --from-release "${{ inputs.tag }}" --publish

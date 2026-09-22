@@ -32,7 +32,7 @@
 // Every archive is checksum-verified against the release's own checksums.txt
 // before it is unpacked — these binaries are about to go out under our name.
 
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -328,11 +328,35 @@ if (!PUBLISH && !DRY_PUBLISH) {
   // must be published under a dist-tag so it doesn't move `latest`; a stable
   // version publishes as `latest` (npm's default).
   const tag = version.includes('-') ? ['--tag', 'next'] : []
+  let published = 0
+  let skipped = 0
   for (const d of order) {
     const dir = path.join(OUT, d)
     const name = readJson(path.join(dir, 'package.json')).name
     const access = name.startsWith('@') ? ['--access', 'public'] : []
     console.log(`${verb} ${name}@${version}`)
-    execFileSync('npm', ['publish', ...dryRun, ...tag, ...access], { cwd: dir, stdio: 'inherit' })
+    // stdio is piped rather than inherited so an already-published version can
+    // be told from a real failure. npm's output is echoed either way.
+    const r = spawnSync('npm', ['publish', ...dryRun, ...tag, ...access],
+      { cwd: dir, encoding: 'utf8' })
+    const out = `${r.stdout || ''}${r.stderr || ''}`
+    if (r.status === 0) {
+      process.stdout.write(out)
+      published++
+      continue
+    }
+    // Republishing a release is how npm is brought back in line after a release
+    // whose npm step alone failed, so meeting versions that are already there is
+    // the normal case — the run has to get PAST them to publish the ones that
+    // are missing. Aborting on the first made the recovery tool useless exactly
+    // when several packages had already gone out.
+    if (/cannot publish over the previously published versions/i.test(out)) {
+      console.log(`  already published — skipping`)
+      skipped++
+      continue
+    }
+    process.stderr.write(out)
+    throw new Error(`npm publish failed for ${name}@${version}`)
   }
+  console.log(`\n${published} published, ${skipped} already there`)
 }
