@@ -1,0 +1,52 @@
+.changeset/quiet-yaks-whisper.md
+  s_df06cc81ca93a0::t_16f0199141901d 1-7
+internal/shiprig/pipeline/pipeline_test.go
+  s_df06cc81ca93a0::t_79498956453406 1045-1069
+core/config/config.go
+  s_df06cc81ca93a0::t_d4c2c93c1330cf 240-242,565-566,568-573,591,593-595,600-606
+  s_df06cc81ca93a0::t_7e6037cfa936b8 12
+internal/shiprig/pipeline/resolve.go
+  s_df06cc81ca93a0::t_88dc30b14c9750 205-211,218-221,544-546
+core/config/config_test.go
+  s_df06cc81ca93a0::t_bbc818202aaa21 468-503
+core/prestate/prestate_test.go
+  s_df06cc81ca93a0::t_4406a4e768fb98 75-76,99-148
+internal/shiprig/cli/tag.go
+  s_df06cc81ca93a0::t_7e6037cfa936b8 59-60
+internal/shiprig/cli/release.go
+  s_df06cc81ca93a0::t_7e6037cfa936b8 287,290,294,325,554,596-599,606
+  s_df06cc81ca93a0::t_88dc30b14c9750 99-100,508-523
+internal/changerig/commands/status.go
+  s_df06cc81ca93a0::t_c4e96e7eda5fba 108-118
+internal/shiprig/forge/forge.go
+  s_df06cc81ca93a0::t_7e6037cfa936b8 108-110
+internal/shiprig/cli/nothingtoversion_test.go
+  s_df06cc81ca93a0::t_bcc8b9c53a2a0e 1-50
+cmd/shiprig/README.md
+  s_df06cc81ca93a0::t_116cc9a792ed1c 51-64
+internal/changerig/commands/version.go
+  s_df06cc81ca93a0::t_85f2de1b1ed3a6 83-89,118-127,426-437,441-442,455-460,462-464
+  s_df06cc81ca93a0::t_721ac741e99f53 416-419,447,449-454,467-469,634,636,638-639,641-642,646-649,652
+core/prestate/prestate.go
+  s_df06cc81ca93a0::t_f4d0d51bd70133 87-98,100,102,104-109,113-135
+internal/shiprig/cli/publish.go
+  s_df06cc81ca93a0::t_7e6037cfa936b8 286
+internal/changerig/cmdtest/prerelease_v3_test.go
+  s_df06cc81ca93a0::t_e62b7a97745f28 1-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "89d324ef3790f4b224405fa7be2d0ac9468baff2",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
