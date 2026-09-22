@@ -1042,3 +1042,28 @@ func TestResolveFusedHistorySkipsTagPushRelease(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveSkipsBuiltinVersionWhenNothingPending(t *testing.T) {
+	steps := mustResolve(t, &Config{}, ResolveOptions{NothingToVersion: true})
+
+	if got := findStep(t, steps, "version").SkipReason; got != NothingToVersionSkipReason {
+		t.Errorf("version skip reason = %q, want %q", got, NothingToVersionSkipReason)
+	}
+	// Only version: a release that publishes or tags what is already
+	// versioned still runs the rest.
+	for _, name := range []string{"publish", "tag", "push"} {
+		if reason := findStep(t, steps, name).SkipReason; reason != "" {
+			t.Errorf("%s should still run, skipped with %q", name, reason)
+		}
+	}
+}
+
+func TestResolveRunsCustomVersionWhenNothingPending(t *testing.T) {
+	config := &Config{Steps: map[string]*StepConfig{
+		"version": {Run: []CommandSpec{ShellCommand("./my-version.sh")}},
+	}}
+
+	if got := findStep(t, mustResolve(t, config, ResolveOptions{NothingToVersion: true}), "version").SkipReason; got != "" {
+		t.Errorf("a custom version step decides for itself; skipped with %q", got)
+	}
+}

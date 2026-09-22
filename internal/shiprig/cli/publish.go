@@ -283,7 +283,7 @@ func newPublishCmd() *cobra.Command {
 			// re-reads the tag the previous one just created).
 			done := map[string]bool{}
 			for _, p := range pkgs {
-				if ws.Config.IsIgnored(p.Name) {
+				if ws.Config.SkipsTag(p.Name) {
 					continue
 				}
 				tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, soloApp)

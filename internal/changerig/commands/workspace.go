@@ -222,6 +222,13 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 		all = append(all, d.pkg)
 		ecoOf[d.pkg.Name] = d.ecoID
 	}
+	var private []string
+	for _, p := range all {
+		if p.Private {
+			private = append(private, p.Name)
+		}
+	}
+	w.Config.MarkPrivate(private)
 	return all, ecoOf, nil
 }
 

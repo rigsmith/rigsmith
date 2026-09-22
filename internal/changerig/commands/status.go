@@ -105,6 +105,17 @@ func NewStatusCmd() *cobra.Command {
 				changesets = kept
 			}
 
+			// The run after `pre exit` graduates the changesets waiting in
+			// .changeset/pre/, even when none are left at the top level; count
+			// them before deciding there is nothing to report.
+			pre, err := prestate.Read(ws.ChangesetDir)
+			if err != nil {
+				return err
+			}
+			if changesets, err = withGraduating(ws, changesets, pre); err != nil {
+				return err
+			}
+
 			// A missing changeset is a failure in changeset mode, like @changesets
 			// and net-changesets (the CI gate this command exists for). In commit
 			// mode there is no changeset to require — no qualifying commits since
@@ -281,8 +292,40 @@ func activeChangesets(changesets []*changeset.Changeset, pre *prestate.PreState)
 	return active
 }
 
+// withGraduating adds, on the run that exits prerelease mode, the changesets a
+// prerelease already consumed into .changeset/pre/: the stable release
+// consolidates every change since pre mode was entered (@changesets v3). Any
+// other run gets changesets back unchanged.
+func withGraduating(ws *Workspace, changesets []*changeset.Changeset, pre *prestate.PreState) ([]*changeset.Changeset, error) {
+	if pre == nil || pre.Mode != prestate.ModeExit || !ws.Config.UsesChangesets() {
+		return changesets, nil
+	}
+	graduating, err := changeset.Dir(prestate.Dir(ws.ChangesetDir), "")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return changesets, nil
+		}
+		return nil, fmt.Errorf("reading prerelease changesets: %w", err)
+	}
+	seen := make(map[string]bool, len(changesets))
+	for _, cs := range changesets {
+		seen[cs.ID] = true
+	}
+	out := append([]*changeset.Changeset{}, changesets...)
+	for _, cs := range graduating {
+		if !seen[cs.ID] {
+			out = append(out, cs)
+		}
+	}
+	return out, nil
+}
+
 func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Changeset, pkgs []plugin.Package) ([]*planner.Module, error) {
 	pre, err := prestate.Read(ws.ChangesetDir)
+	if err != nil {
+		return nil, err
+	}
+	changesets, err = withGraduating(ws, changesets, pre)
 	if err != nil {
 		return nil, err
 	}

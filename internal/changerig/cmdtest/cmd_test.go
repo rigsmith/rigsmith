@@ -451,9 +451,8 @@ func TestStatusInPreModeShowsPrereleaseTarget(t *testing.T) {
 
 // preState mirrors .changeset/pre.json.
 type preState struct {
-	Mode            string            `json:"mode"`
-	Tag             string            `json:"tag"`
-	InitialVersions map[string]string `json:"initialVersions"`
+	Mode string `json:"mode"`
+	Tag  string `json:"tag"`
 }
 
 func readPreState(t *testing.T, dir string) preState {
@@ -465,7 +464,7 @@ func readPreState(t *testing.T, dir string) preState {
 	return ps
 }
 
-// Ported from Enter_WritesPreModeWithTheTagAndInitialVersions.
+// Ported from Enter_WritesPreModeWithTheTagAndInitialVersions (v3: no initialVersions).
 func TestPreEnterWritesPreState(t *testing.T) {
 	dir := newWorkspace(t)
 
@@ -479,8 +478,16 @@ func TestPreEnterWritesPreState(t *testing.T) {
 	if ps.Tag != "next" {
 		t.Errorf("pre.json tag = %q, want \"next\"", ps.Tag)
 	}
-	if got := ps.InitialVersions["pkg-a"]; got != "1.0.0" {
-		t.Errorf("pre.json initialVersions[pkg-a] = %q, want \"1.0.0\"", got)
+	// @changesets v3 keeps only mode and tag; consumed changesets are tracked
+	// by moving them into .changeset/pre/.
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, ".changeset", "pre.json"))), &raw); err != nil {
+		t.Fatalf("parse pre.json: %v", err)
+	}
+	for k := range raw {
+		if k != "mode" && k != "tag" {
+			t.Errorf("pre.json has %q; v3 keeps only mode and tag", k)
+		}
 	}
 }
 
@@ -622,14 +629,15 @@ func TestVersionChangelogImpliesDryRun(t *testing.T) {
 	}
 }
 
-// version with no changesets is a friendly no-op, exit 0.
-func TestVersionNoChangesetsIsANoOp(t *testing.T) {
+// version with no changesets fails, as @changesets v3 does ("No unreleased
+// changesets found", exit 1), and touches nothing.
+func TestVersionNoChangesetsFails(t *testing.T) {
 	dir := newWorkspace(t)
 
 	code, out := runChangerig(t, dir, "version")
 
-	assertExitZero(t, code, out)
-	assertContains(t, out, "no changesets")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "no unreleased changesets found")
 	if got := readFile(t, filepath.Join(dir, "packages", "pkg-a", "package.json")); !strings.Contains(got, `"version": "1.0.0"`) {
 		t.Errorf("manifest was modified with no changesets:\n%s", got)
 	}

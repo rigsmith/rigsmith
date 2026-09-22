@@ -60,9 +60,11 @@ func (d *depRef) UnmarshalJSON(b []byte) error {
 }
 
 type pkgSpec struct {
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Dependencies []depRef `json:"dependencies"`
+	Name             string   `json:"name"`
+	Version          string   `json:"version"`
+	Dependencies     []depRef `json:"dependencies"`
+	PeerDependencies []depRef `json:"peerDependencies"`
+	Private          bool     `json:"private"`
 }
 
 type scenario struct {
@@ -71,10 +73,12 @@ type scenario struct {
 	Fixed                      [][]string                   `json:"fixed"`
 	Linked                     [][]string                   `json:"linked"`
 	Ignore                     []string                     `json:"ignore"`
+	PrivatePackages            json.RawMessage              `json:"privatePackages"`
 	Packages                   []pkgSpec                    `json:"packages"`
 	Changesets                 []changesetSpec              `json:"changesets"`
 	ExpectedVersions           map[string]string            `json:"expectedVersions"`
 	ExpectedRanges             map[string]map[string]string `json:"expectedRanges"`
+	ExpectedPeerRanges         map[string]map[string]string `json:"expectedPeerRanges"`
 	// KnownDivergence marks packages whose changelog deliberately differs from
 	// the Node golden (package → why). Versions and ranges must still agree;
 	// TestParity skips the byte-compare and TestKnownDivergence asserts the
@@ -184,6 +188,14 @@ func TestParity(t *testing.T) {
 				for dep, wantRange := range wantDeps {
 					if gotDeps[dep] != wantRange {
 						t.Errorf("range(%s→%s): got %q, want %q (Node)", pkgName, dep, gotDeps[dep], wantRange)
+					}
+				}
+			}
+			for pkgName, wantDeps := range sc.ExpectedPeerRanges {
+				gotDeps := readNodePeerDeps(t, dir, pkgName)
+				for dep, wantRange := range wantDeps {
+					if gotDeps[dep] != wantRange {
+						t.Errorf("peer range(%s→%s): got %q, want %q (Node)", pkgName, dep, gotDeps[dep], wantRange)
 					}
 				}
 			}
@@ -335,19 +347,53 @@ func TestPrereleaseParity(t *testing.T) {
 		}
 	}
 
-	writeFile(t, filepath.Join(dir, ".changeset", "c1.md"), "---\n\"pkg-a\": minor\n---\n\nFeature one")
+	// Changesets v3 state layout (Node-verified, 3.0.3): a consumed prerelease
+	// changeset moves into .changeset/pre/, and pre.json carries only mode and
+	// tag. Exiting and versioning removes both.
+	csDir := filepath.Join(dir, ".changeset")
+	layout := func(name string, wantPre []string) {
+		t.Helper()
+		for _, id := range wantPre {
+			if !fileExists(filepath.Join(csDir, "pre", id+".md")) {
+				t.Errorf("%s: .changeset/pre/%s.md missing (v3 moves consumed prerelease changesets there)", name, id)
+			}
+			if fileExists(filepath.Join(csDir, id+".md")) {
+				t.Errorf("%s: .changeset/%s.md still at the top level (v3 moves it into pre/)", name, id)
+			}
+		}
+		if len(wantPre) == 0 {
+			if fileExists(filepath.Join(csDir, "pre.json")) || fileExists(filepath.Join(csDir, "pre")) {
+				t.Errorf("%s: pre.json / pre/ should be gone after exit+version", name)
+			}
+			return
+		}
+		var pre map[string]any
+		if err := json.Unmarshal([]byte(readFile(t, filepath.Join(csDir, "pre.json"))), &pre); err != nil {
+			t.Fatalf("%s: parse pre.json: %v", name, err)
+		}
+		for k := range pre {
+			if k != "mode" && k != "tag" {
+				t.Errorf("%s: pre.json has %q; v3 keeps only mode and tag", name, k)
+			}
+		}
+	}
+
+	writeFile(t, filepath.Join(csDir, "c1.md"), "---\n\"pkg-a\": minor\n---\n\nFeature one")
 	runChangerig(t, dir, "pre", "enter", "next")
 	step("enter+version", "1.1.0-next.0", "step1")
+	layout("enter+version", []string{"c1"})
 
-	writeFile(t, filepath.Join(dir, ".changeset", "c2.md"), "---\n\"pkg-a\": patch\n---\n\nFix two")
+	writeFile(t, filepath.Join(csDir, "c2.md"), "---\n\"pkg-a\": patch\n---\n\nFix two")
 	step("+patch+version", "1.1.0-next.1", "step2")
+	layout("+patch+version", []string{"c1", "c2"})
 
 	runChangerig(t, dir, "pre", "exit")
 	step("exit+version", "1.1.0", "step3")
+	layout("exit+version", nil)
 }
 
 // TestSnapshotParity checks `version --snapshot <tag>` against live-Node-verified
-// behavior (@changesets v3.0.0-next.5). The version embeds a timestamp, so this
+// behavior (@changesets 3.0.3). The version embeds a timestamp, so this
 // asserts shape (regex) and a templated changelog instead of a frozen golden:
 //
 //   - every releasing package gets 0.0.0-<tag>-<14-digit datetime>;
@@ -403,6 +449,7 @@ func TestSnapshotParity(t *testing.T) {
 	wantA := normalize(strings.ReplaceAll(`# pkg-a
 
 ## {V}
+
 ### Minor Changes
 
 - Snapshot feature
@@ -413,6 +460,7 @@ func TestSnapshotParity(t *testing.T) {
 	wantB := normalize(strings.ReplaceAll(`# pkg-b
 
 ## {V}
+
 ### Patch Changes
 
 - Updated dependencies
@@ -442,17 +490,10 @@ func writeNodeRepo(t *testing.T, root string, sc scenario) {
 	for _, p := range sc.Packages {
 		dir := filepath.Join(root, "packages", p.Name)
 		mkdirAll(t, dir)
-		deps := ""
-		if len(p.Dependencies) > 0 {
-			parts := make([]string, 0, len(p.Dependencies))
-			for _, d := range p.Dependencies {
-				rng := d.Range
-				if rng == "" {
-					rng = versionOf[d.Name] // default: exact starting version
-				}
-				parts = append(parts, fmt.Sprintf("%q: %q", d.Name, rng))
-			}
-			deps = `, "dependencies": { ` + strings.Join(parts, ", ") + ` }`
+		deps := depBlock("dependencies", p.Dependencies, versionOf) +
+			depBlock("peerDependencies", p.PeerDependencies, versionOf)
+		if p.Private {
+			deps += `, "private": true`
 		}
 		writeFile(t, filepath.Join(dir, "package.json"),
 			fmt.Sprintf(`{ "name": %q, "version": %q%s }`, p.Name, p.Version, deps))
@@ -467,6 +508,9 @@ func writeNodeRepo(t *testing.T, root string, sc scenario) {
 	}
 	if len(sc.Ignore) > 0 {
 		cfg["ignore"] = sc.Ignore
+	}
+	if len(sc.PrivatePackages) > 0 {
+		cfg["privatePackages"] = sc.PrivatePackages
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
@@ -520,6 +564,34 @@ func readNodeDeps(t *testing.T, root, pkg string) map[string]string {
 		t.Fatalf("parse %s package.json: %v", pkg, err)
 	}
 	return pj.Dependencies
+}
+
+func readNodePeerDeps(t *testing.T, root, pkg string) map[string]string {
+	t.Helper()
+	var pj struct {
+		PeerDependencies map[string]string `json:"peerDependencies"`
+	}
+	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(root, "packages", pkg, "package.json"))), &pj); err != nil {
+		t.Fatalf("parse %s package.json: %v", pkg, err)
+	}
+	return pj.PeerDependencies
+}
+
+// depBlock renders `, "<field>": { ... }` for a manifest, or "" when there are
+// no deps. A rangeless dep defaults to the exact starting version.
+func depBlock(field string, deps []depRef, versionOf map[string]string) string {
+	if len(deps) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(deps))
+	for _, d := range deps {
+		rng := d.Range
+		if rng == "" {
+			rng = versionOf[d.Name]
+		}
+		parts = append(parts, fmt.Sprintf("%q: %q", d.Name, rng))
+	}
+	return fmt.Sprintf(`, %q: { %s }`, field, strings.Join(parts, ", "))
 }
 
 // --- helpers ---

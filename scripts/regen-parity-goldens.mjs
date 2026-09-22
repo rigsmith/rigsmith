@@ -10,8 +10,9 @@
 // prints the resulting versions and in-repo dependency ranges so a new
 // scenario's expectedVersions/expectedRanges can be filled from observation.
 //
-// The oracle binary is resolved from $CHANGESETS_BIN, defaulting to the
-// net-changesets demo install (v3.0.0-next.5):
+// The goldens are frozen from @changesets/cli 3.0.3. The oracle binary is
+// resolved from $CHANGESETS_BIN, defaulting to the net-changesets demo install
+// (which must be on 3.0.x for a clean verify):
 //   ~/Git/net-changesets/demo/node-sample/node_modules/@changesets/cli/bin.js
 
 import { execFileSync } from 'node:child_process';
@@ -40,15 +41,17 @@ for (const sc of scenarios) {
     materialize(ws, sc);
     execFileSync('node', [bin, 'version'], { cwd: ws, stdio: 'pipe' });
 
-    const versions = {}, ranges = {};
+    const versions = {}, ranges = {}, peerRanges = {};
     for (const p of sc.packages) {
       const pj = JSON.parse(readFileSync(join(ws, 'packages', p.name, 'package.json'), 'utf8'));
       versions[p.name] = pj.version;
       if (pj.dependencies) ranges[p.name] = pj.dependencies;
+      if (pj.peerDependencies) peerRanges[p.name] = pj.peerDependencies;
     }
     console.log(`=== ${sc.id}`);
     console.log(`  versions: ${JSON.stringify(versions)}`);
     if (Object.keys(ranges).length) console.log(`  ranges:   ${JSON.stringify(ranges)}`);
+    if (Object.keys(peerRanges).length) console.log(`  peers:    ${JSON.stringify(peerRanges)}`);
 
     for (const p of sc.packages) {
       const actual = join(ws, 'packages', p.name, 'CHANGELOG.md');
@@ -93,10 +96,11 @@ function materialize(root, sc) {
     const dir = join(root, 'packages', p.name);
     mkdirSync(dir, { recursive: true });
     const pj = { name: p.name, version: p.version };
-    if (p.dependencies?.length) {
-      pj.dependencies = Object.fromEntries(p.dependencies.map(d =>
-        typeof d === 'string' ? [d, versionOf[d]] : [d.name, d.range || versionOf[d.name]]));
-    }
+    const block = deps => Object.fromEntries(deps.map(d =>
+      typeof d === 'string' ? [d, versionOf[d]] : [d.name, d.range || versionOf[d.name]]));
+    if (p.dependencies?.length) pj.dependencies = block(p.dependencies);
+    if (p.peerDependencies?.length) pj.peerDependencies = block(p.peerDependencies);
+    if (p.private) pj.private = true;
     writeFileSync(join(dir, 'package.json'), JSON.stringify(pj, null, 2));
   }
 
@@ -108,6 +112,7 @@ function materialize(root, sc) {
   if (sc.fixed) cfg.fixed = sc.fixed;
   if (sc.linked) cfg.linked = sc.linked;
   if (sc.ignore) cfg.ignore = sc.ignore;
+  if (sc.privatePackages) cfg.privatePackages = sc.privatePackages;
   writeFileSync(join(root, '.changeset', 'config.json'), JSON.stringify(cfg, null, 2));
 
   for (const cs of sc.changesets) {

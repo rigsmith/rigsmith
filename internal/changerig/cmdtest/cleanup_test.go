@@ -59,6 +59,37 @@ func TestVersionMixedIgnoredChangesetFails(t *testing.T) {
 	}
 }
 
+// A private package is treated as ignored unless privatePackages.version is
+// set (@changesets v3), so a changeset mixing it with a public package fails
+// the same way (Node: "Found mixed changeset").
+func TestVersionMixedPrivateChangesetFails(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	writeFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json"),
+		`{ "name": "pkg-b", "version": "1.0.0", "private": true }`)
+	initChangesets(t, dir)
+	writeFile(t, filepath.Join(dir, ".changeset", "ab.md"),
+		"---\n\"pkg-a\": patch\n\"pkg-b\": patch\n---\n\nboth packages\n")
+
+	code, out := runChangerig(t, dir, "version")
+
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "mixes ignored")
+	if !fileExists(filepath.Join(dir, ".changeset", "ab.md")) {
+		t.Error("failed run must not consume the changeset")
+	}
+
+	// With privatePackages.version the private package versions like any
+	// other, so the same changeset is fine.
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "privatePackages": { "version": true, "tag": false } }`)
+	code, out = runChangerig(t, dir, "version")
+	assertExitZero(t, code, out)
+	if got := readFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json")); !strings.Contains(got, `"version": "1.0.1"`) {
+		t.Errorf("pkg-b should version once privatePackages.version is set:\n%s", got)
+	}
+}
+
 // A changeset naming a package that isn't in the workspace fails the run
 // (Node errors too); nothing is versioned or removed.
 func TestVersionUnknownPackageChangesetFails(t *testing.T) {

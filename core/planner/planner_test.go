@@ -146,16 +146,32 @@ func TestUpdateInternalDependenciesMinor(t *testing.T) {
 	}
 }
 
-func TestPeerDependencyForcesMajor(t *testing.T) {
-	// App peer-depends on Core ^1.0.0. A Core minor that's out of range → App major.
+func TestPeerDependencyOutOfRangePatches(t *testing.T) {
+	// App peer-depends on Core ^1.0.0. A Core major leaves the range, and
+	// @changesets v3 treats a peer dependent like any other: PATCH (v2 forced a
+	// major). Node-verified against 3.0.3.
 	pkgs := []plugin.Package{
 		pkg("Core", "1.0.0"),
 		pkgDep("App", "2.3.4", plugin.Dependency{Name: "Core", Kind: plugin.DepPeer, Range: "^1.0.0"}),
 	}
 	changesets := []*changeset.Changeset{cs("c", changeset.Release{Name: "Core", Bump: changeset.BumpMajor})}
 	plan := Plan(changesets, pkgs, config.Default())
-	if app := find(plan, "App"); app == nil || app.NewVersion().String() != "3.0.0" {
-		t.Fatalf("peer dependent should major-bump, got %v", app)
+	if app := find(plan, "App"); app == nil || app.NewVersion().String() != "2.3.5" {
+		t.Fatalf("out-of-range peer dependent should patch-bump, got %v", app)
+	}
+}
+
+func TestPeerDependencyInRangeNoRelease(t *testing.T) {
+	// A Core minor stays inside ^1.0.0, so App is not released at all (v2 gave
+	// it a major here too).
+	pkgs := []plugin.Package{
+		pkg("Core", "1.0.0"),
+		pkgDep("App", "2.3.4", plugin.Dependency{Name: "Core", Kind: plugin.DepPeer, Range: "^1.0.0"}),
+	}
+	changesets := []*changeset.Changeset{cs("c", changeset.Release{Name: "Core", Bump: changeset.BumpMinor})}
+	plan := Plan(changesets, pkgs, config.Default())
+	if app := find(plan, "App"); app != nil {
+		t.Fatalf("in-range peer dependent should not release, got %v", app)
 	}
 }
 

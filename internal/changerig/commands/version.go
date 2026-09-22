@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -79,6 +80,14 @@ func NewVersionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A snapshot is throwaway and consumes what it plans from, so it
+			// must never take the graduating changesets waiting in pre/: the
+			// stable run after `pre exit` still needs them.
+			if !cmd.Flags().Changed("snapshot") {
+				if changesets, err = withGraduating(ws, changesets, pre); err != nil {
+					return err
+				}
+			}
 
 			// Determine the release mode.
 			mode := planner.ModeNormal
@@ -93,7 +102,9 @@ func NewVersionCmd() *cobra.Command {
 
 			// In prerelease mode only the not-yet-consumed changesets drive the run
 			// (their summaries shouldn't re-appear each version); the prerelease
-			// counter still advances from the current version.
+			// counter still advances from the current version. Consumed ones live
+			// in .changeset/pre/, which LoadChangesets does not read; the filter
+			// is for a prerelease begun under the v2 layout.
 			active := changesets
 			if mode == planner.ModePre {
 				active = nil
@@ -104,9 +115,23 @@ func NewVersionCmd() *cobra.Command {
 				}
 			}
 
+			// A prerelease begun under v2 lists its consumed changesets in
+			// pre.json and leaves them at the top level. Move them into pre/ up
+			// front, so a run with nothing new still migrates instead of
+			// stopping at the empty check below.
+			if mode == planner.ModePre && len(pre.Changesets) > 0 && !dryRun {
+				if _, err := pre.MoveToPre(ws.ChangesetDir, nil); err != nil {
+					return fmt.Errorf("migrating prerelease changesets into .changeset/pre/: %w", err)
+				}
+				if err := prestate.Write(ws.ChangesetDir, pre); err != nil {
+					return err
+				}
+			}
+
 			if len(active) == 0 && mode != planner.ModeExit {
-				fmt.Fprintln(out, DimStyle.Render("No changesets — nothing to version."))
-				return nil
+				// A failure, as in @changesets v3: a release pipeline that reaches
+				// `version` with nothing to release has gone wrong upstream of it.
+				return errors.New("no unreleased changesets found — nothing to version")
 			}
 
 			// Split the run's changesets into consumed (released → deleted
@@ -381,29 +406,67 @@ func NewVersionCmd() *cobra.Command {
 			}
 
 			// Changeset disposal + pre-state bookkeeping per mode. Only the
-			// consumed changesets are removed (or, in pre mode, recorded);
-			// ignored-only ones stay on disk, as Node leaves them.
+			// consumed changesets are removed (or, in pre mode, moved into
+			// .changeset/pre/); ignored-only ones stay on disk, as Node leaves them.
 			switch mode {
 			case planner.ModeSnapshot:
 				// Snapshot consumes changesets like a normal run (verified against
-				// @changesets v3.0.0-next.5); the run is throwaway because the
+				// @changesets 3.0.3); the run is throwaway because the
 				// working-tree changes are never committed.
-				removed := removeConsumedFiles(ws.ChangesetDir, consumed)
+				removed, rmErr := removeConsumedFiles(ws.ChangesetDir, consumed)
+				if rmErr != nil {
+					fmt.Fprintln(out, DimStyle.Render("warn could not remove a consumed changeset: "+rmErr.Error()))
+				}
 				fmt.Fprintf(out, "\nSnapshot-versioned %d package(s)%s.\n", len(plan), removedSuffix(removed, fromCommits))
 			case planner.ModePre:
+				ids := make([]string, 0, len(consumed))
 				for _, cs := range consumed {
-					pre.Changesets = append(pre.Changesets, cs.ID)
+					ids = append(ids, cs.ID)
+				}
+				// The move and pre.json join the transaction: if either fails,
+				// the manifests and changelogs are restored too, so a retry
+				// doesn't bump the same changesets twice.
+				undo, err := pre.MoveToPre(ws.ChangesetDir, ids)
+				if err != nil {
+					txn.rollback()
+					return fmt.Errorf("moving changesets into .changeset/pre/: %w", err)
+				}
+				prePath := filepath.Join(ws.ChangesetDir, "pre.json")
+				if err := txn.guard(prePath); err != nil {
+					undo()
+					txn.rollback()
+					return err
 				}
 				if err := prestate.Write(ws.ChangesetDir, pre); err != nil {
+					undo()
+					txn.rollback()
 					return err
 				}
 				fmt.Fprintf(out, "\nPrereleased %d package(s) (tag %q); changesets kept.\n", len(plan), pre.Tag)
 			default: // Normal, Exit
-				removed := removeConsumedFiles(ws.ChangesetDir, consumed)
+				removed, rmErr := removeConsumedFiles(ws.ChangesetDir, consumed)
 				if mode == planner.ModeExit {
-					_ = prestate.Remove(ws.ChangesetDir)
+					// Stop while pre.json still says "exit": returning an
+					// undeleted consumed changeset to the top level would
+					// release it a second time.
+					if rmErr != nil {
+						return fmt.Errorf("removing graduated changesets (prerelease state left in place; delete them and re-run): %w", rmErr)
+					}
+					// A graduating changeset that wasn't consumed (its package
+					// is now ignored) goes back to the top level, where later
+					// runs look, before pre.json and pre/ are dropped.
+					if err := prestate.ReturnToTop(ws.ChangesetDir); err != nil {
+						return fmt.Errorf("returning unreleased changesets from .changeset/pre/: %w", err)
+					}
+					prestate.RemoveDir(ws.ChangesetDir)
+					if err := prestate.Remove(ws.ChangesetDir); err != nil {
+						return fmt.Errorf("leaving prerelease mode: %w", err)
+					}
 					fmt.Fprintf(out, "\nGraduated %d package(s) to stable; exited prerelease mode.\n", len(plan))
 				} else {
+					if rmErr != nil {
+						fmt.Fprintln(out, DimStyle.Render("warn could not remove a consumed changeset: "+rmErr.Error()))
+					}
 					fmt.Fprintf(out, "\nVersioned %d package(s)%s.\n", len(plan), removedSuffix(removed, fromCommits))
 				}
 			}
@@ -568,14 +631,25 @@ func contributorKey(a plugin.Author) string {
 // changeset, returning how many actually existed. Commit-derived changesets
 // have no file (their ID is a commit hash), so they are silently skipped —
 // keeping the "removed N changeset(s)" count honest in commits/both mode.
-func removeConsumedFiles(changesetDir string, consumed []*changeset.Changeset) int {
+func removeConsumedFiles(changesetDir string, consumed []*changeset.Changeset) (int, error) {
 	removed := 0
+	var errs []error
 	for _, cs := range consumed {
-		if err := os.Remove(filepath.Join(changesetDir, cs.ID+".md")); err == nil {
-			removed++
+		// A graduating changeset sits in .changeset/pre/, not at the top. A
+		// file in neither place (a commit-derived changeset) is not an error.
+		for _, dir := range []string{changesetDir, prestate.Dir(changesetDir)} {
+			err := os.Remove(filepath.Join(dir, cs.ID+".md"))
+			if err == nil {
+				removed++
+				break
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, err)
+				break
+			}
 		}
 	}
-	return removed
+	return removed, errors.Join(errs...)
 }
 
 // removedSuffix renders the trailing clause of a version summary: how many

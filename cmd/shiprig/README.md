@@ -48,6 +48,20 @@ same anywhere.
 cascades bumps to dependents, applies linked/fixed/lockstep grouping, stamps the
 new versions into each ecosystem's manifest, and writes `CHANGELOG.md`.
 
+It follows @changesets v3, which changes two things a release job notices:
+
+- **Nothing pending is an error.** `shiprig version` with no changesets (and no
+  prerelease waiting to graduate) exits 1. Check first in a script; the release
+  action already does. The `release` pipeline checks for you: with nothing
+  pending it skips the built-in `version` step ("no pending changesets") and
+  runs the rest, so a publish-only release still works. A custom `version`
+  step (`run` or `script`) is never skipped.
+- **Private packages are left alone by default.** A `"private": true` package
+  is treated as ignored — not versioned, tagged or released — unless the
+  changeset config sets `privatePackages`. `{ "version": true }` versions it;
+  add `"tag": true` for it to get a git tag and a forge release too. An app
+  that is private only to stay off a registry (an Electron app) wants both.
+
 The full surface is wired: `init`, `add`, `status` (incl. `--since` and
 `--output`), `version` (normal/pre/snapshot, changelog enrichment + `format:`),
 `pre`, `info`, `ui`, `tag`, `publish` (idempotent, confirm-gated on a TTY,

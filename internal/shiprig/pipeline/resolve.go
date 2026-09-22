@@ -202,11 +202,22 @@ type ResolveOptions struct {
 	// and `publish` run as usual. A step the config replaced with its own
 	// `run` or `script` is the user's, and runs.
 	FusedHistory bool
+
+	// NothingToVersion says no release is pending (no changesets, and no
+	// prerelease waiting to graduate). The built-in version step is then
+	// skipped rather than run: `changerig version` exits 1 with nothing to do,
+	// as @changesets does, and a release that only publishes or tags what is
+	// already versioned should not fail on it. A custom run/script still runs.
+	NothingToVersion bool
 }
 
 // fusedHistorySteps are the built-in steps a stackspace never runs: each one
 // puts this history, or a name for it, somewhere outside the machine.
 var fusedHistorySteps = []string{"tag", "push", "release"}
+
+// NothingToVersionSkipReason is the plan's reason for skipping the built-in
+// version step when no release is pending.
+const NothingToVersionSkipReason = "no pending changesets"
 
 // FusedHistorySkipReason is the plan's reason for a built-in step a stackspace
 // leaves out.
@@ -529,6 +540,10 @@ func skipReasonFor(
 	}
 	if stepConfig != nil && stepConfig.Enabled != nil && !*stepConfig.Enabled {
 		return "disabled"
+	}
+	if opts.NothingToVersion && name == "version" &&
+		(stepConfig == nil || (stepConfig.Run == nil && stepConfig.Script == nil)) {
+		return NothingToVersionSkipReason
 	}
 	if opts.FusedHistory && slices.Contains(fusedHistorySteps, name) &&
 		(stepConfig == nil || (stepConfig.Run == nil && stepConfig.Script == nil)) {

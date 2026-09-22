@@ -9,6 +9,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -231,6 +232,15 @@ type Config struct {
 	Linked                     [][]string                 `json:"linked,omitempty"`
 	UpdateInternalDependencies UpdateInternalDependencies `json:"updateInternalDependencies,omitempty"`
 	Snapshot                   Snapshot                   `json:"snapshot,omitempty"`
+
+	// PrivatePackages is @changesets' `privatePackages`: whether private
+	// packages are versioned and tagged. Unset means neither (v3's default), and
+	// such a package is treated as ignored — see MarkPrivate.
+	PrivatePackages *PrivatePackages `json:"privatePackages,omitempty"`
+	// private holds the private packages MarkPrivate found; unversioned is
+	// the subset this config does not version. Runtime-only.
+	private     map[string]bool
+	unversioned map[string]bool
 
 	// VersionStrategy controls how a shared version (e.g. a Directory.Build.props
 	// <Version>) is written: "lockstep" (default, also "") moves every inheritor
@@ -545,11 +555,66 @@ func bytesTrim(b []byte) []byte {
 	return b[i:j]
 }
 
+// PrivatePackages is the `privatePackages` config. @changesets also accepts a
+// bare `false`, meaning neither.
+type PrivatePackages struct {
+	Version bool `json:"version"`
+	Tag     bool `json:"tag"`
+}
+
+// UnmarshalJSON accepts `false` as well as the object form. A bare `true` is
+// an error, as in @changesets: it is not clear which of the two it means.
+func (p *PrivatePackages) UnmarshalJSON(b []byte) error {
+	var flag bool
+	if err := json.Unmarshal(b, &flag); err == nil {
+		if flag {
+			return errors.New(`privatePackages: true is not valid; use false or { "version": …, "tag": … }`)
+		}
+		*p = PrivatePackages{}
+		return nil
+	}
+	type plain PrivatePackages
+	return json.Unmarshal(b, (*plain)(p))
+}
+
+// VersionsPrivate reports whether private packages are versioned.
+func (c *Config) VersionsPrivate() bool {
+	return c.PrivatePackages != nil && c.PrivatePackages.Version
+}
+
+// MarkPrivate records the private packages among names. Unless the config
+// versions them, IsIgnored then reports them ignored, which is exactly how
+// @changesets v3 treats them: never released, a changeset naming one is kept,
+// a changeset mixing one with a public package is an error, and a dependent's
+// range is still rewritten.
+func (c *Config) MarkPrivate(private []string) {
+	c.private, c.unversioned = map[string]bool{}, map[string]bool{}
+	for _, name := range private {
+		c.private[name] = true
+		if !c.VersionsPrivate() {
+			c.unversioned[name] = true
+		}
+	}
+}
+
+// SkipsTag reports whether name gets no git tag (and so no forge release):
+// an ignored package, or a private one unless `privatePackages.tag` is set.
+func (c *Config) SkipsTag(name string) bool {
+	if c.IsIgnored(name) {
+		return true
+	}
+	return c.private[name] && (c.PrivatePackages == nil || !c.PrivatePackages.Tag)
+}
+
 // IsIgnored reports whether the package name matches the `ignore` config (by
-// exact name or a '*' glob, e.g. "*Bench" / "Acme.*"). Ignored packages are
-// never released, tagged, or published — though their manifest dependency
-// ranges are still rewritten (a "none" release).
+// exact name or a '*' glob, e.g. "*Bench" / "Acme.*"), or is a private package
+// the config does not version (MarkPrivate). Ignored packages are never
+// released, tagged, or published — though their manifest dependency ranges are
+// still rewritten (a "none" release).
 func (c *Config) IsIgnored(name string) bool {
+	if c.unversioned[name] {
+		return true
+	}
 	for _, pat := range c.Ignore {
 		if ignoreGlobMatch(pat, name) {
 			return true
