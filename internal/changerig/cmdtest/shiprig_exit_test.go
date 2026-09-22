@@ -30,7 +30,10 @@ func TestShiprigPublishFailureExitsNonZero(t *testing.T) {
 	// Scoped name, plain directory: packages/* is the workspace glob.
 	writeFile(t, filepath.Join(dir, "packages", "auth", "package.json"),
 		`{ "name": "@acme/auth", "version": "1.0.0" }`)
-	initChangesets(t, dir)
+	// OIDC off: on a CI runner with an id-token, "auto" would try a token
+	// exchange first and fail on that instead of the fake registry.
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "node": { "oidc": "off" } }`)
 	// Precondition: the package is discovered, or "nothing to publish" would
 	// exit 0 and this test would pass without reaching the failure.
 	if code, out := runShiprig(t, dir, "info"); code != 0 || !strings.Contains(out, "@acme/auth") {
