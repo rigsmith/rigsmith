@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -38,16 +39,68 @@ func newPackagesCmd() *cobra.Command {
 // exit, never opening the picker (the `… list` convention shared with worktree /
 // branch / mcp / account).
 func newPackagesListCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "Print the release packages and exit (no interactive picker)",
-		Args:    cobra.NoArgs,
+		Long: `Print the release packages and exit (no interactive picker).
+
+--json prints them for a script: every discovered package, in every
+ecosystem, with its directory, current version, where its changelog goes, and
+whether it is private, ignored, or releasing (and to what). Paths are relative
+to the repository root, with forward slashes.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := showPackages(cmd)
-			return err
+			if !asJSON {
+				_, err := showPackages(cmd)
+				return err
+			}
+			ws, err := commands.Open()
+			if err != nil {
+				return err
+			}
+			rps, err := commands.ReleasePackages(cmd.Context(), ws)
+			if err != nil {
+				return err
+			}
+			return writePackagesJSON(cmd.OutOrStdout(), rps)
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the packages as JSON")
+	return cmd
+}
+
+// packageJSON is one package in `packages list --json`: the wire format a
+// script (shiprig-action) reads in place of an npm-only workspace lookup, so
+// its field names are a contract.
+type packageJSON struct {
+	Name             string `json:"name"`
+	Ecosystem        string `json:"ecosystem"`
+	Dir              string `json:"dir"`
+	Version          string `json:"version"`
+	NextVersion      string `json:"nextVersion,omitempty"`
+	Bump             string `json:"bump,omitempty"`
+	Private          bool   `json:"private"`
+	Ignored          bool   `json:"ignored"`
+	Changelog        string `json:"changelog"`
+	ChangelogSection string `json:"changelogSection,omitempty"`
+}
+
+func writePackagesJSON(out io.Writer, rps []commands.ReleasePkg) error {
+	pkgs := make([]packageJSON, 0, len(rps))
+	for _, p := range rps {
+		pkgs = append(pkgs, packageJSON{
+			Name: p.Name, Ecosystem: p.Eco, Dir: p.Dir, Version: p.Current,
+			NextVersion: p.Next, Bump: p.Bump, Private: p.Private, Ignored: p.Ignored,
+			Changelog: p.Changelog, ChangelogSection: p.ChangelogSection,
+		})
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	return enc.Encode(struct {
+		Packages []packageJSON `json:"packages"`
+	}{pkgs})
 }
 
 // showPackages discovers the release packages and prints the disposition table,

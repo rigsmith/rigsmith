@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -22,6 +23,10 @@ type ReleasePkg struct {
 	Bump    string // bump level when it releases; "" otherwise
 	Private bool   // manifest marked private / publish=false — versioned, never published
 	Ignored bool   // matches the config `ignore` list — excluded entirely
+
+	Dir              string // package directory, relative to the root, slash-separated
+	Changelog        string // the CHANGELOG.md its notes go to, relative to the root, slash-separated
+	ChangelogSection string // the section title when Changelog is shared (a stackspace root); "" otherwise
 }
 
 // Releasing reports whether the package gets a new version this run.
@@ -59,7 +64,13 @@ func ReleasePackages(ctx context.Context, ws *Workspace) ([]ReleasePkg, error) {
 			Current: p.Version,
 			Private: p.Private,
 			Ignored: ws.Config.IsIgnored(p.Name),
+			Dir:     filepath.ToSlash(p.Dir),
 		}
+		changelogPath, section := ws.ChangelogFor(p)
+		if rel, err := filepath.Rel(ws.Root, changelogPath); err == nil {
+			rp.Changelog = filepath.ToSlash(rel)
+		}
+		rp.ChangelogSection = section
 		// A RangeOnly module (dependency-range rewrite, no version bump) is not a
 		// "release" for display purposes.
 		if m, ok := byName[p.Name]; ok && !m.RangeOnly {
