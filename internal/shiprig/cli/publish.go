@@ -53,12 +53,13 @@ const dryRunProbeLimit = 8
 
 func newPublishCmd() *cobra.Command {
 	var (
-		dryRun   bool
-		noGitTag bool
-		noPush   bool
-		access   string
-		yes      bool
-		npmAuth  string
+		dryRun     bool
+		noGitTag   bool
+		noPush     bool
+		outputPath string
+		access     string
+		yes        bool
+		npmAuth    string
 	)
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -269,9 +270,17 @@ func newPublishCmd() *cobra.Command {
 				fmt.Fprintln(out, commands.DimStyle.Render("\nstackspace: a fused history is not tagged — registry push only"))
 				return nil
 			}
+			// With tag events on, the caller owns the push (see tagEvents):
+			// tags are created locally only, and the remote is consulted just
+			// to skip a tag that is already there, as `changeset publish` does.
+			events := openTagEvents(outputPath)
 			remote := ""
-			if !noPush {
+			if !noPush && events == nil {
 				remote = gitutil.DefaultRemote(cmd.Context(), ws.Root)
+			}
+			eventRemote := ""
+			if events != nil {
+				eventRemote = gitutil.DefaultRemote(cmd.Context(), ws.Root)
 			}
 			fmt.Fprintln(out)
 			soloApp := singleApp(pkgs)
@@ -292,6 +301,24 @@ func newPublishCmd() *cobra.Command {
 				}
 				done[tag] = true
 				localExists := gitutil.TagExists(cmd.Context(), ws.Root, tag)
+				if events != nil {
+					if localExists || (eventRemote != "" && gitutil.RemoteTagExists(cmd.Context(), ws.Root, eventRemote, tag)) {
+						fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("tag exists"), tag)
+						continue
+					}
+					if dryRun {
+						fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("would tag"), tag)
+						continue
+					}
+					if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
+						return fmt.Errorf("tagging %s: %w", p.Name, err)
+					}
+					if err := events.gitTag(tag, p.Name); err != nil {
+						return fmt.Errorf("recording tag %s in %s: %w", tag, events.path, err)
+					}
+					fmt.Fprintf(out, "%s %s %s\n", commands.PatchStyle.Render("tagged"), tag, commands.DimStyle.Render("(local; the caller pushes it)"))
+					continue
+				}
 				// Without a remote, a local tag is the terminal state. With one, the
 				// tag is only "done" once it's actually on the remote — a previous run
 				// could have created the tag locally and then failed to push it.
@@ -338,6 +365,7 @@ func newPublishCmd() *cobra.Command {
 	f.BoolVarP(&dryRun, "dry-run", "n", false, "show what would be published/tagged without doing it")
 	f.BoolVar(&noGitTag, "no-git-tag", false, "skip creating git tags")
 	f.BoolVar(&noPush, "no-push", false, "create tags locally but do not push them")
+	f.StringVarP(&outputPath, "output", "o", "", "append a git-tag event per tag created to this file (default $CHANGESETS_OUTPUT); tags are then created locally only, for the caller to push")
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
 	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:…); overrides node config")
 	return cmd

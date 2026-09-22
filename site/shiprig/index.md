@@ -37,6 +37,12 @@ The whole workflow is wired:
   prints and exits
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
+- `tag` and `publish` speak @changesets v3's output contract: with `--output
+  <file>` or `$CHANGESETS_OUTPUT` set, each appends a
+  `{"type":"git-tag","tag":…,"packageName":…}` line per tag it creates, skips a
+  tag that already exists locally or on the remote, and pushes nothing. The
+  caller owns the push, as with `changeset publish`; this is how changesets/action
+  and shiprig-action learn which tags to push and release
 - `release` — the [configurable step pipeline](./pipeline) with step filtering
   (`--only` / `--skip` / `--from` / `--to`), `--channels` to build one target
   channel instead of the whole [Velopack](./pipeline#desktop-apps-with-velopack)
