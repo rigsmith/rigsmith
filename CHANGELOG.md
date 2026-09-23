@@ -1,5 +1,58 @@
 # github.com/rigsmith/rigsmith
 
+## 1.20.0
+
+### 🚀 Enhancements
+
+- **rig:** npm packages now publish with no stored credential at all. Every wrapper package has a trusted publisher registered for the release workflow, so CI mints a short-lived credential from its own identity — nothing to expire, nothing to rotate, nothing to leak. Because the repository is public, npm also attaches a provenance attestation to each package, so anyone installing can verify which workflow built it.
+  
+  Republishing is idempotent as well: recovering a release whose npm step alone failed no longer stops at the first version that is already on the registry, which is the normal state of a recovery run and used to abort it.
+- **rig:** npm packages publish with a short-lived credential minted from CI's own identity, instead of a stored token.
+  
+  npm's trusted publishing binds a publisher to one workflow file, and allows one per package, so the npm recovery path moved from its own workflow into the release workflow as a second job. `Actions → Release binaries → Run workflow` now asks which: a dry run, or re-publishing the npm wrappers for a release that already exists. The old `npm republish` workflow is gone; its job does the same work from the same published archives, checksum-verified.
+  
+  Publishing through CI's identity also attaches a provenance attestation to every package automatically, so anyone installing can see which workflow built it.
+- **changerig:** changerig now matches @changesets v3. Changelogs put a blank line under each version heading, and a release with nothing of its own reads "No changes in this release." A peer dependent that falls out of range gets a patch, not a major. Prerelease mode moves consumed changesets into `.changeset/pre/` and keeps only the mode and tag in `pre.json`; a prerelease started on an older version migrates on the next `version`. Two changes need action: `version` with nothing pending now exits 1, and private packages are no longer versioned unless the config sets `"privatePackages": { "version": true }`.
+- **shiprig:** `shiprig packages list --json` prints every discovered package for a script: its ecosystem, directory, current version, next version and bump when it releases, whether it is private or ignored, and the `CHANGELOG.md` its notes go to (with the section title when a stackspace shares the root file). Paths are relative to the repository root.
+- **shiprig:** `shiprig publish` and `shiprig tag` speak @changesets v3's output contract. With `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends a `{"type":"git-tag","tag":…,"packageName":…}` line per tag it creates, skips a tag already present locally or on the remote, and leaves pushing to the caller, as `changeset publish` does. A release action can then push exactly those tags and create a release for each.
+- **shiprig:** `publishDirs` publishes packages a build generated rather than ones anyone checked in.
+  
+  Some packages never exist in the tree. rigsmith's own npm wrappers are written under `npm/dist/` from the release archives at publish time, and are gone after a clean — so discovery finds none of them and `shiprig publish` published nothing. Name them as repo-relative globs under the ecosystem block in `.changeset/config.json` (`"node": { "publishDirs": ["npm/dist/*"] }`) and they publish like any other package, OIDC trusted publishing included.
+  
+  They are never versioned — the build that produced each binary already stamped its manifest — and a glob matching nothing is not an error.
+
+### 🩹 Fixes
+
+- **rig:** A failure in one publishing channel no longer withholds another.
+  
+  A release publishes in sequence — the GitHub release, then npm, then the winget submissions — and a step is skipped when an earlier one fails, whatever its own error handling says. So when 1.19.0's npm credential expired, all five winget packages were silently skipped: the release was out, the manifests needed no changes, and nothing was submitted or reported. The claudeRig UI release had the same shape, where a failed Homebrew cask push would take its winget submission with it.
+  
+  Both now depend on the only thing a winget submission needs — a published release with archives to point at — checked directly rather than inferred from whether the build step as a whole succeeded, so a release that published its assets and then failed on a tap push still reaches winget. The dry-run artifacts survive a later failure too; they are most wanted exactly when something went wrong.
+- **changerig:** `changerig status` now gates the way `changeset status` does in @changesets v3. It fails when a package that would version changed since `--since`, or the base branch by default, and there is no changeset, which is now checked even without `--since`. With nothing pending and nothing changed it exits 0 instead of 1, and `--output` writes an empty plan, so a script can tell "nothing to release" from an error. Ignored packages, and private ones that are not versioned, no longer trip the gate.
+- **changerig:** Two packages with the same name are now an error, naming both, instead of one silently standing in for the other. Changesets name packages by name, so an npm package and a Go module both called `shared` used to share one bump and changelog, and a second npm package with a name already taken was dropped from discovery without a word. Rename one, or narrow discovery so only one is found (`paths`, an ecosystem's `sourcePath`, or a regex ecosystem's `packages` list); `ignore` can't separate them, since it matches by name too.
+- **shiprig:** `publishDirs` says something when it cannot do what you asked.
+  
+  Four ways it could publish fewer packages than intended and report success anyway: a `publishDirs` written as a string rather than a list decoded to nothing and took the no-config path; a matched path that could not be inspected was skipped like a non-directory; a `package.json` that was itself a symlink out of the repository was read anyway, after the directory had been checked; and two generated directories claiming one package name silently published whichever sorted first. Each is now an error naming what it found. A configured glob that matches nothing stays a non-error — before the build that writes those directories has run, empty is correct — but it now says so, because a publish that shipped none of the generated packages otherwise looked exactly like one that had none to ship.
+- **shiprig:** `shiprig release --from <step>` no longer silently skips steps an unfinished release never ran. When a release stops partway, shiprig remembers the step it stopped at, and a later `--from` past it is refused with the steps it would skip: resuming "from publish" after a failure at `commit` used to publish packages `build` never built. Resume from the step shiprig names, or pass `--force` to skip them anyway. Every `--from` run now also lists the steps it skips.
+- **shiprig:** Generated packages are published, and only published: they are no longer git-tagged, and they publish at the access their own manifest declares.
+  
+  Review caught both on the `publishDirs` work before it shipped. Packages named by `publishDirs` were joining the workspace's own package list, so the tagging phase would have pushed a ref per wrapper — 41 of them, on every release. And they inherited the workspace-wide `access`, which for a repo configured "restricted" would have published scoped public packages privately, or failed outright. Each generated manifest now carries `publishConfig.access` and that wins for it.
+  
+  `publishDirs` globs must also stay inside the repository: `../elsewhere/*`, an absolute path, or a symlink resolving outside it are refused, rather than becoming a directory the publisher runs npm in.
+- **shiprig:** `shiprig publish --dry-run` no longer waits on the registry one package at a time.
+  
+  A dry run asks each registry whether a version is already published — that is what lets it report `already published` rather than `would publish` — and it asked serially, so the wait grew with the number of packages. A release generating 41 npm wrapper packages took 29 seconds at 27% CPU to say what it would do; it now takes under 6.
+  
+  The probes run concurrently, bounded so a large workspace cannot open a connection per package. The report is unchanged, including its order: it reads in workspace order, not the order the answers arrive, so a dry run still reads exactly like the publish it previews. A real publish is untouched — still strictly sequential, still stopping at the first failure rather than racing more uploads out.
+- **shiprig:** The generated npm packages declare the repository that builds them, which publishing through OIDC requires: npm attaches a provenance attestation automatically when a public repository publishes that way, and provenance needs the manifest to name its repository.
+- **shiprig:** `shiprig packages` (including `packages list --json`) and `shiprig doctor` work in a repo with no `.changeset/` directory, listing every package with nothing releasing, where they used to fail reading changesets. `shiprig release` in such a repo now skips the `version` step as having nothing pending, so a publish-only release works. `changerig status` and `version` still require `.changeset/`, as `changeset status` does.
+- **shiprig:** The release action reports scoped packages it published. Its parser split a package coordinate at the first `@`, which a scoped name begins with, so `published @scope/pkg@1.2.3` matched nothing: those packages fell out of `publishedPackages` entirely, and a release publishing only scoped packages reported publishing none.
+- **shiprig:** `shiprig release` skips the `version` step when nothing is pending, instead of failing on it, so a release that only publishes what is already versioned still runs. Private packages versioned with `privatePackages.version` get no git tag or forge release unless `privatePackages.tag` is also set.
+
+### 📖 Documentation
+
+- **shiprig:** The per-ecosystem publish config is documented where it actually lives, under the key it actually uses: `.changeset/config.json`, keyed by ecosystem id — `node` for npm packages, not `npm`. Both docs said otherwise, and a block under an unrecognized key is never read and never complains, so anyone who followed them configured nothing at all and got no warning.
+
 ## 1.19.0
 ### 🚀 Enhancements
 
