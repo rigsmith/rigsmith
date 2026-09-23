@@ -270,3 +270,41 @@ func TestVersionComputedVersionIsRecordedNeverStamped(t *testing.T) {
 		t.Fatalf("the second release wrote the project:\n%s", got)
 	}
 }
+
+// ChangelogFor is the single answer to "where do a package's notes go" that
+// both `version` and `shiprig packages list --json` give: its own file
+// outside a stackspace, a section of the root file for a member.
+func TestChangelogForFollowsTheStackspace(t *testing.T) {
+	for _, stack := range []bool{false, true} {
+		root := stampWorkspace(t, stack)
+		ws, err := Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkgs, _, err := ws.Discover(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range pkgs {
+			path, section := ws.ChangelogFor(p)
+			wantPath := filepath.Join(root, filepath.Dir(p.ManifestPath), "CHANGELOG.md")
+			wantSection := ""
+			if stack && p.Name == "Lib" {
+				wantPath, wantSection = filepath.Join(root, "CHANGELOG.md"), "Lib"
+			}
+			// Symlinked temp dirs (macOS /var → /private/var): compare resolved.
+			if gotDir, _ := filepath.EvalSymlinks(filepath.Dir(path)); gotDir != mustEval(t, filepath.Dir(wantPath)) || filepath.Base(path) != "CHANGELOG.md" || section != wantSection {
+				t.Errorf("stack=%v %s: ChangelogFor = (%s, %q), want (%s, %q)", stack, p.Name, path, section, wantPath, wantSection)
+			}
+		}
+	}
+}
+
+func mustEval(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
