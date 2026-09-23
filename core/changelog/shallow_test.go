@@ -94,3 +94,63 @@ func TestResolveLeavesAChangesetUnattributedWhenTheCloneCannotDeepen(t *testing.
 		t.Errorf("result[cs1] = %+v, want it omitted", info)
 	}
 }
+
+// A parentless commit is trusted as a true root only when the repository is
+// known not to be shallow; if that can't be told, the changeset is left
+// unattributed.
+func TestResolveLeavesAChangesetUnattributedWhenShallownessIsUnknown(t *testing.T) {
+	for name, status := range map[string]*fakeResponse{
+		"the probe fails":           nil,
+		"the probe prints nonsense": {name: "git", marker: "--is-shallow-repository", output: "maybe"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			responses := []fakeResponse{{name: "git", marker: "--diff-filter=A", output: "root123:"}}
+			if status != nil {
+				responses = append(responses, *status)
+			}
+			runner := &fakeRunner{responses: responses}
+			result := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, "/repo", runner.run)
+			if info, ok := result["cs1"]; ok {
+				t.Errorf("result[cs1] = %+v, want it omitted", info)
+			}
+		})
+	}
+}
+
+// A true root commit in a complete clone has no parent either, and is the
+// right answer.
+func TestResolveTrustsAParentlessCommitInACompleteClone(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{name: "git", marker: "--diff-filter=A", output: "root123:"},
+		{name: "git", marker: "--is-shallow-repository", output: "false"},
+	}}
+	result := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, "/repo", runner.run)
+	if got := result["cs1"].Commit; got != "root123" {
+		t.Errorf("commit %q, want root123", got)
+	}
+}
+
+// A git too old for --is-shallow-repository echoes the flag; the clone is
+// then shallow exactly when .git/shallow exists.
+func TestResolveReadsShallownessFromTheShallowFileOnOldGit(t *testing.T) {
+	dir := t.TempDir()
+	runner := &fakeRunner{responses: []fakeResponse{
+		{name: "git", marker: "--diff-filter=A", output: "root123:"},
+		{name: "git", marker: "--is-shallow-repository", output: "--is-shallow-repository"},
+		{name: "git", marker: "--git-path shallow", output: ".git/shallow"},
+	}}
+	// No .git/shallow: complete, so the root commit stands.
+	if got := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, dir, runner.run)["cs1"].Commit; got != "root123" {
+		t.Errorf("without .git/shallow: commit %q, want root123", got)
+	}
+	// .git/shallow present and no way to deepen: unattributed.
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte("root123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if info, ok := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, dir, runner.run)["cs1"]; ok {
+		t.Errorf("with .git/shallow: result %+v, want it omitted", info)
+	}
+}
