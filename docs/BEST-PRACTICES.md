@@ -200,10 +200,9 @@ Enforced by the `clauderig guard` PreToolUse hook. Full spec:
   are pending; merging it tags `vX.Y.Z` and/or `ui/vX.Y.Z`, and those tags start
   `goreleaser.yml` and `release-ui.yml`. Review the PR's version bumps and
   changelog — that's the release. Other pushes tag nothing. If the Release run
-  failed before its tags reached GitHub, run the Release workflow by hand on
-  `main` (before another changeset lands, or it only updates the PR). If the tag
-  is there but GoReleaser failed, re-run that GoReleaser run. Tagging by hand
-  still works too.
+  failed before its tags reached GitHub, re-run that run (Re-run jobs): a
+  re-run keeps its own commit, so the tags still land on the release commit.
+  If the tags are there but GoReleaser failed, re-run the GoReleaser run.
 - **Rehearse before going live.** `shiprig release --dry-run` previews the plan;
   `shiprig release --rehearse` does a real local build to `dist/` that commits and
   publishes nothing. See [`RELEASE-PIPELINE-DESIGN.md`](RELEASE-PIPELINE-DESIGN.md).
