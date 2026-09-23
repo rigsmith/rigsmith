@@ -1,0 +1,9 @@
+.github/workflows/goreleaser.yml
+  ai_agent 94-96,144,387,420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8da544fae7ec5a69ccfc2d879eb3584676e773e7",
+  "prompts": {}
+}
