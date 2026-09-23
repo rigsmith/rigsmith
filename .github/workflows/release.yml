@@ -28,11 +28,17 @@ on:
 permissions:
   contents: read
 
-# One at a time, and never cancelled: a cancelled run could leave the PR
-# branch half-updated, or tag without pushing.
+# One at a time, never cancelled, and every push gets its run. A running job
+# can't be cancelled (it could leave the PR branch half-updated, or tag without
+# pushing), and a waiting one can't be replaced: by default a newer push drops
+# the pending run, and if that run was the release PR's merge, its versions
+# would never be tagged. `queue: max` keeps up to 100 waiting, first in first
+# out; each run checks out its own commit, so a merge run still tags that
+# commit.
 concurrency:
   group: release
   cancel-in-progress: false
+  queue: max
 
 jobs:
   release:
