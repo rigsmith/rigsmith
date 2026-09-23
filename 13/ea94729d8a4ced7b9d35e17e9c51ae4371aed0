@@ -1,0 +1,24 @@
+internal/changerig/commands/source.go
+  s_df06cc81ca93a0::t_b6404b22010621 5,7,28-40,43-48
+internal/changerig/commands/releasepkgs.go
+  s_df06cc81ca93a0::t_b6404b22010621 46-48,50
+internal/changerig/cmdtest/shiprig_packages_json_test.go
+  ai_agent 145-158
+  s_df06cc81ca93a0::t_699358c0d868f5 24,88,112-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "13ea94729d8a4ced7b9d35e17e9c51ae4371aed0",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
