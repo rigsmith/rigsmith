@@ -69,10 +69,14 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The event sink is opened before any registry is touched, and with
+			// The event sink is resolved once, here, from the flag or the
+			// process environment: canon never reads .env, so a
+			// CHANGESETS_OUTPUT that only .env sets (loaded below) is not one.
+			// It is opened before any registry is touched, and with
 			// --no-git-tag too, as `changeset publish` does (see
 			// tagEvents.ready). A dry run writes nothing, the file included.
-			if events := openTagEvents(outputPath); events != nil && !dryRun {
+			events := openTagEvents(outputPath)
+			if events != nil && !dryRun {
 				if err := events.ready(); err != nil {
 					return err
 				}
@@ -281,7 +285,6 @@ func newPublishCmd() *cobra.Command {
 			// With tag events on, the caller owns the push (see tagEvents):
 			// tags are created locally only, and the remote is consulted just
 			// to skip a tag that is already there, as `changeset publish` does.
-			events := openTagEvents(outputPath)
 			remote := ""
 			if !noPush && events == nil {
 				remote = gitutil.DefaultRemote(cmd.Context(), ws.Root)

@@ -263,3 +263,33 @@ func TestTagKeepsEventsAlreadyInTheOutputFile(t *testing.T) {
 		t.Fatalf("the earlier event was changed: %q", data)
 	}
 }
+
+// The sink comes from the flag or the process environment only, resolved once:
+// canon never reads .env, so a CHANGESETS_OUTPUT set there alone is not an
+// events file. publish then behaves as with none: it pushes its own tags and
+// writes no file. (Resolved twice, the .env value slipped in after the early
+// open and turned events on half way through.)
+func TestPublishIgnoresChangesetsOutputFromDotenv(t *testing.T) {
+	if prev, ok := os.LookupEnv("CHANGESETS_OUTPUT"); ok {
+		os.Unsetenv("CHANGESETS_OUTPUT")
+		t.Cleanup(func() { os.Setenv("CHANGESETS_OUTPUT", prev) })
+	}
+	dir := tagWorkspace(t)
+	remote := withRemote(t, dir)
+	fakeNpmPublishes(t, dir)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "node": { "oidc": "off" } }`)
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-m", "config")
+	events := filepath.Join(tempDir(t), "events.ndjson")
+	writeFile(t, filepath.Join(dir, ".env"), "CHANGESETS_OUTPUT="+events+"\n")
+
+	code, out := runShiprig(t, dir, "publish", "--yes")
+	assertExitZero(t, code, out)
+	if _, err := os.Stat(events); !os.IsNotExist(err) {
+		t.Fatalf("a CHANGESETS_OUTPUT from .env turned events on (stat err: %v)", err)
+	}
+	if rt := remoteTags(t, remote); !strings.Contains(rt, "pkg-a@1.0.0") {
+		t.Errorf("without an events file publish pushes its tags; remote has %q", rt)
+	}
+}
