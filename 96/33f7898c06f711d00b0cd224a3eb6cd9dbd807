@@ -1,0 +1,9 @@
+.changeset/deep-owls-follow.md
+  ai_agent 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9633f7898c06f711d00b0cd224a3eb6cd9dbd807",
+  "prompts": {}
+}
