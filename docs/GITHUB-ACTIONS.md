@@ -13,6 +13,14 @@ bot for enforcement) — except here the "bot" is a second Action, so there is *
 Ready-to-copy workflows live in
 [`examples/github-workflows/`](../examples/github-workflows).
 
+> **For releasing, prefer [rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action).**
+> It's changesets/action driving shiprig, and it goes further than the `release` composite action
+> here: the version PR is titled with what it releases (`chore: release 1.2.0`), publishing happens
+> only when that PR merges, settings can live in a committed `shiprig-action.jsonc`, and it runs
+> well as a GitHub App (so the PR's CI starts on its own and pushed tags start tag-driven release
+> workflows). rigsmith releases itself with it. The `release` action below stays for repos already
+> using it; `require-changeset` has no counterpart there and is still the gate to use.
+
 ## The shared model
 
 Changesets splits releasing into two moments. The key idea: **contributors don't edit versions or
@@ -46,6 +54,9 @@ So the "release button" is just merging the bot's PR. The `require-changeset` ac
 step 1 honest: it makes sure every feature PR actually carries a changeset.
 
 ## 1. The `release` action
+
+New setups should use [rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action)
+instead (see the note above); this action is kept for repos already on it.
 
 A faithful successor to the net-changesets composite action, driving `shiprig` instead of the .NET
 CLI. It is **polyglot for free** — `shiprig` runs the same engine across .NET, Node, Go, and Rust, so
@@ -86,8 +97,11 @@ For same-repo PR flows, the Action gate is the complete bot with zero infrastruc
 
 ## Dogfooding on this repo
 
-rigsmith itself currently releases its binaries via GoReleaser (see
-[`.goreleaser.yaml`](../.goreleaser.yaml)), not via `shiprig publish`, and does not keep a
-`.changeset/` folder — so these actions are **not** wired into this repo's own CI. They are built
-here to be consumed by polyglot repos that use changesets. Copy the
-[example workflows](../examples/github-workflows) into such a repo to adopt them.
+rigsmith keeps a `.changeset/` folder and releases through
+[rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action), running as the shipRig GitHub
+App ([`.github/workflows/release.yml`](../.github/workflows/release.yml)): changesets keep a
+`chore: release x.y.z` PR open, and merging it tags `vX.Y.Z` (and `ui/vX.Y.Z`), which starts
+[`goreleaser.yml`](../.github/workflows/goreleaser.yml) and
+[`release-ui.yml`](../.github/workflows/release-ui.yml) to build, sign and publish. The composite
+`release` action here isn't used by this repo; it's built for other repos that want it. Copy the
+[example workflows](../examples/github-workflows) to adopt it and `require-changeset`.
