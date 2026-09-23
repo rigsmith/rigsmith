@@ -69,6 +69,13 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The event sink is checked before any registry is touched (see
+			// tagEvents.ready).
+			if events := openTagEvents(outputPath); events != nil && !dryRun && !noGitTag {
+				if err := events.ready(); err != nil {
+					return err
+				}
+			}
 			// Layer .env/.env.local under the ambient environment and export it
 			// (skipped by --no-env) before anything resolves a credential: the
 			// registry push reads its key from the process environment

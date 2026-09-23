@@ -38,6 +38,18 @@ func openTagEvents(flag string) *tagEvents {
 	return &tagEvents{path: flag}
 }
 
+// ready checks, before anything irreversible, that events can be appended:
+// publish pushes to registries before it tags, and a sink that turns out
+// unwritable only then would leave packages published and their tags
+// unreported. It creates the file if needed, as the first append would.
+func (e *tagEvents) ready() error {
+	f, err := os.OpenFile(e.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("tag events file %s: %w", e.path, err)
+	}
+	return f.Close()
+}
+
 // gitTag appends one git-tag event, all or nothing: a write that fails
 // partway is truncated back off, so the file never holds half a line.
 // appended reports whether the whole line landed, which can be true even with

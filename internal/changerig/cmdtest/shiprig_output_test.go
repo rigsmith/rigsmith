@@ -155,3 +155,32 @@ func TestTagRemovesATagItCouldNotReport(t *testing.T) {
 		t.Errorf("the retry should create and report both tags, got %+v", got)
 	}
 }
+
+// An events file that can't be written is caught before any registry is
+// touched: publishing first and failing on the first tag would leave packages
+// out on the registry with their tags unreported.
+func TestPublishChecksTheEventsFileBeforePublishing(t *testing.T) {
+	dir := tagWorkspace(t)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "node": { "oidc": "off" } }`)
+	calls := filepath.Join(tempDir(t), "npm-calls.log")
+	bin := filepath.Join(tempDir(t), "fakebin")
+	if runtime.GOOS == "windows" {
+		writeFile(t, filepath.Join(bin, "npm.cmd"), "@echo off\r\necho %* >> \""+calls+"\"\r\nexit /b 0\r\n")
+	} else {
+		writeFile(t, filepath.Join(bin, "npm"), "#!/bin/sh\necho \"$*\" >> \""+calls+"\"\nexit 0\n")
+		if err := os.Chmod(filepath.Join(bin, "npm"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	code, out := runShiprig(t, dir, "publish", "--yes", "--output", tempDir(t)) // a directory
+	assertExitNonZero(t, code, out)
+	if data, err := os.ReadFile(calls); err == nil && strings.Contains(string(data), "publish") {
+		t.Fatalf("npm publish ran before the events file was checked:\n%s", data)
+	}
+	if tags := tagList(t, dir); len(tags) != 0 {
+		t.Errorf("no tag should be created, got %v", tags)
+	}
+}
