@@ -21,7 +21,7 @@ func TestShiprigPackagesListJSON(t *testing.T) {
 
 	// stdout alone: that is what a script parses, and nothing but the JSON
 	// may be on it.
-	cmd := exec.Command(shiprigBin, "packages", "list", "--json")
+	cmd := exec.CommandContext(t.Context(), shiprigBin, "packages", "list", "--json")
 	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -76,4 +76,83 @@ func TestShiprigPackagesListJSON(t *testing.T) {
 			t.Errorf("%s: changelogSection is only for a shared (stackspace) changelog", name)
 		}
 	}
+}
+
+// Listing packages isn't a changesets command: a repo with no .changeset/ is
+// listed with nothing releasing. `status` still requires the folder, as
+// `changeset status` does.
+func TestShiprigPackagesListJSONWithoutChangesetDir(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	cmd := exec.CommandContext(t.Context(), shiprigBin, "packages", "list", "--json")
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("packages list --json without .changeset/: %v\nstderr:\n%s", err, stderr.String())
+	}
+	var got struct {
+		Packages []map[string]any `json:"packages"`
+	}
+	if err := json.Unmarshal(stdout, &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	if len(got.Packages) != 1 || got.Packages[0]["name"] != "pkg-a" || got.Packages[0]["version"] != "1.0.0" {
+		t.Fatalf("packages = %+v, want just pkg-a@1.0.0", got.Packages)
+	}
+	if _, releasing := got.Packages[0]["nextVersion"]; releasing {
+		t.Errorf("nothing can be pending without .changeset/: %+v", got.Packages[0])
+	}
+
+	code, out := runChangerig(t, dir, "status")
+	assertExitNonZero(t, code, out)
+}
+
+// With the changeset config outside .changeset/ (a root changerig.json) and
+// the source set to "both", a missing .changeset/ must not hide the releases
+// the commits imply.
+func TestShiprigPackagesListJSONWithoutChangesetDirStillReadsCommits(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	writeFile(t, filepath.Join(dir, "changerig.json"), `{ "versioning": { "source": "both" } }`)
+	gitInit(t, dir)
+	writeFile(t, filepath.Join(dir, "packages", "pkg-a", "index.js"), "export {}\n")
+	gitCommitAll(t, dir, "feat: a feature in pkg-a")
+
+	cmd := exec.CommandContext(t.Context(), shiprigBin, "packages", "list", "--json")
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("packages list --json: %v\nstderr:\n%s", err, stderr.String())
+	}
+	var got struct {
+		Packages []map[string]any `json:"packages"`
+	}
+	if err := json.Unmarshal(stdout, &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	if len(got.Packages) != 1 || got.Packages[0]["name"] != "pkg-a" {
+		t.Fatalf("packages = %+v, want just pkg-a", got.Packages)
+	}
+	if next, _ := got.Packages[0]["nextVersion"].(string); next == "" {
+		t.Errorf("the feat commit should release pkg-a even without .changeset/: %+v", got.Packages[0])
+	}
+}
+
+// status is a changesets command and keeps requiring .changeset/, as
+// `changeset status` does, even when the config lives outside it (a root
+// changerig.json), which is the case where the package listing's leniency
+// must not leak into it.
+func TestStatusStillRequiresTheChangesetDir(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	writeFile(t, filepath.Join(dir, "changerig.json"), `{}`)
+
+	code, out := runChangerig(t, dir, "status")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "reading changesets")
 }

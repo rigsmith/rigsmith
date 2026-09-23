@@ -43,7 +43,9 @@ func ReleasePackages(ctx context.Context, ws *Workspace) ([]ReleasePkg, error) {
 	if err != nil {
 		return nil, err
 	}
-	changesets, _, err := ws.LoadChangesets(ctx, pkgs)
+	// Listing packages isn't a changesets command: a repo without .changeset/
+	// has nothing pending on disk, though commits may still release.
+	changesets, _, err := ws.LoadPendingChangesets(ctx, pkgs)
 	if err != nil {
 		return nil, err
 	}

@@ -2,7 +2,9 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/changeset"
@@ -23,12 +25,29 @@ import (
 // commit (so the caller can skip changeset-file bookkeeping like deletion and
 // file-based changelog enrichment that only applies to on-disk changesets).
 func (w *Workspace) LoadChangesets(ctx context.Context, pkgs []plugin.Package) (sets []*changeset.Changeset, fromCommits bool, err error) {
+	return w.loadChangesets(ctx, pkgs, false)
+}
+
+// LoadPendingChangesets is LoadChangesets for a caller that only reports what
+// would release (a package listing), not a changesets command: a missing
+// .changeset/ directory reads as no changesets on disk rather than an error,
+// and commit-derived changesets are still read. `status` and `version` keep
+// the strict LoadChangesets, as `changeset status` requires the folder.
+func (w *Workspace) LoadPendingChangesets(ctx context.Context, pkgs []plugin.Package) (sets []*changeset.Changeset, fromCommits bool, err error) {
+	return w.loadChangesets(ctx, pkgs, true)
+}
+
+func (w *Workspace) loadChangesets(ctx context.Context, pkgs []plugin.Package, missingDirOK bool) (sets []*changeset.Changeset, fromCommits bool, err error) {
 	if w.Config.UsesChangesets() {
 		onDisk, err := changeset.Dir(w.ChangesetDir, "")
-		if err != nil {
+		switch {
+		case err == nil:
+			sets = onDisk
+		case missingDirOK && errors.Is(err, fs.ErrNotExist):
+			// No .changeset/ at all: nothing on disk, and on to commits.
+		default:
 			return nil, false, fmt.Errorf("reading changesets: %w", err)
 		}
-		sets = onDisk
 	}
 	if w.Config.UsesCommits() {
 		derived, err := w.commitChangesets(ctx, pkgs)
