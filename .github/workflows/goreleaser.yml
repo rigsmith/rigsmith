@@ -91,6 +91,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0 # full history so GoReleaser's git changelog is complete
+          # GoReleaser publishes through the API with its own tokens; nothing
+          # here pushes with git, so no credential is left on disk.
+          persist-credentials: false
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -138,7 +141,7 @@ jobs:
       # registration is never exercised. Pinned, like the other tools here, so a
       # release is not the first to meet a new npm.
       - name: npm with trusted-publishing support
-        run: npm install -g npm@${{ env.NPM_VERSION }}
+        run: npm install -g "npm@$NPM_VERSION" # zizmor: ignore[adhoc-packages] exact version, pinned in env
 
       # Keep the JohnCampionJr/winget-pkgs fork's master current with upstream
       # before the komac submission below. komac hardcodes the fork as
@@ -381,7 +384,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false # a release build restores nothing a PR could have written
       - name: npm with trusted-publishing support
-        run: npm install -g npm@${{ env.NPM_VERSION }}
+        run: npm install -g "npm@$NPM_VERSION" # zizmor: ignore[adhoc-packages] exact version, pinned in env
 
       - name: Publish npm wrappers from ${{ github.ref_name }}
         env:
@@ -414,7 +417,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           package-manager-cache: false # a release build restores nothing a PR could have written
       - name: npm with trusted-publishing support
-        run: npm install -g npm@${{ env.NPM_VERSION }}
+        run: npm install -g "npm@$NPM_VERSION" # zizmor: ignore[adhoc-packages] exact version, pinned in env
 
       - name: Publish npm wrappers from ${{ inputs.tag }}
         env:
