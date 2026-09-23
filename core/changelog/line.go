@@ -63,8 +63,11 @@ func gitHubPrefix(info *CommitInfo, repo string) string {
 	if commitLink != "" {
 		prefix += commitLink + " "
 	}
-	// As in the C# source, "Thanks" appears whenever any datum exists, even
-	// when the user link itself is missing.
-	prefix += "Thanks " + userLink + "! - "
-	return prefix
+	// As @changesets/changelog-github does: "Thanks …!" only when there's a
+	// user to thank. (The C# port wrote it whenever any link existed, which
+	// left "Thanks !" when the author couldn't be resolved.)
+	if userLink != "" {
+		prefix += "Thanks " + userLink + "! "
+	}
+	return prefix + "- "
 }
