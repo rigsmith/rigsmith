@@ -155,9 +155,14 @@ Enforced by the `clauderig guard` PreToolUse hook. Full spec:
 
 - **Install hooks once per clone:** `lefthook install`.
 - **Pre-commit runs `gofmt`** — unformatted Go fails the commit (`gofmt -w .`).
-- **Pre-push refuses to clobber `main`** — if local `main` has diverged from
-  `origin/main`, the push is blocked so a force-push can't erase merged PRs.
-  Bypass deliberately with `git push --no-verify`.
+- **Pre-push refuses to clobber `main`** (`.lefthook/pre-push/no-clobber-main.sh`).
+  It checks the refs being pushed, not the branch you're on: tags and other
+  branches always pass, and an update to the remote's `main` passes only as a
+  fast-forward of what that remote has now. Pushing a `main` that's behind,
+  diverged, or missing commits you haven't fetched is refused, as is deleting
+  `main`, so a force-push can't erase merged PRs. It fails closed: if it can't
+  reach the remote, the push is refused. Bypass deliberately with
+  `git push --no-verify`.
 
 ### Commits & PRs
 

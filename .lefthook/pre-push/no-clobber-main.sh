@@ -2,18 +2,22 @@
 #
 # pre-push guard (lefthook's no-clobber-main): refuse an update to the remote's
 # main that would drop commits already on it — the mistake that erases merged
-# PRs. Git passes the remote name as $1 and one line per ref on stdin:
+# PRs. Git passes the remote's name and the URL being pushed to as $1 and $2,
+# and one line per ref on stdin:
 #
 #   <local ref> <local sha> <remote ref> <remote sha>
 #
 # Only a line whose remote ref is refs/heads/main is checked, so tags and other
 # branches always pass, whatever is checked out. That line passes when the
-# remote's main (fetched fresh, since a merge you don't have yet is exactly
-# what gets erased) is an ancestor of what's being pushed: a fast-forward.
-# A push of a main that's behind or diverged, or a delete of main, is refused.
+# remote's main — asked of the push URL itself, now, since a merge you don't
+# have yet is exactly what gets erased — is an ancestor of what's being pushed:
+# a fast-forward. A main that's behind, diverged, or missing commits you
+# haven't fetched is refused, as is a delete of main. If the remote can't be
+# asked, the push is refused too: a guard that can't see main can't clear it.
 # Override with `git push --no-verify`.
 
 remote="${1:-origin}"
+url="${2:-${remote}}"
 refused=0
 
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -28,16 +32,27 @@ while read -r local_ref local_sha remote_ref remote_sha; do
       ;;
   esac
 
-  # What the remote's main is now. If the fetch fails (offline), fall back to
-  # what git last knew; if the remote has no main yet, there's nothing to lose.
-  upstream="${remote_sha}"
-  if git fetch -q "${remote}" main 2>/dev/null; then
-    upstream="$(git rev-parse -q --verify FETCH_HEAD)" || upstream="${remote_sha}"
+  # What the remote's main is now, from the URL git is pushing to. Not a
+  # fetch: FETCH_HEAD is shared with any other fetch, and a failed fetch would
+  # leave only git's stale idea of the remote.
+  if ! listing="$(git ls-remote "${url}" refs/heads/main 2>/dev/null)"; then
+    echo "refusing push: can't reach ${remote} to check its main is only moving forward." >&2
+    echo "  override: git push --no-verify" >&2
+    refused=1
+    continue
   fi
-  case "${upstream}" in
-    *[!0]*) ;;
-    *) continue ;;
-  esac
+  upstream="$(printf '%s\n' "${listing}" | cut -f1)"
+  # No main there yet: nothing to lose.
+  [ -n "${upstream}" ] || continue
+
+  if ! git cat-file -e "${upstream}^{commit}" 2>/dev/null; then
+    echo "refusing push: ${remote}/main has commits you haven't fetched —" >&2
+    echo "  forcing main would erase them." >&2
+    echo "  sync:     git fetch ${remote}, then git merge --ff-only ${remote}/main (or git rebase ${remote}/main to keep local commits)" >&2
+    echo "  override: git push --no-verify" >&2
+    refused=1
+    continue
+  fi
 
   git merge-base --is-ancestor "${upstream}" "${local_sha}" 2>/dev/null && continue
 

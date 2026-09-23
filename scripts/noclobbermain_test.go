@@ -73,6 +73,12 @@ func newClobberRepos(t *testing.T) clobberRepos {
 // stdin as given, and reports whether it allowed the push and what it said.
 func guard(t *testing.T, dir, stdin string) (bool, string) {
 	t.Helper()
+	return guardArgs(t, dir, stdin, "origin", "origin")
+}
+
+// guardArgs is guard with the remote name and push URL git would pass.
+func guardArgs(t *testing.T, dir, stdin, remote, url string) (bool, string) {
+	t.Helper()
 	script, err := filepath.Abs("../.lefthook/pre-push/no-clobber-main.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +86,7 @@ func guard(t *testing.T, dir, stdin string) (bool, string) {
 	if _, err := os.Stat(script); err != nil {
 		t.Fatalf("no-clobber-main.sh not found — fix this test rather than deleting it: %v", err)
 	}
-	cmd := exec.Command("sh", script, "origin")
+	cmd := exec.Command("sh", script, remote, url)
 	cmd.Dir = dir
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
@@ -128,10 +134,9 @@ func TestNoClobberMainAllowsAFastForward(t *testing.T) {
 	}
 }
 
-// git's own remote sha can be stale; the guard fetches, so a main that was a
-// fast-forward of what git last saw is still refused once origin has moved.
 func TestNoClobberMainRefusesAMainThatIsBehind(t *testing.T) {
 	r := newClobberRepos(t)
+	runGit(t, r.work, "fetch", "-q", "origin")
 	ok, out := guard(t, r.work, line("refs/heads/main", r.base, "refs/heads/main", r.base))
 	if ok {
 		t.Fatalf("pushing a main behind origin was allowed:\n%s", out)
@@ -141,8 +146,48 @@ func TestNoClobberMainRefusesAMainThatIsBehind(t *testing.T) {
 	}
 }
 
+// git's own remote sha can be stale; the guard asks the remote, so a main that
+// was a fast-forward of what git last saw is still refused once origin has
+// moved on with commits this clone doesn't have.
+func TestNoClobberMainRefusesWhenOriginHasCommitsNotFetched(t *testing.T) {
+	r := newClobberRepos(t)
+	ok, out := guard(t, r.work, line("refs/heads/main", r.base, "refs/heads/main", r.base))
+	if ok {
+		t.Fatalf("pushing main over unfetched commits was allowed:\n%s", out)
+	}
+	if !strings.Contains(out, "haven't fetched") {
+		t.Errorf("want the unfetched-commits message, got:\n%s", out)
+	}
+}
+
+// Fails closed: a guard that can't see the remote's main can't clear a push.
+func TestNoClobberMainRefusesWhenTheRemoteCannotBeReached(t *testing.T) {
+	r := newClobberRepos(t)
+	missing := filepath.Join(t.TempDir(), "gone.git")
+	ok, out := guardArgs(t, r.work, line("refs/heads/main", r.base, "refs/heads/main", r.base), "origin", missing)
+	if ok {
+		t.Fatalf("a push the guard couldn't check was allowed:\n%s", out)
+	}
+	if !strings.Contains(out, "can't reach") {
+		t.Errorf("want the unreachable message, got:\n%s", out)
+	}
+}
+
+// It asks the URL being pushed to, not whatever the remote's name resolves to:
+// here the name doesn't resolve at all, and the fast-forward still passes.
+func TestNoClobberMainAsksThePushURL(t *testing.T) {
+	r := newClobberRepos(t)
+	runGit(t, r.work, "pull", "-q", "--ff-only", "origin", "main")
+	next := commit(t, r.work, "next")
+	ok, out := guardArgs(t, r.work, line("refs/heads/main", next, "refs/heads/main", r.ahead), "no-such-remote", r.origin)
+	if !ok {
+		t.Fatalf("a fast-forward checked against the push URL was refused:\n%s", out)
+	}
+}
+
 func TestNoClobberMainRefusesADivergedMain(t *testing.T) {
 	r := newClobberRepos(t)
+	runGit(t, r.work, "fetch", "-q", "origin")
 	mine := commit(t, r.work, "local only")
 	ok, out := guard(t, r.work, line("refs/heads/main", mine, "refs/heads/main", r.base))
 	if ok {
@@ -181,7 +226,7 @@ func TestNoClobberMainAsARealPrePushHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	hook := filepath.Join(r.work, ".git", "hooks", "pre-push")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexec sh '"+script+"' \"$1\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexec sh '"+script+"' \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
