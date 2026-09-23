@@ -2,6 +2,10 @@
 package changelog
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -174,15 +178,78 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+// commitThatAddedChangeset finds the commit that added the changeset file, as
+// @changesets/git's getCommitsThatAddFiles does: in a shallow clone (CI's
+// default checkout) the clone's oldest commit has no parent, so every file
+// looks added there. A parentless answer from a shallow clone is therefore
+// not believed: the clone is deepened by 50 commits and the lookup repeated,
+// until the commit found has a parent or the clone is complete (a true root).
+// Where canon throws when the clone can't be deepened, the changeset is left
+// unattributed instead: this resolver degrades rather than errors, and a
+// missing link beats a link to the wrong pull request.
 func commitThatAddedChangeset(run Runner, dir, id, format string) string {
 	for _, extension := range changesetExtensions {
-		hash := runFirstLine(run, dir,
-			"git", "log", "--diff-filter=A", "--max-count=1", "--format="+format, "--", ".changeset/"+id+extension)
-		if hash != "" {
-			return hash
+		path := ".changeset/" + id + extension
+		for deepened := 0; ; deepened++ {
+			line := runFirstLine(run, dir,
+				"git", "log", "--diff-filter=A", "--follow", "--max-count=1", "--format="+format+":%p", "--", path)
+			if line == "" {
+				break
+			}
+			hash, parents, _ := strings.Cut(line, ":")
+			if parents != "" {
+				return hash
+			}
+			shallow, known := isShallowRepository(run, dir)
+			if !known {
+				return "" // can't tell a true root from the clone's boundary
+			}
+			if !shallow {
+				return hash // a true root commit
+			}
+			// 400 rounds is 20,000 commits deeper than the checkout: past that,
+			// give up rather than fetch forever.
+			if deepened == 400 {
+				return ""
+			}
+			if _, err := run(dir, "git", "fetch", "--deepen=50"); err != nil {
+				return ""
+			}
 		}
 	}
 	return ""
+}
+
+// isShallowRepository reports whether dir's repository is a shallow clone,
+// and whether that could be determined at all. As @changesets/git's
+// isRepoShallow: a git too old for --is-shallow-repository echoes the flag
+// back, and then the clone is shallow when .git/shallow exists.
+func isShallowRepository(run Runner, dir string) (shallow, known bool) {
+	switch runFirstLine(run, dir, "git", "rev-parse", "--is-shallow-repository") {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	case "--is-shallow-repository":
+		file := runFirstLine(run, dir, "git", "rev-parse", "--git-path", "shallow")
+		// A git older than 2.5 echoes --git-path back too.
+		if file == "" || file == "--git-path" {
+			return false, false
+		}
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(dir, file)
+		}
+		_, err := os.Stat(file)
+		if err == nil {
+			return true, true
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, true
+		}
+		return false, false
+	default:
+		return false, false
+	}
 }
 
 func pullRequestForCommit(run Runner, dir, repo, sha string) int {
