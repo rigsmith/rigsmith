@@ -184,3 +184,82 @@ func TestPublishChecksTheEventsFileBeforePublishing(t *testing.T) {
 		t.Errorf("no tag should be created, got %v", tags)
 	}
 }
+
+// assertEmptyEventsFile fails unless path exists and holds no events. A
+// missing file is not "no events": changesets/action fails on it, and
+// readTagEvents alone can't tell the two apart.
+func assertEmptyEventsFile(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		t.Fatalf("%s was never created; canon opens it even when there is nothing to report", filepath.Base(path))
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) != 0 {
+		t.Fatalf("want an empty events file, got %q", data)
+	}
+}
+
+// As `changeset git-tag` does, the file exists after a run that tags nothing:
+// an empty file is how the caller learns there were no tags.
+func TestTagCreatesTheOutputFileWhenNothingNeedsATag(t *testing.T) {
+	dir := tagWorkspace(t)
+	code, out := runShiprig(t, dir, "tag")
+	assertExitZero(t, code, out)
+
+	events := filepath.Join(tempDir(t), "events.ndjson")
+	t.Setenv("CHANGESETS_OUTPUT", events)
+	code, out = runShiprig(t, dir, "tag")
+	assertExitZero(t, code, out)
+	assertEmptyEventsFile(t, events)
+}
+
+// As `changeset publish --no-git-tag` does: the file is opened even though no
+// tag can be made.
+func TestPublishWithoutGitTagsStillCreatesTheOutputFile(t *testing.T) {
+	dir := tagWorkspace(t)
+	fakeNpmPublishes(t, dir)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "node": { "oidc": "off" } }`)
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-m", "config")
+
+	events := filepath.Join(tempDir(t), "events.ndjson")
+	code, out := runShiprig(t, dir, "publish", "--yes", "--no-git-tag", "--output", events)
+	assertExitZero(t, code, out)
+	assertEmptyEventsFile(t, events)
+}
+
+// A dry run writes nothing, the events file included.
+func TestTagDryRunCreatesNoOutputFile(t *testing.T) {
+	dir := tagWorkspace(t)
+	events := filepath.Join(tempDir(t), "events.ndjson")
+	code, out := runShiprig(t, dir, "tag", "--dry-run", "--output", events)
+	assertExitZero(t, code, out)
+	if _, err := os.Stat(events); !os.IsNotExist(err) {
+		t.Fatalf("a dry run created the events file (stat err: %v)", err)
+	}
+}
+
+// Opening appends; it never truncates what an earlier step in the same job
+// already reported, as canon's append-mode stream doesn't.
+func TestTagKeepsEventsAlreadyInTheOutputFile(t *testing.T) {
+	dir := tagWorkspace(t)
+	code, out := runShiprig(t, dir, "tag")
+	assertExitZero(t, code, out)
+
+	events := filepath.Join(tempDir(t), "events.ndjson")
+	earlier := `{"type":"git-tag","tag":"other@1.0.0","packageName":"other"}` + "\n"
+	writeFile(t, events, earlier)
+	code, out = runShiprig(t, dir, "tag", "--output", events)
+	assertExitZero(t, code, out)
+	data, err := os.ReadFile(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != earlier {
+		t.Fatalf("the earlier event was changed: %q", data)
+	}
+}

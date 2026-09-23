@@ -69,9 +69,10 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The event sink is checked before any registry is touched (see
-			// tagEvents.ready).
-			if events := openTagEvents(outputPath); events != nil && !dryRun && !noGitTag {
+			// The event sink is opened before any registry is touched, and with
+			// --no-git-tag too, as `changeset publish` does (see
+			// tagEvents.ready). A dry run writes nothing, the file included.
+			if events := openTagEvents(outputPath); events != nil && !dryRun {
 				if err := events.ready(); err != nil {
 					return err
 				}
