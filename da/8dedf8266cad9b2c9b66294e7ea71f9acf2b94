@@ -1,0 +1,27 @@
+internal/shiprig/cli/tagevents.go
+  s_df06cc81ca93a0::t_0b57cb433c5c80 71-82,95
+core/gitutil/gitutil_test.go
+  s_df06cc81ca93a0::t_79849757cb006c 314-340
+internal/shiprig/cli/publish.go
+  s_df06cc81ca93a0::t_ede6bbf6674d74 313-314,317-319
+internal/shiprig/cli/tag.go
+  s_df06cc81ca93a0::t_ede6bbf6674d74 88-90,92-97
+core/gitutil/tags.go
+  s_df06cc81ca93a0::t_0b57cb433c5c80 141-157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "da8dedf8266cad9b2c9b66294e7ea71f9acf2b94",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
