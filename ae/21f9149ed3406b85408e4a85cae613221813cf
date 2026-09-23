@@ -1,0 +1,21 @@
+go.mod
+  s_df06cc81ca93a0::t_b713c69f644740 1
+CHANGELOG.md
+  s_df06cc81ca93a0::t_b713c69f644740 3-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ae21f9149ed3406b85408e4a85cae613221813cf",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
