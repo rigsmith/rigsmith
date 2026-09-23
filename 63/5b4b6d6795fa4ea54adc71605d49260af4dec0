@@ -1,0 +1,23 @@
+.changeset/quiet-otters-march.md
+  ai_agent 1-7
+internal/changerig/cmdtest/shiprig_packages_json_test.go
+  s_df06cc81ca93a0::t_6ab60cacba89c3 80-111
+internal/changerig/commands/releasepkgs.go
+  s_df06cc81ca93a0::t_ac6c95a23126e3 6-7,50-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "635b4b6d6795fa4ea54adc71605d49260af4dec0",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
