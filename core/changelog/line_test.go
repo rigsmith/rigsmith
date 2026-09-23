@@ -76,11 +76,19 @@ func TestRenderLine(t *testing.T) {
 			want:    "A change",
 		},
 		{
-			name:    "github commit only still renders the thanks wrapper",
+			// @changesets/changelog-github adds "Thanks" only for a user.
+			name:    "github commit without an author has no thanks",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
 			info:    &CommitInfo{Commit: "abc1234"},
-			want:    "[`abc1234`](https://github.com/acme/widgets/commit/abc1234) Thanks ! - A change",
+			want:    "[`abc1234`](https://github.com/acme/widgets/commit/abc1234) - A change",
+		},
+		{
+			name:    "github pull and commit without an author has no thanks",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
+			info:    &CommitInfo{Commit: "abc1234", PullRequest: 42},
+			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/abc1234) - A change",
 		},
 	}
 
