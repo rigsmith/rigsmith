@@ -8,6 +8,11 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # gh-aw's lock files are generated from .github/aw/actions-lock.json by
+      # `gh aw compile`; bump them with `gh aw update`, not by editing the
+      # output, which the next compile would revert.
+      - dependency-name: github/gh-aw-actions/*
     groups:
       github-actions:
         patterns: ["*"]
