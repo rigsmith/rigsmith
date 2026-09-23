@@ -254,13 +254,12 @@ jobs:
       # this workflow, so npm mints a short-lived credential from the job's own
       # OIDC identity — nothing stored, nothing to expire, and a provenance
       # attestation attached automatically because this repository is public.
-      - name: npm wrapper packages
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            node scripts/npm/build-packages.mjs --dry-publish
-          else
-            node scripts/npm/build-packages.mjs --publish
-          fi
+      # A dry run checks the wrappers build and pack. A tag release publishes
+      # them in the `npm` job below instead, on a GitHub-hosted runner: npm
+      # refuses a provenance-signed publish from this one (see that job).
+      - name: npm wrapper packages (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: node scripts/npm/build-packages.mjs --dry-publish
 
       # Submit to winget via komac, which updates the PUBLISHED manifest rather
       # than writing one from config — so Commands, Tags, Copyright,
@@ -351,9 +350,41 @@ jobs:
   # publisher is bound to a workflow filename and npm allows one per package. As
   # its own file it could never publish these packages except with a stored
   # token; as a job in this one it mints its own credential like the release does.
+  # npm publishing runs on a GitHub-hosted runner, never Blacksmith: trusted
+  # publishing from a public repository signs a provenance statement, and npm
+  # rejects that from anything it classes as self-hosted, which Blacksmith is
+  # ("Only github-hosted runners are supported when publishing with
+  # provenance", E422, v1.20.0). The trusted publisher is bound to this
+  # workflow FILE, not the runner, so moving the job changes nothing there.
+  npm:
+    # A tag release publishes the npm wrappers from the release the goreleaser
+    # job just made: the same checksum-verified archives republish-npm uses.
+    needs: goreleaser
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read the release's assets
+      id-token: write # mint the OIDC token npm exchanges
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          registry-url: https://registry.npmjs.org
+      - name: npm with trusted-publishing support
+        run: npm install -g npm@${{ env.NPM_VERSION }}
+
+      - name: Publish npm wrappers from ${{ github.ref_name }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/npm/build-packages.mjs --from-release "${{ github.ref_name }}" --publish
+
   republish-npm:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'republish-npm' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest # GitHub-hosted: see the npm job
     permissions:
       contents: read # read the release's assets
       id-token: write # mint the OIDC token npm exchanges
