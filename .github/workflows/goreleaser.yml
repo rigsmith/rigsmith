@@ -1,8 +1,10 @@
 # Build and publish the four CLI binaries on a version tag.
 #
 # The release flow is two moments:
-#   1. `shiprig version` bumps versions + writes changelogs; you commit, push, and
-#      push a `vX.Y.Z` tag.
+#   1. release.yml keeps a "chore: release" PR open with the version bumps and
+#      changelogs; merging it makes release.yml push the `vX.Y.Z` tag as the
+#      shipRig App. (By hand still works: `shiprig version`, commit, push, and
+#      push the tag.)
 #   2. This workflow fires on that tag, runs GoReleaser, and creates the GitHub
 #      Release with the cross-platform archives + checksums.
 #
