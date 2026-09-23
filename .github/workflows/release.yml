@@ -69,7 +69,7 @@ jobs:
       - name: Install shiprig
         run: .github/actions/release/install-shiprig.sh
         env:
-          INPUT_SHIPRIG_VERSION: v1.20.0
+          INPUT_SHIPRIG_VERSION: v1.20.2
           GITHUB_TOKEN: ${{ github.token }}
 
       - name: Release PR or tags
