@@ -6,12 +6,21 @@ name: Release
 #   - Changesets pending: keep a standing release PR open with the version
 #     bumps and changelog, titled and committed as what it releases
 #     ("chore: release 1.20.2", the action's default). Nothing is tagged.
-#   - Nothing pending (the release PR was just merged): `shiprig tag` tags every
-#     package whose version has no tag yet — vX.Y.Z for the CLIs, ui/vX.Y.Z for
-#     the UI — and the action pushes those tags. The tag push starts
-#     goreleaser.yml or release-ui.yml, which build, sign and publish exactly as
-#     they do for a tag pushed by hand. On any other push there is nothing new
-#     to tag, so nothing happens.
+#   - The push that merges the release PR: `shiprig tag` tags each package it
+#     releases whose version has no tag yet (ignored packages never, private
+#     ones only with privatePackages.tag) — vX.Y.Z for the CLIs, ui/vX.Y.Z for
+#     the UI — and the action pushes those tags, failing the run if one can't
+#     be pushed. The tag push starts goreleaser.yml or release-ui.yml, which
+#     build, sign and publish exactly as they do for a tag pushed by hand.
+#   - Any other push with nothing pending: nothing happens (the action's
+#     publish-on: version-pr-merge default).
+#
+# To recover, re-run the failed run itself (Actions → the run → Re-run jobs):
+# a re-run uses that run's own commit, so the tags land on the release commit
+# even if main has moved on. There is deliberately no manual trigger: it would
+# tag main's latest commit, which after any later push isn't the release. If the
+# tags are on GitHub but goreleaser.yml or release-ui.yml failed, re-run that
+# run instead.
 #
 # The App token is what makes that hand-off work: a tag pushed with GITHUB_TOKEN
 # does not start other workflows. It also means the release PR's CI runs
@@ -74,27 +83,8 @@ jobs:
 
       - name: Release PR or tags
         id: shiprig
-        uses: rigsmith/shiprig-action@58c0a2d36cd85e9fcb1d4b18d19a1f83656de1e0 # v0.2.0
+        uses: rigsmith/shiprig-action@ec23d482a2e2e10872edc876a223c0f07d767dc8 # v0.3.0
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           publish-script: shiprig tag
           create-github-releases: false
-
-      # The action only warns when a tag push fails ("Assuming it was manually
-      # pushed by the publish script"), which would leave this run green with
-      # nothing released. Every tag shiprig made here has to be on GitHub.
-      - name: Check the tags reached GitHub
-        if: steps.shiprig.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          missing=0
-          for tag in $(git tag --points-at HEAD); do
-            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --silent 2>/dev/null; then
-              echo "pushed: ${tag}"
-            else
-              echo "::error::${tag} was tagged but never reached GitHub, so nothing was released for it."
-              missing=1
-            fi
-          done
-          exit "${missing}"
