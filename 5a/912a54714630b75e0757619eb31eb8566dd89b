@@ -1,0 +1,25 @@
+internal/changerig/cmdtest/duplicate_names_test.go
+  s_df06cc81ca93a0::t_f68dca7fac1133 24-25
+internal/changerig/commands/workspace.go
+  s_df06cc81ca93a0::t_f68dca7fac1133 183-184
+.changeset/lucky-ravens-glow.md
+  s_df06cc81ca93a0::t_f68dca7fac1133 7
+site/changerig/index.md
+  s_df06cc81ca93a0::t_f68dca7fac1133 31-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5a912a54714630b75e0757619eb31eb8566dd89b",
+  "prompts": {},
+  "sessions": {
+    "s_df06cc81ca93a0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ea084e0d-e516-4120-9276-01a2c9e861f3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
