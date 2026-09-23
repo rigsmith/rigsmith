@@ -174,15 +174,43 @@ func shortSHA(sha string) string {
 	return sha
 }
 
+// commitThatAddedChangeset finds the commit that added the changeset file, as
+// @changesets/git's getCommitsThatAddFiles does: in a shallow clone (CI's
+// default checkout) the clone's oldest commit has no parent, so every file
+// looks added there. A parentless answer from a shallow clone is therefore
+// not believed: the clone is deepened by 50 commits and the lookup repeated,
+// until the commit found has a parent or the clone is complete (a true root).
+// Where canon throws when the clone can't be deepened, the changeset is left
+// unattributed instead: this resolver degrades rather than errors, and a
+// missing link beats a link to the wrong pull request.
 func commitThatAddedChangeset(run Runner, dir, id, format string) string {
 	for _, extension := range changesetExtensions {
-		hash := runFirstLine(run, dir,
-			"git", "log", "--diff-filter=A", "--max-count=1", "--format="+format, "--", ".changeset/"+id+extension)
-		if hash != "" {
-			return hash
+		path := ".changeset/" + id + extension
+		for deepened := 0; ; deepened++ {
+			line := runFirstLine(run, dir,
+				"git", "log", "--diff-filter=A", "--follow", "--max-count=1", "--format="+format+":%p", "--", path)
+			if line == "" {
+				break
+			}
+			hash, parents, _ := strings.Cut(line, ":")
+			if parents != "" || !isShallowRepository(run, dir) {
+				return hash
+			}
+			// 400 rounds is 20,000 commits deeper than the checkout: past that,
+			// give up rather than fetch forever.
+			if deepened == 400 {
+				return ""
+			}
+			if _, err := run(dir, "git", "fetch", "--deepen=50"); err != nil {
+				return ""
+			}
 		}
 	}
 	return ""
+}
+
+func isShallowRepository(run Runner, dir string) bool {
+	return runFirstLine(run, dir, "git", "rev-parse", "--is-shallow-repository") == "true"
 }
 
 func pullRequestForCommit(run Runner, dir, repo, sha string) int {
