@@ -6,16 +6,21 @@ name: Release
 #   - Changesets pending: keep a standing release PR open with the version
 #     bumps and changelog, titled and committed as what it releases
 #     ("chore: release 1.20.2", the action's default). Nothing is tagged.
-#   - The push that merges the release PR: `shiprig tag` tags every package
-#     whose version has no tag yet — vX.Y.Z for the CLIs, ui/vX.Y.Z for the
-#     UI — and the action pushes those tags, failing the run if one can't be
-#     pushed. The tag push starts goreleaser.yml or release-ui.yml, which
+#   - The push that merges the release PR: `shiprig tag` tags each package it
+#     releases whose version has no tag yet (ignored packages never, private
+#     ones only with privatePackages.tag) — vX.Y.Z for the CLIs, ui/vX.Y.Z for
+#     the UI — and the action pushes those tags, failing the run if one can't
+#     be pushed. The tag push starts goreleaser.yml or release-ui.yml, which
 #     build, sign and publish exactly as they do for a tag pushed by hand.
 #   - Any other push with nothing pending: nothing happens (the action's
 #     publish-on: version-pr-merge default).
 #
-# Run it by hand (Actions → Release → Run workflow) to tag whatever is
-# untagged without a release PR: a retry after a failed release run, say.
+# Run it by hand on main (Actions → Release → Run workflow) to push a tag that
+# never reached GitHub: a retry after this workflow failed to tag. It only
+# tags; it can't restart a build. If the tag is on GitHub and goreleaser.yml or
+# release-ui.yml failed, re-run that run instead. And it tags only while
+# nothing is pending: once a new changeset lands, a manual run updates the
+# release PR, so retry before then.
 #
 # The App token is what makes that hand-off work: a tag pushed with GITHUB_TOKEN
 # does not start other workflows. It also means the release PR's CI runs
@@ -49,6 +54,10 @@ concurrency:
 jobs:
   release:
     name: Release
+    # Pushes are to main already; a manual run could be started on any branch,
+    # and tagging that branch's HEAD would release it. Checked before a token
+    # is minted.
+    if: github.ref == 'refs/heads/main'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
