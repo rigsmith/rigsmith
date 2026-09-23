@@ -1,0 +1,13 @@
+# Actions are pinned by commit SHA (zizmor's unpinned-uses rule); Dependabot
+# moves the SHA and its version comment together when an action releases.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]

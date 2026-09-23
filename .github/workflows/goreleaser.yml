@@ -40,21 +40,22 @@ env:
   # is not the first thing to meet a fresh npm.
   NPM_VERSION: 11.17.0
 
-permissions:
-  contents: write # create the GitHub Release and upload assets
-  # Lets a job mint an OIDC token, which npm exchanges for a short-lived publish
-  # credential (trusted publishing). A trusted publisher is bound to a repository
-  # and a WORKFLOW FILENAME, and npm allows one configuration per package — which
-  # is why republishing lives in this file as a second job rather than in a
-  # workflow of its own. A separate file could not publish these packages without
-  # a stored token.
-  id-token: write
+# Nothing at the workflow level; each job asks for what it needs. The npm jobs'
+# id-token lets them mint an OIDC token, which npm exchanges for a short-lived
+# publish credential (trusted publishing). A trusted publisher is bound to a
+# repository and a WORKFLOW FILENAME, and npm allows one configuration per
+# package — which is why republishing lives in this file as a second job rather
+# than in a workflow of its own. A separate file could not publish these
+# packages without a stored token.
+permissions: {}
 
 jobs:
   goreleaser:
     # A tag release, or a manual dry run. Republishing npm is the other job.
     if: ${{ github.event_name == 'push' || inputs.mode == 'dry-run' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: write # create the GitHub Release and upload assets
     steps:
       # Fail fast on half-configured Windows signing. scripts/sign-windows.sh
       # auto-enables once TRUSTED_SIGNING_ACCOUNT is set, then hard-requires the
@@ -87,13 +88,14 @@ jobs:
           fi
           echo "All Trusted Signing secrets present and non-empty."
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0 # full history so GoReleaser's git changelog is complete
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false # a release build restores nothing a PR could have written
 
       # The gitrepo tests need a git identity + a `main` default branch, same as
       # ci.yml. Without this the temp repos default to `master` and the
@@ -114,7 +116,7 @@ jobs:
 
       # jsign signs the Windows .exe with Azure Trusted Signing during the build
       # (see scripts/sign-windows.sh); it's a Java jar and needs a JRE.
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "21"
@@ -125,10 +127,11 @@ jobs:
           echo "JSIGN_JAR=/tmp/jsign.jar" >> "$GITHUB_ENV"
 
       # Node builds the npm binary-wrapper packages; registry-url wires npm auth.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false # a release build restores nothing a PR could have written
       # Node 22 ships npm 10, which knows nothing about trusted publishing. npm
       # detects the OIDC environment and exchanges the token itself from 11.5.1;
       # without this upgrade the publish silently falls back to NPM_TOKEN and the
@@ -208,7 +211,7 @@ jobs:
           echo "GORELEASER_CURRENT_TAG=$tag" >> "$GITHUB_ENV"
           echo "dry run will build as $tag"
 
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -322,7 +325,7 @@ jobs:
       # Dry run only: hand back the built + signed artifacts to inspect locally
       # (codesign --verify / spctl on the mac binaries, the casks, checksums).
       # Nothing was published.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
         with:
           name: dryrun-dist
@@ -368,21 +371,22 @@ jobs:
       contents: read # read the release's assets
       id-token: write # mint the OIDC token npm exchanges
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false # a release build restores nothing a PR could have written
       - name: npm with trusted-publishing support
         run: npm install -g npm@${{ env.NPM_VERSION }}
 
       - name: Publish npm wrappers from ${{ github.ref_name }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/npm/build-packages.mjs --from-release "${{ github.ref_name }}" --publish
+        run: node scripts/npm/build-packages.mjs --from-release "$GITHUB_REF_NAME" --publish
 
   republish-npm:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'republish-npm' }}
@@ -392,20 +396,23 @@ jobs:
       id-token: write # mint the OIDC token npm exchanges
     steps:
       - name: Require a tag
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
-          if [ -z "${{ inputs.tag }}" ]; then
+          if [ -z "$TAG" ]; then
             echo "::error::republish-npm needs the tag of an already-published release (e.g. v1.19.0)."
             exit 1
           fi
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false # a release build restores nothing a PR could have written
       - name: npm with trusted-publishing support
         run: npm install -g npm@${{ env.NPM_VERSION }}
 
@@ -416,5 +423,6 @@ jobs:
           # moved here.
           # `gh release download` reads this repository's release assets.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/npm/build-packages.mjs --from-release "${{ inputs.tag }}" --publish
+          TAG: ${{ inputs.tag }}
+        run: node scripts/npm/build-packages.mjs --from-release "$TAG" --publish
 

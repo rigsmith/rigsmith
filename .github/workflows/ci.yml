@@ -60,8 +60,9 @@ env:
 jobs:
   # zizmor: a security linter for the workflows and actions in .github/
   # (unpinned actions, template injection, leaked credentials, excessive
-  # permissions, cache poisoning, dangerous triggers). Pedantic, as
-  # shiprig-action runs it. Findings show as annotations on the PR.
+  # permissions, cache poisoning, dangerous triggers), in its regular persona.
+  # Findings show as annotations on the PR; .github/zizmor.yml holds the
+  # exclusions.
   lint-workflows:
     name: Lint workflows
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -76,7 +77,6 @@ jobs:
       - name: Run zizmor
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
-          persona: pedantic
           annotations: true
           advanced-security: false
 
@@ -88,11 +88,11 @@ jobs:
       contents: read
       actions: write # for the cancel step alone
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0 # pinned pre-refactor source for command compatibility
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -102,7 +102,7 @@ jobs:
           echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ${{ steps.paths.outputs.gocache }}
@@ -210,11 +210,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0 # pinned pre-refactor source for command compatibility
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -224,7 +224,7 @@ jobs:
           echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ${{ steps.paths.outputs.gocache }}
@@ -266,12 +266,12 @@ jobs:
       actions: write # for the cancel step alone
     steps:
       # Full history so the scan covers every commit, not just the tip.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
       - id: gitleaks
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.local/bin/gitleaks
           key: gitleaks-${{ runner.os }}-${{ env.GITLEAKS_VERSION }}
@@ -314,13 +314,13 @@ jobs:
       contents: read
       actions: write # for the cancel step alone
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       # go-version-file honours the go directive, so the scan runs on the same
       # toolchain the module requires — which is the point: most findings here
       # have been standard-library ones, invisible to any dependency bump.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -330,7 +330,7 @@ jobs:
           echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
           echo "gobin=$(go env GOPATH)/bin" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ${{ steps.paths.outputs.gocache }}
@@ -342,7 +342,7 @@ jobs:
       # The vulnerability database is fetched live either way, so this still
       # scans against current advisories.
       - id: tools
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.paths.outputs.gobin }}
           key: go-tools-${{ runner.os }}-${{ steps.paths.outputs.goversion }}-govulncheck-${{ env.GOVULNCHECK_VERSION }}
@@ -380,10 +380,10 @@ jobs:
       contents: read
       actions: write # for the cancel step alone
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -392,7 +392,7 @@ jobs:
           echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ${{ steps.paths.outputs.gocache }}
@@ -444,13 +444,13 @@ jobs:
       # that would have caught it existed only behind workflow_dispatch, which
       # is a thing somebody has to remember. This job is that snapshot, run
       # without being remembered.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
           # GoReleaser reads git state; a shallow clone makes it complain rather
           # than build.
           fetch-depth: 0
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -459,7 +459,7 @@ jobs:
           echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0 # zizmor: ignore[cache-poisoning] snapshot build only; publishes nothing
         with:
           path: |
             ${{ steps.paths.outputs.gocache }}
@@ -472,7 +472,7 @@ jobs:
       # Signing and notarization are skipped rather than attempted — their
       # secrets are not exposed here, and scripts/sign-windows.sh no-ops
       # without them anyway.
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: "~> v2"
