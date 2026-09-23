@@ -49,6 +49,13 @@ A release that stops partway records the step it stopped at, and a later
 steps in between never ran, and `publish` ships what `build` produced. See
 [the pipeline docs](../../site/shiprig/pipeline.md#resuming-a-release).
 
+`publish` and `tag` speak @changesets v3's output contract for a calling
+action: with `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends one
+`{"type":"git-tag","tag":…,"packageName":…}` line per tag it creates, skips a
+tag already present locally or on the remote, and pushes nothing. The tags stay
+local for the caller to push (changesets/action, shiprig-action). `publish`
+checks that the file can be written before it touches any registry.
+
 `version` runs the shared engine in `rigsmith/core`: it parses changesets,
 cascades bumps to dependents, applies linked/fixed/lockstep grouping, stamps the
 new versions into each ecosystem's manifest, and writes `CHANGELOG.md`.

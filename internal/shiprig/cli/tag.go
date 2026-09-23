@@ -27,7 +27,10 @@ func singleApp(pkgs []plugin.Package) bool {
 // `tagTemplate` (e.g. "v${version}") overrides this for every package. Existing
 // tags are skipped.
 func newTagCmd() *cobra.Command {
-	var dryRun bool
+	var (
+		dryRun     bool
+		outputPath string
+	)
 	cmd := &cobra.Command{
 		Use:   "tag",
 		Short: "Create git tags for each package at its current version",
@@ -49,6 +52,13 @@ func newTagCmd() *cobra.Command {
 				return err
 			}
 			solo := singleApp(pkgs)
+			// Tag events (see tagEvents): as `changeset git-tag`, a tag already
+			// on the remote counts as existing too.
+			events := openTagEvents(outputPath)
+			eventRemote := ""
+			if events != nil {
+				eventRemote = gitutil.DefaultRemote(cmd.Context(), ws.Root)
+			}
 			created, skipped := 0, 0
 			// Distinct tags, not packages: a `tagTemplate` like "v${version}"
 			// renders the same tag for every package, and one git ref should be
@@ -64,7 +74,8 @@ func newTagCmd() *cobra.Command {
 					continue
 				}
 				done[tag] = true
-				if gitutil.TagExists(cmd.Context(), ws.Root, tag) {
+				if gitutil.TagExists(cmd.Context(), ws.Root, tag) ||
+					(eventRemote != "" && gitutil.RemoteTagExists(cmd.Context(), ws.Root, eventRemote, tag)) {
 					skipped++
 					continue
 				}
@@ -73,7 +84,16 @@ func newTagCmd() *cobra.Command {
 					created++
 					continue
 				}
-				if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
+				if events != nil {
+					created, err := events.create(cmd.Context(), ws.Root, tag, p.Name)
+					if err != nil {
+						return fmt.Errorf("tagging %s: %w", p.Name, err)
+					}
+					if !created {
+						skipped++
+						continue
+					}
+				} else if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
 					return fmt.Errorf("tagging %s: %w", p.Name, err)
 				}
 				fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
@@ -84,5 +104,6 @@ func newTagCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "print the tags without creating them")
+	cmd.Flags().StringVarP(&outputPath, "output", "o", "", "append a git-tag event per tag created to this file (default $CHANGESETS_OUTPUT)")
 	return cmd
 }

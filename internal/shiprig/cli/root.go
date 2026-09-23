@@ -88,7 +88,7 @@ func releaseMenuItems() []commands.MenuItem {
 	return []commands.MenuItem{
 		{Label: "Packages", Desc: "show packages to build; include/exclude them", Build: newPackagesCmd},
 		{Label: "Publish", Desc: "publish built packages to their registries", Build: newPublishCmd},
-		{Label: "Tag", Desc: "create + push git tags for released versions", Build: newTagCmd},
+		{Label: "Tag", Desc: "create git tags for released versions (push them with `git push --follow-tags`)", Build: newTagCmd},
 		{Label: "Release", Desc: "run the full release pipeline", Build: newReleaseCmd},
 		{Label: "Doctor", Desc: "check the release setup", Build: newDoctorCmd},
 	}
