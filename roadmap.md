@@ -137,7 +137,9 @@ becomes common once rows outlive their transcripts.
 
 **Context.** The `release` composite action already gives the release-please
 experience on changesets: a standing **Version Packages** PR that previews the
-next release and publishes when merged (see `docs/GITHUB-ACTIONS.md`). What
+next release and publishes when merged (see `docs/GITHUB-ACTIONS.md`); its
+successor, [rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action),
+already covers several items below, and its `docs/ROADMAP.md` tracks the rest. What
 release-please does *beyond* that is mostly about closing loops — telling
 contributors what happened to their change, and letting maintainers steer the
 release moment. This is the list of what would take the action and shiprig
@@ -202,11 +204,11 @@ by leverage within each group.
 
 **Dogfooding**
 
-- **Wire the action into rigsmith itself.** `docs/GITHUB-ACTIONS.md` notes the
-  action isn't used by the repo that builds it (GoReleaser-only, no
-  `.changeset/`). Moving rigsmith onto `.changeset/` + the action catches
-  action bugs before the polyglot consumers do, and gives the most active
-  repo the running changelog preview.
+- **Wire the action into rigsmith itself.** Done, with
+  [rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action) rather
+  than the composite action: rigsmith keeps `.changeset/`, and merging its
+  `chore: release` PR tags the release that GoReleaser publishes. Its own
+  roadmap (`docs/ROADMAP.md` there) now carries the release-please items.
 
 **If only three ship:** released-in comments, changelog preview in the feature
 PR, snapshot publishes. Those are the ones contributors notice every day.

@@ -80,7 +80,7 @@ is a Node reference plugin producing changelogen-style output. Set
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module layout, the shared-core boundary, how `rig` and `shiprig` relate.
 - [docs/PLUGIN-PROTOCOL.md](docs/PLUGIN-PROTOCOL.md) — the one extension mechanism (subprocess + versioned JSON) for both ecosystem adapters and changelog generators, and why built-ins dogfood it.
 - [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md) — exhaustive feature-by-feature parity audit of rigsmith against net-changesets and rig (.NET + Node).
-- [docs/GITHUB-ACTIONS.md](docs/GITHUB-ACTIONS.md) — the two composite Actions: `release` (the version-PR/publish loop) and `require-changeset` (the per-PR gate — comment + block, no hosted bot). **Built** (`.github/actions/`).
+- [docs/GITHUB-ACTIONS.md](docs/GITHUB-ACTIONS.md) — the two composite Actions: `release` (the version-PR/publish loop) and `require-changeset` (the per-PR gate — comment + block, no hosted bot). **Built** (`.github/actions/`). For releasing, [rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action) is the recommended successor, and what rigsmith itself uses.
 - [docs/BEST-PRACTICES.md](docs/BEST-PRACTICES.md) — a field guide in three parts: the engineering patterns this codebase embodies, how to contribute (worktree/PR discipline, commits, releases), and how to get the most out of the tools.
 
 ## Building
