@@ -21,6 +21,8 @@ func TestDuplicateNameAcrossEcosystemsIsRefused(t *testing.T) {
 	assertContains(t, out, `more than one package is named "shared"`)
 	assertContains(t, out, "packages/shared/package.json")
 	assertContains(t, out, "gomod/go.mod")
+	// ignore matches by name, so it is not offered as a way out.
+	assertContains(t, out, "can't separate them")
 }
 
 // Within one ecosystem the second package used to vanish without a word,

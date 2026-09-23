@@ -180,7 +180,8 @@ func duplicateNames(found []discovered) error {
 		return nil
 	}
 	return fmt.Errorf("more than one package is named %s: changesets name packages by name, so each name must be unique; "+
-		"rename one, or narrow discovery with `paths` or an ecosystem's `sourcePath` so only one is found", strings.Join(dups, "; "))
+		"rename one, or narrow discovery so only one is found (`paths`, an ecosystem's `sourcePath`, or a regex ecosystem's `packages` list) — "+
+		"`ignore` can't separate them, since it matches by name too", strings.Join(dups, "; "))
 }
 
 // Discover enumerates packages across every ecosystem that applies to the repo,
