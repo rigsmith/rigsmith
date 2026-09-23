@@ -40,6 +40,14 @@ func newTagCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
+			// The event sink is opened first, as `changeset git-tag` does, so
+			// it exists even when there is nothing to tag (see tagEvents.ready).
+			// A dry run writes nothing, the file included.
+			if events := openTagEvents(outputPath); events != nil && !dryRun {
+				if err := events.ready(); err != nil {
+					return err
+				}
+			}
 			// A stackspace's history is several upstreams' fused together; a
 			// tag on it names nothing any of them knows, and the history is
 			// never pushed for one to be found. Nothing to do, and said so.

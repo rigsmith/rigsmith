@@ -38,10 +38,14 @@ func openTagEvents(flag string) *tagEvents {
 	return &tagEvents{path: flag}
 }
 
-// ready checks, before anything irreversible, that events can be appended:
+// ready opens the sink before any work, as canon's createOutputReport does
+// first thing in `changeset publish` and `changeset git-tag`: the file then
+// exists even when nothing is tagged, and an empty file is how the caller
+// learns "no tags" (changesets/action fails outright on a missing one). It
+// also checks, before anything irreversible, that events can be appended:
 // publish pushes to registries before it tags, and a sink that turns out
 // unwritable only then would leave packages published and their tags
-// unreported. It creates the file if needed, as the first append would.
+// unreported. It appends, never truncates, as canon's stream does.
 func (e *tagEvents) ready() error {
 	f, err := os.OpenFile(e.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
