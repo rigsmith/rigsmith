@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/changelog"
@@ -167,6 +168,44 @@ type discovered struct {
 	ecoID string
 }
 
+// duplicateNames refuses two packages under one name. Changesets, the plan,
+// and every command after discovery identify a package by its name alone, so
+// a second one would silently borrow the first's ecosystem, bump and
+// changelog, or vanish. It runs after overlay reconciliation, which folds a
+// base package into the overlay that owns the same directory.
+func duplicateNames(found []discovered) error {
+	byName := map[string][]discovered{}
+	var order []string
+	for _, d := range found {
+		if _, ok := byName[d.pkg.Name]; !ok {
+			order = append(order, d.pkg.Name)
+		}
+		byName[d.pkg.Name] = append(byName[d.pkg.Name], d)
+	}
+	var dups []string
+	for _, name := range order {
+		ds := byName[name]
+		if len(ds) < 2 {
+			continue
+		}
+		where := make([]string, 0, len(ds))
+		for _, d := range ds {
+			loc := d.pkg.ManifestPath
+			if loc == "" {
+				loc = d.pkg.Dir
+			}
+			where = append(where, d.ecoID+" "+filepath.ToSlash(loc))
+		}
+		dups = append(dups, fmt.Sprintf("%q (%s)", name, strings.Join(where, ", ")))
+	}
+	if len(dups) == 0 {
+		return nil
+	}
+	return fmt.Errorf("more than one package is named %s: changesets name packages by name, so each name must be unique; "+
+		"rename one, or narrow discovery so only one is found (`paths`, an ecosystem's `sourcePath`, or a regex ecosystem's `packages` list) — "+
+		"`ignore` can't separate them, since it matches by name too", strings.Join(dups, "; "))
+}
+
 // Discover enumerates packages across every ecosystem that applies to the repo,
 // returning the packages and a name→ecosystem-id map. Discovery is narrowed to
 // the top-level config.Paths roots; a per-ecosystem `sourcePath` block overrides
@@ -180,7 +219,10 @@ type discovered struct {
 // overlay — rather than appearing twice.
 func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]string, error) {
 	var found []discovered
-	seen := map[string]bool{} // dedupe a package discovered via overlapping roots
+	// The same package found again through overlapping roots is one package:
+	// it has the same manifest. Two manifests are two packages, even under one
+	// name (see duplicateNames).
+	seen := map[string]bool{}
 
 	for _, eco := range w.Registry.All() {
 		ok, err := eco.Detect(ctx, w.Root)
@@ -205,7 +247,11 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 				return nil, nil, fmt.Errorf("discover %s: %w", eco.Info().ID, err)
 			}
 			for _, p := range resp.Packages {
-				key := eco.Info().ID + "\x00" + p.Name
+				where := p.ManifestPath
+				if where == "" {
+					where = p.Dir
+				}
+				key := eco.Info().ID + "\x00" + filepath.ToSlash(where)
 				if seen[key] {
 					continue
 				}
@@ -216,6 +262,9 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 	}
 
 	found = w.reconcileOverlays(found)
+	if err := duplicateNames(found); err != nil {
+		return nil, nil, err
+	}
 
 	// Where the manifest is not the version's home, the record beside the
 	// changesets is: a package with no number in the tree (computed at build

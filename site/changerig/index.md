@@ -23,7 +23,14 @@ changerig ui                                  # interactive bubbletea menu
 it when it's missing), and the packages discovered across every ecosystem — the
 same shared report/fix model the other rigs use.
 
-It works across **.NET, Node, Go, and Rust** in the same polyglot monorepo. The
+It works across **.NET, Node, Go, and Rust** in the same polyglot monorepo.
+Changesets name packages by name, so every discovered package needs a name of
+its own, across ecosystems too: two packages under one name (an npm package and
+a Go module both called `shared`, say) stop every command with an error naming
+both, instead of one silently standing in for the other. Rename one, or narrow
+discovery so only one is found: `paths`, an ecosystem's `sourcePath`, or, for a
+regex ecosystem, its `packages` list. `ignore` can't separate them, because it
+matches by name too. The
 `version` step runs the [core](/core/) engine: it parses changesets, cascades
 bumps to dependents, applies linked/fixed/lockstep grouping, stamps the new
 versions into each ecosystem's manifest, and writes `CHANGELOG.md`.
