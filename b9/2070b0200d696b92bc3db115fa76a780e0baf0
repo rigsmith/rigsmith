@@ -1,0 +1,9 @@
+.changeset/README.md
+  ai_agent 32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b92070b0200d696b92bc3db115fa76a780e0baf0",
+  "prompts": {}
+}
