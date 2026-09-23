@@ -185,6 +185,33 @@ func TestNoClobberMainAsksThePushURL(t *testing.T) {
 	}
 }
 
+// A remote that doesn't list main while git's own line says it has one (a
+// hidden ref) is refused; only a main neither side knows is a first push.
+func TestNoClobberMainRefusesAMainTheRemoteDoesNotList(t *testing.T) {
+	r := newClobberRepos(t)
+	runGit(t, r.origin, "config", "uploadpack.hideRefs", "refs/heads/main")
+	ok, out := guard(t, r.work, line("refs/heads/main", r.base, "refs/heads/main", r.ahead))
+	if ok {
+		t.Fatalf("a push over a main the remote hides was allowed:\n%s", out)
+	}
+	if !strings.Contains(out, "doesn't list") {
+		t.Errorf("want the unlisted-main message, got:\n%s", out)
+	}
+}
+
+func TestNoClobberMainAllowsTheFirstPushOfMain(t *testing.T) {
+	root := t.TempDir()
+	origin := filepath.Join(root, "origin.git")
+	work := filepath.Join(root, "work")
+	runGit(t, root, "init", "-q", "--bare", "-b", "main", origin)
+	runGit(t, root, "clone", "-q", origin, work)
+	first := commit(t, work, "first")
+	ok, out := guard(t, work, line("refs/heads/main", first, "refs/heads/main", zeroSHA))
+	if !ok {
+		t.Fatalf("the first push of main was refused:\n%s", out)
+	}
+}
+
 func TestNoClobberMainRefusesADivergedMain(t *testing.T) {
 	r := newClobberRepos(t)
 	runGit(t, r.work, "fetch", "-q", "origin")

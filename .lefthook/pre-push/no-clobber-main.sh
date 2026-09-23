@@ -42,8 +42,19 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
   upstream="$(printf '%s\n' "${listing}" | cut -f1)"
-  # No main there yet: nothing to lose.
-  [ -n "${upstream}" ] || continue
+  if [ -z "${upstream}" ]; then
+    # Not advertised. With no main there as far as git knows either, it's a
+    # first push and there's nothing to lose; but a main git knows about that
+    # the remote won't list (hidden refs) can't be checked, so it isn't cleared.
+    case "${remote_sha}" in
+      *[!0]*)
+        echo "refusing push: ${remote} doesn't list its main, so it can't be checked." >&2
+        echo "  override: git push --no-verify" >&2
+        refused=1
+        ;;
+    esac
+    continue
+  fi
 
   if ! git cat-file -e "${upstream}^{commit}" 2>/dev/null; then
     echo "refusing push: ${remote}/main has commits you haven't fetched —" >&2
