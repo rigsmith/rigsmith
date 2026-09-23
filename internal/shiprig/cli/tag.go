@@ -84,13 +84,17 @@ func newTagCmd() *cobra.Command {
 					created++
 					continue
 				}
-				if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
-					return fmt.Errorf("tagging %s: %w", p.Name, err)
-				}
 				if events != nil {
-					if err := events.record(cmd.Context(), ws.Root, tag, p.Name); err != nil {
-						return err
+					created, err := events.create(cmd.Context(), ws.Root, tag, p.Name)
+					if err != nil {
+						return fmt.Errorf("tagging %s: %w", p.Name, err)
 					}
+					if !created {
+						skipped++
+						continue
+					}
+				} else if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
+					return fmt.Errorf("tagging %s: %w", p.Name, err)
 				}
 				fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
 				created++

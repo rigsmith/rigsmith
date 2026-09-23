@@ -68,6 +68,18 @@ func (e *tagEvents) gitTag(tag, packageName string) (appended bool, err error) {
 	return true, f.Close()
 }
 
+// create makes the tag and reports it, or reports nothing when the tag turned
+// out to exist already: one another process created between the caller's
+// check and this call is theirs, so it is neither reported nor, on a failed
+// write, deleted.
+func (e *tagEvents) create(ctx context.Context, repoRoot, tag, packageName string) (created bool, err error) {
+	created, err = gitutil.CreateNewTag(ctx, repoRoot, tag, tag)
+	if err != nil || !created {
+		return false, err
+	}
+	return true, e.record(ctx, repoRoot, tag, packageName)
+}
+
 // record reports a tag this run just created. When its event could not be
 // appended, the tag is deleted again: left in place, a retry would find it
 // existing, skip it, and never report it, so the caller would never push or
@@ -80,7 +92,7 @@ func (e *tagEvents) record(ctx context.Context, repoRoot, tag, packageName strin
 	}
 	if !appended {
 		if derr := gitutil.DeleteTag(ctx, repoRoot, tag); derr != nil {
-			return fmt.Errorf("recording tag %s in %s: %w (and removing the tag again failed: %v)", tag, e.path, err, derr)
+			return fmt.Errorf("recording tag %s in %s: %w (and removing the tag again failed: %w)", tag, e.path, err, derr)
 		}
 		return fmt.Errorf("recording tag %s in %s (tag removed, so a retry creates and reports it): %w", tag, e.path, err)
 	}

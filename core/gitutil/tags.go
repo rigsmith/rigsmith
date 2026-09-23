@@ -138,6 +138,23 @@ func CreateTag(ctx context.Context, repoRoot, tag, message string) error {
 	return err
 }
 
+// CreateNewTag creates an annotated tag at HEAD and reports whether this call
+// created it. Unlike CreateTag it has no separate existence check: git refuses
+// to overwrite a tag, so a tag another process created first comes back as
+// created=false rather than as this caller's own.
+func CreateNewTag(ctx context.Context, repoRoot, tag, message string) (created bool, err error) {
+	if message == "" {
+		message = tag
+	}
+	if _, err := runGit(ctx, repoRoot, "tag", "-a", tag, "-m", message); err != nil {
+		if TagExists(ctx, repoRoot, tag) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // DeleteTag removes a local tag.
 func DeleteTag(ctx context.Context, repoRoot, tag string) error {
 	_, err := runGit(ctx, repoRoot, "tag", "-d", tag)

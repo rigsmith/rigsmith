@@ -311,3 +311,30 @@ func TestChangedFilesSinceInvalidRef(t *testing.T) {
 		t.Error("non-repo should error")
 	}
 }
+
+// CreateNewTag answers "did THIS call create it?": a tag that already exists
+// (another process got there first) is created=false with no error, and is
+// left exactly as it was.
+func TestCreateNewTagReportsWhoCreatedIt(t *testing.T) {
+	dir := initRepo(t)
+	ctx := context.Background()
+
+	created, err := CreateNewTag(ctx, dir, "pkg@1.0.0", "")
+	if err != nil || !created {
+		t.Fatalf("first CreateNewTag = (%v, %v), want (true, nil)", created, err)
+	}
+
+	// Someone else's tag: a lightweight one, so it is distinguishable from ours.
+	git(t, dir, "tag", "other@1.0.0")
+	created, err = CreateNewTag(ctx, dir, "other@1.0.0", "")
+	if err != nil || created {
+		t.Fatalf("CreateNewTag on an existing tag = (%v, %v), want (false, nil)", created, err)
+	}
+	if kind := git(t, dir, "cat-file", "-t", "other@1.0.0"); kind != "commit" {
+		t.Errorf("the existing tag was replaced: it now points at a %q, want the original lightweight tag", kind)
+	}
+
+	if err := DeleteTag(ctx, dir, "pkg@1.0.0"); err != nil || TagExists(ctx, dir, "pkg@1.0.0") {
+		t.Errorf("DeleteTag: err=%v, still exists=%v", err, TagExists(ctx, dir, "pkg@1.0.0"))
+	}
+}

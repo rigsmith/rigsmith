@@ -310,11 +310,13 @@ func newPublishCmd() *cobra.Command {
 						fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("would tag"), tag)
 						continue
 					}
-					if err := gitutil.CreateTag(cmd.Context(), ws.Root, tag, tag); err != nil {
+					created, err := events.create(cmd.Context(), ws.Root, tag, p.Name)
+					if err != nil {
 						return fmt.Errorf("tagging %s: %w", p.Name, err)
 					}
-					if err := events.record(cmd.Context(), ws.Root, tag, p.Name); err != nil {
-						return err
+					if !created {
+						fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("tag exists"), tag)
+						continue
 					}
 					fmt.Fprintf(out, "%s %s %s\n", commands.PatchStyle.Render("tagged"), tag, commands.DimStyle.Render("(local; the caller pushes it)"))
 					continue
