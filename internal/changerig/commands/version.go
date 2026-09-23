@@ -289,7 +289,6 @@ func NewVersionCmd() *cobra.Command {
 			}
 			var unstamped []string
 			stateChanged := false
-			rootChangelog := filepath.Join(ws.Root, changelog.FileName)
 			for _, m := range plan {
 				pkg := pkgByName[m.Name]
 				eco, ok := ws.EcosystemFor(ecoOf[m.Name])
@@ -345,23 +344,16 @@ func NewVersionCmd() *cobra.Command {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
-				// A stackspace member's directory is its upstream's, so its
-				// notes go to the stackspace root instead — one CHANGELOG.md
-				// with a section per member, the file the stackspace owns. A
-				// package of the stackspace's own that lives at the root
-				// shares that file, and so writes a section too: a title-based
-				// write there would land under whichever member came first.
-				pkgDir := filepath.Dir(filepath.Join(ws.Root, m.ManifestPath))
-				changelogPath := filepath.Join(pkgDir, changelog.FileName)
-				if ws.MemberOf(pkg) != "" {
-					changelogPath = rootChangelog
-				}
-				if ws.Stackspace != nil && changelogPath == rootChangelog {
+				// A shared file (a stackspace's root CHANGELOG.md) gets a
+				// section per package rather than a title-based write, which
+				// would land under whichever package came first.
+				changelogPath, section := ws.ChangelogFor(pkg)
+				if section != "" {
 					if err := txn.guard(changelogPath); err != nil {
 						txn.rollback()
 						return fmt.Errorf("changelog for %s: %w", m.Name, err)
 					}
-					if err := changelog.WriteSection(changelogPath, m.DisplayName, entry); err != nil {
+					if err := changelog.WriteSection(changelogPath, section, entry); err != nil {
 						txn.rollback()
 						return fmt.Errorf("changelog for %s: %w", m.Name, err)
 					}
@@ -374,7 +366,7 @@ func NewVersionCmd() *cobra.Command {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
-				if err := changelog.WriteEntry(pkgDir, m.DisplayName, entry); err != nil {
+				if err := changelog.WriteEntry(filepath.Dir(changelogPath), m.DisplayName, entry); err != nil {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
 				}
