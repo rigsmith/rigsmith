@@ -459,7 +459,9 @@ jobs:
           echo "gocache=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
           echo "gomodcache=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
           echo "goversion=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v4.3.0 # zizmor: ignore[cache-poisoning] snapshot build only; publishes nothing
+      # Snapshot build only; publishes nothing, so a PR-written cache can't reach
+      # a release.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # zizmor: ignore[cache-poisoning] v6.1.0
         with:
           path: |
             ${{ steps.paths.outputs.gocache }}
