@@ -3,8 +3,9 @@ name: Release
 # Releases rigsmith with rigsmith/shiprig-action (changesets/action driving
 # shiprig), acting as the shipRig GitHub App. On every push to main:
 #
-#   - Changesets pending: keep a standing "chore: release" PR open with the
-#     version bumps and changelog. Nothing is tagged.
+#   - Changesets pending: keep a standing release PR open with the version
+#     bumps and changelog, titled and committed as what it releases
+#     ("chore: release 1.20.2", the action's default). Nothing is tagged.
 #   - Nothing pending (the release PR was just merged): `shiprig tag` tags every
 #     package whose version has no tag yet — vX.Y.Z for the CLIs, ui/vX.Y.Z for
 #     the UI — and the action pushes those tags. The tag push starts
@@ -73,11 +74,9 @@ jobs:
 
       - name: Release PR or tags
         id: shiprig
-        uses: rigsmith/shiprig-action@v0.1.0
+        uses: rigsmith/shiprig-action@v0.2.0
         with:
           github-token: ${{ steps.app-token.outputs.token }}
-          commit-message: "chore: release"
-          pr-title: "chore: release"
           publish-script: shiprig tag
           create-github-releases: false
 
