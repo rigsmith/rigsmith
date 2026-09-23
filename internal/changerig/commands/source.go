@@ -12,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/since"
 )
 
 // LoadChangesets resolves the changesets a version/status run plans from,
@@ -25,7 +26,35 @@ import (
 // commit (so the caller can skip changeset-file bookkeeping like deletion and
 // file-based changelog enrichment that only applies to on-disk changesets).
 func (w *Workspace) LoadChangesets(ctx context.Context, pkgs []plugin.Package) (sets []*changeset.Changeset, fromCommits bool, err error) {
-	return w.loadChangesets(ctx, pkgs, false)
+	return w.loadChangesets(ctx, pkgs, false, nil)
+}
+
+// LoadChangesetsSince is LoadChangesets narrowed to what a branch adds since
+// ref, whatever the versioning source: the changeset files it adds or edits,
+// and the releases derived from the commits it adds, so a commit already on
+// the base branch isn't the branch's. Commits are narrowed before a first
+// release is collapsed, so its headline stands for the branch's commits only.
+func (w *Workspace) LoadChangesetsSince(ctx context.Context, pkgs []plugin.Package, ref string) (sets []*changeset.Changeset, fromCommits bool, err error) {
+	files, err := gitutil.ChangedFilesSince(ctx, w.Root, ref)
+	if err != nil {
+		return nil, false, fmt.Errorf("could not determine changes since %q: %w", ref, err)
+	}
+	commits, err := gitutil.CommitsSince(ctx, w.Root, ref)
+	if err != nil {
+		return nil, false, fmt.Errorf("could not determine commits since %q: %w", ref, err)
+	}
+	scope := &sinceScope{ids: map[string]bool{}, commits: commits}
+	for _, id := range since.ChangedChangesetIDs(files, w.ChangesetDir) {
+		scope.ids[id] = true
+	}
+	return w.loadChangesets(ctx, pkgs, false, scope)
+}
+
+// sinceScope is what a branch adds since a ref: the ids of the changeset
+// files it changed, and its commits' SHAs.
+type sinceScope struct {
+	ids     map[string]bool
+	commits map[string]bool
 }
 
 // LoadPendingChangesets is LoadChangesets for a caller that only reports what
@@ -34,15 +63,20 @@ func (w *Workspace) LoadChangesets(ctx context.Context, pkgs []plugin.Package) (
 // and commit-derived changesets are still read. `status` and `version` keep
 // the strict LoadChangesets, as `changeset status` requires the folder.
 func (w *Workspace) LoadPendingChangesets(ctx context.Context, pkgs []plugin.Package) (sets []*changeset.Changeset, fromCommits bool, err error) {
-	return w.loadChangesets(ctx, pkgs, true)
+	return w.loadChangesets(ctx, pkgs, true, nil)
 }
 
-func (w *Workspace) loadChangesets(ctx context.Context, pkgs []plugin.Package, missingDirOK bool) (sets []*changeset.Changeset, fromCommits bool, err error) {
+// A nil scope narrows nothing.
+func (w *Workspace) loadChangesets(ctx context.Context, pkgs []plugin.Package, missingDirOK bool, scope *sinceScope) (sets []*changeset.Changeset, fromCommits bool, err error) {
 	if w.Config.UsesChangesets() {
 		onDisk, err := changeset.Dir(w.ChangesetDir, "")
 		switch {
 		case err == nil:
-			sets = onDisk
+			for _, cs := range onDisk {
+				if scope == nil || scope.ids[cs.ID] {
+					sets = append(sets, cs)
+				}
+			}
 		case missingDirOK && errors.Is(err, fs.ErrNotExist):
 			// No .changeset/ at all: nothing on disk, and on to commits.
 		default:
@@ -50,7 +84,7 @@ func (w *Workspace) loadChangesets(ctx context.Context, pkgs []plugin.Package, m
 		}
 	}
 	if w.Config.UsesCommits() {
-		derived, err := w.commitChangesets(ctx, pkgs)
+		derived, err := w.commitChangesets(ctx, pkgs, scope)
 		if err != nil {
 			return nil, false, err
 		}
@@ -65,7 +99,9 @@ func (w *Workspace) loadChangesets(ctx context.Context, pkgs []plugin.Package, m
 // tag, e.g. `core/v1.2.0` vs `v1.2.0`), so packages released at different times
 // each see only their own new commits. Packages sharing a since-ref share one
 // `git log`.
-func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package) ([]*changeset.Changeset, error) {
+//
+// A scope keeps only the changesets from its commits.
+func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package, scope *sinceScope) ([]*changeset.Changeset, error) {
 	// Bucket packages by their since-ref so each distinct ref is logged once.
 	refOf := map[string]string{}
 	pkgsByRef := map[string][]string{}
@@ -95,6 +131,9 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 		}
 		var refSets []*changeset.Changeset
 		for _, cs := range commitsource.Synthesize(commits, pkgs, w.Root, w.Config) {
+			if scope != nil && !scope.commits[cs.Commit] {
+				continue
+			}
 			var kept []changeset.Release
 			for _, r := range cs.Releases {
 				if want[r.Name] {

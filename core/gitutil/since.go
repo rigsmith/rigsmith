@@ -39,3 +39,24 @@ func ChangedFilesSince(ctx context.Context, dir, ref string) ([]string, error) {
 	}
 	return files, nil
 }
+
+// CommitsSince returns the full SHAs of the commits reachable from HEAD but not
+// from the merge-base of ref and HEAD: the commits a branch adds since ref. An
+// invalid ref (or absent git/repo) is an error, as for ChangedFilesSince.
+func CommitsSince(ctx context.Context, dir, ref string) (map[string]bool, error) {
+	base, err := runGit(ctx, dir, "merge-base", ref, "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("gitutil: %q is not a valid ref: %w", ref, err)
+	}
+	out, err := runGit(ctx, dir, "rev-list", strings.TrimSpace(base)+"..HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("gitutil: commits since %s: %w", ref, err)
+	}
+	commits := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			commits[line] = true
+		}
+	}
+	return commits, nil
+}

@@ -30,6 +30,7 @@ import (
 func NewVersionCmd() *cobra.Command {
 	var (
 		dryRun           bool
+		sinceRef         string
 		showChangelog    bool
 		snapshotTag      string
 		snapshotTemplate string
@@ -50,6 +51,11 @@ func NewVersionCmd() *cobra.Command {
 			// --changelog is a preview: render the notes to stdout, write nothing.
 			if showChangelog {
 				dryRun = true
+			}
+			// A branch's share of a release is something to preview, never to
+			// write: versioning it would drop the base branch's changes.
+			if sinceRef != "" && !dryRun {
+				return errors.New("--since only narrows a preview: use it with --changelog or --dry-run")
 			}
 			ws, err := Open()
 			if err != nil {
@@ -72,7 +78,13 @@ func NewVersionCmd() *cobra.Command {
 			// beside the changesets instead; and a stackspace member's manifest
 			// is never written, whatever the flag says (ws.Stamps).
 			stamp := !noStamp && ws.Config.StampEnabled()
-			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
+			var changesets []*changeset.Changeset
+			var fromCommits bool
+			if sinceRef != "" {
+				changesets, fromCommits, err = ws.LoadChangesetsSince(cmd.Context(), pkgs, sinceRef)
+			} else {
+				changesets, fromCommits, err = ws.LoadChangesets(cmd.Context(), pkgs)
+			}
 			if err != nil {
 				return err
 			}
@@ -498,6 +510,7 @@ func NewVersionCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVarP(&dryRun, "dry-run", "n", false, "print the plan without writing files")
 	f.BoolVar(&showChangelog, "changelog", false, "preview each releasing package's rendered changelog notes (implies --dry-run; writes nothing)")
+	f.StringVar(&sinceRef, "since", "", "preview only what the branch adds since this git ref: its changesets and commits (needs --changelog or --dry-run)")
 	f.StringVar(&snapshotTag, "snapshot", "", "create a snapshot release (optional tag)")
 	f.Lookup("snapshot").NoOptDefVal = " " // allow bare --snapshot (no tag)
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")

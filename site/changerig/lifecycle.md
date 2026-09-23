@@ -136,6 +136,12 @@ Shows the pending release plan — every package that will bump, the level, and
 why (including the dependency **cascade**: a dependent is patch-bumped when one
 of its dependencies releases). Supports `--since` and `--output`.
 
+`--since <ref>` narrows the plan to what the branch adds since that ref, the
+way a pull request's status check wants it: the changesets it adds or edits
+and, when commits are a versioning source, the commits it adds (those between
+the merge-base of the ref and `HEAD`). Changesets and commits already on the
+base branch stay out.
+
 It doubles as the CI gate, as `changeset status` does: it fails when a package
 that would version (not ignored, and not private unless `privatePackages.version`
 is set) changed since `--since`, or the base branch by default, and there is no
@@ -173,8 +179,12 @@ Flags: `-n, --dry-run` (plan only), `--snapshot [tag]` and `--snapshot-template`
 (`{tag}`/`{commit}`/`{datetime}`/`{timestamp}` suffix) for snapshot releases,
 `--independent` to version each package separately instead of via a shared
 version file, `-y, --yes` to accept the computed versions without the
-interactive override prompt, and `--no-stamp` to write nothing into any
-manifest.
+interactive override prompt, `--no-stamp` to write nothing into any
+manifest, `--changelog` to print each releasing package's changelog notes
+instead of writing anything, and `--since <ref>` to narrow a preview
+(`--changelog` or `--dry-run`) to what the branch adds, as `status --since`
+does. A run that writes refuses `--since`: versioning only a branch's share
+would drop the base branch's changes.
 
 ### Versions that do not live in the tree {#no-stamp}
 

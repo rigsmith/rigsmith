@@ -1,0 +1,102 @@
+package cmdtest
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// --since narrows a plan to what a branch adds, whatever the versioning
+// source: with commits as a source, a commit already on the base branch is
+// not the branch's, any more than a changeset file already there is.
+
+// sinceCommitsRepo is a two-package workspace versioning from the given source.
+// main has a feat commit to pkg-a and a pkg-a changeset; the feature branch
+// adds a fix commit to pkg-b and a pkg-b changeset.
+func sinceCommitsRepo(t *testing.T, source string) string {
+	t.Helper()
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0", "pkg-b": "1.0.0"})
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "versioning": { "source": "`+source+`" } }`)
+	gitInit(t, dir)
+
+	writeFile(t, filepath.Join(dir, "packages", "pkg-a", "index.js"), "export {}\n")
+	writeChangeset(t, dir, "main-one", "pkg-a", "patch", "Already on main")
+	gitCommitAll(t, dir, "feat: a thing on main")
+
+	git(t, dir, "switch", "-c", "feature")
+	writeFile(t, filepath.Join(dir, "packages", "pkg-b", "index.js"), "export {}\n")
+	writeChangeset(t, dir, "pr-one", "pkg-b", "minor", "The branch's feature")
+	gitCommitAll(t, dir, "fix: a fix on the branch")
+	return dir
+}
+
+// planNames runs status with --output (and any extra args) and returns the
+// planned package names.
+func planNames(t *testing.T, dir string, args ...string) []string {
+	t.Helper()
+	plan := filepath.Join(t.TempDir(), "plan.json")
+	code, out := runChangerig(t, dir, append([]string{"status", "--output", plan}, args...)...)
+	assertExitZero(t, code, out)
+	data, err := os.ReadFile(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Releases []struct{ Name string } `json:"releases"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("plan: %v\n%s", err, data)
+	}
+	var names []string
+	for _, r := range parsed.Releases {
+		names = append(names, r.Name)
+	}
+	return names
+}
+
+func TestStatusSinceNarrowsCommitsAndChangesets(t *testing.T) {
+	for _, source := range []string{"both", "commits"} {
+		t.Run(source, func(t *testing.T) {
+			dir := sinceCommitsRepo(t, source)
+
+			// Without --since, main's commit plans pkg-a too.
+			if got := planNames(t, dir); len(got) != 2 {
+				t.Fatalf("plan without --since = %v, want pkg-a and pkg-b", got)
+			}
+			got := planNames(t, dir, "--since", "main")
+			if len(got) != 1 || got[0] != "pkg-b" {
+				t.Fatalf("plan --since main = %v, want only pkg-b", got)
+			}
+		})
+	}
+}
+
+func TestVersionChangelogSincePreviewsOnlyTheBranch(t *testing.T) {
+	dir := sinceCommitsRepo(t, "both")
+
+	code, out := runChangerig(t, dir, "version", "--changelog")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "a thing on main")
+
+	code, out = runChangerig(t, dir, "version", "--changelog", "--since", "main")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "The branch's feature")
+	assertContains(t, out, "a fix on the branch")
+	assertNotContains(t, out, "a thing on main")
+	assertNotContains(t, out, "Already on main")
+	assertNotContains(t, out, "pkg-a")
+}
+
+// Writing a branch's share of a release would drop the base branch's changes.
+func TestVersionSinceRefusesToWrite(t *testing.T) {
+	dir := sinceCommitsRepo(t, "both")
+	code, out := runChangerig(t, dir, "version", "--yes", "--since", "main")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "--since only narrows a preview")
+	if len(changesetFiles(t, dir)) != 2 {
+		t.Fatal("version --since consumed changesets")
+	}
+}

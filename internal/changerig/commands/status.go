@@ -71,36 +71,27 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
-			if err != nil {
-				return err
-			}
-
-			// --since narrows the changesets to those added since the ref
-			// (mirrors @changesets and net-changesets).
+			// --since narrows the plan to what the branch adds since the ref:
+			// its changesets (as @changesets and net-changesets do) and, with
+			// commits as a source, its commits. An explicit ref is validated
+			// whatever the source, so a mistyped one never passes silently.
 			var changedFiles []string
 			changesetMode := ws.Config.CommitSource() == config.SourceChangesets
-			// An explicit ref is validated whatever the source, so a mistyped
-			// one never passes silently in commit mode.
 			if sinceRef != "" {
 				changedFiles, err = gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
 				if err != nil {
 					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
 				}
 			}
-			if sinceRef != "" && changesetMode {
-				ids := since.ChangedChangesetIDs(changedFiles, ws.ChangesetDir)
-				inSince := map[string]bool{}
-				for _, id := range ids {
-					inSince[id] = true
-				}
-				kept := changesets[:0]
-				for _, cs := range changesets {
-					if inSince[cs.ID] {
-						kept = append(kept, cs)
-					}
-				}
-				changesets = kept
+			var changesets []*changeset.Changeset
+			var fromCommits bool
+			if sinceRef != "" {
+				changesets, fromCommits, err = ws.LoadChangesetsSince(cmd.Context(), pkgs, sinceRef)
+			} else {
+				changesets, fromCommits, err = ws.LoadChangesets(cmd.Context(), pkgs)
+			}
+			if err != nil {
+				return err
 			}
 
 			// The run after `pre exit` graduates the changesets waiting in
