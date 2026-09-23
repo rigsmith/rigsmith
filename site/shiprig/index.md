@@ -37,8 +37,8 @@ The whole workflow is wired:
   prints and exits
 - `tag` — create the git tags for the released versions
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
-- `tag` and `publish` speak @changesets v3's output contract: with `--output
-  <file>` or `$CHANGESETS_OUTPUT` set, each appends a
+- `tag` and `publish` speak @changesets v3's output contract: with
+  `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends a
   `{"type":"git-tag","tag":…,"packageName":…}` line per tag it creates, skips a
   tag that already exists locally or on the remote, and pushes nothing. The
   caller owns the push, as with `changeset publish`; this is how changesets/action
