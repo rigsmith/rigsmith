@@ -154,3 +154,16 @@ func TestResolveReadsShallownessFromTheShallowFileOnOldGit(t *testing.T) {
 		t.Errorf("with .git/shallow: result %+v, want it omitted", info)
 	}
 }
+
+// A git older than 2.5 knows neither flag and echoes both back; that's no
+// answer, so the changeset is left unattributed.
+func TestResolveTreatsAnEchoedGitPathAsUnknown(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{name: "git", marker: "--diff-filter=A", output: "root123:"},
+		{name: "git", marker: "--is-shallow-repository", output: "--is-shallow-repository"},
+		{name: "git", marker: "--git-path shallow", output: "--git-path\nshallow"},
+	}}
+	if info, ok := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, t.TempDir(), runner.run)["cs1"]; ok {
+		t.Errorf("result[cs1] = %+v, want it omitted", info)
+	}
+}

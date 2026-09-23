@@ -232,7 +232,8 @@ func isShallowRepository(run Runner, dir string) (shallow, known bool) {
 		return false, true
 	case "--is-shallow-repository":
 		file := runFirstLine(run, dir, "git", "rev-parse", "--git-path", "shallow")
-		if file == "" {
+		// A git older than 2.5 echoes --git-path back too.
+		if file == "" || file == "--git-path" {
 			return false, false
 		}
 		if !filepath.IsAbs(file) {
