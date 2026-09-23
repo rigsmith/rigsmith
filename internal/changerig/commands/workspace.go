@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
+	"github.com/rigsmith/rigsmith/core/changelog"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -64,6 +65,27 @@ func (w *Workspace) Stamps(pkg plugin.Package) bool {
 // is the repository's own (always "" outside a stackspace).
 func (w *Workspace) MemberOf(pkg plugin.Package) string {
 	return w.Stackspace.MemberOf(pkg.ManifestPath)
+}
+
+// ChangelogFor returns the absolute path of the CHANGELOG.md that pkg's
+// release notes go to, and the section title when that file is shared: a
+// stackspace member's directory is its upstream's, so its notes go to the
+// stackspace root as one section per member, and a package of the
+// stackspace's own that lives at the root shares that file too. section is
+// "" for a package with a file of its own.
+func (w *Workspace) ChangelogFor(pkg plugin.Package) (path, section string) {
+	root := filepath.Join(w.Root, changelog.FileName)
+	path = filepath.Join(filepath.Dir(filepath.Join(w.Root, pkg.ManifestPath)), changelog.FileName)
+	if w.MemberOf(pkg) != "" {
+		path = root
+	}
+	if w.Stackspace != nil && path == root {
+		section = pkg.DisplayName
+		if section == "" {
+			section = pkg.Name
+		}
+	}
+	return path, section
 }
 
 // FindRoot walks up from start to the directory containing a .changeset folder,
