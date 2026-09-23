@@ -1,0 +1,11 @@
+docs/BEST-PRACTICES.md
+  ai_agent 202-206
+.github/workflows/release.yml
+  ai_agent 9-13,18-23,57-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "bc1d979edad914d39a01c91dd408c8aa9f923772",
+  "prompts": {}
+}
