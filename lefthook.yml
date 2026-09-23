@@ -16,18 +16,14 @@ pre-commit:
         exit 1
 
 pre-push:
-  commands:
-    # Guard against clobbering main: refuse to push when the local main branch
-    # has diverged from origin/main (the mistake that erases merged PRs). Only
-    # fires while you're on main; a fresh fetch makes it catch merges you don't
-    # have yet. Override with --no-verify.
-    no-clobber-main:
-      run: |
-        [ "$(git symbolic-ref --short HEAD 2>/dev/null)" = "main" ] || exit 0
-        git fetch -q origin main 2>/dev/null || exit 0
-        git merge-base --is-ancestor origin/main HEAD 2>/dev/null && exit 0
-        echo "refusing push: local 'main' has diverged from origin/main —" >&2
-        echo "  pushing would rewrite main and can erase already-merged PRs." >&2
-        echo "  sync:     git fetch && git reset --hard origin/main" >&2
-        echo "  override: git push --no-verify" >&2
-        exit 1
+  # A script, not a command: lefthook skips a pre-push command when the push
+  # carries no new files, and a force push of an older main carries none — the
+  # one push this guard exists to stop. Scripts don't have that skip.
+  scripts:
+    # Guard against clobbering main: refuse a push that would move the
+    # remote's main backwards or sideways (the mistake that erases merged PRs).
+    # It checks the refs being pushed, so tags and other branches always pass,
+    # whatever is checked out. Override with --no-verify.
+    "no-clobber-main.sh":
+      runner: sh
+      use_stdin: true
