@@ -323,14 +323,23 @@ func TestStatusWithChangesetListsThePlan(t *testing.T) {
 	assertContains(t, out, "1.1.0")
 }
 
-// Ported from StatusChangesetCommand_WhenNoChangesetExists_FinishesWithError.
-func TestStatusNoChangesetsFails(t *testing.T) {
+// With no changesets and nothing changed, status is not a failure:
+// @changesets v3 prints an empty list and exits 0 (net-changesets, where this
+// test was ported from, exited 1). --output writes the empty plan, which is
+// how a script tells "nothing to release" from an error.
+func TestStatusNoChangesetsNothingChangedSucceeds(t *testing.T) {
 	dir := newWorkspace(t)
 
 	code, out := runChangerig(t, dir, "status")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "nothing to release")
 
-	assertExitNonZero(t, code, out)
-	assertContains(t, out, "no changesets found")
+	plan := filepath.Join(dir, "plan.json")
+	code, out = runChangerig(t, dir, "status", "--output", plan)
+	assertExitZero(t, code, out)
+	if got := strings.TrimSpace(readFile(t, plan)); got != "{\n  \"releases\": []\n}" {
+		t.Errorf("empty plan = %q, want an empty releases list", got)
+	}
 }
 
 // Ported from StatusChangesetCommand_Verbose_ShowsTheNewVersionAndChangesetFiles,

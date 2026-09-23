@@ -76,21 +76,19 @@ func NewStatusCmd() *cobra.Command {
 				return err
 			}
 
-			// --since: guard against changes with no changeset, then narrow the
-			// displayed changesets to those added since the ref (mirrors
-			// @changesets and net-changesets). The gate is changeset-file
-			// specific; in commit mode the commits themselves are the source, so
-			// there is nothing to require.
-			if sinceRef != "" && ws.Config.CommitSource() == config.SourceChangesets {
-				changedFiles, err := gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
+			// --since narrows the changesets to those added since the ref
+			// (mirrors @changesets and net-changesets).
+			var changedFiles []string
+			changesetMode := ws.Config.CommitSource() == config.SourceChangesets
+			// An explicit ref is validated whatever the source, so a mistyped
+			// one never passes silently in commit mode.
+			if sinceRef != "" {
+				changedFiles, err = gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
 				if err != nil {
 					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
 				}
-				changedProjects := since.ChangedProjectNames(changedFiles, pkgs, ws.Root)
-				if len(changedProjects) > 0 && !since.AnyChangesetAdded(changedFiles, ws.ChangesetDir) {
-					return fmt.Errorf("some projects have changed since %q but no changeset was found (%s) — run `changerig add` to add one, or `changerig add --empty` if no release is needed",
-						sinceRef, strings.Join(changedProjects, ", "))
-				}
+			}
+			if sinceRef != "" && changesetMode {
 				ids := since.ChangedChangesetIDs(changedFiles, ws.ChangesetDir)
 				inSince := map[string]bool{}
 				for _, id := range ids {
@@ -116,26 +114,52 @@ func NewStatusCmd() *cobra.Command {
 				return err
 			}
 
-			// A missing changeset is a failure in changeset mode, like @changesets
-			// and net-changesets (the CI gate this command exists for). In commit
-			// mode there is no changeset to require — no qualifying commits since
-			// the last release simply means "nothing to release".
+			// The CI gate, as @changesets v3 has it: fail when a package that
+			// would version (not ignored, and not private unless
+			// privatePackages.version) changed since the ref — --since, else
+			// the base branch — and there is no changeset at all. Commit mode
+			// has no changeset to require. Without --since, a base that can't
+			// be compared against (no git, no such branch) gates nothing.
+			if changesetMode && len(changesets) == 0 {
+				ref := sinceRef
+				if ref == "" {
+					ref = ws.Config.BaseBranch
+					if ref == "" {
+						ref = "main"
+					}
+					changedFiles, _ = gitutil.ChangedFilesSince(cmd.Context(), ws.Root, ref)
+				}
+				var changed []string
+				for _, name := range since.ChangedProjectNames(changedFiles, pkgs, ws.Root) {
+					if !ws.Config.IsIgnored(name) {
+						changed = append(changed, name)
+					}
+				}
+				if len(changed) > 0 {
+					return fmt.Errorf("some projects have changed since %q but no changeset was found (%s) — run `changerig add` to add one, or `changerig add --empty` if no release is needed",
+						ref, strings.Join(changed, ", "))
+				}
+			}
+
+			// Nothing pending is not a failure (@changesets v3 prints an empty
+			// list and exits 0); --output still writes the (empty) plan, which
+			// is how a script tells "nothing to release" from an error.
 			if len(changesets) == 0 {
 				if fromCommits || ws.Config.UsesCommits() {
 					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
 					return nil
 				}
-				// On a real terminal (not a pipe/CI, and not the machine-readable
-				// --output or the --since gate), a bare `shiprig`/`status` with
-				// nothing pending shouldn't dead-end on a red error — show the
-				// source, the packages at their current versions, and the next
-				// step. The hard error stays for scripted/CI use, which is the
-				// whole reason `status` exists.
-				if output == "" && sinceRef == "" && term.IsTerminal(os.Stdout.Fd()) {
+				if output != "" {
+					return writeStatusPlan(ws.Root, output, nil)
+				}
+				// On a real terminal, show the source, the packages at their
+				// current versions, and the next step.
+				if sinceRef == "" && term.IsTerminal(os.Stdout.Fd()) {
 					printEmptyStatusPanel(cmd, ws, pkgs, ecoOf)
 					return nil
 				}
-				return errors.New("no changesets found")
+				fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No changesets — nothing to release."))
+				return nil
 			}
 
 			plan, err := assemblePlan(cmd.Context(), ws, changesets, pkgs)
