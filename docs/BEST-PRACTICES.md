@@ -199,7 +199,9 @@ Enforced by the `clauderig guard` PreToolUse hook. Full spec:
   (rigsmith/shiprig-action, as the shipRig App) keeps it open while changesets
   are pending; merging it tags `vX.Y.Z` and/or `ui/vX.Y.Z`, and those tags start
   `goreleaser.yml` and `release-ui.yml`. Review the PR's version bumps and
-  changelog — that's the release. Tagging by hand still works as a fallback.
+  changelog — that's the release. Other pushes tag nothing. To tag without the
+  PR (a retry after a failed run), run the Release workflow by hand; tagging by
+  hand still works too.
 - **Rehearse before going live.** `shiprig release --dry-run` previews the plan;
   `shiprig release --rehearse` does a real local build to `dist/` that commits and
   publishes nothing. See [`RELEASE-PIPELINE-DESIGN.md`](RELEASE-PIPELINE-DESIGN.md).
