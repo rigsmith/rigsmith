@@ -3,6 +3,7 @@ package scripts
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -149,18 +150,25 @@ func TestPublishingWorkflowCanMintAnOIDCToken(t *testing.T) {
 // npm only exchanges an OIDC token from 11.5.1; Node 22 ships npm 10. Without
 // the upgrade the publish falls back to the token and the registration is never
 // exercised — green, and still dependent on the secret.
+var (
+	npmUpgrade       = regexp.MustCompile(`npm install -g "?npm@`)
+	npmUpgradeLatest = regexp.MustCompile(`npm install -g "?npm@latest\b`)
+)
+
 func TestPublishingWorkflowUpgradesNpm(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("../.github/workflows", publishingWorkflow))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	if !strings.Contains(body, "npm install -g npm@") {
+	// The spec may be quoted (`"npm@$NPM_VERSION"`, as zizmor prefers to a
+	// template expansion) or bare.
+	if !npmUpgrade.MatchString(body) {
 		t.Error("the publishing workflow does not upgrade npm; Node 22 ships npm 10, which knows " +
 			"nothing about trusted publishing and would quietly publish with NPM_TOKEN instead")
 	}
 	// Pinned rather than @latest, like the other tools here.
-	if strings.Contains(body, "npm install -g npm@latest") {
+	if npmUpgradeLatest.MatchString(body) {
 		t.Error("pin the npm version rather than tracking @latest: a release should not be the " +
 			"first thing to meet a new npm")
 	}

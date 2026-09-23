@@ -49,7 +49,7 @@ jobs:
     steps:
       - name: Get a shipRig App token
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.SHIPRIG_APP_CLIENT_ID }}
           private-key: ${{ secrets.SHIPRIG_APP_PRIVATE_KEY }}
@@ -59,7 +59,7 @@ jobs:
       # Full history and every tag, so `shiprig tag` sees what's already
       # released. No stored credentials: the action writes through the GitHub
       # API with the App token and never pushes with git.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -69,12 +69,12 @@ jobs:
       - name: Install shiprig
         run: .github/actions/release/install-shiprig.sh
         env:
-          INPUT_SHIPRIG_VERSION: v1.20.0
+          INPUT_SHIPRIG_VERSION: v1.20.2
           GITHUB_TOKEN: ${{ github.token }}
 
       - name: Release PR or tags
         id: shiprig
-        uses: rigsmith/shiprig-action@v0.2.0
+        uses: rigsmith/shiprig-action@58c0a2d36cd85e9fcb1d4b18d19a1f83656de1e0 # v0.2.0
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           publish-script: shiprig tag

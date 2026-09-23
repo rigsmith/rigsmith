@@ -32,13 +32,15 @@ on:
       - "ui/v*"
   workflow_dispatch: {} # manual dry run — build + sign, publish nothing
 
-permissions:
-  contents: write # create the GitHub Release and upload assets
+# Nothing at the workflow level; each job asks for what it needs.
+permissions: {}
 
 jobs:
   windows:
     name: Build + sign for Windows
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    permissions:
+      contents: read
     timeout-minutes: 20
     steps:
       # Fail fast on half-configured Windows signing, exactly as the CLI release
@@ -69,19 +71,22 @@ jobs:
           fi
           echo "All Trusted Signing secrets present and non-empty."
 
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+          cache: false # a release build restores nothing a PR could have written
 
       # The tag and ui/go.mod have to agree about what is being released; the
       # script refuses when they do not, and marks a dry run so its artifacts
       # can never be mistaken for a release build.
       - name: Resolve the version
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: |
-          v=$(sh scripts/ui-release-version.sh "${{ github.event_name == 'push' && github.ref_name || '' }}")
+          v=$(sh scripts/ui-release-version.sh "$TAG")
           echo "UI_VERSION=$v" >> "$GITHUB_ENV"
           echo "releasing the window as $v"
 
@@ -102,7 +107,7 @@ jobs:
 
       # jsign signs the .exe with Azure Trusted Signing during the build (see
       # scripts/sign-windows.sh); it is a Java jar and needs a JRE.
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: "21"
@@ -114,7 +119,7 @@ jobs:
 
       # --snapshot on purpose, tag or no tag: see the header. The version comes
       # from UI_VERSION either way, so the artifacts are named the same in both.
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -127,7 +132,7 @@ jobs:
           TRUSTED_SIGNING_ACCOUNT: ${{ secrets.TRUSTED_SIGNING_ACCOUNT }}
           TRUSTED_SIGNING_PROFILE: ${{ secrets.TRUSTED_SIGNING_PROFILE }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-zips
           path: dist/*.zip
@@ -138,18 +143,22 @@ jobs:
     name: Package the macOS app
     runs-on: blacksmith-6vcpu-macos-15
     timeout-minutes: 40 # notarization waits on Apple
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-          cache-dependency-path: go.sum
+          cache: false # a release build restores nothing a PR could have written
 
       - name: Resolve the version
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
         run: |
-          v=$(sh scripts/ui-release-version.sh "${{ github.event_name == 'push' && github.ref_name || '' }}")
+          v=$(sh scripts/ui-release-version.sh "$TAG")
           echo "UI_VERSION=$v" >> "$GITHUB_ENV"
 
       # Reuses the release's own Developer ID certificate and App Store Connect
@@ -165,7 +174,7 @@ jobs:
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
         run: sh scripts/package-ui.sh "$UI_VERSION" dist-ui
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: macos-zip
           path: dist-ui/*.zip
@@ -180,16 +189,18 @@ jobs:
     if: github.event_name == 'push'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 20
+    permissions:
+      contents: write # create the GitHub Release and upload assets
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: windows-zips
           path: dist
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
           name: macos-zip
           path: dist-ui
