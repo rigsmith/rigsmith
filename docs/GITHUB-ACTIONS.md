@@ -100,8 +100,10 @@ For same-repo PR flows, the Action gate is the complete bot with zero infrastruc
 rigsmith keeps a `.changeset/` folder and releases through
 [rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action), running as the shipRig GitHub
 App ([`.github/workflows/release.yml`](../.github/workflows/release.yml)): changesets keep a
-`chore: release x.y.z` PR open, and merging it tags `vX.Y.Z` (and `ui/vX.Y.Z`), which starts
-[`goreleaser.yml`](../.github/workflows/goreleaser.yml) and
-[`release-ui.yml`](../.github/workflows/release-ui.yml) to build, sign and publish. The composite
+`chore: release x.y.z` PR open, and merging it tags each package that release bumps and hasn't
+tagged yet: `vX.Y.Z` for the CLIs, which starts
+[`goreleaser.yml`](../.github/workflows/goreleaser.yml), and `ui/vX.Y.Z` for the UI, which starts
+[`release-ui.yml`](../.github/workflows/release-ui.yml). A CLI-only release makes no `ui/` tag, so
+only GoReleaser runs. The composite
 `release` action here isn't used by this repo; it's built for other repos that want it. Copy the
 [example workflows](../examples/github-workflows) to adopt it and `require-changeset`.
