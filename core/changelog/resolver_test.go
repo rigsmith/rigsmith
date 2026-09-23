@@ -52,7 +52,7 @@ func TestResolveDefaultGeneratorDoesNotTouchGitAndReturnsEmpty(t *testing.T) {
 
 func TestResolveGitResolvesTheShortCommitThatAddedTheChangeset(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "--format=%h", output: "abc1234"},
+		{name: "git", marker: "--format=%h", output: "abc1234:0f1e2d3"},
 	}}
 
 	result := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, "/repo", runner.run)
@@ -75,8 +75,8 @@ func TestResolveGitNoCommitFoundSkipsTheChangeset(t *testing.T) {
 
 func TestResolveGitHubResolvesCommitPullRequestAndAuthor(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "--format=%h", output: "abc1234"},
-		{name: "git", marker: "--format=%H", output: "abc1234567890"},
+		{name: "git", marker: "--format=%h", output: "abc1234:0f1e2d3"},
+		{name: "git", marker: "--format=%H", output: "abc1234567890:0f1e2d3c4b5a6"},
 		{name: "gh", marker: "/pulls", output: "42"},
 		{name: "gh", marker: ".author.login", output: "octocat"},
 	}}
@@ -91,8 +91,8 @@ func TestResolveGitHubResolvesCommitPullRequestAndAuthor(t *testing.T) {
 
 func TestResolveGitHubWhenGhFailsKeepsTheCommitButLeavesPrAndAuthorZero(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "--format=%h", output: "abc1234"},
-		{name: "git", marker: "--format=%H", output: "abc1234567890"},
+		{name: "git", marker: "--format=%h", output: "abc1234:0f1e2d3"},
+		{name: "git", marker: "--format=%H", output: "abc1234567890:0f1e2d3c4b5a6"},
 		{name: "gh", marker: "api", output: "gh: not authenticated", err: errors.New("exit status 1")},
 	}}
 
@@ -108,7 +108,7 @@ func TestResolveGitHubWhenGhFailsKeepsTheCommitButLeavesPrAndAuthorZero(t *testi
 
 func TestResolveFallsBackToTheNetMkdExtension(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: ".changeset/cs1.net.mkd", output: "abc1234"},
+		{name: "git", marker: ".changeset/cs1.net.mkd", output: "abc1234:0f1e2d3"},
 	}}
 
 	result := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, "/repo", runner.run)
@@ -121,8 +121,8 @@ func TestResolveFallsBackToTheNetMkdExtension(t *testing.T) {
 
 func TestResolveGitHubTreatsTheNullLiteralAsMissing(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "--format=%h", output: "abc1234"},
-		{name: "git", marker: "--format=%H", output: "abc1234567890"},
+		{name: "git", marker: "--format=%h", output: "abc1234:0f1e2d3"},
+		{name: "git", marker: "--format=%H", output: "abc1234567890:0f1e2d3c4b5a6"},
 		// gh's --jq prints the literal "null" when the JSON field is absent.
 		{name: "gh", marker: "api", output: "null\n"},
 	}}
@@ -195,7 +195,7 @@ func TestResolveAuthorsCommitModeUsesKnownSha(t *testing.T) {
 func TestResolveAuthorsFileModeLooksUpAddingCommitAndLogin(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		// file mode: find the commit that added the changeset, then read its author.
-		{name: "git", marker: "--diff-filter=A", output: "deadbee1234567"},
+		{name: "git", marker: "--diff-filter=A", output: "deadbee1234567:0f1e2d3c4b5a6"},
 		{name: "git", marker: "show", output: "Jane Doe\x1fjane@example.com\x1f"},
 		{name: "gh", marker: ".author.login", output: "janedoe"},
 	}}
