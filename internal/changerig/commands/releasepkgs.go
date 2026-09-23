@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -45,7 +47,13 @@ func ReleasePackages(ctx context.Context, ws *Workspace) ([]ReleasePkg, error) {
 	}
 	changesets, _, err := ws.LoadChangesets(ctx, pkgs)
 	if err != nil {
-		return nil, err
+		// Listing packages isn't a changesets command: `status` and
+		// `version` need .changeset/ (as `changeset status` does), but a repo
+		// without one just has nothing pending. Any other read error stands.
+		if _, statErr := os.Stat(ws.ChangesetDir); !errors.Is(statErr, os.ErrNotExist) {
+			return nil, err
+		}
+		changesets = nil
 	}
 	ws.Config.PerPackageStrategy = ws.Config.StrategyByPackage(ecoOf)
 	plan, err := assemblePlan(ctx, ws, changesets, pkgs)

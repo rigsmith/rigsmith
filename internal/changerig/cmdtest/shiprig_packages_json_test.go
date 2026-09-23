@@ -77,3 +77,35 @@ func TestShiprigPackagesListJSON(t *testing.T) {
 		}
 	}
 }
+
+// Listing packages isn't a changesets command: a repo with no .changeset/ is
+// listed with nothing releasing. `status` still requires the folder, as
+// `changeset status` does.
+func TestShiprigPackagesListJSONWithoutChangesetDir(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+
+	cmd := exec.Command(shiprigBin, "packages", "list", "--json")
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("packages list --json without .changeset/: %v\nstderr:\n%s", err, stderr.String())
+	}
+	var got struct {
+		Packages []map[string]any `json:"packages"`
+	}
+	if err := json.Unmarshal(stdout, &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	if len(got.Packages) != 1 || got.Packages[0]["name"] != "pkg-a" || got.Packages[0]["version"] != "1.0.0" {
+		t.Fatalf("packages = %+v, want just pkg-a@1.0.0", got.Packages)
+	}
+	if _, releasing := got.Packages[0]["nextVersion"]; releasing {
+		t.Errorf("nothing can be pending without .changeset/: %+v", got.Packages[0])
+	}
+
+	code, out := runChangerig(t, dir, "status")
+	assertExitNonZero(t, code, out)
+}
