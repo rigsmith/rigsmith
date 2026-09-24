@@ -259,6 +259,7 @@ func NewVersionCmd() *cobra.Command {
 				if err := applyReleaseAs(out, plan, releaseAs); err != nil {
 					return err
 				}
+				planner.RefreshDependencies(plan)
 			}
 
 			PrintPlan(out, plan, false)
@@ -313,6 +314,9 @@ func NewVersionCmd() *cobra.Command {
 					return err
 				}
 				if changed {
+					// Dependents' ranges and changelog lines follow the chosen
+					// versions.
+					planner.RefreshDependencies(plan)
 					fmt.Fprintln(out)
 					PrintPlan(out, plan, false)
 				}

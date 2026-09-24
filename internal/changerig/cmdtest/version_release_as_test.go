@@ -92,3 +92,23 @@ func TestVersionReleaseAsCompletesPackageNames(t *testing.T) {
 	assertContains(t, out, "pkg-a=")
 	assertContains(t, out, "pkg-b=")
 }
+
+// A dependent's range and "Updated dependencies" line name the version the
+// dependency is actually released at, not the computed one.
+func TestVersionReleaseAsFlowsIntoDependents(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	writeFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json"),
+		`{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "^1.0.0" } }`)
+	initChangesets(t, dir)
+	writeChangeset(t, dir, "a-change", "pkg-a", "minor", "A change to a")
+	writeChangeset(t, dir, "b-change", "pkg-b", "minor", "A change to b")
+	gitInit(t, dir)
+
+	code, out := runChangerig(t, dir, "version", "--yes", "--release-as", "pkg-a=2.0.0")
+	assertExitZero(t, code, out)
+	assertContains(t, manifest(t, dir, "pkg-b"), `"pkg-a": "^2.0.0"`)
+	changelog := readFile(t, filepath.Join(dir, "packages", "pkg-b", "CHANGELOG.md"))
+	assertContains(t, changelog, "pkg-a@2.0.0")
+	assertNotContains(t, changelog, "pkg-a@1.1.0")
+}

@@ -161,6 +161,9 @@ func applyReleaseAs(out io.Writer, plan []*planner.Module, specs []string) error
 			groupOf[m.Name] = group
 		}
 	}
+	// Packages sharing a version file move together, so two specs for one
+	// group must agree.
+	chosen := map[*planner.Module]string{}
 	for _, spec := range specs {
 		name, version, named := strings.Cut(spec, "=")
 		var group []*planner.Module
@@ -183,6 +186,10 @@ func applyReleaseAs(out io.Writer, plan []*planner.Module, specs []string) error
 		if semver.Compare(v, rep.Current) <= 0 {
 			return fmt.Errorf("--release-as %s: must be greater than the current %s", spec, rep.Current)
 		}
+		if prev, ok := chosen[rep]; ok && prev != v.String() {
+			return fmt.Errorf("--release-as gives %s two versions, %s and %s: its packages share a version file", groupLabel(group), prev, v)
+		}
+		chosen[rep] = v.String()
 		for _, m := range group {
 			m.VersionOverride = v.String()
 		}

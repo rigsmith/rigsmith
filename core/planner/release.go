@@ -59,6 +59,18 @@ func ApplyPre(plan []*Module, tag string) {
 	}
 }
 
+// RefreshDependencies re-derives every module's dependency range rewrites and
+// "Updated dependencies" changelog lines from its dependencies' resolved
+// versions. Call it after setting a VersionOverride by hand (--release-as,
+// the override prompt), so a dependent's range and changelog name the version
+// that is actually released, as ApplyPre does for prerelease overrides. It
+// doesn't recompute the cascade.
+func RefreshDependencies(plan []*Module) {
+	for _, m := range plan {
+		m.materializeDeps(false)
+	}
+}
+
 // ApplySnapshot stamps snapshot version overrides onto every module in the plan,
 // then re-materializes dependency lines/rewrites pinned to the exact snapshot
 // version (^1.0.0 → 0.0.0-canary-…, operator dropped, per Node).
