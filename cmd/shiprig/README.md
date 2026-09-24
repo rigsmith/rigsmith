@@ -34,6 +34,7 @@ shiprig init
 shiprig add -p my/pkg --bump minor -m "Add a feature"   # interactive without flags
 shiprig status --verbose
 shiprig version            # bump + changelog, with dependency cascade
+shiprig version --changelog --since main   # preview only this branch's entries (writes nothing)
 shiprig info
 ```
 
@@ -75,7 +76,9 @@ It follows @changesets v3, which changes two things a release job notices:
   that is private only to stay off a registry (an Electron app) wants both.
 
 The full surface is wired: `init`, `add`, `status` (incl. `--since` and
-`--output`), `version` (normal/pre/snapshot, changelog enrichment + `format:`),
+`--output`), `version` (normal/pre/snapshot, changelog enrichment + `format:`;
+`--since <ref>` narrows a `--changelog` or `--dry-run` preview to a branch's
+changesets and commits, and a run that writes refuses it),
 `pre`, `info`, `ui`, `tag`, `publish` (idempotent, confirm-gated on a TTY,
 `--yes` for CI), and `release` — the configurable step pipeline
 (`.changeset/release.jsonc`: steps/hooks/vars/confirm gates/secret masking,

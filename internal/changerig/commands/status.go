@@ -71,36 +71,20 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// --since narrows the plan to what the branch adds since the ref:
+			// its changesets (as @changesets and net-changesets do) and, with
+			// commits as a source, its commits. An explicit ref is validated
+			// whatever the source, so a mistyped one never passes silently.
+			var changedFiles []string
+			changesetMode := ws.Config.CommitSource() == config.SourceChangesets
+			if sinceRef != "" {
+				if changedFiles, err = ws.NarrowSince(cmd.Context(), sinceRef); err != nil {
+					return err
+				}
+			}
 			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
 			if err != nil {
 				return err
-			}
-
-			// --since narrows the changesets to those added since the ref
-			// (mirrors @changesets and net-changesets).
-			var changedFiles []string
-			changesetMode := ws.Config.CommitSource() == config.SourceChangesets
-			// An explicit ref is validated whatever the source, so a mistyped
-			// one never passes silently in commit mode.
-			if sinceRef != "" {
-				changedFiles, err = gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
-				if err != nil {
-					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
-				}
-			}
-			if sinceRef != "" && changesetMode {
-				ids := since.ChangedChangesetIDs(changedFiles, ws.ChangesetDir)
-				inSince := map[string]bool{}
-				for _, id := range ids {
-					inSince[id] = true
-				}
-				kept := changesets[:0]
-				for _, cs := range changesets {
-					if inSince[cs.ID] {
-						kept = append(kept, cs)
-					}
-				}
-				changesets = kept
 			}
 
 			// The run after `pre exit` graduates the changesets waiting in
@@ -145,12 +129,12 @@ func NewStatusCmd() *cobra.Command {
 			// list and exits 0); --output still writes the (empty) plan, which
 			// is how a script tells "nothing to release" from an error.
 			if len(changesets) == 0 {
+				if output != "" {
+					return writeStatusPlan(ws.Root, output, nil)
+				}
 				if fromCommits || ws.Config.UsesCommits() {
 					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
 					return nil
-				}
-				if output != "" {
-					return writeStatusPlan(ws.Root, output, nil)
 				}
 				// On a real terminal, show the source, the packages at their
 				// current versions, and the next step.
@@ -321,7 +305,7 @@ func activeChangesets(changesets []*changeset.Changeset, pre *prestate.PreState)
 // consolidates every change since pre mode was entered (@changesets v3). Any
 // other run gets changesets back unchanged.
 func withGraduating(ws *Workspace, changesets []*changeset.Changeset, pre *prestate.PreState) ([]*changeset.Changeset, error) {
-	if pre == nil || pre.Mode != prestate.ModeExit || !ws.Config.UsesChangesets() {
+	if pre == nil || pre.Mode != prestate.ModeExit || !ws.Config.UsesChangesets() || !ws.Graduates() {
 		return changesets, nil
 	}
 	graduating, err := changeset.Dir(prestate.Dir(ws.ChangesetDir), "")
@@ -360,7 +344,7 @@ func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Ch
 	switch {
 	case pre != nil && pre.Mode == prestate.ModePre:
 		planner.ApplyPre(plan, pre.Tag)
-	case pre != nil && pre.Mode == prestate.ModeExit:
+	case pre != nil && pre.Mode == prestate.ModeExit && ws.Graduates():
 		plan = planner.GraduatePrereleases(plan, pkgs)
 	}
 	return plan, nil

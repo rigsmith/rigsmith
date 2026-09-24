@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/changeset"
@@ -12,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/since"
 )
 
 // LoadChangesets resolves the changesets a version/status run plans from,
@@ -28,6 +30,67 @@ func (w *Workspace) LoadChangesets(ctx context.Context, pkgs []plugin.Package) (
 	return w.loadChangesets(ctx, pkgs, false)
 }
 
+// NarrowSince limits the rest of the run to what a branch adds since ref,
+// whatever the versioning source: the changeset files it adds or edits, a
+// prerelease's graduation only if the branch changed the prerelease state
+// (Graduates), and the
+// releases derived from the commits it adds, so a commit already on the base
+// branch isn't the branch's. Commits are narrowed before a first release is
+// collapsed, so its headline stands for the branch's commits only. It returns
+// the changed files, read once, so a caller gating on them sees the same
+// snapshot the plan is built from.
+func (w *Workspace) NarrowSince(ctx context.Context, ref string) ([]string, error) {
+	files, err := gitutil.ChangedFilesSince(ctx, w.Root, ref)
+	if err != nil {
+		return nil, fmt.Errorf("could not determine changes since %q: %w", ref, err)
+	}
+	commits, err := gitutil.CommitsSince(ctx, w.Root, ref)
+	if err != nil {
+		return nil, fmt.Errorf("could not determine commits since %q: %w", ref, err)
+	}
+	scope := &sinceScope{ids: map[string]bool{}, commits: commits}
+	for _, id := range since.ChangedChangesetIDs(files, w.ChangesetDir) {
+		scope.ids[id] = true
+	}
+	preFile := filepath.Join(w.ChangesetDir, "pre.json")
+	for _, f := range files {
+		if f == preFile {
+			scope.prereleaseState = true
+		}
+	}
+	w.since = scope
+	return files, nil
+}
+
+// sinceScope is what a branch adds since a ref: the ids of the changeset
+// files it changed, its commits' SHAs, and whether it changed the prerelease
+// state (.changeset/pre.json).
+type sinceScope struct {
+	ids             map[string]bool
+	commits         map[string]bool
+	prereleaseState bool
+}
+
+// Graduates reports whether the run may graduate a prerelease (the run after
+// `pre exit`): always, unless narrowed to a branch that didn't change the
+// prerelease state, since then the graduation is the base branch's, not the
+// branch's.
+func (w *Workspace) Graduates() bool {
+	return w.since == nil || w.since.prereleaseState
+}
+
+// keeps reports whether a changeset is the branch's: a file it changed, or a
+// release from one of its commits. A nil scope keeps everything.
+func (s *sinceScope) keeps(cs *changeset.Changeset) bool {
+	if s == nil {
+		return true
+	}
+	if cs.Commit != "" {
+		return s.commits[cs.Commit]
+	}
+	return s.ids[cs.ID]
+}
+
 // LoadPendingChangesets is LoadChangesets for a caller that only reports what
 // would release (a package listing), not a changesets command: a missing
 // .changeset/ directory reads as no changesets on disk rather than an error,
@@ -42,7 +105,11 @@ func (w *Workspace) loadChangesets(ctx context.Context, pkgs []plugin.Package, m
 		onDisk, err := changeset.Dir(w.ChangesetDir, "")
 		switch {
 		case err == nil:
-			sets = onDisk
+			for _, cs := range onDisk {
+				if w.since.keeps(cs) {
+					sets = append(sets, cs)
+				}
+			}
 		case missingDirOK && errors.Is(err, fs.ErrNotExist):
 			// No .changeset/ at all: nothing on disk, and on to commits.
 		default:
@@ -65,6 +132,7 @@ func (w *Workspace) loadChangesets(ctx context.Context, pkgs []plugin.Package, m
 // tag, e.g. `core/v1.2.0` vs `v1.2.0`), so packages released at different times
 // each see only their own new commits. Packages sharing a since-ref share one
 // `git log`.
+// Narrowed (NarrowSince), only the branch's commits count.
 func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package) ([]*changeset.Changeset, error) {
 	// Bucket packages by their since-ref so each distinct ref is logged once.
 	refOf := map[string]string{}
@@ -95,6 +163,9 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 		}
 		var refSets []*changeset.Changeset
 		for _, cs := range commitsource.Synthesize(commits, pkgs, w.Root, w.Config) {
+			if !w.since.keeps(cs) {
+				continue
+			}
 			var kept []changeset.Release
 			for _, r := range cs.Releases {
 				if want[r.Name] {
