@@ -33,8 +33,21 @@ func TestFileAtRevsAndParents(t *testing.T) {
 	git(t, dir, "add", "-A")
 	git(t, dir, "commit", "-m", "a directory")
 	third := git(t, dir, "rev-parse", "HEAD")
-	if files, err := FileAtRevs(ctx, dir, []string{third}, "sub/f.json.d"); err != nil || files[third] != nil {
-		t.Errorf("a directory read as a file: %q, %v", files[third], err)
+	if files, err := FileAtRevs(ctx, dir, []string{third}, "sub/f.json.d"); err != nil {
+		t.Fatal(err)
+	} else if _, ok := files[third]; ok {
+		t.Errorf("a directory read as a file: %q", files[third])
+	}
+
+	// An empty file is present, and empty.
+	writeFile(t, filepath.Join(dir, "sub", "empty.json"), "")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-m", "an empty file")
+	fourth := git(t, dir, "rev-parse", "HEAD")
+	if files, err := FileAtRevs(ctx, dir, []string{fourth}, "sub/empty.json"); err != nil {
+		t.Fatal(err)
+	} else if body, ok := files[fourth]; !ok || len(body) != 0 {
+		t.Errorf("an empty file read as %q, present %v", body, ok)
 	}
 
 	if _, err := FileAtRevs(ctx, dir, []string{"0123456789012345678901234567890123456789"}, "sub/f.json"); err == nil {

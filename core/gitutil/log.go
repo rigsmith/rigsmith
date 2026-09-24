@@ -152,14 +152,16 @@ func FileAtRevs(ctx context.Context, dir string, revs []string, relPath string) 
 	}
 	files := make(map[string][]byte, len(revs))
 	rest := out
-	next := func() (header string, body []byte, err error) {
+	// next reads one object: its type, or "" when it's missing.
+	next := func() (typ string, body []byte, err error) {
 		nl := bytes.IndexByte(rest, '\n')
 		if nl < 0 {
 			return "", nil, fmt.Errorf("gitutil: truncated cat-file output")
 		}
-		header, rest = string(rest[:nl]), rest[nl+1:]
+		header := string(rest[:nl])
+		rest = rest[nl+1:]
 		if strings.HasSuffix(header, " missing") || strings.HasSuffix(header, " ambiguous") {
-			return header, nil, nil
+			return "", nil, nil
 		}
 		f := strings.Fields(header)
 		if len(f) != 3 {
@@ -170,25 +172,23 @@ func FileAtRevs(ctx context.Context, dir string, revs []string, relPath string) 
 			return "", nil, fmt.Errorf("gitutil: bad cat-file size in %q", header)
 		}
 		body, rest = rest[:size], rest[size+1:]
-		if f[1] != "blob" {
-			// Not a file (a directory by that name, say): no record there.
-			return header, []byte{}, nil
-		}
-		return header, body, nil
+		return f[1], body, nil
 	}
 	for _, rev := range revs {
-		commit, body, err := next()
+		typ, _, err := next()
 		if err != nil {
 			return nil, err
 		}
-		if body == nil {
-			return nil, fmt.Errorf("gitutil: no commit %s", strings.TrimSuffix(commit, " missing"))
+		if typ != "commit" {
+			return nil, fmt.Errorf("gitutil: no commit %s", rev)
 		}
-		_, body, err = next()
+		typ, body, err := next()
 		if err != nil {
 			return nil, err
 		}
-		if len(body) > 0 {
+		// Only a file is a file there: a directory by that name isn't, and
+		// an empty file is still one (its content is for the caller to judge).
+		if typ == "blob" {
 			files[rev] = body
 		}
 	}
