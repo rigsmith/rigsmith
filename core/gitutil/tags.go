@@ -51,6 +51,46 @@ func LatestModuleVersion(ctx context.Context, repoRoot, dirRel string) (version 
 	return best.String(), true
 }
 
+// ListTags returns every tag in the repository.
+func ListTags(ctx context.Context, repoRoot string) ([]string, error) {
+	out, err := runGit(ctx, repoRoot, "tag", "--list")
+	if err != nil {
+		return nil, err
+	}
+	var tags []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			tags = append(tags, line)
+		}
+	}
+	return tags, nil
+}
+
+// LatestTag returns the tag among tags that names the highest semver between
+// prefix and suffix, the two halves of a rendered release tag around its
+// version ("lib@" and "", "packages/lib/v" and ""). Tags whose middle isn't a
+// version are skipped; prereleases count, by precedence.
+func LatestTag(tags []string, prefix, suffix string) (string, bool) {
+	var (
+		best    semver.Version
+		bestTag string
+		found   bool
+	)
+	for _, tag := range tags {
+		if !strings.HasPrefix(tag, prefix) || !strings.HasSuffix(tag, suffix) || len(tag) < len(prefix)+len(suffix) {
+			continue
+		}
+		v, ok := semver.Parse(tag[len(prefix) : len(tag)-len(suffix)])
+		if !ok {
+			continue
+		}
+		if !found || semver.Compare(v, best) > 0 {
+			best, bestTag, found = v, tag, true
+		}
+	}
+	return bestTag, found
+}
+
 // ModuleTag returns the canonical tag name for a module version, e.g.
 // "core/v1.2.3" for a submodule or "v1.2.3" for the root module.
 func ModuleTag(dirRel, version string) string {

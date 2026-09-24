@@ -69,8 +69,8 @@ func TestRecordBaselineIsPerPackage(t *testing.T) {
 	assertNotContains(t, out, "app ")            // nothing pending for app
 }
 
-// Without the record, the baseline is the tag, as before: an npm-style tag
-// isn't one it finds, so the history is counted again.
+// Without the record, the baseline is the tag, as before: with none, the
+// history is counted again.
 func TestNoRecordKeepsTheTagBaseline(t *testing.T) {
 	dir := commitRepo(t, "")
 	commitIn(t, dir, "lib", "a", "feat: old lib feature")
@@ -82,11 +82,11 @@ func TestNoRecordKeepsTheTagBaseline(t *testing.T) {
 	assertContains(t, out, "old lib feature")
 }
 
-// The record wins over a tag: an older module tag (packages/lib/v1.0.0, on
-// the first commit) doesn't pull the released feature back in.
+// The record wins over a tag: an older release tag (lib@1.0.0, on the first
+// commit) doesn't pull the released feature back in.
 func TestRecordBaselineWinsOverAnOlderTag(t *testing.T) {
 	dir := commitRepo(t, `, "record": true`)
-	git(t, dir, "tag", "packages/lib/v1.0.0")
+	git(t, dir, "tag", "lib@1.0.0")
 	commitIn(t, dir, "lib", "a", "feat: old lib feature")
 	release(t, dir)
 	commitIn(t, dir, "lib", "b", "fix: new lib fix")

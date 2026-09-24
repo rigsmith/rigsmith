@@ -305,9 +305,10 @@ release that didn't go through `version`.
 
 With commits as a versioning source, the record is also where each package's
 next release starts counting. Without it, a package's commits count from its
-last release tag, and only module-style tags (`v1.2.0`, `packages/lib/v1.2.0`)
-are found there, so a package tagged `lib@1.2.0` counts its whole history
-again. With it, a package's commits count from the commit that recorded its
+highest release tag, named as the tag step names it: `lib@1.2.0`, a Go
+module's `packages/lib/v1.2.0`, a single app's `v1.2.0`, or the `tagTemplate`
+(one without `${name}`, like `v${version}`, is shared, so every package counts
+from the latest). With it, a package's commits count from the commit that recorded its
 current `released` version: the version PR's commit, or its squash on the
 base branch. It's per package, so releasing `app` alone doesn't move `lib`'s
 starting point, and it wins over a tag, which can be deleted or never pushed.
