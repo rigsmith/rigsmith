@@ -138,7 +138,7 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 	// Bucket packages by their since-ref so each distinct ref is logged once.
 	refOf := map[string]string{}
 	pkgsByRef := map[string][]string{}
-	baselines, err := w.recordBaselines(ctx)
+	baselines, err := w.recordBaselines(ctx, pkgs)
 	if err != nil {
 		return nil, err
 	}
@@ -238,8 +238,10 @@ func collapseInitialRelease(sets []*changeset.Changeset, cfg *config.Config) []*
 // tag, which can be deleted or never pushed. A package with no record entry,
 // or no record kept, falls back to its tag, and so does every package in a
 // shallow clone, whose cut-off history would make its oldest commit look like
-// the one that recorded everything.
-func (w *Workspace) recordBaselines(ctx context.Context) (map[string]string, error) {
+// the one that recorded everything. An entry that isn't the package's current
+// version is stale (a release went out while the record was off) and is
+// passed over too.
+func (w *Workspace) recordBaselines(ctx context.Context, pkgs []plugin.Package) (map[string]string, error) {
 	if !w.Config.Versioning.Record {
 		return nil, nil
 	}
@@ -288,6 +290,19 @@ func (w *Workspace) recordBaselines(ctx context.Context) (map[string]string, err
 	if err != nil {
 		return nil, err
 	}
+	stale := map[string]bool{}
+	for _, p := range pkgs {
+		if v, ok := current[p.Name]; ok && v != p.Version {
+			stale[p.Name] = true
+		}
+	}
+	fresh := make(map[string]string, len(current))
+	for name, v := range current {
+		if !stale[name] {
+			fresh[name] = v
+		}
+	}
+	current = fresh
 	out := make(map[string]string, len(current))
 	for _, sha := range history { // newest first
 		after, err := released(sha)

@@ -137,6 +137,9 @@ func TestRecordBaselineFollowsAMergedRelease(t *testing.T) {
 	merge := exec.Command("git", "merge", "--no-ff", "--no-commit", "x")
 	merge.Dir = dir
 	_ = merge.Run()
+	if git(t, dir, "rev-parse", "-q", "--verify", "MERGE_HEAD") == "" {
+		t.Fatal("the merge didn't start")
+	}
 	writeFile(t, filepath.Join(dir, ".changeset", "versions.json"), mergeRecords(t, mainRecord, xRecord, "lib", "app"))
 	git(t, dir, "checkout", "--theirs", "--", "packages/app")
 	git(t, dir, "checkout", "--ours", "--", "packages/lib")
@@ -190,4 +193,26 @@ func mergeRecords(t *testing.T, ours, theirs, fromOurs, fromTheirs string) strin
 		t.Fatal(err)
 	}
 	return string(data) + "\n"
+}
+
+// A record entry older than the package's version is stale: lib released
+// again while the record was off (tagged packages/lib/v1.2.0, a tag the
+// fallback finds), so the tag, not the stale entry, is where it counts from.
+func TestRecordBaselinePassesOverAStaleEntry(t *testing.T) {
+	dir := commitRepo(t, `, "record": true`)
+	commitIn(t, dir, "lib", "a", "feat: first lib feature")
+	release(t, dir) // recorded: lib 1.1.0
+
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"), `{ "versioning": { "source": "commits" } }`)
+	commitIn(t, dir, "lib", "b", "feat: second lib feature")
+	release(t, dir) // lib 1.2.0, unrecorded
+	git(t, dir, "tag", "packages/lib/v1.2.0")
+
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"), `{ "versioning": { "source": "commits", "record": true } }`)
+	commitIn(t, dir, "lib", "c", "fix: new lib fix")
+
+	code, out := runChangerig(t, dir, "status", "--verbose")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "new lib fix")
+	assertNotContains(t, out, "second lib feature")
 }

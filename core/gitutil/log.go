@@ -170,6 +170,10 @@ func FileAtRevs(ctx context.Context, dir string, revs []string, relPath string) 
 			return "", nil, fmt.Errorf("gitutil: bad cat-file size in %q", header)
 		}
 		body, rest = rest[:size], rest[size+1:]
+		if f[1] != "blob" {
+			// Not a file (a directory by that name, say): no record there.
+			return header, []byte{}, nil
+		}
 		return header, body, nil
 	}
 	for _, rev := range revs {
@@ -180,10 +184,11 @@ func FileAtRevs(ctx context.Context, dir string, revs []string, relPath string) 
 		if body == nil {
 			return nil, fmt.Errorf("gitutil: no commit %s", strings.TrimSuffix(commit, " missing"))
 		}
-		if _, body, err = next(); err != nil {
+		_, body, err = next()
+		if err != nil {
 			return nil, err
 		}
-		if body != nil {
+		if len(body) > 0 {
 			files[rev] = body
 		}
 	}

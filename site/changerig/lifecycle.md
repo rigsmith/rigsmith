@@ -314,7 +314,8 @@ starting point, and it wins over a tag, which can be deleted or never pushed.
 A release merged in from another branch counts from the commit that recorded
 it there, not from the merge. The record has to be committed to count (it's
 read from history, not the working tree), and a package it doesn't hold falls
-back to its tag. So does every package in a shallow clone, whose cut-off
+back to its tag, as does one whose recorded version isn't its current one (a
+release went out while the record was off). So does every package in a shallow clone, whose cut-off
 history can't say which commit recorded a release; commit-sourced releases
 want the full history anyway (`fetch-depth: 0` in GitHub Actions).
 

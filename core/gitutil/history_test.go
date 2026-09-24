@@ -28,6 +28,15 @@ func TestFileAtRevsAndParents(t *testing.T) {
 		t.Errorf("content at %s = %q", second, files[second])
 	}
 
+	// A directory at the path isn't a file there.
+	writeFile(t, filepath.Join(dir, "sub", "f.json.d", "x"), "x\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-m", "a directory")
+	third := git(t, dir, "rev-parse", "HEAD")
+	if files, err := FileAtRevs(ctx, dir, []string{third}, "sub/f.json.d"); err != nil || files[third] != nil {
+		t.Errorf("a directory read as a file: %q, %v", files[third], err)
+	}
+
 	if _, err := FileAtRevs(ctx, dir, []string{"0123456789012345678901234567890123456789"}, "sub/f.json"); err == nil {
 		t.Error("a commit that doesn't exist read as a missing file")
 	}
