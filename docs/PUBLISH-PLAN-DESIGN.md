@@ -26,9 +26,12 @@ new plugin method, `published`:
 - **npm**: `npm view <name>@<version> version`, as canon's `npm info`: the
   version printed means published, E404 means not, anything else is an error.
 - **NuGet**: the feed's flat container (`PackageBaseAddress/3.0.0` from the
-  v3 service index; nuget.org by default). A source given by its NuGet.config
-  name can't be resolved and is an error.
-- **crates.io**: `GET /api/v1/crates/<name>/<version>`.
+  v3 service index; nuget.org by default), compared in NuGet's normalized form
+  (`1.0.0.0` is `1.0.0`). A source given by its NuGet.config name can't be
+  resolved and is an error, and so is a 200 without a versions list.
+- **crates.io**: `GET /api/v1/crates/<name>/<version>`. Only crates.io: an
+  alternate registry is named for cargo (`--registry`) and need not serve that
+  endpoint, so its 404 would read as "not published". Checking one is an error.
 - **Go modules, regex packages, Electron, Tauri, Velopack** answer
   `noRegistry`: they release by their git tag (and forge release), so the plan
   lists them `tag-only` when the tag is missing.

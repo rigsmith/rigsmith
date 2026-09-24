@@ -170,11 +170,28 @@ func (s *SubprocessEcosystem) Publish(ctx context.Context, req PublishRequest) (
 	return resp, err
 }
 
+// Published calls the plugin and insists on an answer: a response without a
+// published field (unless it says noRegistry), or one claiming both, is an
+// error, never read as "not published".
 func (s *SubprocessEcosystem) Published(ctx context.Context, req PublishedRequest) (PublishedResponse, error) {
 	req.APIVersion = APIVersion
-	var resp PublishedResponse
-	err := s.host.Call(ctx, MethodPublished, req, &resp)
-	return resp, err
+	var raw struct {
+		Published  *bool  `json:"published"`
+		NoRegistry bool   `json:"noRegistry"`
+		Message    string `json:"message"`
+	}
+	if err := s.host.Call(ctx, MethodPublished, req, &raw); err != nil {
+		return PublishedResponse{}, err
+	}
+	switch {
+	case raw.NoRegistry && raw.Published != nil && *raw.Published:
+		return PublishedResponse{}, fmt.Errorf("plugin %s answered published and noRegistry for %s", s.Info().ID, req.Package.Name)
+	case raw.NoRegistry:
+		return PublishedResponse{NoRegistry: true, Message: raw.Message}, nil
+	case raw.Published == nil:
+		return PublishedResponse{}, fmt.Errorf("plugin %s gave no published answer for %s@%s", s.Info().ID, req.Package.Name, req.Package.Version)
+	}
+	return PublishedResponse{Published: *raw.Published, Message: raw.Message}, nil
 }
 
 func (s *SubprocessEcosystem) Artifacts(ctx context.Context, req ArtifactsRequest) (ArtifactsResponse, error) {

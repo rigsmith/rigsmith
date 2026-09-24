@@ -42,6 +42,7 @@ func TestPublishedAnswersFromNpmView(t *testing.T) {
 	}{
 		{"the version is there", "1.2.0\n", "", nil, true, false},
 		{"the package is there without it", "", "", nil, false, false},
+		{"an answer that isn't the version", "npm notice something\n", "", nil, false, true},
 		{"no such package", "", "npm error code E404\nnpm error 404 Not Found", errors.New("exit status 1"), false, false},
 		{"the registry failed", "", "npm error code E500", errors.New("exit status 1"), false, true},
 		{"npm isn't reachable", "", "npm error network request failed", errors.New("exit status 1"), false, true},

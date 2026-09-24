@@ -197,7 +197,14 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 		}
 		return plugin.PublishedResponse{}, fmt.Errorf("npm view %s: %s", spec, strings.TrimSpace(stderr+" "+err.Error()))
 	}
-	return plugin.PublishedResponse{Published: strings.TrimSpace(out) == req.Package.Version}, nil
+	switch strings.TrimSpace(out) {
+	case req.Package.Version:
+		return plugin.PublishedResponse{Published: true}, nil
+	case "":
+		return plugin.PublishedResponse{}, nil
+	default:
+		return plugin.PublishedResponse{}, fmt.Errorf("npm view %s printed %q, not the version or nothing", spec, strings.TrimSpace(out))
+	}
 }
 
 // Credentials: npm uses the caller's npm auth (~/.npmrc / NPM_TOKEN), which we do

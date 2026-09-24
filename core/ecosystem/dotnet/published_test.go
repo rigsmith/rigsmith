@@ -44,6 +44,10 @@ func TestPublishedReadsTheFlatContainer(t *testing.T) {
 		{"the version is there", "1.2.0", 200, `{"versions":["1.1.0","1.2.0"]}`, true, false},
 		{"case and build metadata don't matter", "1.2.0-Beta.1+abc", 200, `{"versions":["1.2.0-beta.1"]}`, true, false},
 		{"other versions only", "1.3.0", 200, `{"versions":["1.2.0"]}`, false, false},
+		{"a four-part version with a zero", "1.2.0.0", 200, `{"versions":["1.2.0"]}`, true, false},
+		{"leading zeros", "01.02.0", 200, `{"versions":["1.2.0"]}`, true, false},
+		{"a fourth number that isn't zero", "1.2.0.1", 200, `{"versions":["1.2.0"]}`, false, false},
+		{"a 200 without the list", "1.2.0", 200, `{}`, false, true},
 		{"no such package", "1.2.0", 404, ``, false, false},
 		{"the feed failed", "1.2.0", 500, `oops`, false, true},
 	} {

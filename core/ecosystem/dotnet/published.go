@@ -27,7 +27,7 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the feed: %w", what, err)
 	}
 	var index struct {
-		Versions []string `json:"versions"`
+		Versions *[]string `json:"versions"`
 	}
 	found, err := getJSON(ctx, base+strings.ToLower(req.Package.Name)+"/index.json", &index)
 	if err != nil {
@@ -36,15 +36,45 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 	if !found {
 		return plugin.PublishedResponse{}, nil
 	}
-	// The feed lists normalized versions, lowercased and without build
-	// metadata.
-	want, _, _ := strings.Cut(req.Package.Version, "+")
-	for _, v := range index.Versions {
-		if strings.EqualFold(v, want) {
+	// A 200 without the list isn't an answer.
+	if index.Versions == nil {
+		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the feed: its version index has no versions list", what)
+	}
+	want := normalizeNuGetVersion(req.Package.Version)
+	for _, v := range *index.Versions {
+		if normalizeNuGetVersion(v) == want {
 			return plugin.PublishedResponse{Published: true}, nil
 		}
 	}
 	return plugin.PublishedResponse{}, nil
+}
+
+// normalizeNuGetVersion is NuGet's normalized form, which a feed lists:
+// build metadata dropped, leading zeros dropped from the numbers, a fourth
+// number dropped when it's zero, at least three numbers, and lowercase.
+// "01.0.0.0-Beta+abc" and "1.0.0-beta" are the same version.
+func normalizeNuGetVersion(v string) string {
+	v, _, _ = strings.Cut(v, "+")
+	release, pre, hasPre := strings.Cut(v, "-")
+	parts := strings.Split(release, ".")
+	for i, p := range parts {
+		if trimmed := strings.TrimLeft(p, "0"); trimmed != "" {
+			parts[i] = trimmed
+		} else {
+			parts[i] = "0"
+		}
+	}
+	if len(parts) == 4 && parts[3] == "0" {
+		parts = parts[:3]
+	}
+	for len(parts) < 3 {
+		parts = append(parts, "0")
+	}
+	out := strings.Join(parts, ".")
+	if hasPre {
+		out += "-" + pre
+	}
+	return strings.ToLower(out)
 }
 
 // nugetOrgBase is nuget.org's package base address.

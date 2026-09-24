@@ -182,17 +182,27 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // failure is returned as an error. A non-crates.io req.PackageSource is passed as
 // --registry (the crates.io aliases "crates.io"/"crates" mean the default).
 //
-// Published asks the registry's web API (GET /api/v1/crates/<name>/<version>,
-// crates.io by default, a URL package source otherwise) whether the version
-// exists: 200 is published, 404 isn't, anything else is an error rather than
-// a guess. A private (publish = false) crate has no registry.
+// Published asks crates.io's web API (GET /api/v1/crates/<name>/<version>)
+// whether the version exists: 200 is published, 404 isn't, anything else is
+// an error rather than a guess. Only crates.io is asked: publish passes any
+// other source to cargo as a named registry (--registry), whose API isn't
+// known here, and an alternate registry need not serve that endpoint at all,
+// so its 404 would read as "not published". A private (publish = false) crate
+// has no registry.
 func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
 	if req.Package.Private {
 		return plugin.PublishedResponse{NoRegistry: true}, nil
 	}
-	url := cratesRegistryBase(req.PackageSource) + "/api/v1/crates/" + req.Package.Name + "/" + req.Package.Version
+	if src := req.PackageSource; src != "" && src != "crates.io" && src != "crates" {
+		return plugin.PublishedResponse{}, fmt.Errorf("can't check %s@%s on the registry %q: only crates.io can be asked whether a version is published", req.Package.Name, req.Package.Version, src)
+	}
+	url := cratesIOBase + "/api/v1/crates/" + req.Package.Name + "/" + req.Package.Version
 	return registryHas(ctx, url, req.Package.Name+"@"+req.Package.Version)
 }
+
+// cratesIOBase is crates.io's API base: a variable so a test can point it
+// at a local server.
+var cratesIOBase = "https://crates.io"
 
 // registryHTTP is the client for registry queries: a variable so a test can
 // shorten its timeout.
