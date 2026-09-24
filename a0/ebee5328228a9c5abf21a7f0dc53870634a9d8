@@ -1,0 +1,9 @@
+internal/shiprig/cli/publishwiring_test.go
+  ai_agent 72-88,93-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a0ebee5328228a9c5abf21a7f0dc53870634a9d8",
+  "prompts": {}
+}
