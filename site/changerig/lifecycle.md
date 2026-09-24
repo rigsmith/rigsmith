@@ -140,7 +140,10 @@ of its dependencies releases). Supports `--since` and `--output`.
 way a pull request's status check wants it: the changesets it adds or edits
 and, when commits are a versioning source, the commits it adds (those between
 the merge-base of the ref and `HEAD`). Changesets and commits already on the
-base branch stay out.
+base branch stay out, and so does a prerelease's graduation (the run after
+`pre exit`) unless the branch itself changed `.changeset/pre.json`. With
+`--output`, a branch with nothing to release still gets the empty plan, in
+every source mode.
 
 It doubles as the CI gate, as `changeset status` does: it fails when a package
 that would version (not ignored, and not private unless `privatePackages.version`

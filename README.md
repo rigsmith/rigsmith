@@ -40,7 +40,9 @@ the decisions made along the way.
 changerig init                              # create .changeset/
 changerig add -t feat -p my/pkg -m "…"      # write a changeset (interactive without flags)
 changerig status --verbose                  # show the pending release plan
+changerig status --since main               # only what this branch adds (its changesets and commits)
 changerig version                           # bump versions + write CHANGELOG.md, with dependency cascade
+changerig version --changelog --since main  # preview this branch's changelog entries; writes nothing
 changerig ui                                # interactive bubbletea menu
 shiprig publish                             # registries + tags (idempotent, confirm-gated on a TTY)
 shiprig release                             # the configurable step pipeline (.changeset/release.jsonc)

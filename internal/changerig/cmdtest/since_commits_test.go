@@ -100,3 +100,59 @@ func TestVersionSinceRefusesToWrite(t *testing.T) {
 		t.Fatal("version --since consumed changesets")
 	}
 }
+
+// On the run after `pre exit`, the prerelease's changesets graduate. They were
+// consumed on the base branch, so a branch's --since plan leaves them out.
+func TestStatusSinceLeavesOutTheBaseBranchsGraduation(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0", "pkg-b": "1.0.0"})
+	initChangesets(t, dir)
+	prereleaseThenExit(t, dir) // cs1, a pkg-a minor, waits in .changeset/pre/
+	gitInit(t, dir)
+	git(t, dir, "switch", "-c", "feature")
+	writeChangeset(t, dir, "pr-one", "pkg-b", "minor", "The branch's feature")
+	gitCommitAll(t, dir, "the branch's changeset")
+
+	if got := planNames(t, dir); len(got) != 2 {
+		t.Fatalf("plan without --since = %v, want pkg-a (graduating) and pkg-b", got)
+	}
+	got := planNames(t, dir, "--since", "main")
+	if len(got) != 1 || got[0] != "pkg-b" {
+		t.Fatalf("plan --since main = %v, want only pkg-b", got)
+	}
+}
+
+// A branch with nothing releasable still gets the empty plan --output
+// promises, in commit mode too.
+func TestStatusSinceWritesAnEmptyPlanInCommitMode(t *testing.T) {
+	dir := sinceCommitsRepo(t, "commits")
+	git(t, dir, "switch", "-q", "-c", "docs-only", "main")
+	writeFile(t, filepath.Join(dir, "NOTES.md"), "notes\n")
+	gitCommitAll(t, dir, "docs: notes")
+
+	if got := planNames(t, dir, "--since", "main"); len(got) != 0 {
+		t.Fatalf("plan --since main = %v, want empty", got)
+	}
+}
+
+// A branch that exits prerelease mode itself owns the graduation.
+func TestStatusSinceKeepsTheBranchsOwnGraduation(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	initChangesets(t, dir)
+	writeChangeset(t, dir, "cs1", "pkg-a", "minor", "a feature")
+	for _, args := range [][]string{{"pre", "enter", "next"}, {"version"}} {
+		code, out := runChangerig(t, dir, args...)
+		assertExitZero(t, code, out)
+	}
+	gitInit(t, dir)
+	git(t, dir, "switch", "-c", "feature")
+	code, out := runChangerig(t, dir, "pre", "exit")
+	assertExitZero(t, code, out)
+	gitCommitAll(t, dir, "leave prerelease mode")
+
+	got := planNames(t, dir, "--since", "main")
+	if len(got) != 1 || got[0] != "pkg-a" {
+		t.Fatalf("plan --since main = %v, want pkg-a graduating", got)
+	}
+}

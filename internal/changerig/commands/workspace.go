@@ -38,6 +38,10 @@ type Workspace struct {
 	// changesets, and a `<Version>` inserted into such a project would fight
 	// the tool that owns it. Filled by Discover.
 	computed map[string]bool
+	// since, when set (NarrowSince), limits what the run plans from to what a
+	// branch adds since a ref: loading changesets and graduating a
+	// prerelease's both read it.
+	since *sinceScope
 }
 
 // Stamps reports whether `version` may write a version into pkg's manifest:

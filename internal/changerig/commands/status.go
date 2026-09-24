@@ -78,18 +78,11 @@ func NewStatusCmd() *cobra.Command {
 			var changedFiles []string
 			changesetMode := ws.Config.CommitSource() == config.SourceChangesets
 			if sinceRef != "" {
-				changedFiles, err = gitutil.ChangedFilesSince(cmd.Context(), ws.Root, sinceRef)
-				if err != nil {
-					return fmt.Errorf("could not determine changes since %q: %w", sinceRef, err)
+				if changedFiles, err = ws.NarrowSince(cmd.Context(), sinceRef); err != nil {
+					return err
 				}
 			}
-			var changesets []*changeset.Changeset
-			var fromCommits bool
-			if sinceRef != "" {
-				changesets, fromCommits, err = ws.LoadChangesetsSince(cmd.Context(), pkgs, sinceRef)
-			} else {
-				changesets, fromCommits, err = ws.LoadChangesets(cmd.Context(), pkgs)
-			}
+			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
 			if err != nil {
 				return err
 			}
@@ -136,12 +129,12 @@ func NewStatusCmd() *cobra.Command {
 			// list and exits 0); --output still writes the (empty) plan, which
 			// is how a script tells "nothing to release" from an error.
 			if len(changesets) == 0 {
+				if output != "" {
+					return writeStatusPlan(ws.Root, output, nil)
+				}
 				if fromCommits || ws.Config.UsesCommits() {
 					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
 					return nil
-				}
-				if output != "" {
-					return writeStatusPlan(ws.Root, output, nil)
 				}
 				// On a real terminal, show the source, the packages at their
 				// current versions, and the next step.
@@ -312,7 +305,7 @@ func activeChangesets(changesets []*changeset.Changeset, pre *prestate.PreState)
 // consolidates every change since pre mode was entered (@changesets v3). Any
 // other run gets changesets back unchanged.
 func withGraduating(ws *Workspace, changesets []*changeset.Changeset, pre *prestate.PreState) ([]*changeset.Changeset, error) {
-	if pre == nil || pre.Mode != prestate.ModeExit || !ws.Config.UsesChangesets() {
+	if pre == nil || pre.Mode != prestate.ModeExit || !ws.Config.UsesChangesets() || !ws.Graduates() {
 		return changesets, nil
 	}
 	graduating, err := changeset.Dir(prestate.Dir(ws.ChangesetDir), "")
@@ -351,7 +344,7 @@ func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Ch
 	switch {
 	case pre != nil && pre.Mode == prestate.ModePre:
 		planner.ApplyPre(plan, pre.Tag)
-	case pre != nil && pre.Mode == prestate.ModeExit:
+	case pre != nil && pre.Mode == prestate.ModeExit && ws.Graduates():
 		plan = planner.GraduatePrereleases(plan, pkgs)
 	}
 	return plan, nil

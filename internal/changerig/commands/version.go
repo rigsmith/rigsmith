@@ -78,13 +78,12 @@ func NewVersionCmd() *cobra.Command {
 			// beside the changesets instead; and a stackspace member's manifest
 			// is never written, whatever the flag says (ws.Stamps).
 			stamp := !noStamp && ws.Config.StampEnabled()
-			var changesets []*changeset.Changeset
-			var fromCommits bool
 			if sinceRef != "" {
-				changesets, fromCommits, err = ws.LoadChangesetsSince(cmd.Context(), pkgs, sinceRef)
-			} else {
-				changesets, fromCommits, err = ws.LoadChangesets(cmd.Context(), pkgs)
+				if _, err := ws.NarrowSince(cmd.Context(), sinceRef); err != nil {
+					return err
+				}
 			}
+			changesets, fromCommits, err := ws.LoadChangesets(cmd.Context(), pkgs)
 			if err != nil {
 				return err
 			}
@@ -218,7 +217,9 @@ func NewVersionCmd() *cobra.Command {
 			case planner.ModePre:
 				planner.ApplyPre(plan, pre.Tag)
 			case planner.ModeExit:
-				plan = planner.GraduatePrereleases(plan, pkgs)
+				if ws.Graduates() {
+					plan = planner.GraduatePrereleases(plan, pkgs)
+				}
 			}
 
 			if len(plan) == 0 {
