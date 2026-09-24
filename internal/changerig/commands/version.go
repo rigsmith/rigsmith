@@ -32,6 +32,7 @@ func NewVersionCmd() *cobra.Command {
 		dryRun           bool
 		sinceRef         string
 		ignoreFlag       []string
+		onlyFlag         []string
 		releaseAs        []string
 		showChangelog    bool
 		snapshotTag      string
@@ -75,6 +76,33 @@ func NewVersionCmd() *cobra.Command {
 			for _, p := range pkgs {
 				pkgByName[p.Name] = p
 			}
+			// --only, shiprig's own: version just these packages, and treat
+			// every other one as ignored for this run on top of the config's
+			// ignore (unlike --ignore, it combines with it). What the named
+			// packages must move with (status --output's group) has to be
+			// named too; the refusals below say so.
+			configIgnore := slices.Clone(ws.Config.Ignore)
+			if len(onlyFlag) > 0 {
+				if len(ignoreFlag) > 0 {
+					return errors.New("--only and --ignore can't be combined: --only already leaves out every package it doesn't name")
+				}
+				var unknown []string
+				only := map[string]bool{}
+				for _, name := range onlyFlag {
+					if _, ok := pkgByName[name]; !ok {
+						unknown = append(unknown, name)
+					}
+					only[name] = true
+				}
+				if len(unknown) > 0 {
+					return fmt.Errorf("--only names %s, which is not in the workspace; is it misspelled?", strings.Join(unknown, ", "))
+				}
+				for _, p := range pkgs {
+					if !only[p.Name] {
+						ws.Config.Ignore = append(ws.Config.Ignore, p.Name)
+					}
+				}
+			}
 			// --ignore, as @changesets has it: exact names, and not alongside
 			// an `ignore` in the config.
 			if len(ignoreFlag) > 0 {
@@ -93,6 +121,9 @@ func NewVersionCmd() *cobra.Command {
 				ws.Config.Ignore = ignoreFlag
 			}
 			if msgs := planner.SkippedDependents(pkgs, ws.Config, len(ignoreFlag) > 0); len(msgs) > 0 {
+				if len(onlyFlag) > 0 {
+					return fmt.Errorf("--only leaves out packages the named ones move with:\n%s\npass each package's whole release group (`status --output` lists them)", strings.Join(msgs, "\n"))
+				}
 				return errors.New(strings.Join(msgs, "\n"))
 			}
 			// Whether the new versions are written into manifests at all. Off by
@@ -171,8 +202,16 @@ func NewVersionCmd() *cobra.Command {
 			// afterwards) and kept (every named package ignored → left for a
 			// future run). Mixed and unknown-package changesets are hard
 			// errors before anything is written, matching @changesets.
+			if len(onlyFlag) > 0 {
+				if err := checkWholeGroups(onlyFlag, active, pkgs, ecoOf, ws.Config, configIgnore, independent); err != nil {
+					return err
+				}
+			}
 			consumed, kept, err := planner.PartitionChangesets(active, pkgs, ws.Config)
 			if err != nil {
+				if len(onlyFlag) > 0 {
+					return fmt.Errorf("%w\n--only has to name every package a changeset names together: pass each package's whole release group (`status --output` lists them)", err)
+				}
 				return err
 			}
 
@@ -564,6 +603,8 @@ func NewVersionCmd() *cobra.Command {
 	f.BoolVar(&showChangelog, "changelog", false, "preview each releasing package's rendered changelog notes (implies --dry-run; writes nothing)")
 	f.StringVar(&sinceRef, "since", "", "preview only what the branch adds since this git ref: its changesets and commits (needs --changelog or --dry-run)")
 	f.StringArrayVar(&ignoreFlag, "ignore", nil, "leave this package out of the run (repeatable; not with `ignore` in the config)")
+	f.StringArrayVar(&onlyFlag, "only", nil, "version only this package, leaving every other one for a later run (repeatable; name each package's whole group from `status --output`)")
+	_ = cmd.RegisterFlagCompletionFunc("only", completePackageNames)
 	// Completion offers the workspace's package names, the only values --ignore
 	// accepts.
 	_ = cmd.RegisterFlagCompletionFunc("ignore", completePackageNames)
@@ -802,4 +843,49 @@ func completePackageNames(c *cobra.Command, _ []string, _ string) ([]string, cob
 		names = append(names, p.Name)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+// checkWholeGroups refuses an --only that names part of a release group: it
+// plans the run as if --only weren't there (the config's own ignore only) and
+// requires every planned member of each named package's group to be named
+// too. The other refusals catch a split changeset or dependency; a fixed or
+// linked group, or a shared version file, splits without either.
+func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugin.Package, ecoOf map[string]string, cfg *config.Config, configIgnore []string, independent bool) error {
+	full := *cfg
+	full.Ignore = configIgnore
+	if independent {
+		full.VersionStrategy = config.Independent
+	} else {
+		full.PerPackageStrategy = full.StrategyByPackage(ecoOf)
+	}
+	plan := planner.Plan(active, pkgs, &full)
+	groups := planner.ReleaseGroups(plan, active, &full)
+	named := map[string]bool{}
+	for _, n := range only {
+		named[n] = true
+	}
+	var missing []string
+	seen := map[string]bool{}
+	for _, n := range only {
+		g, ok := groups[n]
+		if !ok || seen[g] {
+			continue
+		}
+		seen[g] = true
+		var left []string
+		for member, mg := range groups {
+			if mg == g && !named[member] {
+				left = append(left, member)
+			}
+		}
+		if len(left) > 0 {
+			sort.Strings(left)
+			missing = append(missing, fmt.Sprintf("  group %s also needs %s", g, strings.Join(left, ", ")))
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("--only names part of a release group:\n%s\npass each package's whole release group (`status --output` lists them)", strings.Join(missing, "\n"))
 }

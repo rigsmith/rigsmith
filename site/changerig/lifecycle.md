@@ -136,6 +136,13 @@ Shows the pending release plan — every package that will bump, the level, and
 why (including the dependency **cascade**: a dependent is patch-bumped when one
 of its dependencies releases). Supports `--since` and `--output`.
 
+With `--output`, each release also carries a `group`: the packages that have
+to be versioned together, named by the group's first member. Packages share a
+group when one changeset names both, when one depends on the other in the
+plan, when they're in the same fixed or linked group, or when they share a
+version file. `version --only` takes a group at a time, which is how a release
+can go out in parts (a version PR per group, say).
+
 `--since <ref>` narrows the plan to what the branch adds since that ref, the
 way a pull request's status check wants it: the changesets it adds or edits
 and, when commits are a versioning source, the commits it adds (those between
@@ -177,6 +184,14 @@ Private packages (`"private": true`) are treated as ignored unless the config
 sets `"privatePackages": { "version": true }`: never versioned, a changeset
 naming one is left in place, and one mixing it with a public package is an
 error. This is @changesets v3's default.
+
+`--only <package>` (repeatable) is the other way round, and shiprig's own:
+version only the named packages, leaving every other one's changesets for a
+later run. Unlike `--ignore`, it combines with `ignore` in the config. The
+named packages must be whole groups (`status --output` lists each package's
+group); naming part of one is refused, since a changeset would be split, a
+dependent left behind its dependency, or a fixed or linked group or shared
+version file released in pieces. The refusal names what's missing.
 
 `--ignore <package>` (repeatable) leaves packages out of one run, as
 `changeset version --ignore` does: their changesets stay for a later run, and
