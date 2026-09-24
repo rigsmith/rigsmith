@@ -73,10 +73,11 @@ same way.
   must match the integrity `pack` recorded, the package must be in the
   workspace at the plan's version, and the file must sit inside the pack
   directory. Canon trusts the directory; a registry push can't be taken back.
-- **The plan's npm dist-tag reaches `npm publish`.** `PublishRequest` gained
-  `tag`. An ordinary `shiprig publish` still passes none, so a prerelease
-  published without a pack directory goes to npm's default tag; giving it
-  the prerelease tag, as canon does, is a follow-up.
+- **The npm dist-tag reaches `npm publish`.** `PublishRequest` gained `tag`.
+  From a pack directory it's the plan's. An ordinary `shiprig publish` picks it
+  as `changeset publish` does: `--tag`, else the prerelease tag in pre mode,
+  else npm's default. `--tag` is refused in pre mode and with a pack directory,
+  as canon refuses it.
 - **A first publish in pre mode** keeps the prerelease tag. Canon sends it to
   `latest`, which needs the registry's version list and dist-tags; `published`
   answers only yes or no.

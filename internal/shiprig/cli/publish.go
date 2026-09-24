@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/prestate"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -61,6 +64,7 @@ func newPublishCmd() *cobra.Command {
 		yes        bool
 		npmAuth    string
 		packDir    string
+		distTag    string
 	)
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -127,6 +131,27 @@ func newPublishCmd() *cobra.Command {
 			toPublish := make([]plugin.Package, 0, len(pkgs)+len(gen.Packages))
 			toPublish = append(toPublish, pkgs...)
 			toPublish = append(toPublish, gen.Packages...)
+			// The npm dist-tag, as `changeset publish` picks it. Settled
+			// before any registry is touched.
+			pre, err := prestate.Read(ws.ChangesetDir)
+			if err != nil {
+				return err
+			}
+			// Only npm has dist-tags, so the tag is only checked when an npm
+			// package is going out: a Go- or .NET-only prerelease can be
+			// tagged anything.
+			npm := false
+			for _, p := range toPublish {
+				if ecoOf[p.Name] == "node" && !p.Private && !ws.Config.IsIgnored(p.Name) {
+					npm = true
+				}
+			}
+			// A --tag given explicitly counts even when it's empty: an empty
+			// one mustn't slip past the pre-mode and pack refusals.
+			tag, err := publishDistTag(distTag, cmd.Flags().Changed("tag"), packDir != "", pre, npm)
+			if err != nil {
+				return err
+			}
 			// From a pack directory, exactly the files pack built go out, in
 			// the plan's order, and nothing is built.
 			packed := map[string]packedRelease{}
@@ -223,6 +248,9 @@ func newPublishCmd() *cobra.Command {
 				// A packed release carries the access and dist-tag its plan was
 				// made with.
 				pr, fromPack := packed[p.Name]
+				if !fromPack {
+					pr.tag = tag
+				}
 				if fromPack && pr.access != "" {
 					pkgAccess = pr.access
 				}
@@ -404,6 +432,7 @@ func newPublishCmd() *cobra.Command {
 	f.StringVarP(&outputPath, "output", "o", "", "append a git-tag event per tag created to this file (default $CHANGESETS_OUTPUT); tags are then created locally only, for the caller to push")
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
 	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:…); overrides node config")
+	f.StringVar(&distTag, "tag", "", "the npm dist-tag to publish under (default: the prerelease tag in pre mode; not allowed in pre mode or with --from-pack-dir)")
 	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
 	return cmd
 }
@@ -477,3 +506,67 @@ func ecosystemSource(eco string) string {
 		return ""
 	}
 }
+
+// publishDistTag picks the npm dist-tag a publish goes out under, as
+// `changeset publish` does. --tag names it, except in pre mode, where the
+// prerelease tag is the only one allowed, and from a pack directory, whose
+// plan carries each release's own. In pre mode it's the prerelease tag. Empty
+// otherwise, which leaves npm's default (latest). Without this, a prerelease
+// version went out as latest.
+//
+// supplied says --tag was given, even as an empty string. npm says whether an
+// npm package is being published: only npm has
+// dist-tags, so without one the tag isn't checked against npm's rules.
+func publishDistTag(flag string, supplied, fromPackDir bool, pre *prestate.PreState, npm bool) (string, error) {
+	inPre := pre != nil && pre.Mode == prestate.ModePre
+	switch {
+	case supplied && fromPackDir:
+		return "", errors.New("--tag can't be used with --from-pack-dir: the pack plan carries each release's dist-tag")
+	case supplied && inPre:
+		return "", errors.New("--tag can't be used in pre mode: prereleases go out under the prerelease tag (run `pre exit` to publish under another)")
+	case supplied:
+		if err := checkDistTag(flag); npm && err != nil {
+			return "", fmt.Errorf("--tag %q: %w", flag, err)
+		}
+		return flag, nil
+	case fromPackDir:
+		return "", nil
+	case inPre:
+		if strings.TrimSpace(pre.Tag) == "" {
+			return "", errors.New(".changeset/pre.json is in pre mode with no tag: set its tag")
+		}
+		if err := checkDistTag(pre.Tag); npm && err != nil {
+			return "", fmt.Errorf(".changeset/pre.json's tag %q: %w", pre.Tag, err)
+		}
+		return pre.Tag, nil
+	}
+	return "", nil
+}
+
+// distTagChars is what a dist-tag is made of, as npm has it: characters
+// encodeURIComponent leaves alone (letters, digits and - _ . ! ~ * ' ( )),
+// so no whitespace and nothing a URL would need to escape.
+var distTagChars = regexp.MustCompile(`^[A-Za-z0-9\-_.!~*'()]+$`)
+
+// checkDistTag refuses a tag npm would refuse, before anything is published:
+// npm checks it per package, so a bad one would fail partway through a
+// release. Beyond the characters, npm refuses a tag that reads as a version
+// or range ("1", "v2", "1.x"), since `npm install pkg@<tag>` couldn't tell
+// the two apart.
+func checkDistTag(tag string) error {
+	if !distTagChars.MatchString(tag) {
+		return errors.New("a dist-tag is letters, digits and - _ . ! ~ * ' ( ) (what a URL doesn't need to escape)")
+	}
+	if looksLikeVersion.MatchString(tag) {
+		return errors.New("npm refuses a dist-tag that reads as a version or range")
+	}
+	return nil
+}
+
+// looksLikeVersion matches what npm's semver would read as a version or
+// range, among tags distTagChars allows: an optional ~ (the only range
+// operator a URL leaves alone), an optional v, then a number or wildcard and
+// more of either, and any suffix, with or without a separator, since npm's
+// loose parsing takes "1.2.3beta" as a version ("1", "v2", "1.x", "~1.2",
+// "*", "1.2.3-rc.1", "1.2.3beta").
+var looksLikeVersion = regexp.MustCompile(`^~?[vV]?(\d+|[xX*])(\.(\d+|[xX*]))*[-+]?[0-9A-Za-z.+-]*$`)
