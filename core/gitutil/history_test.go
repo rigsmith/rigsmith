@@ -2,6 +2,7 @@ package gitutil
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -60,5 +61,18 @@ func TestFileAtRevsAndParents(t *testing.T) {
 	}
 	if len(parents[first]) != 0 || len(parents[second]) != 1 || parents[second][0] != first {
 		t.Errorf("parents = %v", parents)
+	}
+}
+
+// A ref that looks like an option is still a revision: it fails as an
+// unknown revision rather than being read as --output and writing a file.
+func TestLogSinceTreatsARefAsARevision(t *testing.T) {
+	dir := initRepo(t)
+	target := filepath.Join(t.TempDir(), "written")
+	if _, err := LogSince(context.Background(), dir, "--output="+target); err == nil {
+		t.Error("an option-like ref was accepted")
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Error("an option-like ref was read as git's --output")
 	}
 }

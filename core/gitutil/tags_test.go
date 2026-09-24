@@ -13,6 +13,12 @@ func TestLatestTag(t *testing.T) {
 	if got, ok := LatestTag([]string{"lib@1.2.3.4", "lib@1.2.3"}, []string{"lib@", ""}); !ok || got != "lib@1.2.3.4" {
 		t.Errorf("LatestTag with a .NET version = %q, %v; want lib@1.2.3.4", got, ok)
 	}
+	// The fourth part decides between otherwise-equal versions, in any order.
+	for _, tags := range [][]string{{"lib@1.2.3.4", "lib@1.2.3.10"}, {"lib@1.2.3.10", "lib@1.2.3.4"}} {
+		if got, _ := LatestTag(tags, []string{"lib@", ""}); got != "lib@1.2.3.10" {
+			t.Errorf("LatestTag(%v) = %q, want lib@1.2.3.10", tags, got)
+		}
+	}
 	if _, ok := LatestTag([]string{"lib@next", "app@1.0.0"}, []string{"lib@", ""}); ok {
 		t.Error("LatestTag found a tag with no version")
 	}

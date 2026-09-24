@@ -146,8 +146,12 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 	// named as the tag step names it (RenderTag: `name@version`, a Go module's
 	// `dir/vX.Y.Z`, a single app's `vX.Y.Z`, or the tagTemplate). A template
 	// without ${name} is shared, so every package counts from the latest one.
-	// No git, no tags: every package counts its whole history.
-	tags, _ := gitutil.ListTags(ctx, w.Root)
+	// Tags that can't be listed are an error, not "no tags": that would
+	// count every package's whole history.
+	tags, err := gitutil.ListTags(ctx, w.Root)
+	if err != nil {
+		return nil, fmt.Errorf("listing release tags: %w", err)
+	}
 	solo := len(pkgs) == 1
 	const at = "\x00" // stands in for the version, to split the tag around it
 	for _, p := range pkgs {

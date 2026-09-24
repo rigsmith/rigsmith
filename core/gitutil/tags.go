@@ -7,6 +7,7 @@ package gitutil
 import (
 	"context"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/semver"
@@ -83,9 +84,10 @@ func LatestTag(tags []string, parts []string) (string, bool) {
 	}
 	places := len(parts) - 1
 	var (
-		best    semver.Version
-		bestTag string
-		found   bool
+		best        semver.Version
+		bestTag     string
+		bestVersion string
+		found       bool
 	)
 	for _, tag := range tags {
 		rest := len(tag) - fixed
@@ -101,11 +103,27 @@ func LatestTag(tags []string, parts []string) (string, bool) {
 		if !ok {
 			continue
 		}
-		if !found || semver.Compare(v, best) > 0 {
-			best, bestTag, found = v, tag, true
+		// semver.Version has no fourth part: .NET's x.y.z.w breaks the tie.
+		if c := semver.Compare(v, best); !found || c > 0 || (c == 0 && fourth(version) > fourth(bestVersion)) {
+			best, bestTag, bestVersion, found = v, tag, version, true
 		}
 	}
 	return bestTag, found
+}
+
+// fourth returns a version's fourth core part (.NET's revision), or -1.
+func fourth(version string) int {
+	core, _, _ := strings.Cut(version, "+")
+	core, _, _ = strings.Cut(core, "-")
+	parts := strings.Split(core, ".")
+	if len(parts) < 4 {
+		return -1
+	}
+	n, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return -1
+	}
+	return n
 }
 
 // fullVersion reports whether version's core has at least three parts, which
