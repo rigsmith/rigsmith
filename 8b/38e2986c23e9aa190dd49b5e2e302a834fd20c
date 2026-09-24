@@ -1,0 +1,9 @@
+core/ecosystem/dotnet/published_test.go
+  ai_agent 8,72-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8b38e2986c23e9aa190dd49b5e2e302a834fd20c",
+  "prompts": {}
+}
