@@ -54,6 +54,11 @@ func report(out io.Writer, r publishResult) {
 // own opinion about that.
 const dryRunProbeLimit = 8
 
+// openPublishWorkspace opens the workspace publish runs in: a variable so a
+// test can hand it one whose adapters record what they're asked instead of
+// publishing.
+var openPublishWorkspace = commands.Open
+
 func newPublishCmd() *cobra.Command {
 	var (
 		dryRun     bool
@@ -70,7 +75,7 @@ func newPublishCmd() *cobra.Command {
 		Use:   "publish",
 		Short: "Publish packages to their registries and tag the release",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ws, err := commands.Open()
+			ws, err := openPublishWorkspace()
 			if err != nil {
 				return err
 			}
