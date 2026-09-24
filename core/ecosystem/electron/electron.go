@@ -122,6 +122,12 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 	return os.WriteFile(path, []byte(setVersionField(string(content), req.NewVersion)), 0o644)
 }
 
+// Published answers NoRegistry: an Electron app is released by its git tag and forge release, so
+// there's no registry to ask.
+func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	return plugin.PublishedResponse{NoRegistry: true}, nil
+}
+
 // Publish is a no-op: an Electron app is released by the publish tagging phase and
 // the forge release (Artifacts builds the installers to attach), not pushed to a
 // registry. (Not advertised in Capabilities. electron-builder's own publisher is

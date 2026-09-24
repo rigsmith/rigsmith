@@ -35,6 +35,10 @@ type Ecosystem interface {
 	//
 	// A real publish is never called concurrently.
 	Publish(ctx context.Context, req PublishRequest) (PublishResponse, error)
+	// Published reports whether a package's version is already on its
+	// registry, without publishing: see PublishedRequest. An ecosystem with no
+	// registry answers NoRegistry.
+	Published(ctx context.Context, req PublishedRequest) (PublishedResponse, error)
 	// Artifacts builds the package's distributable files into req.OutputDir and
 	// returns them. Separate from Publish: it produces, it does not ship. An
 	// adapter with nothing to build (e.g. a Go module published by tag, with no
@@ -163,6 +167,13 @@ func (s *SubprocessEcosystem) Publish(ctx context.Context, req PublishRequest) (
 	req.APIVersion = APIVersion
 	var resp PublishResponse
 	err := s.host.Call(ctx, MethodPublish, req, &resp)
+	return resp, err
+}
+
+func (s *SubprocessEcosystem) Published(ctx context.Context, req PublishedRequest) (PublishedResponse, error) {
+	req.APIVersion = APIVersion
+	var resp PublishedResponse
+	err := s.host.Call(ctx, MethodPublished, req, &resp)
 	return resp, err
 }
 

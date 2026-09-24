@@ -13,12 +13,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/cmderr"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -179,6 +182,46 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // failure is returned as an error. A non-crates.io req.PackageSource is passed as
 // --registry (the crates.io aliases "crates.io"/"crates" mean the default).
 //
+// Published asks the registry's web API (GET /api/v1/crates/<name>/<version>,
+// crates.io by default, a URL package source otherwise) whether the version
+// exists: 200 is published, 404 isn't, anything else is an error rather than
+// a guess. A private (publish = false) crate has no registry.
+func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	if req.Package.Private {
+		return plugin.PublishedResponse{NoRegistry: true}, nil
+	}
+	url := cratesRegistryBase(req.PackageSource) + "/api/v1/crates/" + req.Package.Name + "/" + req.Package.Version
+	return registryHas(ctx, url, req.Package.Name+"@"+req.Package.Version)
+}
+
+// registryHTTP is the client for registry queries: a variable so a test can
+// shorten its timeout.
+var registryHTTP = &http.Client{Timeout: 30 * time.Second}
+
+// registryHas GETs url: 200 means the version exists, 404 that it doesn't.
+func registryHas(ctx context.Context, url, what string) (plugin.PublishedResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return plugin.PublishedResponse{}, err
+	}
+	// crates.io refuses requests without a User-Agent.
+	req.Header.Set("User-Agent", "shiprig (https://rigsmith.dev)")
+	resp, err := registryHTTP.Do(req)
+	if err != nil {
+		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the registry: %w", what, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return plugin.PublishedResponse{Published: true}, nil
+	case http.StatusNotFound:
+		return plugin.PublishedResponse{}, nil
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the registry: %s: %s", what, resp.Status, cratesMessage(body))
+	}
+}
+
 // Credentials: cargo uses the caller's token (`cargo login` / CARGO_REGISTRY_TOKEN),
 // which we do not manage here.
 func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugin.PublishResponse, error) {

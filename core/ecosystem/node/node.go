@@ -170,6 +170,36 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // we skip. Access defaults to "restricted" unless req.Access is an explicit
 // "public"/"restricted". A URL-shaped req.PackageSource is passed as --registry.
 //
+// npmView runs `npm view` in dir: a variable so a test can stand in for npm.
+var npmView = func(ctx context.Context, dir string, args ...string) (stdout, stderr string, err error) {
+	return runCmd(ctx, dir, "npm", append([]string{"view"}, args...)...)
+}
+
+// Published asks npm whether the version is on the registry, as @changesets'
+// publish-plan does: `npm view <name>@<version> version` prints the version
+// when it's there and nothing when the package exists without it, and fails
+// with E404 when the package doesn't exist at all. Any other failure is an
+// error rather than "not published". A private package has no registry.
+func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	if req.Package.Private {
+		return plugin.PublishedResponse{NoRegistry: true}, nil
+	}
+	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
+	spec := req.Package.Name + "@" + req.Package.Version
+	args := []string{spec, "version"}
+	if strings.HasPrefix(req.PackageSource, "http") {
+		args = append(args, "--registry", req.PackageSource)
+	}
+	out, stderr, err := npmView(ctx, dir, args...)
+	if err != nil {
+		if strings.Contains(stderr, "E404") {
+			return plugin.PublishedResponse{}, nil
+		}
+		return plugin.PublishedResponse{}, fmt.Errorf("npm view %s: %s", spec, strings.TrimSpace(stderr+" "+err.Error()))
+	}
+	return plugin.PublishedResponse{Published: strings.TrimSpace(out) == req.Package.Version}, nil
+}
+
 // Credentials: npm uses the caller's npm auth (~/.npmrc / NPM_TOKEN), which we do
 // not manage here.
 func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugin.PublishResponse, error) {
