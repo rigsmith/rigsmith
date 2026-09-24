@@ -197,6 +197,29 @@ instead of writing anything, and `--since <ref>` to narrow a preview
 does. A run that writes refuses `--since`: versioning only a branch's share
 would drop the base branch's changes.
 
+### Releasing at an exact version {#release-as}
+
+On a terminal, `version` offers each releasing package's computed version and
+lets you pick another. `--release-as` gives that answer up front, for CI or a
+script:
+
+```sh
+changerig version --yes --release-as pkg-b=3.0.0   # this package at exactly 3.0.0
+changerig version --yes --release-as 2.0.0         # the only version releasing
+changerig version --changelog --release-as pkg-b=3.0.0   # preview it first
+```
+
+It's repeatable. The package has to be releasing already, from a changeset or a
+commit: an override changes the number, not whether it ships. The version must
+be valid semver above the current one. Packages sharing a version file move
+together, as they do at the prompt, and the dependency cascade isn't
+recomputed: dependents already in the release get the new version in their
+ranges and changelogs, and an override that would push past the range of a
+dependent that isn't releasing is refused, since nothing would update it. Give
+that package a changeset with the bump you want instead, so the cascade runs. It's for normal releases only; a prerelease or snapshot sets its
+own suffix. @changesets has no equivalent (there you write a changeset with
+the bump you want), so without the flag nothing changes.
+
 ### Versions that do not live in the tree {#no-stamp}
 
 Step 4 assumes the manifest is where the version lives. Two kinds of package
@@ -235,7 +258,8 @@ directory is not the stackspace's either.
 
 A package with no version anywhere yet — nothing in the tree, nothing recorded —
 plans from `0.0.0`; seed `.changeset/versions.json` with its real current
-version, or type the exact version at the override prompt, and it is remembered.
+version, or type the exact version at the override prompt (or pass
+`--release-as`), and it is remembered.
 A package with no version in the tree is never stamped, whatever the config
 says: a `<Version>` inserted into a MinVer project would fight the tool that
 owns the number. The record and the manifest never disagree for long, either:

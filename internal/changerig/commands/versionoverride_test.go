@@ -1,48 +1,35 @@
 package commands
 
 import (
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/planner"
 	"github.com/rigsmith/rigsmith/core/semver"
 )
 
-// TestGroupByVersionFile: modules sharing a version file group together (one
-// override prompt, applied to all), while inline modules stay singletons.
-func TestGroupByVersionFile(t *testing.T) {
-	plan := []*planner.Module{
-		{Name: "a", VersionFile: "version.txt"},
-		{Name: "b", VersionFile: "version.txt"}, // shares with a
-		{Name: "c", ManifestPath: "c/pkg.json"}, // inline → own group
-		{Name: "d", RangeOnly: true},            // skipped
-	}
-	groups := groupByVersionFile(plan)
-	if len(groups) != 2 {
-		t.Fatalf("got %d groups, want 2: %+v", len(groups), groups)
-	}
-	if len(groups[0]) != 2 || groups[0][0].Name != "a" || groups[0][1].Name != "b" {
-		t.Errorf("first group should be [a b], got %+v", groups[0])
-	}
-	if len(groups[1]) != 1 || groups[1][0].Name != "c" {
-		t.Errorf("second group should be [c], got %+v", groups[1])
-	}
-}
-
-// TestCanonicalizeOverride documents that the override stores a canonical semver
-// string even though Parse accepts non-canonical input — the same normalization
-// the custom-version branch applies before writing VersionOverride.
-func TestCanonicalizeOverride(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{"1.2", "1.2.0"},
-		{"01.2.3", "1.2.3"},
-		{"2", "2.0.0"},
-	} {
-		v, ok := semver.Parse(tc.in)
-		if !ok {
-			t.Fatalf("Parse(%q) failed", tc.in)
+// Packages sharing a version file move together: two --release-as specs for
+// them must agree.
+func TestApplyReleaseAsRefusesTwoVersionsForOneVersionFile(t *testing.T) {
+	shared := func() []*planner.Module {
+		cur, _ := semver.Parse("1.0.0")
+		return []*planner.Module{
+			{Name: "pkg-a", DisplayName: "pkg-a", VersionFile: "Directory.Build.props", Current: cur},
+			{Name: "pkg-b", DisplayName: "pkg-b", VersionFile: "Directory.Build.props", Current: cur},
 		}
-		if got := v.String(); got != tc.want {
-			t.Errorf("canonical %q = %q, want %q", tc.in, got, tc.want)
+	}
+	err := applyReleaseAs(io.Discard, shared(), []string{"pkg-a=2.0.0", "pkg-b=3.0.0"})
+	if err == nil || !strings.Contains(err.Error(), "two versions") {
+		t.Errorf("err = %v, want the two-versions refusal", err)
+	}
+	plan := shared()
+	if err := applyReleaseAs(io.Discard, plan, []string{"pkg-a=2.0.0", "pkg-b=2.0.0"}); err != nil {
+		t.Errorf("the same version twice: err = %v", err)
+	}
+	for _, m := range plan {
+		if m.VersionOverride != "2.0.0" {
+			t.Errorf("%s override = %q, want 2.0.0", m.Name, m.VersionOverride)
 		}
 	}
 }

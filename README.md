@@ -44,6 +44,7 @@ changerig status --since main               # only what this branch adds (its ch
 changerig version                           # bump versions + write CHANGELOG.md, with dependency cascade
 changerig version --changelog --since main  # preview this branch's changelog entries; writes nothing
 changerig version --ignore pkg              # leave a package out of this run (as changeset version --ignore)
+changerig version --yes --release-as pkg=2.0.0   # release a package at an exact version (CI)
 changerig ui                                # interactive bubbletea menu
 shiprig publish                             # registries + tags (idempotent, confirm-gated on a TTY)
 shiprig release                             # the configurable step pipeline (.changeset/release.jsonc)

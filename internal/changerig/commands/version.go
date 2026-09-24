@@ -32,6 +32,7 @@ func NewVersionCmd() *cobra.Command {
 		dryRun           bool
 		sinceRef         string
 		ignoreFlag       []string
+		releaseAs        []string
 		showChangelog    bool
 		snapshotTag      string
 		snapshotTemplate string
@@ -248,6 +249,22 @@ func NewVersionCmd() *cobra.Command {
 				return nil
 			}
 
+			// --release-as: the override prompt's answer given up front, so a
+			// preview shows it and CI can set it. Normal releases only, as the
+			// prompt: a prerelease or snapshot sets its own suffix.
+			if len(releaseAs) > 0 {
+				if mode != planner.ModeNormal {
+					return errors.New("--release-as applies to a normal release, not a prerelease or snapshot")
+				}
+				if err := applyReleaseAs(out, plan, releaseAs); err != nil {
+					return err
+				}
+				if err := checkOverriddenDependents(plan, pkgs); err != nil {
+					return err
+				}
+				planner.RefreshDependencies(plan)
+			}
+
 			PrintPlan(out, plan, false)
 
 			// Before any changelog is written, and before the override prompt —
@@ -294,12 +311,18 @@ func NewVersionCmd() *cobra.Command {
 			// Only for a normal release on a real terminal — snapshot/prerelease set
 			// their own version suffixes, and --yes / non-interactive runs accept the
 			// computed plan as-is.
-			if !yes && mode == planner.ModeNormal && Interactive() {
+			if !yes && len(releaseAs) == 0 && mode == planner.ModeNormal && Interactive() {
 				changed, err := promptVersionOverrides(out, plan)
 				if err != nil {
 					return err
 				}
 				if changed {
+					if err := checkOverriddenDependents(plan, pkgs); err != nil {
+						return err
+					}
+					// Dependents' ranges and changelog lines follow the chosen
+					// versions.
+					planner.RefreshDependencies(plan)
 					fmt.Fprintln(out)
 					PrintPlan(out, plan, false)
 				}
@@ -542,6 +565,8 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	f.BoolVarP(&yes, "yes", "y", false, "accept the computed versions; skip the interactive version-override prompt")
+	f.StringArrayVar(&releaseAs, "release-as", nil, "release a package at this exact version, <package>=<version> (or a bare <version> when one version is releasing); repeatable, and skips the prompt")
+	_ = cmd.RegisterFlagCompletionFunc("release-as", completeReleaseAs)
 	f.BoolVar(&noStamp, "no-stamp", false, "compute and record the versions (.changeset/versions.json) without writing them into any manifest")
 	return cmd
 }
