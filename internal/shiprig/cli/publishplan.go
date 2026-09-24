@@ -33,12 +33,46 @@ const publishPlanVersion = 1
 // missing). Tag is the npm dist-tag, as canon has it. Ecosystem is
 // shiprig's own addition, which canon's readers ignore.
 type planRelease struct {
-	Kind      string `json:"kind"`
-	Name      string `json:"name"`
-	Version   string `json:"version"`
-	Access    string `json:"access,omitempty"`
-	Tag       string `json:"tag,omitempty"`
-	Ecosystem string `json:"ecosystem,omitempty"`
+	Kind      string      `json:"kind"`
+	Name      string      `json:"name"`
+	Version   string      `json:"version"`
+	Access    string      `json:"access,omitempty"`
+	Tag       string      `json:"tag,omitempty"`
+	Ecosystem string      `json:"ecosystem,omitempty"`
+	Tarball   *packedFile `json:"tarball,omitempty"` // set by pack, as canon's
+}
+
+// packedFile is where pack put a release's package file, relative to the
+// pack directory, and its sha256 integrity ("sha256-<base64>"), as canon's
+// tarball entry has it. The name stays "tarball" whatever the ecosystem (a
+// .nupkg too), so canon's readers find it.
+type packedFile struct {
+	Path      string `json:"path"`
+	Integrity string `json:"integrity"`
+}
+
+// readPublishPlan reads a plan file, as canon's readPlanFile does: an object
+// with version 1 and a plan array.
+func readPublishPlan(path string) ([][]planRelease, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var file struct {
+		Version *int             `json:"version"`
+		Plan    *[][]planRelease `json:"plan"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil || file.Plan == nil {
+		return nil, fmt.Errorf("%s: not a publish plan file", path)
+	}
+	if file.Version == nil || *file.Version != publishPlanVersion {
+		v := "none"
+		if file.Version != nil {
+			v = fmt.Sprint(*file.Version)
+		}
+		return nil, fmt.Errorf("%s: publish plan file version %s, expected %d", path, v, publishPlanVersion)
+	}
+	return *file.Plan, nil
 }
 
 type publishPlanFile struct {
