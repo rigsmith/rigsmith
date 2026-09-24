@@ -1,0 +1,31 @@
+core/ecosystem/dotnet/published_test.go
+  s_505a2cfce9114c::t_594e04b846ced8 51,82-97
+core/plugin/published_test.go
+  s_505a2cfce9114c::t_594e04b846ced8 29,60-68
+core/ecosystem/dotnet/published.go
+  s_505a2cfce9114c::t_88d5490e95c000 132-141,149,153
+  s_505a2cfce9114c::t_113ea0b7c0b39b 6,10,41-44,108,115,122-125,127-131,142-148,159,166
+core/plugin/ecosystem.go
+  s_505a2cfce9114c::t_88d5490e95c000 7
+  s_505a2cfce9114c::t_113ea0b7c0b39b 178-182
+core/ecosystem/cargo/cargo.go
+  s_505a2cfce9114c::t_113ea0b7c0b39b 15,201,212-215,229-236
+core/ecosystem/cargo/published_test.go
+  s_505a2cfce9114c::t_594e04b846ced8 17,21-25,36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3465303353f386d746065c134623984df3d217a0",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
