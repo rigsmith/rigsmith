@@ -43,7 +43,7 @@ func TestPublishDistTag(t *testing.T) {
 		{"a bad prerelease tag is refused", "", false, &prestate.PreState{Mode: prestate.ModePre, Tag: "beta 1"}, "", "pre.json's tag"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := publishDistTag(tc.flag, tc.packDir, tc.pre)
+			got, err := publishDistTag(tc.flag, tc.packDir, tc.pre, true)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tc.wantErr)
@@ -54,5 +54,20 @@ func TestPublishDistTag(t *testing.T) {
 				t.Errorf("= %q, %v; want %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// Without an npm package going out, the tag isn't held to npm's rules: a
+// Go- or .NET-only prerelease can be tagged "x". The canon refusals stay.
+func TestPublishDistTagWithoutNpm(t *testing.T) {
+	pre := &prestate.PreState{Mode: prestate.ModePre, Tag: "x"}
+	if got, err := publishDistTag("", false, pre, false); err != nil || got != "x" {
+		t.Errorf("pre tag x without npm = %q, %v; want x", got, err)
+	}
+	if _, err := publishDistTag("", false, pre, true); err == nil {
+		t.Error("pre tag x with npm: want npm's refusal")
+	}
+	if _, err := publishDistTag("canary", false, pre, false); err == nil {
+		t.Error("--tag in pre mode is refused whatever the ecosystem")
 	}
 }

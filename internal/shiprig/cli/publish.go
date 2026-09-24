@@ -137,7 +137,16 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			tag, err := publishDistTag(distTag, packDir != "", pre)
+			// Only npm has dist-tags, so the tag is only checked when an npm
+			// package is going out: a Go- or .NET-only prerelease can be
+			// tagged anything.
+			npm := false
+			for _, p := range toPublish {
+				if ecoOf[p.Name] == "node" && !p.Private && !ws.Config.IsIgnored(p.Name) {
+					npm = true
+				}
+			}
+			tag, err := publishDistTag(distTag, packDir != "", pre, npm)
 			if err != nil {
 				return err
 			}
@@ -502,7 +511,10 @@ func ecosystemSource(eco string) string {
 // plan carries each release's own. In pre mode it's the prerelease tag. Empty
 // otherwise, which leaves npm's default (latest). Without this, a prerelease
 // version went out as latest.
-func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState) (string, error) {
+//
+// npm says whether an npm package is being published: only npm has
+// dist-tags, so without one the tag isn't checked against npm's rules.
+func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState, npm bool) (string, error) {
 	inPre := pre != nil && pre.Mode == prestate.ModePre
 	switch {
 	case flag != "" && fromPackDir:
@@ -510,7 +522,7 @@ func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState) (stri
 	case flag != "" && inPre:
 		return "", errors.New("--tag can't be used in pre mode: prereleases go out under the prerelease tag (run `pre exit` to publish under another)")
 	case flag != "":
-		if err := checkDistTag(flag); err != nil {
+		if err := checkDistTag(flag); npm && err != nil {
 			return "", fmt.Errorf("--tag %q: %w", flag, err)
 		}
 		return flag, nil
@@ -520,7 +532,7 @@ func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState) (stri
 		if strings.TrimSpace(pre.Tag) == "" {
 			return "", errors.New(".changeset/pre.json is in pre mode with no tag: set its tag")
 		}
-		if err := checkDistTag(pre.Tag); err != nil {
+		if err := checkDistTag(pre.Tag); npm && err != nil {
 			return "", fmt.Errorf(".changeset/pre.json's tag %q: %w", pre.Tag, err)
 		}
 		return pre.Tag, nil
