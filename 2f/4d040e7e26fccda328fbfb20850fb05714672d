@@ -1,0 +1,32 @@
+internal/shiprig/cli/root.go
+  s_505a2cfce9114c::t_99e23a55749ce9 78
+.changeset/shiprig-pack.md
+  ai_agent 1-7
+cmd/shiprig/README.md
+  ai_agent 80-81
+site/shiprig/index.md
+  ai_agent 48-54
+internal/shiprig/cli/pack_test.go
+  s_505a2cfce9114c::t_cd57ccda66a43b 1-154
+  s_505a2cfce9114c::t_8fcfe3a16bade6 155-182
+internal/shiprig/cli/publishplan.go
+  s_505a2cfce9114c::t_99e23a55749ce9 35-74
+internal/shiprig/cli/pack.go
+  s_505a2cfce9114c::t_99e23a55749ce9 1-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2f4d040e7e26fccda328fbfb20850fb05714672d",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
