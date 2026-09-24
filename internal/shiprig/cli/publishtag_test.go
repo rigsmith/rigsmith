@@ -32,6 +32,8 @@ func TestPublishDistTag(t *testing.T) {
 		{"a --tag like a v-version is refused", "v2", false, nil, "", "version or range"},
 		{"a --tag like a range is refused", "1.x", false, nil, "", "version or range"},
 		{"a tag with digits is fine", "next-2", false, nil, "next-2", ""},
+		{"a --tag like a loose version is refused", "1.2.3beta", false, nil, "", "version or range"},
+		{"a --tag like a prerelease version is refused", "1.2.3-rc.1", false, nil, "", "version or range"},
 		{"npm's other URL-safe characters are fine", "~beta", false, nil, "~beta", ""},
 		{"a leading dot is fine", ".beta", false, nil, ".beta", ""},
 		{"a leading underscore is fine", "_beta", false, nil, "_beta", ""},
@@ -43,7 +45,7 @@ func TestPublishDistTag(t *testing.T) {
 		{"a bad prerelease tag is refused", "", false, &prestate.PreState{Mode: prestate.ModePre, Tag: "beta 1"}, "", "pre.json's tag"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := publishDistTag(tc.flag, tc.packDir, tc.pre, true)
+			got, err := publishDistTag(tc.flag, tc.flag != "", tc.packDir, tc.pre, true)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("err = %v, want %q", err, tc.wantErr)
@@ -61,13 +63,28 @@ func TestPublishDistTag(t *testing.T) {
 // Go- or .NET-only prerelease can be tagged "x". The canon refusals stay.
 func TestPublishDistTagWithoutNpm(t *testing.T) {
 	pre := &prestate.PreState{Mode: prestate.ModePre, Tag: "x"}
-	if got, err := publishDistTag("", false, pre, false); err != nil || got != "x" {
+	if got, err := publishDistTag("", false, false, pre, false); err != nil || got != "x" {
 		t.Errorf("pre tag x without npm = %q, %v; want x", got, err)
 	}
-	if _, err := publishDistTag("", false, pre, true); err == nil {
+	if _, err := publishDistTag("", false, false, pre, true); err == nil {
 		t.Error("pre tag x with npm: want npm's refusal")
 	}
-	if _, err := publishDistTag("canary", false, pre, false); err == nil {
+	if _, err := publishDistTag("canary", true, false, pre, false); err == nil {
 		t.Error("--tag in pre mode is refused whatever the ecosystem")
+	}
+}
+
+// An explicit --tag "" still counts as --tag: it's refused in pre mode and
+// with a pack directory, and refused as blank otherwise.
+func TestPublishDistTagExplicitEmpty(t *testing.T) {
+	pre := &prestate.PreState{Mode: prestate.ModePre, Tag: "next"}
+	if _, err := publishDistTag("", true, false, pre, true); err == nil || !strings.Contains(err.Error(), "pre mode") {
+		t.Errorf("--tag \"\" in pre mode: err = %v", err)
+	}
+	if _, err := publishDistTag("", true, true, nil, true); err == nil || !strings.Contains(err.Error(), "--from-pack-dir") {
+		t.Errorf("--tag \"\" with a pack dir: err = %v", err)
+	}
+	if _, err := publishDistTag("", true, false, nil, true); err == nil {
+		t.Error("--tag \"\" on its own: want the blank-tag refusal")
 	}
 }

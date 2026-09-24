@@ -146,7 +146,9 @@ func newPublishCmd() *cobra.Command {
 					npm = true
 				}
 			}
-			tag, err := publishDistTag(distTag, packDir != "", pre, npm)
+			// A --tag given explicitly counts even when it's empty: an empty
+			// one mustn't slip past the pre-mode and pack refusals.
+			tag, err := publishDistTag(distTag, cmd.Flags().Changed("tag"), packDir != "", pre, npm)
 			if err != nil {
 				return err
 			}
@@ -512,16 +514,17 @@ func ecosystemSource(eco string) string {
 // otherwise, which leaves npm's default (latest). Without this, a prerelease
 // version went out as latest.
 //
-// npm says whether an npm package is being published: only npm has
+// supplied says --tag was given, even as an empty string. npm says whether an
+// npm package is being published: only npm has
 // dist-tags, so without one the tag isn't checked against npm's rules.
-func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState, npm bool) (string, error) {
+func publishDistTag(flag string, supplied, fromPackDir bool, pre *prestate.PreState, npm bool) (string, error) {
 	inPre := pre != nil && pre.Mode == prestate.ModePre
 	switch {
-	case flag != "" && fromPackDir:
+	case supplied && fromPackDir:
 		return "", errors.New("--tag can't be used with --from-pack-dir: the pack plan carries each release's dist-tag")
-	case flag != "" && inPre:
+	case supplied && inPre:
 		return "", errors.New("--tag can't be used in pre mode: prereleases go out under the prerelease tag (run `pre exit` to publish under another)")
-	case flag != "":
+	case supplied:
 		if err := checkDistTag(flag); npm && err != nil {
 			return "", fmt.Errorf("--tag %q: %w", flag, err)
 		}
@@ -563,5 +566,7 @@ func checkDistTag(tag string) error {
 // looksLikeVersion matches what npm's semver would read as a version or
 // range, among tags distTagChars allows: an optional ~ (the only range
 // operator a URL leaves alone), an optional v, then a number or wildcard and
-// more of either ("1", "v2", "1.x", "~1.2", "*").
-var looksLikeVersion = regexp.MustCompile(`^~?[vV]?(\d+|[xX*])(\.(\d+|[xX*]))*([-+].*)?$`)
+// more of either, and any suffix, with or without a separator, since npm's
+// loose parsing takes "1.2.3beta" as a version ("1", "v2", "1.x", "~1.2",
+// "*", "1.2.3-rc.1", "1.2.3beta").
+var looksLikeVersion = regexp.MustCompile(`^~?[vV]?(\d+|[xX*])(\.(\d+|[xX*]))*[-+]?[0-9A-Za-z.+-]*$`)
