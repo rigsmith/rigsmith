@@ -27,7 +27,9 @@ trailing commas gone), defaults applied, ecosystem blocks kept, and
 
 `doctor` checks git, the repo, `.changeset/config.json` (and offers to scaffold
 it when it's missing), and the packages discovered across every ecosystem — the
-same shared report/fix model the other rigs use.
+same shared report/fix model the other rigs use. With a
+[release record](lifecycle#record) kept, it also checks the manifests and tags
+against it.
 
 It works across **.NET, Node, Go, and Rust** in the same polyglot monorepo.
 Changesets name packages by name, so every discovered package needs a name of
