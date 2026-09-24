@@ -176,3 +176,14 @@ func TestStatusOutputGroupsOnlyActiveChangesets(t *testing.T) {
 		t.Errorf("groups = %v, want tool and cli apart", got)
 	}
 }
+
+// A package --only names but the config ignores is held back by the ignore,
+// so its changeset is reported as ignored, not as outside --only.
+func TestVersionOnlyReportsAnIgnoredNamedPackageAsIgnored(t *testing.T) {
+	dir := groupsRepo(t, "")
+	writeChangeset(t, dir, "extra-change", "extra", "patch", "An extra fix")
+	code, out := runChangerig(t, dir, "version", "--yes", "--only", "solo", "--only", "extra")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "naming only ignored packages")
+	assertNotContains(t, out, "outside --only")
+}

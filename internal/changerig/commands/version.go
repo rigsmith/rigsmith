@@ -567,9 +567,11 @@ func NewVersionCmd() *cobra.Command {
 			}
 			if len(kept) > 0 {
 				msg := fmt.Sprintf("kept %d changeset(s) naming only ignored packages.", len(kept))
-				if len(onlyFlag) > 0 {
-					// Under --only they're waiting, not ignored: say for what.
-					msg = fmt.Sprintf("left %d changeset(s) for a later run: they name only packages outside --only (%s).", len(kept), previewNames(keptPackages(kept), 4))
+				// Under --only they're waiting, not ignored: say for what. Not
+				// when one names a package --only named, which the config's
+				// ignore held back instead.
+				if names := keptPackages(kept); len(onlyFlag) > 0 && !slices.ContainsFunc(names, func(n string) bool { return slices.Contains(onlyFlag, n) }) {
+					msg = fmt.Sprintf("left %d changeset(s) for a later run: they name only packages outside --only (%s).", len(kept), previewNames(names, 4))
 				}
 				fmt.Fprintln(out, DimStyle.Render(msg))
 			}
