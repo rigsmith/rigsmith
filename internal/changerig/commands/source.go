@@ -142,11 +142,24 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 	if err != nil {
 		return nil, err
 	}
+	// Without a record, a package's last release is its highest release tag,
+	// named as the tag step names it (RenderTag: `name@version`, a Go module's
+	// `dir/vX.Y.Z`, a single app's `vX.Y.Z`, or the tagTemplate). A template
+	// without ${name} is shared, so every package counts from the latest one.
+	// Tags that can't be listed are an error, not "no tags": that would
+	// count every package's whole history.
+	tags, err := gitutil.MergedTags(ctx, w.Root)
+	if err != nil {
+		return nil, fmt.Errorf("listing release tags: %w", err)
+	}
+	solo := len(pkgs) == 1
+	const at = "\x00" // stands in for the version, to split the tag around it
 	for _, p := range pkgs {
 		ref := baselines[p.Name]
 		if ref == "" {
-			if v, ok := gitutil.LatestModuleVersion(ctx, w.Root, p.Dir); ok {
-				ref = gitutil.ModuleTag(p.Dir, v)
+			rendered := gitutil.RenderTag(w.Config.TagTemplate, w.ecoOf[p.Name], p.Dir, p.Name, at, solo)
+			if tag, found := gitutil.LatestTag(tags, strings.Split(rendered, at)); found {
+				ref = tag
 			}
 		}
 		refOf[p.Name] = ref

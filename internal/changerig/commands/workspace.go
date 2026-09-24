@@ -38,6 +38,9 @@ type Workspace struct {
 	// changesets, and a `<Version>` inserted into such a project would fight
 	// the tool that owns it. Filled by Discover.
 	computed map[string]bool
+	// ecoOf maps each discovered package to its ecosystem id, as Discover
+	// last returned it.
+	ecoOf map[string]string
 	// since, when set (NarrowSince), limits what the run plans from to what a
 	// branch adds since a ref: loading changesets and graduating a
 	// prerelease's both read it.
@@ -304,6 +307,7 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 		}
 	}
 	w.Config.MarkPrivate(private)
+	w.ecoOf = ecoOf
 	return all, ecoOf, nil
 }
 

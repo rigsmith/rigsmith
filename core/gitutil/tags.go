@@ -7,6 +7,7 @@ package gitutil
 import (
 	"context"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/semver"
@@ -49,6 +50,104 @@ func LatestModuleVersion(ctx context.Context, repoRoot, dirRel string) (version 
 		return "", false
 	}
 	return best.String(), true
+}
+
+// MergedTags returns the tags reachable from HEAD: a release on another
+// branch isn't one this branch has had.
+func MergedTags(ctx context.Context, repoRoot string) ([]string, error) {
+	out, err := runGit(ctx, repoRoot, "tag", "--list", "--merged", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var tags []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			tags = append(tags, line)
+		}
+	}
+	return tags, nil
+}
+
+// LatestTag returns the tag among tags that names the highest version in a
+// release tag's shape: parts is the rendered tag split at each place the
+// version goes ("lib@" and "", "packages/lib/v" and "", or three parts for a
+// template naming ${version} twice, every place the same version). Only a
+// full version counts, x.y.z (x.y.z.w for .NET) with any prerelease: a
+// hand-made `lib@2.0` or `lib@next` is not a release tag. Prereleases count,
+// by precedence.
+func LatestTag(tags []string, parts []string) (string, bool) {
+	if len(parts) < 2 {
+		return "", false
+	}
+	fixed := 0
+	for _, p := range parts {
+		fixed += len(p)
+	}
+	places := len(parts) - 1
+	var (
+		best        semver.Version
+		bestTag     string
+		bestVersion string
+		found       bool
+	)
+	for _, tag := range tags {
+		rest := len(tag) - fixed
+		// A length that doesn't divide evenly fails the Join check below.
+		if !strings.HasPrefix(tag, parts[0]) || rest <= 0 {
+			continue
+		}
+		version := tag[len(parts[0]) : len(parts[0])+rest/places]
+		if strings.Join(parts, version) != tag || !fullVersion(version) {
+			continue
+		}
+		v, ok := semver.Parse(version)
+		if !ok {
+			continue
+		}
+		if !found || compareRelease(v, version, best, bestVersion) > 0 {
+			best, bestTag, bestVersion, found = v, tag, version, true
+		}
+	}
+	return bestTag, found
+}
+
+// compareRelease orders two parsed versions (with their text) as .NET does:
+// x.y.z, then the fourth part semver.Version doesn't keep, and only then the
+// prerelease, so 1.2.3.5-rc.1 comes after 1.2.3.4.
+func compareRelease(a semver.Version, aText string, b semver.Version, bText string) int {
+	if c := semver.Compare(semver.New(a.Major, a.Minor, a.Patch, "", ""), semver.New(b.Major, b.Minor, b.Patch, "", "")); c != 0 {
+		return c
+	}
+	if fa, fb := fourth(aText), fourth(bText); fa != fb {
+		if fa > fb {
+			return 1
+		}
+		return -1
+	}
+	return semver.Compare(a, b)
+}
+
+// fourth returns a version's fourth core part (.NET's revision), or -1.
+func fourth(version string) int {
+	core, _, _ := strings.Cut(version, "+")
+	core, _, _ = strings.Cut(core, "-")
+	parts := strings.Split(core, ".")
+	if len(parts) < 4 {
+		return -1
+	}
+	n, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// fullVersion reports whether version's core has at least three parts, which
+// semver.Parse doesn't insist on (it reads "2.0" as 2.0.0).
+func fullVersion(version string) bool {
+	core, _, _ := strings.Cut(version, "+")
+	core, _, _ = strings.Cut(core, "-")
+	return strings.Count(core, ".") >= 2
 }
 
 // ModuleTag returns the canonical tag name for a module version, e.g.

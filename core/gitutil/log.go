@@ -51,7 +51,9 @@ func LogSince(ctx context.Context, dir, ref string) ([]Commit, error) {
 
 	args := []string{"log", "--name-only", "--no-renames", "--pretty=format:" + logRecordSep + logFormat + logFieldSep}
 	if strings.TrimSpace(ref) != "" {
-		args = append(args, ref+"..HEAD")
+		// A tag rendered from a template could start with a dash; after
+		// --end-of-options it's a revision, never an option.
+		args = append(args, "--end-of-options", ref+"..HEAD")
 	}
 	out, err := runGit(ctx, dir, args...)
 	if err != nil {
