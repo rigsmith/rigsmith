@@ -32,6 +32,14 @@ func TestPublishDistTag(t *testing.T) {
 		{"a --tag like a v-version is refused", "v2", false, nil, "", "version or range"},
 		{"a --tag like a range is refused", "1.x", false, nil, "", "version or range"},
 		{"a tag with digits is fine", "next-2", false, nil, "next-2", ""},
+		{"npm's other URL-safe characters are fine", "~beta", false, nil, "~beta", ""},
+		{"a leading dot is fine", ".beta", false, nil, ".beta", ""},
+		{"a leading underscore is fine", "_beta", false, nil, "_beta", ""},
+		{"a --tag like a tilde range is refused", "~1.2", false, nil, "", "version or range"},
+		{"a --tag like a caret range is refused", "^2", false, nil, "", "letters, digits"},
+		{"a --tag like a comparison is refused", ">=1", false, nil, "", "letters, digits"},
+		{"a --tag of * is refused", "*", false, nil, "", "version or range"},
+		{"a --tag of x is refused", "x", false, nil, "", "version or range"},
 		{"a bad prerelease tag is refused", "", false, &prestate.PreState{Mode: prestate.ModePre, Tag: "beta 1"}, "", "pre.json's tag"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
