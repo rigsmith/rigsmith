@@ -1,5 +1,23 @@
 # github.com/rigsmith/rigsmith
 
+## 1.21.0
+
+### 🚀 Enhancements
+
+- **changerig:** `config show --json` prints the resolved changeset config for scripts: parsed from whichever location it lives in (JSONC stripped), defaults applied, ecosystem blocks kept, and `versioning.source` always present with its effective value.
+- **changerig:** `status --since` narrows commit-sourced releases too: with `versioning.source` of `commits` or `both`, only the commits the branch adds since the ref count, as only its changeset files already did. `version --changelog --since <ref>` previews just the branch's share of the changelog (`--since` needs `--changelog` or `--dry-run`).
+- **changerig:** `version --ignore <package>` (repeatable) leaves packages out of one run, as `changeset version --ignore` does: their changesets wait for a later run. As in @changesets, it takes exact names, can't be combined with `ignore` in the config, and every `version` run now refuses to skip a package that a published package depends on unless that dependent is skipped too.
+- **changerig:** `version --release-as <package>=<version>` releases a package at an exact version without the interactive prompt, so CI can do it (a bare `--release-as <version>` works when one version is releasing). It's repeatable, shows in a `--changelog` or `--dry-run` preview, and needs the package to be releasing already. Without the flag nothing changes.
+- **shiprig:** `shiprig publish --from-pack-dir <dir>` publishes exactly the files `shiprig pack` built there, in dependency order and under the plan's npm dist-tag, building nothing, as `changeset publish --from-pack-dir` does. Before anything is pushed, every file must still match the sha256 `pack` recorded and its package must be at the plan's version. npm and NuGet publish the prebuilt file; cargo, which publishes from source, is refused.
+- **shiprig:** `shiprig publish-plan` shows what a publish would release, as `changeset publish-plan` does: it asks each package's registry whether its version is already there, and lists packages released by their git tag alone (Go modules, desktop apps, private packages with `privatePackages.tag`) when the tag is missing. `--output <file>` writes @changesets v3's plan JSON in dependency order, for the split build/publish flow.
+- **shiprig:** Ecosystem plugins gain a `published` method: whether a package's version is already on its registry, publishing nothing. The built-in npm, NuGet and crates.io adapters ask their registries; Go modules and the desktop adapters, released by their tag, answer that they have no registry. `shiprig publish-plan` asks it, so an external plugin needs to implement it, and list `published` in its info capabilities, before `publish-plan` runs in a repo that uses it.
+- **shiprig:** `shiprig pack --out-dir <dir>` builds the package file for each release a publish would push (`npm pack`, `dotnet pack`) into `<dir>/packages/` and writes `<dir>/publish-plan.json` recording each file and its sha256 integrity, as `changeset pack` does. `--from-publish-plan <file>` packs a plan made earlier. It's the build half of a split release; cargo releases are refused, since cargo can't publish a prebuilt crate.
+- `--version` prints the bare version number (`1.20.3`) when its output isn't a terminal, so a script or CI step can read and compare it, as with `changeset --version`. In a terminal it still shows the banner. This applies to every rig.
+
+### 🩹 Fixes
+
+- **shiprig:** In prerelease mode, `shiprig publish` now publishes npm packages under the prerelease tag (`next`, say), as `changeset publish` does. It used to pass no tag, so a prerelease went out as `latest` and became what `npm install` picks. A new `--tag <name>` picks another dist-tag outside pre mode.
+
 ## 1.20.3
 
 ### 🩹 Fixes
