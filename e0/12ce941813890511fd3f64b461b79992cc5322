@@ -1,0 +1,9 @@
+internal/shiprig/cli/pack_test.go
+  ai_agent 21-23,40-46,80-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e012ce941813890511fd3f64b461b79992cc5322",
+  "prompts": {}
+}
