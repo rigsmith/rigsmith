@@ -1,0 +1,26 @@
+core/planner/partition.go
+  s_505a2cfce9114c::t_bc3b2b892731bf 47-53,58-68,75,78-84
+  s_505a2cfce9114c::t_fbacfc48b63741 54-57,69-74,76-77
+internal/changerig/commands/version.go
+  s_505a2cfce9114c::t_6d670ee8ce689e 34,77-93,95-96,536
+  s_505a2cfce9114c::t_fbacfc48b63741 754,756-772
+internal/changerig/cmdtest/version_ignore_test.go
+  s_505a2cfce9114c::t_d00c66fc0676c2 1-77
+  s_505a2cfce9114c::t_fbacfc48b63741 78-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "16c01012a1a699e6a05845b502b05d6711c6a471",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
