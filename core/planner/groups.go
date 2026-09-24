@@ -53,9 +53,19 @@ func ReleaseGroups(plan []*Module, changesets []*changeset.Changeset, cfg *confi
 		}
 		parent[rb] = ra
 	}
+	// Only planned names join: a fixed group or changeset whose first name
+	// isn't releasing still joins the rest.
 	unionAll := func(names []string) {
-		for i := 1; i < len(names); i++ {
-			union(names[0], names[i])
+		anchor := ""
+		for _, n := range names {
+			if _, ok := parent[n]; !ok {
+				continue
+			}
+			if anchor == "" {
+				anchor = n
+				continue
+			}
+			union(anchor, n)
 		}
 	}
 

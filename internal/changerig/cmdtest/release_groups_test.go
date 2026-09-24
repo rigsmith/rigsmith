@@ -129,3 +129,47 @@ func TestVersionOnlyRefusesWithIgnore(t *testing.T) {
 	assertExitNonZero(t, code, out)
 	assertContains(t, out, "can't be combined")
 }
+
+// A fixed group splits with no mixed changeset and no dependency, so --only
+// checks the group itself.
+func TestVersionOnlyRefusesPartOfAFixedGroup(t *testing.T) {
+	dir := groupsRepo(t, `, "fixed": [["solo", "tool"]]`)
+	code, out := runChangerig(t, dir, "version", "--yes", "--only", "solo")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "group cli also needs cli, tool")
+	if len(changesetFiles(t, dir)) != 3 {
+		t.Fatal("a refused run consumed changesets")
+	}
+}
+
+// status groups as version plans: an ecosystem's versionStrategy applies, so
+// two .NET packages sharing Directory.Build.props but independent by their
+// ecosystem block aren't one group.
+func TestStatusOutputHonorsTheEcosystemStrategy(t *testing.T) {
+	dir := tempDir(t)
+	sharedPropsWorkspace(t, dir)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "dotnet": { "versionStrategy": "independent" } }`)
+	gitInit(t, dir)
+	got := statusGroups(t, dir)
+	if got["A"] != "A" || got["B"] != "B" {
+		t.Errorf("groups = %v, want A and B apart", got)
+	}
+}
+
+// In prerelease mode, a changeset the prerelease already consumed doesn't tie
+// its packages. Under @changesets v2's layout a consumed changeset stays at
+// the top level, listed in pre.json; pair.md (tool with cli) is one, and
+// tool's and cli's new changesets release apart.
+func TestStatusOutputGroupsOnlyActiveChangesets(t *testing.T) {
+	dir := groupsRepo(t, "")
+	writeFile(t, filepath.Join(dir, ".changeset", "pre.json"),
+		`{ "mode": "pre", "tag": "next", "initialVersions": {}, "changesets": ["pair"] }`)
+	writeChangeset(t, dir, "tool-more", "tool", "patch", "More tool")
+	writeChangeset(t, dir, "cli-more", "cli", "patch", "More cli")
+
+	got := statusGroups(t, dir)
+	if got["tool"] != "tool" || got["cli"] != "cli" {
+		t.Errorf("groups = %v, want tool and cli apart", got)
+	}
+}

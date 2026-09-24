@@ -189,8 +189,9 @@ error. This is @changesets v3's default.
 version only the named packages, leaving every other one's changesets for a
 later run. Unlike `--ignore`, it combines with `ignore` in the config. The
 named packages must be whole groups (`status --output` lists each package's
-group); naming part of one is refused, since a changeset would be split or a
-dependent left behind its dependency.
+group); naming part of one is refused, since a changeset would be split, a
+dependent left behind its dependency, or a fixed or linked group or shared
+version file released in pieces. The refusal names what's missing.
 
 `--ignore <package>` (repeatable) leaves packages out of one run, as
 `changeset version --ignore` does: their changesets stay for a later run, and

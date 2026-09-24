@@ -81,6 +81,7 @@ func NewVersionCmd() *cobra.Command {
 			// ignore (unlike --ignore, it combines with it). What the named
 			// packages must move with (status --output's group) has to be
 			// named too; the refusals below say so.
+			configIgnore := slices.Clone(ws.Config.Ignore)
 			if len(onlyFlag) > 0 {
 				if len(ignoreFlag) > 0 {
 					return errors.New("--only and --ignore can't be combined: --only already leaves out every package it doesn't name")
@@ -201,6 +202,11 @@ func NewVersionCmd() *cobra.Command {
 			// afterwards) and kept (every named package ignored → left for a
 			// future run). Mixed and unknown-package changesets are hard
 			// errors before anything is written, matching @changesets.
+			if len(onlyFlag) > 0 {
+				if err := checkWholeGroups(onlyFlag, active, pkgs, ecoOf, ws.Config, configIgnore, independent); err != nil {
+					return err
+				}
+			}
 			consumed, kept, err := planner.PartitionChangesets(active, pkgs, ws.Config)
 			if err != nil {
 				if len(onlyFlag) > 0 {
@@ -837,4 +843,49 @@ func completePackageNames(c *cobra.Command, _ []string, _ string) ([]string, cob
 		names = append(names, p.Name)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+// checkWholeGroups refuses an --only that names part of a release group: it
+// plans the run as if --only weren't there (the config's own ignore only) and
+// requires every planned member of each named package's group to be named
+// too. The other refusals catch a split changeset or dependency; a fixed or
+// linked group, or a shared version file, splits without either.
+func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugin.Package, ecoOf map[string]string, cfg *config.Config, configIgnore []string, independent bool) error {
+	full := *cfg
+	full.Ignore = configIgnore
+	if independent {
+		full.VersionStrategy = config.Independent
+	} else {
+		full.PerPackageStrategy = full.StrategyByPackage(ecoOf)
+	}
+	plan := planner.Plan(active, pkgs, &full)
+	groups := planner.ReleaseGroups(plan, active, &full)
+	named := map[string]bool{}
+	for _, n := range only {
+		named[n] = true
+	}
+	var missing []string
+	seen := map[string]bool{}
+	for _, n := range only {
+		g, ok := groups[n]
+		if !ok || seen[g] {
+			continue
+		}
+		seen[g] = true
+		var left []string
+		for member, mg := range groups {
+			if mg == g && !named[member] {
+				left = append(left, member)
+			}
+		}
+		if len(left) > 0 {
+			sort.Strings(left)
+			missing = append(missing, fmt.Sprintf("  group %s also needs %s", g, strings.Join(left, ", ")))
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("--only names part of a release group:\n%s\npass each package's whole release group (`status --output` lists them)", strings.Join(missing, "\n"))
 }

@@ -48,3 +48,21 @@ func TestReleaseGroups(t *testing.T) {
 		t.Errorf("groups = %v\nwant     %v", got, want)
 	}
 }
+
+// A fixed group (or changeset) whose first name isn't releasing still joins
+// the members that are.
+func TestReleaseGroupsAnchorOnAPlannedMember(t *testing.T) {
+	plan := []*Module{{Name: "fx-b"}, {Name: "fx-c"}, {Name: "cs-b"}, {Name: "cs-c"}}
+	cfg := config.Default()
+	cfg.Fixed = [][]string{{"not-in-plan", "fx-c", "fx-b"}}
+	changesets := []*changeset.Changeset{
+		{ID: "cs", Releases: []changeset.Release{{Name: "gone"}, {Name: "cs-c"}, {Name: "cs-b"}}},
+	}
+	got := ReleaseGroups(plan, changesets, cfg)
+	if got["fx-b"] != "fx-b" || got["fx-c"] != "fx-b" {
+		t.Errorf("fixed group split: %v", got)
+	}
+	if got["cs-b"] != "cs-b" || got["cs-c"] != "cs-b" {
+		t.Errorf("changeset group split: %v", got)
+	}
+}

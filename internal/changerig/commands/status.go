@@ -150,12 +150,17 @@ func NewStatusCmd() *cobra.Command {
 				return nil
 			}
 
-			plan, err := assemblePlan(cmd.Context(), ws, changesets, pkgs)
+			// Per-ecosystem versionStrategy overrides, as `version` applies
+			// them, so the plan and its groups match what it would write.
+			ws.Config.PerPackageStrategy = ws.Config.StrategyByPackage(ecoOf)
+			plan, active, err := assemblePlanActive(cmd.Context(), ws, changesets, pkgs)
 			if err != nil {
 				return err
 			}
 			if output != "" {
-				return writeStatusPlan(ws.Root, output, plan, planner.ReleaseGroups(plan, changesets, ws.Config))
+				// Grouped by the changesets that drive the plan: one a
+				// prerelease already consumed doesn't tie its packages now.
+				return writeStatusPlan(ws.Root, output, plan, planner.ReleaseGroups(plan, active, ws.Config))
 			}
 			if len(plan) == 0 {
 				out := cmd.OutOrStdout()
@@ -334,13 +339,20 @@ func withGraduating(ws *Workspace, changesets []*changeset.Changeset, pre *prest
 }
 
 func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Changeset, pkgs []plugin.Package) ([]*planner.Module, error) {
+	plan, _, err := assemblePlanActive(ctx, ws, changesets, pkgs)
+	return plan, err
+}
+
+// assemblePlanActive is assemblePlan, also returning the changesets that
+// drove the plan.
+func assemblePlanActive(ctx context.Context, ws *Workspace, changesets []*changeset.Changeset, pkgs []plugin.Package) ([]*planner.Module, []*changeset.Changeset, error) {
 	pre, err := prestate.Read(ws.ChangesetDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	changesets, err = withGraduating(ws, changesets, pre)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	active := activeChangesets(changesets, pre)
@@ -352,7 +364,7 @@ func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Ch
 	case pre != nil && pre.Mode == prestate.ModeExit && ws.Graduates():
 		plan = planner.GraduatePrereleases(plan, pkgs)
 	}
-	return plan, nil
+	return plan, active, nil
 }
 
 // PrintPlan renders a release plan to w.
