@@ -178,6 +178,14 @@ sets `"privatePackages": { "version": true }`: never versioned, a changeset
 naming one is left in place, and one mixing it with a public package is an
 error. This is @changesets v3's default.
 
+`--ignore <package>` (repeatable) leaves packages out of one run, as
+`changeset version --ignore` does: their changesets stay for a later run, and
+a changeset naming an ignored package alongside one that isn't is an error. It
+takes exact names and can't be combined with `ignore` in the config. Every
+run, `--ignore` or not, refuses to skip a package a published package depends
+on (not as a dev dependency) unless the dependent is skipped too, so nothing is
+released against a dependency that stayed put.
+
 Flags: `-n, --dry-run` (plan only), `--snapshot [tag]` and `--snapshot-template`
 (`{tag}`/`{commit}`/`{datetime}`/`{timestamp}` suffix) for snapshot releases,
 `--independent` to version each package separately instead of via a shared

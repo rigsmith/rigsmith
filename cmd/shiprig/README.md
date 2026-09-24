@@ -35,6 +35,7 @@ shiprig add -p my/pkg --bump minor -m "Add a feature"   # interactive without fl
 shiprig status --verbose
 shiprig version            # bump + changelog, with dependency cascade
 shiprig version --changelog --since main   # preview only this branch's entries (writes nothing)
+shiprig version --ignore my/app   # leave a package out of this run; its changesets wait
 shiprig info
 ```
 
