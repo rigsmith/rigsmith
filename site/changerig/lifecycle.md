@@ -305,7 +305,8 @@ release that didn't go through `version`.
 
 With commits as a versioning source, the record is also where each package's
 next release starts counting. Without it, a package's commits count from its
-highest release tag (a full version, `x.y.z` with any prerelease), named as
+highest release tag reachable from `HEAD` (a full version, `x.y.z` with any
+prerelease; a .NET revision ranks before the prerelease), named as
 the tag step names it: `lib@1.2.0`, a Go
 module's `packages/lib/v1.2.0`, a single app's `v1.2.0`, or the `tagTemplate`
 (one without `${name}`, like `v${version}`, is shared, so every package counts

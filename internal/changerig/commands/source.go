@@ -148,7 +148,7 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 	// without ${name} is shared, so every package counts from the latest one.
 	// Tags that can't be listed are an error, not "no tags": that would
 	// count every package's whole history.
-	tags, err := gitutil.ListTags(ctx, w.Root)
+	tags, err := gitutil.MergedTags(ctx, w.Root)
 	if err != nil {
 		return nil, fmt.Errorf("listing release tags: %w", err)
 	}

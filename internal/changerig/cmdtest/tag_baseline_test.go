@@ -71,3 +71,25 @@ func TestTagBaselineKeepsGoModuleTags(t *testing.T) {
 	assertContains(t, out, "new core fix")
 	assertNotContains(t, out, "old core feature")
 }
+
+// A higher tag on another branch isn't this branch's release: a main fix
+// made before that branch forked is still pending here, though the other
+// branch's tag has it in its history.
+func TestTagBaselineIgnoresTagsOnOtherBranches(t *testing.T) {
+	dir := commitRepo(t, "")
+	commitIn(t, dir, "lib", "a", "feat: old lib feature")
+	git(t, dir, "tag", "lib@1.0.0")
+	commitIn(t, dir, "lib", "p", "fix: pending main fix")
+	git(t, dir, "checkout", "-q", "-b", "other")
+	commitIn(t, dir, "lib", "o", "feat: other-branch feature")
+	git(t, dir, "tag", "lib@9.0.0")
+	git(t, dir, "checkout", "-q", "main")
+	commitIn(t, dir, "lib", "b", "fix: new lib fix")
+
+	code, out := runChangerig(t, dir, "status", "--verbose")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "pending main fix")
+	assertContains(t, out, "new lib fix")
+	assertNotContains(t, out, "old lib feature")
+	assertNotContains(t, out, "other-branch feature")
+}

@@ -19,6 +19,13 @@ func TestLatestTag(t *testing.T) {
 			t.Errorf("LatestTag(%v) = %q, want lib@1.2.3.10", tags, got)
 		}
 	}
+	// The fourth part ranks before the prerelease.
+	if got, _ := LatestTag([]string{"lib@1.2.3.5-rc.1", "lib@1.2.3.4"}, []string{"lib@", ""}); got != "lib@1.2.3.5-rc.1" {
+		t.Errorf("LatestTag = %q, want lib@1.2.3.5-rc.1", got)
+	}
+	if got, _ := LatestTag([]string{"lib@1.2.3.4-rc.1", "lib@1.2.3.4"}, []string{"lib@", ""}); got != "lib@1.2.3.4" {
+		t.Errorf("LatestTag = %q, want lib@1.2.3.4 (a release outranks its prerelease)", got)
+	}
 	if _, ok := LatestTag([]string{"lib@next", "app@1.0.0"}, []string{"lib@", ""}); ok {
 		t.Error("LatestTag found a tag with no version")
 	}

@@ -52,9 +52,10 @@ func LatestModuleVersion(ctx context.Context, repoRoot, dirRel string) (version 
 	return best.String(), true
 }
 
-// ListTags returns every tag in the repository.
-func ListTags(ctx context.Context, repoRoot string) ([]string, error) {
-	out, err := runGit(ctx, repoRoot, "tag", "--list")
+// MergedTags returns the tags reachable from HEAD: a release on another
+// branch isn't one this branch has had.
+func MergedTags(ctx context.Context, repoRoot string) ([]string, error) {
+	out, err := runGit(ctx, repoRoot, "tag", "--list", "--merged", "HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -103,12 +104,27 @@ func LatestTag(tags []string, parts []string) (string, bool) {
 		if !ok {
 			continue
 		}
-		// semver.Version has no fourth part: .NET's x.y.z.w breaks the tie.
-		if c := semver.Compare(v, best); !found || c > 0 || (c == 0 && fourth(version) > fourth(bestVersion)) {
+		if !found || compareRelease(v, version, best, bestVersion) > 0 {
 			best, bestTag, bestVersion, found = v, tag, version, true
 		}
 	}
 	return bestTag, found
+}
+
+// compareRelease orders two parsed versions (with their text) as .NET does:
+// x.y.z, then the fourth part semver.Version doesn't keep, and only then the
+// prerelease, so 1.2.3.5-rc.1 comes after 1.2.3.4.
+func compareRelease(a semver.Version, aText string, b semver.Version, bText string) int {
+	if c := semver.Compare(semver.New(a.Major, a.Minor, a.Patch, "", ""), semver.New(b.Major, b.Minor, b.Patch, "", "")); c != 0 {
+		return c
+	}
+	if fa, fb := fourth(aText), fourth(bText); fa != fb {
+		if fa > fb {
+			return 1
+		}
+		return -1
+	}
+	return semver.Compare(a, b)
 }
 
 // fourth returns a version's fourth core part (.NET's revision), or -1.
