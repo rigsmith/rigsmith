@@ -38,6 +38,13 @@ The whole workflow is wired:
   (ecosystem, directory, version, next version and bump, private/ignored, and
   where its changelog goes)
 - `tag` — create the git tags for the released versions
+- `publish-plan` — what a publish would release, as `changeset publish-plan`:
+  each package's registry is asked whether its version is already there, and a
+  package released by its git tag alone (a Go module, a desktop app, a private
+  package with `privatePackages.tag`) is listed `tag-only` when its tag is
+  missing. `--output <file>` writes @changesets v3's plan JSON, chunked in
+  dependency order, and `--tag` sets the npm dist-tag. A registry that can't be
+  reached fails it rather than guessing
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `tag` and `publish` speak @changesets v3's output contract: with
   `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends a

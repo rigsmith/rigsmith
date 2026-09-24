@@ -74,6 +74,7 @@ func newRootCmd() *cobra.Command {
 		newPackagesCmd(),
 		newPublishCmd(),
 		newTagCmd(),
+		newPublishPlanCmd(),
 		newReleaseCmd(),
 		newDoctorCmd(),
 	)
@@ -87,6 +88,7 @@ func newRootCmd() *cobra.Command {
 func releaseMenuItems() []commands.MenuItem {
 	return []commands.MenuItem{
 		{Label: "Packages", Desc: "show packages to build; include/exclude them", Build: newPackagesCmd},
+		{Label: "Publish plan", Desc: "show what a publish would release, asking each registry", Build: newPublishPlanCmd},
 		{Label: "Publish", Desc: "publish built packages to their registries", Build: newPublishCmd},
 		{Label: "Tag", Desc: "create git tags for released versions (push them with `git push --follow-tags`)", Build: newTagCmd},
 		{Label: "Release", Desc: "run the full release pipeline", Build: newReleaseCmd},
