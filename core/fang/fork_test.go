@@ -98,11 +98,11 @@ func TestWithBanner(t *testing.T) {
 		t.Errorf("banner should not appear on subcommand help; got:\n%s", subHelp)
 	}
 
-	// Version: the banner replaces the default `demo version 1.2.3` line, and
-	// the resolved version is threaded through to it.
+	// Version, piped (the buffer isn't a terminal): the bare number, for a
+	// script to read. The banner case is in version_test.go.
 	ver := runHelp(t, newRoot(), opts, "--version")
-	if !strings.Contains(ver, marker+" 1.2.3") {
-		t.Errorf("--version should render the banner with the version; got:\n%s", ver)
+	if ver != "1.2.3\n" {
+		t.Errorf("piped --version = %q, want the bare version", ver)
 	}
 }
 

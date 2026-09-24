@@ -1,8 +1,13 @@
 package fang
 
 import (
+	"bytes"
+	"context"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
 
 // With RIGSMITH_DEV_SRC set (as the -dev/-wt launchers do), the source location
@@ -41,5 +46,40 @@ func TestSourceBuildVersionDescribesTheBuild(t *testing.T) {
 	}
 	if !strings.Contains(got, "/tmp/rigsmith-worktrees/feat-x") {
 		t.Errorf("version = %q, want it to include the source location", got)
+	}
+}
+
+func TestPlainVersion(t *testing.T) {
+	for in, want := range map[string]string{
+		"1.20.3":            "1.20.3",
+		"v1.20.3 (abc1234)": "1.20.3",
+		"1.21.0-beta.1":     "1.21.0-beta.1",
+		"source build · x":  "source build · x",
+		"":                  "",
+	} {
+		if got := plainVersion(in); got != want {
+			t.Errorf("plainVersion(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// In a terminal, --version shows the banner with the resolved version.
+func TestVersionInATerminalShowsTheBanner(t *testing.T) {
+	was := isTerminal
+	isTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { isTerminal = was })
+
+	var buf bytes.Buffer
+	root := &cobra.Command{Use: "demo", Run: func(*cobra.Command, []string) {}}
+	root.SetOut(&buf)
+	root.SetArgs([]string{"--version"})
+	err := Execute(context.Background(), root,
+		WithVersion("1.2.3"),
+		WithBanner(func(v string) string { return "BANNER " + v }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "BANNER 1.2.3\n" {
+		t.Errorf("--version in a terminal = %q, want the banner", got)
 	}
 }
