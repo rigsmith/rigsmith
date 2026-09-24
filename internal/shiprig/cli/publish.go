@@ -60,6 +60,7 @@ func newPublishCmd() *cobra.Command {
 		access     string
 		yes        bool
 		npmAuth    string
+		packDir    string
 	)
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -126,6 +127,20 @@ func newPublishCmd() *cobra.Command {
 			toPublish := make([]plugin.Package, 0, len(pkgs)+len(gen.Packages))
 			toPublish = append(toPublish, pkgs...)
 			toPublish = append(toPublish, gen.Packages...)
+			// From a pack directory, exactly the files pack built go out, in
+			// the plan's order, and nothing is built.
+			packed := map[string]packedRelease{}
+			if packDir != "" {
+				releases, err := readPackDir(packDir, toPublish, ecoOf)
+				if err != nil {
+					return err
+				}
+				toPublish = toPublish[:0]
+				for _, r := range releases {
+					toPublish = append(toPublish, r.pkg)
+					packed[r.pkg.Name] = r
+				}
+			}
 			out := cmd.OutOrStdout()
 			acc := access
 			if acc == "" {
@@ -205,6 +220,12 @@ func newPublishCmd() *cobra.Command {
 				if a, ok := gen.Access[p.Name]; ok && a != "" {
 					pkgAccess = a
 				}
+				// A packed release carries the access and dist-tag its plan was
+				// made with.
+				pr, fromPack := packed[p.Name]
+				if fromPack && pr.access != "" {
+					pkgAccess = pr.access
+				}
 				resp, pubErr := eco.Publish(cmd.Context(), plugin.PublishRequest{
 					RepoRoot:      ws.Root,
 					Package:       p,
@@ -214,6 +235,8 @@ func newPublishCmd() *cobra.Command {
 					Auth:          cred,
 					OIDC:          oidc,
 					OIDCUser:      ws.Config.EcoConfig(ecoID).User,
+					ArtifactPath:  pr.file,
+					Tag:           pr.tag,
 				})
 				if pubErr != nil {
 					results[i].err = fmt.Errorf("publish %s: %s", p.Name, redactor.Redact(pubErr.Error()))
@@ -381,6 +404,7 @@ func newPublishCmd() *cobra.Command {
 	f.StringVarP(&outputPath, "output", "o", "", "append a git-tag event per tag created to this file (default $CHANGESETS_OUTPUT); tags are then created locally only, for the caller to push")
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
 	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:…); overrides node config")
+	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
 	return cmd
 }
 

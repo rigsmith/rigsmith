@@ -306,21 +306,25 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		}, nil
 	}
 
-	// Pack into a throwaway directory so the .nupkg never lands in the work tree.
-	tmpDir, err := os.MkdirTemp("", "rigsmith-nupkg-*")
-	if err != nil {
-		return plugin.PublishResponse{}, fmt.Errorf("dotnet publish: mkdir temp: %w", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// A .nupkg `shiprig pack` built is pushed as it is.
+	nupkg := req.ArtifactPath
+	if nupkg == "" {
+		// Pack into a throwaway directory so the .nupkg never lands in the work tree.
+		tmpDir, err := os.MkdirTemp("", "rigsmith-nupkg-*")
+		if err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("dotnet publish: mkdir temp: %w", err)
+		}
+		defer os.RemoveAll(tmpDir)
 
-	manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
-	if _, _, err := packRunner(ctx, "", "dotnet", packArgs(manifest, tmpDir, req.Package.Version)...); err != nil {
-		return plugin.PublishResponse{}, fmt.Errorf("dotnet pack: %w", err)
-	}
+		manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
+		if _, _, err := packRunner(ctx, "", "dotnet", packArgs(manifest, tmpDir, req.Package.Version)...); err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("dotnet pack: %w", err)
+		}
 
-	// The PackageId is req.Package.Name and the version is req.Package.Version, so
-	// the produced artifact is deterministically named.
-	nupkg := filepath.Join(tmpDir, req.Package.Name+"."+req.Package.Version+".nupkg")
+		// The PackageId is req.Package.Name and the version is req.Package.Version, so
+		// the produced artifact is deterministically named.
+		nupkg = filepath.Join(tmpDir, req.Package.Name+"."+req.Package.Version+".nupkg")
+	}
 
 	// Resolve the API key. An engine-resolved secret ref or an OIDC-minted key
 	// wins; otherwise fall back to NUGET_API_KEY (and, if that is empty, to
@@ -334,7 +338,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if key != "" {
 		args = append(args, "--api-key", key)
 	}
-	if _, _, err := runCmd(ctx, "", "dotnet", args...); err != nil {
+	if _, _, err := pushRunner(ctx, "", "dotnet", args...); err != nil {
 		// dotnet nuget push takes the key on argv, so redact it from the error
 		// (which echoes the command) before surfacing.
 		return plugin.PublishResponse{}, fmt.Errorf("dotnet nuget push: %s", redact(err.Error(), key))
@@ -453,6 +457,10 @@ func runCmd(ctx context.Context, dir, name string, args ...string) (stdout, stde
 // packRunner runs `dotnet pack`; a variable so tests can see the arguments
 // without a toolchain.
 var packRunner = runCmd
+
+// pushRunner runs `dotnet nuget push`; a variable so tests can see what is
+// pushed without a feed.
+var pushRunner = runCmd
 
 // packArgs is the `dotnet pack` command line for a project, packing into
 // outDir. The version is passed explicitly: the .nupkg is looked for under the

@@ -180,3 +180,95 @@ func TestPackRefusesACargoRelease(t *testing.T) {
 		t.Errorf("built %v before refusing", built)
 	}
 }
+
+// packAndRead packs the planRepo workspace with the fake, then reads the pack
+// directory back as publish --from-pack-dir does.
+func packAndRead(t *testing.T, tamper func(dir string)) ([]packedRelease, error) {
+	t.Helper()
+	var built []string
+	out, _, err := packWith(t, fakePacker{fakeRegistry: fakeRegistry{published: map[string]bool{"done": true}}, built: &built}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tamper != nil {
+		tamper(out)
+	}
+	ws, err := commands.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgs, ecoOf, err := ws.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return readPackDir(out, pkgs, ecoOf)
+}
+
+func TestReadPackDirReturnsThePlansFilesInOrder(t *testing.T) {
+	planRepo(t, `{}`)
+	releases, err := packAndRead(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range releases {
+		got = append(got, r.pkg.Name+" "+filepath.Base(r.file)+" "+r.tag)
+	}
+	want := []string{"lib lib-1.0.0.tgz latest", "app app-2.0.0.tgz latest"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("releases = %v, want %v", got, want)
+	}
+}
+
+func TestReadPackDirRefusals(t *testing.T) {
+	// lib's entry, wherever it sits in the plan.
+	lib := func(f *publishPlanFile) *planRelease {
+		for ci := range f.Plan {
+			for ri := range f.Plan[ci] {
+				if f.Plan[ci][ri].Name == "lib" {
+					return &f.Plan[ci][ri]
+				}
+			}
+		}
+		t.Fatal("no lib in the plan")
+		return nil
+	}
+	rewrite := func(dir string, edit func(*publishPlanFile)) {
+		plan, err := readPublishPlan(filepath.Join(dir, packDirPlan))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f := publishPlanFile{Version: 1, Plan: plan}
+		edit(&f)
+		if err := writePublishPlan(filepath.Join(dir, packDirPlan), f.Plan); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		tamper func(dir string)
+		want   string
+	}{
+		"a file changed after packing": {func(dir string) {
+			if err := os.WriteFile(filepath.Join(dir, "packages", "lib-1.0.0.tgz"), []byte("swapped"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}, "doesn't match the integrity"},
+		"a version other than the workspace's": {func(dir string) {
+			rewrite(dir, func(f *publishPlanFile) { lib(f).Version = "0.9.0" })
+		}, "publish from the commit that was packed"},
+		"a path outside the pack directory": {func(dir string) {
+			rewrite(dir, func(f *publishPlanFile) { lib(f).Tarball.Path = "../elsewhere.tgz" })
+		}, "outside the pack directory"},
+		"no file recorded": {func(dir string) {
+			rewrite(dir, func(f *publishPlanFile) { lib(f).Tarball = nil })
+		}, "no file for lib"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			planRepo(t, `{}`)
+			_, err := packAndRead(t, tc.tamper)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

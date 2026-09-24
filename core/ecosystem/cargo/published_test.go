@@ -88,3 +88,14 @@ func TestPublishedRefusesOtherRegistries(t *testing.T) {
 		}
 	}
 }
+
+// Cargo publishes from source only: a prebuilt crate is refused, not rebuilt.
+func TestPublishRefusesAPrebuiltCrate(t *testing.T) {
+	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		Package:      plugin.Package{Name: "acme-lib", Version: "1.2.0"},
+		ArtifactPath: "/pack/packages/acme-lib-1.2.0.crate",
+	})
+	if err == nil || !strings.Contains(err.Error(), "prebuilt crate") {
+		t.Errorf("err = %v, want the prebuilt-crate refusal", err)
+	}
+}

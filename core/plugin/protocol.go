@@ -212,6 +212,13 @@ type PublishRequest struct {
 	Auth          *AuthCredential `json:"auth,omitempty"`     // resolved by the engine; nil = use the ambient credential
 	OIDC          bool            `json:"oidc,omitempty"`     // attempt OIDC trusted publishing (the adapter mints + exchanges the token)
 	OIDCUser      string          `json:"oidcUser,omitempty"` // account/subject some registries' OIDC exchange requires (NuGet)
+	// ArtifactPath, when set, is a package file already built (by `shiprig
+	// pack`) to publish as it is, building nothing. An adapter that can only
+	// publish from source must refuse it rather than rebuild.
+	ArtifactPath string `json:"artifactPath,omitempty"`
+	// Tag is the registry's distribution tag to publish under (npm's
+	// dist-tag), when the caller sets one. Empty leaves the registry default.
+	Tag string `json:"tag,omitempty"`
 }
 
 // AuthCredential is a registry credential the engine resolved (OIDC exchange,

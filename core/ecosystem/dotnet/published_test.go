@@ -97,3 +97,30 @@ func TestFeedErrorsRedactCredentials(t *testing.T) {
 		t.Errorf("error should still name the feed: %v", err)
 	}
 }
+
+// A packed .nupkg is pushed as it is: nothing is packed.
+func TestPublishPushesAPackedNupkgWithoutPacking(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	wasPack, wasPush := packRunner, pushRunner
+	t.Cleanup(func() { packRunner, pushRunner = wasPack, wasPush })
+	packRunner = func(context.Context, string, string, ...string) (string, string, error) {
+		t.Error("dotnet pack ran for a packed release")
+		return "", "", nil
+	}
+	var pushed []string
+	pushRunner = func(_ context.Context, _ string, _ string, args ...string) (string, string, error) {
+		pushed = args
+		return "", "", nil
+	}
+	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot:     "/repo",
+		Package:      plugin.Package{Name: "Acme.Lib", Version: "1.2.0", ManifestPath: "src/Acme.Lib/Acme.Lib.csproj"},
+		ArtifactPath: "/pack/packages/Acme.Lib.1.2.0.nupkg",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pushed) < 3 || pushed[0] != "nuget" || pushed[1] != "push" || pushed[2] != "/pack/packages/Acme.Lib.1.2.0.nupkg" {
+		t.Errorf("push args = %v", pushed)
+	}
+}

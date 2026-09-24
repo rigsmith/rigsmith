@@ -52,7 +52,12 @@ The whole workflow is wired:
   earlier. This is the build half of a split release, where the job holding
   registry credentials never builds. Cargo can't publish a prebuilt crate, so a
   cargo release is refused
-- `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
+- `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI.
+  `--from-pack-dir <dir>` publishes exactly the files `pack` built there, in the
+  plan's order and under its npm dist-tag, building nothing, as `changeset
+  publish --from-pack-dir` does: each file's sha256 must still match what `pack`
+  recorded and its package must be at the plan's version, or nothing is pushed.
+  npm and NuGet publish a prebuilt file; cargo can't, so it's refused
 - `tag` and `publish` speak @changesets v3's output contract: with
   `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends a
   `{"type":"git-tag","tag":…,"packageName":…}` line per tag it creates, skips a

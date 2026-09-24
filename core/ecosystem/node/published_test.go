@@ -79,3 +79,30 @@ func TestPublishedPrivatePackageHasNoRegistry(t *testing.T) {
 		t.Errorf("resp = %+v, err = %v, want NoRegistry", resp, err)
 	}
 }
+
+// A packed tarball goes out as it is, under the plan's dist-tag.
+func TestPublishSendsAPackedTarballWithItsDistTag(t *testing.T) {
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	var got []string
+	was := npmPublish
+	npmPublish = func(_ context.Context, _ string, _ []string, args ...string) (string, string, error) {
+		got = args
+		return "", "", nil
+	}
+	t.Cleanup(func() { npmPublish = was })
+
+	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot:     "/repo",
+		Package:      plugin.Package{Name: "@acme/lib", Version: "1.2.0-next.0", Dir: "packages/lib"},
+		Access:       "public",
+		ArtifactPath: "/pack/packages/acme-lib-1.2.0-next.0.tgz",
+		Tag:          "next",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"publish", "/pack/packages/acme-lib-1.2.0-next.0.tgz", "--access", "public", "--tag", "next"}
+	if !slices.Equal(got, want) {
+		t.Errorf("npm args = %v, want %v", got, want)
+	}
+}
