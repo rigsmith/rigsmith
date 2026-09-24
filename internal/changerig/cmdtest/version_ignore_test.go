@@ -75,3 +75,23 @@ func TestVersionRefusesToSkipAPackageItsDependentNeeds(t *testing.T) {
 	code, out = runChangerig(t, dir, "version", "--yes", "--ignore", "pkg-a")
 	assertExitZero(t, code, out)
 }
+
+// With ignore set in the config, the remedy is the config: --ignore alongside
+// it is refused.
+func TestSkippedDependentRemedyFollowsWhereTheIgnoreIs(t *testing.T) {
+	dir := ignoreRepo(t, "dependencies")
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "ignore": ["pkg-a"] }`)
+	code, out := runChangerig(t, dir, "version", "--yes")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "add it to `ignore` in the config too")
+	assertNotContains(t, out, "pass it to --ignore")
+}
+
+func TestVersionIgnoreCompletesPackageNames(t *testing.T) {
+	dir := ignoreRepo(t, "")
+	code, out := runChangerig(t, dir, "__complete", "version", "--ignore", "")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "pkg-a")
+	assertContains(t, out, "pkg-b")
+}

@@ -91,7 +91,7 @@ func NewVersionCmd() *cobra.Command {
 				}
 				ws.Config.Ignore = ignoreFlag
 			}
-			if msgs := planner.SkippedDependents(pkgs, ws.Config); len(msgs) > 0 {
+			if msgs := planner.SkippedDependents(pkgs, ws.Config, len(ignoreFlag) > 0); len(msgs) > 0 {
 				return errors.New(strings.Join(msgs, "\n"))
 			}
 			// Whether the new versions are written into manifests at all. Off by
@@ -534,6 +534,9 @@ func NewVersionCmd() *cobra.Command {
 	f.BoolVar(&showChangelog, "changelog", false, "preview each releasing package's rendered changelog notes (implies --dry-run; writes nothing)")
 	f.StringVar(&sinceRef, "since", "", "preview only what the branch adds since this git ref: its changesets and commits (needs --changelog or --dry-run)")
 	f.StringArrayVar(&ignoreFlag, "ignore", nil, "leave this package out of the run (repeatable; not with `ignore` in the config)")
+	// Completion offers the workspace's package names, the only values --ignore
+	// accepts.
+	_ = cmd.RegisterFlagCompletionFunc("ignore", completePackageNames)
 	f.StringVar(&snapshotTag, "snapshot", "", "create a snapshot release (optional tag)")
 	f.Lookup("snapshot").NoOptDefVal = " " // allow bare --snapshot (no tag)
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
@@ -749,4 +752,22 @@ func execRunner(cmd *cobra.Command) func(dir, name string, args ...string) (stri
 		out, err := c.CombinedOutput()
 		return string(out), err
 	}
+}
+
+// completePackageNames completes a flag that takes a package name with the
+// workspace's packages.
+func completePackageNames(c *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	ws, err := Open()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	pkgs, _, err := ws.Discover(c.Context())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	names := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		names = append(names, p.Name)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
 }

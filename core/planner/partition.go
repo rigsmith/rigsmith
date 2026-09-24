@@ -51,7 +51,10 @@ func PartitionChangesets(changesets []*changeset.Changeset, packages []plugin.Pa
 // that never moves. Dev dependencies don't count, and a private dependent is
 // never published, so it doesn't either. One message per pair, in package
 // order; none means the run can go ahead.
-func SkippedDependents(packages []plugin.Package, cfg *config.Config) []string {
+//
+// cliIgnore says the ignore list came from --ignore rather than the config, so
+// the remedy names the flag.
+func SkippedDependents(packages []plugin.Package, cfg *config.Config, cliIgnore bool) []string {
 	var msgs []string
 	for _, skipped := range packages {
 		if !cfg.IsIgnored(skipped.Name) {
@@ -63,9 +66,15 @@ func SkippedDependents(packages []plugin.Package, cfg *config.Config) []string {
 			}
 			for _, d := range p.Dependencies {
 				if d.Name == skipped.Name && d.Kind != plugin.DepDev {
+					// --ignore can't be combined with the config's ignore, so
+					// the remedy goes where the skipping was set.
+					remedy := "pass it to --ignore too"
+					if len(cfg.Ignore) > 0 && !cliIgnore {
+						remedy = "add it to `ignore` in the config too"
+					}
 					msgs = append(msgs, fmt.Sprintf(
-						"%s depends on the skipped package %s (by `ignore` or unversioned private packages), but %s is not being skipped: pass it to --ignore too",
-						p.Name, skipped.Name, p.Name))
+						"%s depends on the skipped package %s (by `ignore` or unversioned private packages), but %s is not being skipped: %s",
+						p.Name, skipped.Name, p.Name, remedy))
 					break
 				}
 			}
