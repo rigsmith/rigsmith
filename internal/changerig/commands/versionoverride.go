@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/planner"
+	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/semver"
 	"github.com/spf13/cobra"
 )
@@ -214,4 +215,39 @@ func completeReleaseAs(c *cobra.Command, _ []string, _ string) ([]string, cobra.
 		out = append(out, p.Name+"=")
 	}
 	return out, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveNoSpace
+}
+
+// checkOverriddenDependents refuses an override that leaves a package outside
+// the plan depending on the overridden one through a range the new version
+// falls out of. The cascade decided that package needn't release because the
+// computed version was in range; an override isn't recomputed through the
+// cascade, so nothing would rewrite its range and it would be left pointing
+// at versions that no longer exist in the release. The fix is the canon one:
+// a changeset carrying the bump, which cascades.
+func checkOverriddenDependents(plan []*planner.Module, pkgs []plugin.Package) error {
+	overridden := map[string]string{}
+	planned := map[string]bool{}
+	for _, m := range plan {
+		planned[m.Name] = true
+		if m.VersionOverride != "" {
+			overridden[m.Name] = m.VersionOverride
+		}
+	}
+	var stranded []string
+	for _, p := range pkgs {
+		if planned[p.Name] {
+			continue
+		}
+		for _, d := range p.Dependencies {
+			v, ok := overridden[d.Name]
+			if ok && d.Range != "" && !semver.SatisfiesString(v, d.Range) {
+				stranded = append(stranded, fmt.Sprintf("%s depends on %s %q, which %s is outside", p.Name, d.Name, d.Range, v))
+			}
+		}
+	}
+	if len(stranded) == 0 {
+		return nil
+	}
+	return fmt.Errorf("the version override would leave dependents behind (they aren't in this release, so their ranges wouldn't be updated):\n  %s\ngive the package a changeset with that bump instead, so its dependents cascade, or release it within their range",
+		strings.Join(stranded, "\n  "))
 }

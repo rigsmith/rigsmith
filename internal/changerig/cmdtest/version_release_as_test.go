@@ -112,3 +112,29 @@ func TestVersionReleaseAsFlowsIntoDependents(t *testing.T) {
 	assertContains(t, changelog, "pkg-a@2.0.0")
 	assertNotContains(t, changelog, "pkg-a@1.1.0")
 }
+
+// pkg-b isn't releasing (1.1.0 is inside its ^1.0.0), so an override past its
+// range would strand it: refused, naming it. One inside the range is fine.
+func TestVersionReleaseAsRefusesToStrandADependent(t *testing.T) {
+	setup := func() string {
+		dir := tempDir(t)
+		writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+		writeFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json"),
+			`{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "^1.0.0" } }`)
+		initChangesets(t, dir)
+		writeChangeset(t, dir, "a-change", "pkg-a", "minor", "A change to a")
+		gitInit(t, dir)
+		return dir
+	}
+
+	dir := setup()
+	code, out := runChangerig(t, dir, "version", "--yes", "--release-as", "pkg-a=2.0.0")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, `pkg-b depends on pkg-a "^1.0.0"`)
+	assertContains(t, manifest(t, dir, "pkg-a"), `"1.0.0"`)
+
+	dir = setup()
+	code, out = runChangerig(t, dir, "version", "--yes", "--release-as", "pkg-a=1.5.0")
+	assertExitZero(t, code, out)
+	assertContains(t, manifest(t, dir, "pkg-a"), `"1.5.0"`)
+}

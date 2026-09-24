@@ -213,7 +213,10 @@ It's repeatable. The package has to be releasing already, from a changeset or a
 commit: an override changes the number, not whether it ships. The version must
 be valid semver above the current one. Packages sharing a version file move
 together, as they do at the prompt, and the dependency cascade isn't
-recomputed. It's for normal releases only; a prerelease or snapshot sets its
+recomputed: dependents already in the release get the new version in their
+ranges and changelogs, and an override that would push past the range of a
+dependent that isn't releasing is refused, since nothing would update it. Give
+that package a changeset with the bump you want instead, so the cascade runs. It's for normal releases only; a prerelease or snapshot sets its
 own suffix. @changesets has no equivalent (there you write a changeset with
 the bump you want), so without the flag nothing changes.
 

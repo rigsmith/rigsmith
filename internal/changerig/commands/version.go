@@ -259,6 +259,9 @@ func NewVersionCmd() *cobra.Command {
 				if err := applyReleaseAs(out, plan, releaseAs); err != nil {
 					return err
 				}
+				if err := checkOverriddenDependents(plan, pkgs); err != nil {
+					return err
+				}
 				planner.RefreshDependencies(plan)
 			}
 
@@ -314,6 +317,9 @@ func NewVersionCmd() *cobra.Command {
 					return err
 				}
 				if changed {
+					if err := checkOverriddenDependents(plan, pkgs); err != nil {
+						return err
+					}
 					// Dependents' ranges and changelog lines follow the chosen
 					// versions.
 					planner.RefreshDependencies(plan)
