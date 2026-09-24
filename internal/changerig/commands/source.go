@@ -154,10 +154,8 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 		ref := baselines[p.Name]
 		if ref == "" {
 			rendered := gitutil.RenderTag(w.Config.TagTemplate, w.ecoOf[p.Name], p.Dir, p.Name, at, solo)
-			if prefix, suffix, ok := strings.Cut(rendered, at); ok {
-				if tag, found := gitutil.LatestTag(tags, prefix, suffix); found {
-					ref = tag
-				}
+			if tag, found := gitutil.LatestTag(tags, strings.Split(rendered, at)); found {
+				ref = tag
 			}
 		}
 		refOf[p.Name] = ref

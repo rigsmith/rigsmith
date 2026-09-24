@@ -66,21 +66,38 @@ func ListTags(ctx context.Context, repoRoot string) ([]string, error) {
 	return tags, nil
 }
 
-// LatestTag returns the tag among tags that names the highest semver between
-// prefix and suffix, the two halves of a rendered release tag around its
-// version ("lib@" and "", "packages/lib/v" and ""). Tags whose middle isn't a
-// version are skipped; prereleases count, by precedence.
-func LatestTag(tags []string, prefix, suffix string) (string, bool) {
+// LatestTag returns the tag among tags that names the highest version in a
+// release tag's shape: parts is the rendered tag split at each place the
+// version goes ("lib@" and "", "packages/lib/v" and "", or three parts for a
+// template naming ${version} twice, every place the same version). Only a
+// full version counts, x.y.z (x.y.z.w for .NET) with any prerelease: a
+// hand-made `lib@2.0` or `lib@next` is not a release tag. Prereleases count,
+// by precedence.
+func LatestTag(tags []string, parts []string) (string, bool) {
+	if len(parts) < 2 {
+		return "", false
+	}
+	fixed := 0
+	for _, p := range parts {
+		fixed += len(p)
+	}
+	places := len(parts) - 1
 	var (
 		best    semver.Version
 		bestTag string
 		found   bool
 	)
 	for _, tag := range tags {
-		if !strings.HasPrefix(tag, prefix) || !strings.HasSuffix(tag, suffix) || len(tag) < len(prefix)+len(suffix) {
+		rest := len(tag) - fixed
+		// A length that doesn't divide evenly fails the Join check below.
+		if !strings.HasPrefix(tag, parts[0]) || rest <= 0 {
 			continue
 		}
-		v, ok := semver.Parse(tag[len(prefix) : len(tag)-len(suffix)])
+		version := tag[len(parts[0]) : len(parts[0])+rest/places]
+		if strings.Join(parts, version) != tag || !fullVersion(version) {
+			continue
+		}
+		v, ok := semver.Parse(version)
 		if !ok {
 			continue
 		}
@@ -89,6 +106,14 @@ func LatestTag(tags []string, prefix, suffix string) (string, bool) {
 		}
 	}
 	return bestTag, found
+}
+
+// fullVersion reports whether version's core has at least three parts, which
+// semver.Parse doesn't insist on (it reads "2.0" as 2.0.0).
+func fullVersion(version string) bool {
+	core, _, _ := strings.Cut(version, "+")
+	core, _, _ = strings.Cut(core, "-")
+	return strings.Count(core, ".") >= 2
 }
 
 // ModuleTag returns the canonical tag name for a module version, e.g.
