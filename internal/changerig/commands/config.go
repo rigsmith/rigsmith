@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -110,7 +112,8 @@ func configFile() (string, error) {
 }
 
 func newConfigShowCmd() *cobra.Command {
-	return &cobra.Command{
+	var asJSON bool
+	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Print the whole config",
 		Args:  cobra.NoArgs,
@@ -118,6 +121,9 @@ func newConfigShowCmd() *cobra.Command {
 			src, _, err := resolveConfigSource()
 			if err != nil {
 				return err
+			}
+			if asJSON {
+				return writeResolvedConfig(cmd.OutOrStdout(), src)
 			}
 			if src == nil {
 				fmt.Fprintln(cmd.OutOrStdout(), "no config yet — run `changerig init`")
@@ -128,6 +134,49 @@ func newConfigShowCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print the config as parsed, defaults applied, as plain JSON (for scripts)")
+	return cmd
+}
+
+// writeResolvedConfig prints the config shiprig runs with as plain JSON: the
+// resolved source parsed (JSONC stripped), defaults applied, ecosystem blocks
+// kept, and `versioning.source` always present with its effective value, so
+// a script needn't know where the config lives, how to read JSONC, or the
+// defaults. No config at all prints the defaults.
+func writeResolvedConfig(w io.Writer, src *cfgfind.Source) error {
+	cfg := config.Default()
+	if src != nil {
+		parsed, err := config.Parse(src.Data)
+		if err != nil {
+			return err
+		}
+		cfg = parsed
+	}
+	typed, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal(typed, &out); err != nil {
+		return err
+	}
+	for name, block := range cfg.Ecosystems {
+		var v any
+		if err := json.Unmarshal(block, &v); err != nil {
+			return fmt.Errorf("config: %s: %w", name, err)
+		}
+		out[name] = v
+	}
+	versioning, _ := out["versioning"].(map[string]any)
+	if versioning == nil {
+		versioning = map[string]any{}
+	}
+	versioning["source"] = string(cfg.CommitSource())
+	out["versioning"] = versioning
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 func newConfigGetCmd() *cobra.Command {
