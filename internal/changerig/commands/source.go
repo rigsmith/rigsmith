@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/since"
+	"github.com/rigsmith/rigsmith/core/versionstate"
 )
 
 // LoadChangesets resolves the changesets a version/status run plans from,
@@ -137,10 +138,16 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 	// Bucket packages by their since-ref so each distinct ref is logged once.
 	refOf := map[string]string{}
 	pkgsByRef := map[string][]string{}
+	baselines, err := w.recordBaselines(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range pkgs {
-		ref := ""
-		if v, ok := gitutil.LatestModuleVersion(ctx, w.Root, p.Dir); ok {
-			ref = gitutil.ModuleTag(p.Dir, v)
+		ref := baselines[p.Name]
+		if ref == "" {
+			if v, ok := gitutil.LatestModuleVersion(ctx, w.Root, p.Dir); ok {
+				ref = gitutil.ModuleTag(p.Dir, v)
+			}
 		}
 		refOf[p.Name] = ref
 		pkgsByRef[ref] = append(pkgsByRef[ref], p.Name)
@@ -221,4 +228,63 @@ func collapseInitialRelease(sets []*changeset.Changeset, cfg *config.Config) []*
 		})
 	}
 	return out
+}
+
+// recordBaselines finds, for each package in the committed release record
+// (versioning.record), the commit that recorded its current release: the
+// newest commit that changed its `released` entry in .changeset/versions.json.
+// That commit is the package's last release, so its commits since are what
+// the next release is made of; the record wins over a tag, which can be
+// deleted, never pushed, or (outside Go's module tags) not found at all. A
+// package with no record entry, or no record kept, falls back to its tag.
+func (w *Workspace) recordBaselines(ctx context.Context) (map[string]string, error) {
+	if !w.Config.Versioning.Record {
+		return nil, nil
+	}
+	rel, err := filepath.Rel(w.Root, filepath.Join(w.ChangesetDir, versionstate.FileName))
+	if err != nil {
+		return nil, nil
+	}
+	history, err := gitutil.FileHistory(ctx, w.Root, rel)
+	if err != nil || len(history) == 0 {
+		return nil, nil // not committed yet (or no git): tags, as before
+	}
+	released := func(rev string) (map[string]string, error) {
+		data, ok := gitutil.ShowFile(ctx, w.Root, rev, rel)
+		if !ok {
+			return nil, nil
+		}
+		s, err := versionstate.Parse(data)
+		if err != nil {
+			return nil, fmt.Errorf("reading %s at %.12s: %w", rel, rev, err)
+		}
+		return s.Released, nil
+	}
+	current, err := released(history[0])
+	if err != nil {
+		return nil, err
+	}
+	// Newest first, a package's baseline is the first commit whose previous
+	// record doesn't hold its current version: every newer commit left the
+	// entry as it is, so this one set it.
+	out := make(map[string]string, len(current))
+	for i, sha := range history {
+		// The record as it stood before this commit: at the next-older
+		// commit that changed it (nothing in between did).
+		var before map[string]string
+		if i+1 < len(history) {
+			if before, err = released(history[i+1]); err != nil {
+				return nil, err
+			}
+		}
+		for name, v := range current {
+			if _, found := out[name]; !found && before[name] != v {
+				out[name] = sha
+			}
+		}
+		if len(out) == len(current) {
+			break
+		}
+	}
+	return out, nil
 }

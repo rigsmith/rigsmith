@@ -81,3 +81,29 @@ func LogSince(ctx context.Context, dir, ref string) ([]Commit, error) {
 	}
 	return commits, nil
 }
+
+// FileHistory returns the full SHAs of the commits that changed relPath
+// (relative to dir), newest first.
+func FileHistory(ctx context.Context, dir, relPath string) ([]string, error) {
+	out, err := runGit(ctx, dir, "log", "--format=%H", "--", relPath)
+	if err != nil {
+		return nil, fmt.Errorf("gitutil: history of %s: %w", relPath, err)
+	}
+	var shas []string
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			shas = append(shas, line)
+		}
+	}
+	return shas, nil
+}
+
+// ShowFile returns relPath's content (relative to dir) at rev, and false when
+// the file (or rev) doesn't exist there.
+func ShowFile(ctx context.Context, dir, rev, relPath string) ([]byte, bool) {
+	out, err := runGit(ctx, dir, "show", rev+":./"+filepath.ToSlash(relPath))
+	if err != nil {
+		return nil, false
+	}
+	return []byte(out), true
+}
