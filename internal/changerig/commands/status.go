@@ -31,6 +31,10 @@ type statusRelease struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`
 	NewVersion string `json:"newVersion"`
+	// Group names the packages that have to be versioned together (see
+	// planner.ReleaseGroups): its alphabetically first member. shiprig's
+	// addition; canon's readers ignore it.
+	Group string `json:"group,omitempty"`
 }
 
 type statusPlan struct {
@@ -130,7 +134,7 @@ func NewStatusCmd() *cobra.Command {
 			// is how a script tells "nothing to release" from an error.
 			if len(changesets) == 0 {
 				if output != "" {
-					return writeStatusPlan(ws.Root, output, nil)
+					return writeStatusPlan(ws.Root, output, nil, nil)
 				}
 				if fromCommits || ws.Config.UsesCommits() {
 					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
@@ -151,7 +155,7 @@ func NewStatusCmd() *cobra.Command {
 				return err
 			}
 			if output != "" {
-				return writeStatusPlan(ws.Root, output, plan)
+				return writeStatusPlan(ws.Root, output, plan, planner.ReleaseGroups(plan, changesets, ws.Config))
 			}
 			if len(plan) == 0 {
 				out := cmd.OutOrStdout()
@@ -240,13 +244,14 @@ func printEmptyStatusPanel(cmd *cobra.Command, ws *Workspace, pkgs []plugin.Pack
 
 // writeStatusPlan serializes the plan as { releases: [{ name, type, newVersion }] }.
 // A relative path is resolved against the workspace root, matching @changesets.
-func writeStatusPlan(root, output string, plan []*planner.Module) error {
+func writeStatusPlan(root, output string, plan []*planner.Module, groups map[string]string) error {
 	releases := make([]statusRelease, 0, len(plan))
 	for _, m := range plan {
 		releases = append(releases, statusRelease{
 			Name:       m.Name,
 			Type:       m.HighestBump().String(),
 			NewVersion: m.ResolvedVersion(),
+			Group:      groups[m.Name],
 		})
 	}
 	sort.Slice(releases, func(i, j int) bool { return releases[i].Name < releases[j].Name })
