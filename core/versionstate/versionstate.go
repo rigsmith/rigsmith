@@ -40,6 +40,18 @@ type State struct {
 	Released map[string]string `json:"released,omitempty"`
 }
 
+// Parse reads a state from the file's content (as a past commit held it, say).
+func Parse(data []byte) (*State, error) {
+	s := &State{Packages: map[string]string{}}
+	if err := json.Unmarshal(data, s); err != nil {
+		return nil, err
+	}
+	if s.Packages == nil {
+		s.Packages = map[string]string{}
+	}
+	return s, nil
+}
+
 // Read returns the recorded versions; an absent file is an empty state.
 func Read(changesetDir string) (*State, error) {
 	s := &State{Packages: map[string]string{}}

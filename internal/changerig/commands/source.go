@@ -14,6 +14,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/since"
+	"github.com/rigsmith/rigsmith/core/versionstate"
 )
 
 // LoadChangesets resolves the changesets a version/status run plans from,
@@ -137,10 +138,16 @@ func (w *Workspace) commitChangesets(ctx context.Context, pkgs []plugin.Package)
 	// Bucket packages by their since-ref so each distinct ref is logged once.
 	refOf := map[string]string{}
 	pkgsByRef := map[string][]string{}
+	baselines, err := w.recordBaselines(ctx, pkgs)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range pkgs {
-		ref := ""
-		if v, ok := gitutil.LatestModuleVersion(ctx, w.Root, p.Dir); ok {
-			ref = gitutil.ModuleTag(p.Dir, v)
+		ref := baselines[p.Name]
+		if ref == "" {
+			if v, ok := gitutil.LatestModuleVersion(ctx, w.Root, p.Dir); ok {
+				ref = gitutil.ModuleTag(p.Dir, v)
+			}
 		}
 		refOf[p.Name] = ref
 		pkgsByRef[ref] = append(pkgsByRef[ref], p.Name)
@@ -221,4 +228,111 @@ func collapseInitialRelease(sets []*changeset.Changeset, cfg *config.Config) []*
 		})
 	}
 	return out
+}
+
+// recordBaselines finds, for each package in the committed release record
+// (versioning.record), the commit that recorded its current release: a commit
+// whose record holds the package's current version while none of its own
+// parents' records does. That commit is the package's last release, so its
+// commits since are what the next release is made of; the record wins over a
+// tag, which can be deleted or never pushed. A package with no record entry,
+// or no record kept, falls back to its tag, and so does every package in a
+// shallow clone, whose cut-off history would make its oldest commit look like
+// the one that recorded everything. An entry that isn't the package's current
+// version is stale (a release went out while the record was off) and is
+// passed over too.
+func (w *Workspace) recordBaselines(ctx context.Context, pkgs []plugin.Package) (map[string]string, error) {
+	if !w.Config.Versioning.Record {
+		return nil, nil
+	}
+	rel, err := filepath.Rel(w.Root, filepath.Join(w.ChangesetDir, versionstate.FileName))
+	if err != nil {
+		return nil, nil
+	}
+	history, err := gitutil.FileHistory(ctx, w.Root, rel)
+	if err != nil || len(history) == 0 {
+		return nil, nil // not committed yet (or no git): tags, as before
+	}
+	if gitutil.IsShallow(ctx, w.Root) {
+		return nil, nil
+	}
+	parents, err := gitutil.Parents(ctx, w.Root, history)
+	if err != nil {
+		return nil, err
+	}
+	// Every record the search can look at, read in one pass: HEAD's, each
+	// commit's that changed the file, and each of their parents'.
+	revs := append([]string{"HEAD"}, history...)
+	for _, sha := range history {
+		revs = append(revs, parents[sha]...)
+	}
+	files, err := gitutil.FileAtRevs(ctx, w.Root, revs, rel)
+	if err != nil {
+		return nil, err
+	}
+	records := map[string]map[string]string{}
+	released := func(rev string) (map[string]string, error) {
+		if r, ok := records[rev]; ok {
+			return r, nil
+		}
+		var r map[string]string
+		if data, ok := files[rev]; ok { // no file there is an empty record
+			s, err := versionstate.Parse(data)
+			if err != nil {
+				return nil, fmt.Errorf("reading %s at %.12s: %w", rel, rev, err)
+			}
+			r = s.Released
+		}
+		records[rev] = r
+		return r, nil
+	}
+	current, err := released("HEAD")
+	if err != nil {
+		return nil, err
+	}
+	stale := map[string]bool{}
+	for _, p := range pkgs {
+		if v, ok := current[p.Name]; ok && v != p.Version {
+			stale[p.Name] = true
+		}
+	}
+	fresh := make(map[string]string, len(current))
+	for name, v := range current {
+		if !stale[name] {
+			fresh[name] = v
+		}
+	}
+	current = fresh
+	out := make(map[string]string, len(current))
+	for _, sha := range history { // newest first
+		after, err := released(sha)
+		if err != nil {
+			return nil, err
+		}
+		for name, v := range current {
+			if _, found := out[name]; found || after[name] != v {
+				continue
+			}
+			// A merge that took the entry from one side didn't record it:
+			// that side's commit did, further down the history.
+			set := true
+			for _, p := range parents[sha] {
+				before, err := released(p)
+				if err != nil {
+					return nil, err
+				}
+				if before[name] == v {
+					set = false
+					break
+				}
+			}
+			if set {
+				out[name] = sha
+			}
+		}
+		if len(out) == len(current) {
+			break
+		}
+	}
+	return out, nil
 }

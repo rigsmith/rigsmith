@@ -288,8 +288,8 @@ manifest is stamped:
 ```
 
 The record is never a version source. The manifest (or `packages`, for the
-versions that don't live in the tree) stays that, so turning it on changes no
-release decision. A snapshot records nothing, and nor does a range-only
+versions that don't live in the tree) stays that, so with changesets as the
+source, turning it on changes no release decision. A snapshot records nothing, and nor does a range-only
 rewrite, which releases nothing. A package enters the record the first time it
 releases with the flag on; nothing is seeded, so the record never claims a
 release that didn't go through `version`.
@@ -302,6 +302,22 @@ release that didn't go through `version`.
   never finished publishing. It's expected in the window between the version
   PR's merge and the publish that tags it. A package that's never tagged is
   not flagged.
+
+With commits as a versioning source, the record is also where each package's
+next release starts counting. Without it, a package's commits count from its
+last release tag, and only module-style tags (`v1.2.0`, `packages/lib/v1.2.0`)
+are found there, so a package tagged `lib@1.2.0` counts its whole history
+again. With it, a package's commits count from the commit that recorded its
+current `released` version: the version PR's commit, or its squash on the
+base branch. It's per package, so releasing `app` alone doesn't move `lib`'s
+starting point, and it wins over a tag, which can be deleted or never pushed.
+A release merged in from another branch counts from the commit that recorded
+it there, not from the merge. The record has to be committed to count (it's
+read from history, not the working tree), and a package it doesn't hold falls
+back to its tag, as does one whose recorded version isn't its current one (a
+release went out while the record was off). So does every package in a shallow clone, whose cut-off
+history can't say which commit recorded a release; commit-sourced releases
+want the full history anyway (`fetch-depth: 0` in GitHub Actions).
 
 ## `pre`
 
