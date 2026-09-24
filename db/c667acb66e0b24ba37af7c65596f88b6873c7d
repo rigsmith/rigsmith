@@ -1,0 +1,11 @@
+internal/changerig/commands/config.go
+  ai_agent 4,161,166,322-328
+internal/changerig/commands/config_show_json_test.go
+  ai_agent 92-115
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "dbc667acb66e0b24ba37af7c65596f88b6873c7d",
+  "prompts": {}
+}
