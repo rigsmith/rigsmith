@@ -211,39 +211,102 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 
 // chunkByDependencies orders releases so each chunk's packages depend (dev
 // dependencies aside, as canon) only on packages in earlier chunks. A cycle
-// can't be ordered; its packages go out together in a final chunk.
+// can't be ordered inside itself, so its members go out together, in a chunk
+// of their own once nothing outside the cycle is still waiting; a package
+// depending on the cycle comes after it.
 func chunkByDependencies(releases []planRelease, pkgOf map[string]plugin.Package) [][]planRelease {
 	pending := map[string]planRelease{}
 	for _, r := range releases {
 		pending[r.Name] = r
 	}
+	// waitsOn is what name still waits for: its pending, non-dev dependencies.
+	waitsOn := func(name string) []string {
+		var out []string
+		for _, d := range pkgOf[name].Dependencies {
+			if _, ok := pending[d.Name]; ok && d.Kind != plugin.DepDev && d.Name != name {
+				out = append(out, d.Name)
+			}
+		}
+		return out
+	}
 	var chunks [][]planRelease
 	for len(pending) > 0 {
-		var ready []planRelease
-		for name, r := range pending {
-			blocked := false
-			for _, d := range pkgOf[name].Dependencies {
-				if _, waiting := pending[d.Name]; waiting && d.Kind != plugin.DepDev && d.Name != name {
-					blocked = true
-					break
-				}
-			}
-			if !blocked {
-				ready = append(ready, r)
+		var ready []string
+		for name := range pending {
+			if len(waitsOn(name)) == 0 {
+				ready = append(ready, name)
 			}
 		}
-		if len(ready) == 0 { // a cycle: everything left depends on something left
-			for _, r := range pending {
-				ready = append(ready, r)
-			}
+		if len(ready) == 0 {
+			ready = firstCycle(pending, waitsOn)
 		}
-		sort.Slice(ready, func(i, j int) bool { return ready[i].Name < ready[j].Name })
-		for _, r := range ready {
-			delete(pending, r.Name)
+		sort.Strings(ready)
+		chunk := make([]planRelease, 0, len(ready))
+		for _, name := range ready {
+			chunk = append(chunk, pending[name])
 		}
-		chunks = append(chunks, ready)
+		for _, name := range ready {
+			delete(pending, name)
+		}
+		chunks = append(chunks, chunk)
 	}
 	return chunks
+}
+
+// firstCycle picks, when nothing pending is free to go, a cycle whose members
+// wait on nothing outside it: the set of packages that reach each other
+// through what they wait on, closed to everything else. One always exists
+// when every package waits on something. Packages are tried in name order,
+// so the choice is stable.
+func firstCycle(pending map[string]planRelease, waitsOn func(string) []string) []string {
+	reach := func(from string) map[string]bool {
+		seen := map[string]bool{}
+		stack := []string{from}
+		for len(stack) > 0 {
+			n := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, d := range waitsOn(n) {
+				if !seen[d] {
+					seen[d] = true
+					stack = append(stack, d)
+				}
+			}
+		}
+		return seen
+	}
+	names := make([]string, 0, len(pending))
+	for n := range pending {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		fromN := reach(n)
+		if !fromN[n] {
+			continue // not on a cycle: it waits on one
+		}
+		// n's cycle: what n reaches that reaches n back.
+		var members []string
+		inCycle := map[string]bool{}
+		for m := range fromN {
+			if reach(m)[n] {
+				members = append(members, m)
+				inCycle[m] = true
+			}
+		}
+		// Closed: nothing a member waits on lies outside the cycle.
+		closed := true
+		for _, m := range members {
+			for _, d := range waitsOn(m) {
+				if !inCycle[d] {
+					closed = false
+				}
+			}
+		}
+		if closed {
+			return members
+		}
+	}
+	return names // unreachable when every package waits on something
 }
 
 func writePublishPlan(path string, plan [][]planRelease) error {

@@ -250,3 +250,31 @@ func TestChunkByDependenciesPutsACycleLast(t *testing.T) {
 		t.Fatalf("chunks = %v, want %v", got, want)
 	}
 }
+
+// A package depending on a cycle goes out after the cycle, not in its chunk,
+// even when it sorts first; a second cycle that waits on it comes after it.
+func TestChunkByDependenciesOrdersAroundCycles(t *testing.T) {
+	deps := func(names ...string) []plugin.Dependency {
+		var out []plugin.Dependency
+		for _, n := range names {
+			out = append(out, plugin.Dependency{Name: n, Kind: plugin.DepNormal})
+		}
+		return out
+	}
+	pkgs := map[string]plugin.Package{
+		"x": {Name: "x", Dependencies: deps("y")},
+		"y": {Name: "y", Dependencies: deps("x")},
+		"a": {Name: "a", Dependencies: deps("x")}, // sorts before the cycle it waits on
+		"p": {Name: "p", Dependencies: deps("q", "a")},
+		"q": {Name: "q", Dependencies: deps("p")},
+	}
+	var releases []planRelease
+	for _, n := range []string{"p", "q", "x", "y", "a"} {
+		releases = append(releases, planRelease{Kind: "publish", Name: n})
+	}
+	got := names(chunkByDependencies(releases, pkgs))
+	want := [][]string{{"publish:x", "publish:y"}, {"publish:a"}, {"publish:p", "publish:q"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("chunks = %v, want %v", got, want)
+	}
+}
