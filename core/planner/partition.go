@@ -44,3 +44,32 @@ func PartitionChangesets(changesets []*changeset.Changeset, packages []plugin.Pa
 	}
 	return consumed, kept, nil
 }
+
+// SkippedDependents reports, as @changesets' version does, each package that
+// depends on a skipped one (ignored, or private and unversioned) without being
+// skipped itself: versioning it would release a package against a dependency
+// that never moves. Dev dependencies don't count, and a private dependent is
+// never published, so it doesn't either. One message per pair, in package
+// order; none means the run can go ahead.
+func SkippedDependents(packages []plugin.Package, cfg *config.Config) []string {
+	var msgs []string
+	for _, skipped := range packages {
+		if !cfg.IsIgnored(skipped.Name) {
+			continue
+		}
+		for _, p := range packages {
+			if p.Private || cfg.IsIgnored(p.Name) {
+				continue
+			}
+			for _, d := range p.Dependencies {
+				if d.Name == skipped.Name && d.Kind != plugin.DepDev {
+					msgs = append(msgs, fmt.Sprintf(
+						"%s depends on the skipped package %s (by `ignore` or unversioned private packages), but %s is not being skipped: pass it to --ignore too",
+						p.Name, skipped.Name, p.Name))
+					break
+				}
+			}
+		}
+	}
+	return msgs
+}
