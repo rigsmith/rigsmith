@@ -89,3 +89,27 @@ func TestConfigShowJSONFillsTheSourceWherever(t *testing.T) {
 		t.Errorf("versioning.source = %v, want changesets", got)
 	}
 }
+
+// Numbers come out as written: a large integer in an ecosystem block keeps
+// every digit, rather than passing through float64.
+func TestConfigShowJSONKeepsNumbersExact(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".changeset"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".changeset", "config.json"),
+		[]byte(`{ "node": { "big": 9007199254740993 } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	cmd := newConfigShowCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("9007199254740993")) {
+		t.Errorf("output lost digits:\n%s", out.String())
+	}
+}

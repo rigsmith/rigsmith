@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -157,12 +158,12 @@ func writeResolvedConfig(w io.Writer, src *cfgfind.Source) error {
 		return err
 	}
 	out := map[string]any{}
-	if err := json.Unmarshal(typed, &out); err != nil {
+	if err := decodeExact(typed, &out); err != nil {
 		return err
 	}
 	for name, block := range cfg.Ecosystems {
 		var v any
-		if err := json.Unmarshal(block, &v); err != nil {
+		if err := decodeExact(block, &v); err != nil {
 			return fmt.Errorf("config: %s: %w", name, err)
 		}
 		out[name] = v
@@ -317,4 +318,12 @@ func contains(xs []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// decodeExact decodes JSON keeping numbers as written (json.Number), so a
+// large integer doesn't lose digits through float64 on its way back out.
+func decodeExact(data []byte, dst any) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	return dec.Decode(dst)
 }
