@@ -144,3 +144,48 @@ func promptVersionTarget(rep *planner.Module, group []*planner.Module) (string, 
 		return "", nil
 	}
 }
+
+// applyReleaseAs is the prompt's "custom version" without the prompt, for CI:
+// each spec is `<package>=<version>`, or a bare `<version>` when the run
+// releases a single version. The version must be valid semver above the
+// package's current one, and like a prompted override it applies to every
+// package sharing that version file and doesn't recompute the cascade. A
+// package that isn't releasing has nothing to override: an error, so a typo
+// or a missing changeset isn't silently a no-op.
+func applyReleaseAs(out io.Writer, plan []*planner.Module, specs []string) error {
+	groups := groupByVersionFile(plan)
+	groupOf := map[string][]*planner.Module{}
+	for _, group := range groups {
+		for _, m := range group {
+			groupOf[m.Name] = group
+		}
+	}
+	for _, spec := range specs {
+		name, version, named := strings.Cut(spec, "=")
+		var group []*planner.Module
+		switch {
+		case named:
+			group = groupOf[strings.TrimSpace(name)]
+			if group == nil {
+				return fmt.Errorf("--release-as %s: %s isn't releasing in this run; a changeset (or commit) has to release it first", spec, name)
+			}
+		case len(groups) == 1:
+			version, group = name, groups[0]
+		default:
+			return fmt.Errorf("--release-as %s: %d versions are releasing, so name the package (<package>=<version>)", spec, len(groups))
+		}
+		rep := group[0]
+		v, ok := semver.Parse(strings.TrimSpace(version))
+		if !ok {
+			return fmt.Errorf("--release-as %s: %q is not a valid semver version", spec, version)
+		}
+		if semver.Compare(v, rep.Current) <= 0 {
+			return fmt.Errorf("--release-as %s: must be greater than the current %s", spec, rep.Current)
+		}
+		for _, m := range group {
+			m.VersionOverride = v.String()
+		}
+		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("  release as %s → %s", groupLabel(group), v)))
+	}
+	return nil
+}
