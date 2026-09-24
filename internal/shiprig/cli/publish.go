@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/prestate"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -61,6 +63,7 @@ func newPublishCmd() *cobra.Command {
 		yes        bool
 		npmAuth    string
 		packDir    string
+		distTag    string
 	)
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -127,6 +130,16 @@ func newPublishCmd() *cobra.Command {
 			toPublish := make([]plugin.Package, 0, len(pkgs)+len(gen.Packages))
 			toPublish = append(toPublish, pkgs...)
 			toPublish = append(toPublish, gen.Packages...)
+			// The npm dist-tag, as `changeset publish` picks it. Settled
+			// before any registry is touched.
+			pre, err := prestate.Read(ws.ChangesetDir)
+			if err != nil {
+				return err
+			}
+			tag, err := publishDistTag(distTag, packDir != "", pre)
+			if err != nil {
+				return err
+			}
 			// From a pack directory, exactly the files pack built go out, in
 			// the plan's order, and nothing is built.
 			packed := map[string]packedRelease{}
@@ -223,6 +236,9 @@ func newPublishCmd() *cobra.Command {
 				// A packed release carries the access and dist-tag its plan was
 				// made with.
 				pr, fromPack := packed[p.Name]
+				if !fromPack {
+					pr.tag = tag
+				}
 				if fromPack && pr.access != "" {
 					pkgAccess = pr.access
 				}
@@ -404,6 +420,7 @@ func newPublishCmd() *cobra.Command {
 	f.StringVarP(&outputPath, "output", "o", "", "append a git-tag event per tag created to this file (default $CHANGESETS_OUTPUT); tags are then created locally only, for the caller to push")
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
 	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:…); overrides node config")
+	f.StringVar(&distTag, "tag", "", "the npm dist-tag to publish under (default: the prerelease tag in pre mode; not allowed in pre mode or with --from-pack-dir)")
 	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
 	return cmd
 }
@@ -476,4 +493,30 @@ func ecosystemSource(eco string) string {
 	default:
 		return ""
 	}
+}
+
+// publishDistTag picks the npm dist-tag a publish goes out under, as
+// `changeset publish` does. --tag names it, except in pre mode, where the
+// prerelease tag is the only one allowed, and from a pack directory, whose
+// plan carries each release's own. In pre mode it's the prerelease tag. Empty
+// otherwise, which leaves npm's default (latest). Without this, a prerelease
+// version went out as latest.
+func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState) (string, error) {
+	inPre := pre != nil && pre.Mode == prestate.ModePre
+	switch {
+	case flag != "" && fromPackDir:
+		return "", errors.New("--tag can't be used with --from-pack-dir: the pack plan carries each release's dist-tag")
+	case flag != "" && inPre:
+		return "", errors.New("--tag can't be used in pre mode: prereleases go out under the prerelease tag (run `pre exit` to publish under another)")
+	case flag != "":
+		return flag, nil
+	case fromPackDir:
+		return "", nil
+	case inPre:
+		if strings.TrimSpace(pre.Tag) == "" {
+			return "", errors.New(".changeset/pre.json is in pre mode with no tag: set its tag")
+		}
+		return pre.Tag, nil
+	}
+	return "", nil
 }

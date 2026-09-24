@@ -52,7 +52,10 @@ The whole workflow is wired:
   earlier. This is the build half of a split release, where the job holding
   registry credentials never builds. Cargo can't publish a prebuilt crate, so a
   cargo release is refused
-- `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI.
+- `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI. In pre mode
+  npm packages go out under the prerelease tag (`next`, say) rather than
+  `latest`, as `changeset publish` does; `--tag <name>` picks another dist-tag
+  outside pre mode.
   `--from-pack-dir <dir>` publishes exactly the files `pack` built there, in the
   plan's order and under its npm dist-tag, building nothing, as `changeset
   publish --from-pack-dir` does: each file's sha256 must still match what `pack`
