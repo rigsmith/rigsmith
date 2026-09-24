@@ -1,0 +1,15 @@
+internal/shiprig/cli/root.go
+  ai_agent 93
+cmd/shiprig/README.md
+  ai_agent 80-81
+site/shiprig/index.md
+  ai_agent 48-54
+.changeset/shiprig-pack.md
+  ai_agent 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4c3952aaf55ed5914bb1c1431f3d6b37495c4c81",
+  "prompts": {}
+}
