@@ -1,0 +1,32 @@
+internal/changerig/commands/versionoverride.go
+  s_505a2cfce9114c::t_888241cfbed968 147-191
+site/changerig/lifecycle.md
+  s_505a2cfce9114c::t_e1e5aac5be5e68 179-198,237-238
+internal/changerig/cmdtest/version_release_as_test.go
+  s_505a2cfce9114c::t_cb45ba4d34c15f 1-52,54-86
+  s_505a2cfce9114c::t_cbd99969bcd44c 53
+README.md
+  s_505a2cfce9114c::t_e1e5aac5be5e68 44
+cmd/shiprig/README.md
+  s_505a2cfce9114c::t_e1e5aac5be5e68 37
+internal/changerig/commands/version.go
+  s_505a2cfce9114c::t_888241cfbed968 33,218-229,276,519
+.changeset/version-release-as.md
+  ai_agent 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f1f9aeaae619cca5a814c07e273f8327cc983d60",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
