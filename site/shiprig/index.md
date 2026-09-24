@@ -45,6 +45,13 @@ The whole workflow is wired:
   missing, and so is a package already published whose tag never made it. `--output <file>` writes @changesets v3's plan JSON, chunked in
   dependency order, and `--tag` sets the npm dist-tag. A registry that can't be
   reached fails it rather than guessing
+- `pack --out-dir <dir>` — build the package file for each release the plan
+  would publish (`npm pack`, `dotnet pack`) into `<dir>/packages/`, and write
+  `<dir>/publish-plan.json` recording each file and its sha256 integrity, as
+  `changeset pack` does; `--from-publish-plan <file>` packs a plan made
+  earlier. This is the build half of a split release, where the job holding
+  registry credentials never builds. Cargo can't publish a prebuilt crate, so a
+  cargo release is refused
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI
 - `tag` and `publish` speak @changesets v3's output contract: with
   `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends a
