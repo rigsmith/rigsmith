@@ -15,9 +15,15 @@ changerig pre enter next                       # enter prerelease mode (changeri
 changerig changelog add -m "…" -t fix          # hand-author a CHANGELOG entry (also: changelog format)
 changerig info                                # resolved config + discovered packages
 changerig config show                          # view/edit .changeset/config.json
+changerig config show --json                   # the config as parsed, defaults applied (for scripts)
 changerig doctor                              # health-check the setup (--fix to scaffold config)
 changerig ui                                  # interactive bubbletea menu
 ```
+
+`config show` prints the config file as written, wherever it resolved from.
+`config show --json` is for scripts: the same config parsed (JSONC comments and
+trailing commas gone), defaults applied, ecosystem blocks kept, and
+`versioning.source` always present with its effective value.
 
 `doctor` checks git, the repo, `.changeset/config.json` (and offers to scaffold
 it when it's missing), and the packages discovered across every ecosystem — the
