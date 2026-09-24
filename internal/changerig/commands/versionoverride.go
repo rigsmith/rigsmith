@@ -9,6 +9,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/planner"
 	"github.com/rigsmith/rigsmith/core/semver"
+	"github.com/spf13/cobra"
 )
 
 // promptVersionOverrides offers a release-it–style override for each releasing
@@ -188,4 +189,22 @@ func applyReleaseAs(out io.Writer, plan []*planner.Module, specs []string) error
 		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("  release as %s → %s", groupLabel(group), v)))
 	}
 	return nil
+}
+
+// completeReleaseAs completes --release-as with "<package>=" for each
+// workspace package, leaving the cursor after the = for the version.
+func completeReleaseAs(c *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	ws, err := Open()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	pkgs, _, err := ws.Discover(c.Context())
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	out := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		out = append(out, p.Name+"=")
+	}
+	return out, cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveNoSpace
 }

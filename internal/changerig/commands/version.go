@@ -556,6 +556,7 @@ func NewVersionCmd() *cobra.Command {
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	f.BoolVarP(&yes, "yes", "y", false, "accept the computed versions; skip the interactive version-override prompt")
 	f.StringArrayVar(&releaseAs, "release-as", nil, "release a package at this exact version, <package>=<version> (or a bare <version> when one version is releasing); repeatable, and skips the prompt")
+	_ = cmd.RegisterFlagCompletionFunc("release-as", completeReleaseAs)
 	f.BoolVar(&noStamp, "no-stamp", false, "compute and record the versions (.changeset/versions.json) without writing them into any manifest")
 	return cmd
 }

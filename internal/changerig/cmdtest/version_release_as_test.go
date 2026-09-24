@@ -84,3 +84,11 @@ func TestVersionReleaseAsRefusedInPrereleaseMode(t *testing.T) {
 	assertExitNonZero(t, code, out)
 	assertContains(t, out, "normal release")
 }
+
+func TestVersionReleaseAsCompletesPackageNames(t *testing.T) {
+	dir := releaseAsRepo(t)
+	code, out := runChangerig(t, dir, "__complete", "version", "--release-as", "")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "pkg-a=")
+	assertContains(t, out, "pkg-b=")
+}
