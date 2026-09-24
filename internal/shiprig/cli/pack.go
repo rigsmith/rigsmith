@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
@@ -197,4 +198,61 @@ func sha256Integrity(file string) (string, error) {
 		return "", err
 	}
 	return "sha256-" + base64.StdEncoding.EncodeToString(h.Sum(nil)), nil
+}
+
+// packedRelease is one release publish --from-pack-dir pushes: its package,
+// the file pack built for it (absolute), and the plan's dist-tag and access.
+type packedRelease struct {
+	pkg    plugin.Package
+	file   string
+	tag    string
+	access string
+}
+
+// readPackDir reads the plan pack wrote into dir and returns its "publish"
+// releases in plan order (dependencies first). Every file is checked before
+// anything is pushed: it's there, its sha256 is the integrity pack recorded,
+// its package is in the workspace at the plan's version, and its ecosystem can
+// publish a prebuilt file.
+func readPackDir(dir string, candidates []plugin.Package, ecoOf map[string]string) ([]packedRelease, error) {
+	plan, err := readPublishPlan(filepath.Join(dir, packDirPlan))
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]plugin.Package, len(candidates))
+	for _, p := range candidates {
+		byName[p.Name] = p
+	}
+	var out []packedRelease
+	for _, chunk := range plan {
+		for _, r := range chunk {
+			if r.Kind != "publish" {
+				continue
+			}
+			p, ok := byName[r.Name]
+			switch {
+			case !ok:
+				return nil, fmt.Errorf("the pack plan's %s isn't in this workspace", r.Name)
+			case p.Version != r.Version:
+				return nil, fmt.Errorf("the pack plan has %s@%s, but the workspace has %s: publish from the commit that was packed", r.Name, r.Version, p.Version)
+			case ecoOf[r.Name] == "cargo":
+				return nil, fmt.Errorf("%s: cargo can't publish a prebuilt crate", r.Name)
+			case r.Tarball == nil:
+				return nil, fmt.Errorf("the pack plan has no file for %s: was it written by pack?", r.Name)
+			}
+			file := filepath.Join(dir, filepath.FromSlash(r.Tarball.Path))
+			if rel, err := filepath.Rel(dir, file); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return nil, fmt.Errorf("%s: the pack plan's file %q is outside the pack directory", r.Name, r.Tarball.Path)
+			}
+			got, err := sha256Integrity(file)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", r.Name, err)
+			}
+			if got != r.Tarball.Integrity {
+				return nil, fmt.Errorf("%s: %s doesn't match the integrity pack recorded (%s, now %s)", r.Name, r.Tarball.Path, r.Tarball.Integrity, got)
+			}
+			out = append(out, packedRelease{pkg: p, file: file, tag: r.Tag, access: r.Access})
+		}
+	}
+	return out, nil
 }

@@ -66,3 +66,17 @@ same way.
    rather than rebuilt behind the caller's back. `tag-only` releases only tag.
 5. **shiprig-action's `select-mode`, `pack` and `publish` sub-actions** run
    on shiprig.
+
+## Decisions made along the way
+
+- **`publish --from-pack-dir` checks before it pushes.** Every file's sha256
+  must match the integrity `pack` recorded, the package must be in the
+  workspace at the plan's version, and the file must sit inside the pack
+  directory. Canon trusts the directory; a registry push can't be taken back.
+- **The plan's npm dist-tag reaches `npm publish`.** `PublishRequest` gained
+  `tag`. An ordinary `shiprig publish` still passes none, so a prerelease
+  published without a pack directory goes to npm's default tag; giving it
+  the prerelease tag, as canon does, is a follow-up.
+- **A first publish in pre mode** keeps the prerelease tag. Canon sends it to
+  `latest`, which needs the registry's version list and dist-tags; `published`
+  answers only yes or no.

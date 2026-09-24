@@ -170,6 +170,11 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // we skip. Access defaults to "restricted" unless req.Access is an explicit
 // "public"/"restricted". A URL-shaped req.PackageSource is passed as --registry.
 //
+// npmPublish runs `npm publish`: a variable so a test can see its arguments.
+var npmPublish = func(ctx context.Context, dir string, env []string, args ...string) (stdout, stderr string, err error) {
+	return runCmdEnv(ctx, dir, env, "npm", args...)
+}
+
 // npmView runs `npm view` in dir: a variable so a test can stand in for npm.
 var npmView = func(ctx context.Context, dir string, args ...string) (stdout, stderr string, err error) {
 	return runCmd(ctx, dir, "npm", append([]string{"view"}, args...)...)
@@ -237,7 +242,16 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if access != "public" && access != "restricted" {
 		access = "restricted"
 	}
-	args := []string{"publish", "--access", access}
+	args := []string{"publish"}
+	// A file `shiprig pack` built goes out as it is; npm publish takes a
+	// tarball path in place of the package directory.
+	if req.ArtifactPath != "" {
+		args = append(args, req.ArtifactPath)
+	}
+	args = append(args, "--access", access)
+	if req.Tag != "" {
+		args = append(args, "--tag", req.Tag)
+	}
 	if strings.HasPrefix(req.PackageSource, "http") {
 		args = append(args, "--registry", req.PackageSource)
 	}
@@ -286,7 +300,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		}
 	}
 
-	if _, _, err := runCmdEnv(ctx, dir, env, "npm", args...); err != nil {
+	if _, _, err := npmPublish(ctx, dir, env, args...); err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 	}
 

@@ -246,6 +246,11 @@ func registryHas(ctx context.Context, url, what, version string) (plugin.Publish
 // Credentials: cargo uses the caller's token (`cargo login` / CARGO_REGISTRY_TOKEN),
 // which we do not manage here.
 func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugin.PublishResponse, error) {
+	// cargo publish builds the crate from source; a prebuilt one can't be
+	// published, and rebuilding it here would break pack's promise.
+	if req.ArtifactPath != "" {
+		return plugin.PublishResponse{}, fmt.Errorf("cargo can't publish a prebuilt crate (%s); publish %s from source", req.ArtifactPath, req.Package.Name)
+	}
 	if req.Package.Private {
 		return plugin.PublishResponse{Skipped: true, Message: "private"}, nil
 	}
