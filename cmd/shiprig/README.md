@@ -81,7 +81,8 @@ The full surface is wired: `init`, `add`, `status` (incl. `--since` and
 `--output`), `version` (normal/pre/snapshot, changelog enrichment + `format:`;
 `--since <ref>` narrows a `--changelog` or `--dry-run` preview to a branch's
 changesets and commits, and a run that writes refuses it),
-`pre`, `info`, `ui`, `tag`, `publish` (idempotent, confirm-gated on a TTY,
+`pre`, `info`, `ui`, `tag`, `publish-plan` (what a publish would release, as
+`changeset publish-plan`), `publish` (idempotent, confirm-gated on a TTY,
 `--yes` for CI), and `release` — the configurable step pipeline
 (`.changeset/release.jsonc`: steps/hooks/vars/confirm gates/secret masking,
 GitHub forge releases). See [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).

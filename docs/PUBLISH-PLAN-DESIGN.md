@@ -38,6 +38,16 @@ new plugin method, `published`:
   `noRegistry`: they release by their git tag (and forge release), so the plan
   lists them `tag-only` when the tag is missing.
 
+The npm dist-tag each `publish` entry carries is `--tag` when given, else the
+prerelease tag in pre mode (an empty one is refused), else `latest`. Canon
+sends a package's first publish in pre mode to `latest` instead; that needs
+the registry's version list and dist-tags, and `published` answers only yes
+or no, so shiprig keeps the prerelease tag there.
+
+A package already published whose git tag is missing is listed `tag-only`:
+shiprig's publish creates that tag (canon's doesn't), so a plan-driven
+workflow has to run for it.
+
 A registry that can't be reached is an error, never "not published". A plan
 built on a guess would publish or skip the wrong thing, and canon fails the
 same way.
