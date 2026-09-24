@@ -1,0 +1,15 @@
+cmd/shiprig/README.md
+  ai_agent 81-82
+.changeset/publish-from-pack-dir.md
+  ai_agent 1-7
+docs/PUBLISH-PLAN-DESIGN.md
+  ai_agent 54-67
+site/shiprig/index.md
+  ai_agent 55-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f81b7fe5c83a1403bdde514625025a87faf35e76",
+  "prompts": {}
+}
