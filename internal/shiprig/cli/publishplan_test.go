@@ -278,3 +278,16 @@ func TestChunkByDependenciesOrdersAroundCycles(t *testing.T) {
 		t.Fatalf("chunks = %v, want %v", got, want)
 	}
 }
+
+func TestRedactURLCredentials(t *testing.T) {
+	for in, want := range map[string]string{
+		"at https://bot:s3cret@npm.example.com/x":    "at https://***@npm.example.com/x",
+		"at https://bot:p@ss@npm.example.com/x":      "at https://***@npm.example.com/x",
+		"at https://npm.example.com/a@b and more":    "at https://npm.example.com/a@b and more",
+		"two: http://a:b@h1/ and https://c:d@h2/ ok": "two: http://***@h1/ and https://***@h2/ ok",
+	} {
+		if got := redactURLCredentials(in); got != want {
+			t.Errorf("redactURLCredentials(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

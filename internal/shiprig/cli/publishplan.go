@@ -346,8 +346,9 @@ func printPublishPlan(w io.Writer, plan [][]planRelease) {
 	}
 }
 
-// urlCredentials matches the user[:password]@ part of a URL.
-var urlCredentials = regexp.MustCompile(`(://)[^/@\s]+@`)
+// urlCredentials matches the user[:password]@ part of a URL, up to the last
+// '@' before the path: a password can hold an unencoded '@'.
+var urlCredentials = regexp.MustCompile(`(://)[^/?#\s]*@`)
 
 // redactURLCredentials masks credentials embedded in any URL in s.
 func redactURLCredentials(s string) string {
