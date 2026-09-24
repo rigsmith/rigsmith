@@ -1,0 +1,43 @@
+core/ecosystem/cargo/published_test.go
+  s_505a2cfce9114c::t_f07002919fb84f 91-101
+.changeset/publish-from-pack-dir.md
+  s_505a2cfce9114c::t_f07002919fb84f 1-7
+cmd/shiprig/README.md
+  s_505a2cfce9114c::t_f07002919fb84f 86-87
+core/ecosystem/dotnet/dotnet.go
+  s_505a2cfce9114c::t_f07002919fb84f 309-317,319-322,324-327,341,461-463
+core/ecosystem/node/published_test.go
+  s_505a2cfce9114c::t_f07002919fb84f 82-108
+internal/shiprig/cli/pack_test.go
+  s_505a2cfce9114c::t_f07002919fb84f 183-262
+internal/shiprig/cli/pack.go
+  s_505a2cfce9114c::t_f07002919fb84f 12,202-257
+core/plugin/protocol.go
+  s_505a2cfce9114c::t_f07002919fb84f 215-221
+docs/PUBLISH-PLAN-DESIGN.md
+  s_505a2cfce9114c::t_f07002919fb84f 69-82
+internal/shiprig/cli/publish.go
+  s_505a2cfce9114c::t_f07002919fb84f 63,130-143,223-228,238-239,407
+site/shiprig/index.md
+  s_505a2cfce9114c::t_f07002919fb84f 55-60
+core/ecosystem/cargo/cargo.go
+  s_505a2cfce9114c::t_f07002919fb84f 249-253
+core/ecosystem/node/node.go
+  s_505a2cfce9114c::t_f07002919fb84f 173-177,245-254,303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "15c9516daf6f04907c1b76bb43fc0d355e5d5af5",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
