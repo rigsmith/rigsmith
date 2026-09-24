@@ -83,3 +83,54 @@ func TestVersionInATerminalShowsTheBanner(t *testing.T) {
 		t.Errorf("--version in a terminal = %q, want the banner", got)
 	}
 }
+
+// Text with template syntax in it is printed as it is: a source build's path
+// can hold "{{", which as template source would panic cobra.
+func TestVersionTemplatePrintsTemplateSyntaxLiterally(t *testing.T) {
+	for _, tty := range []bool{false, true} {
+		was := isTerminal
+		isTerminal = func(io.Writer) bool { return tty }
+		t.Cleanup(func() { isTerminal = was })
+
+		var buf bytes.Buffer
+		root := &cobra.Command{Use: "demo", Run: func(*cobra.Command, []string) {}}
+		root.SetOut(&buf)
+		root.SetArgs([]string{"--version"})
+		err := Execute(context.Background(), root,
+			WithVersion("1.2.3"),
+			WithBanner(func(v string) string { return "BANNER {{ .Oops " + v }))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "1.2.3\n"
+		if tty {
+			want = "BANNER {{ .Oops 1.2.3\n"
+		}
+		if got := buf.String(); got != want {
+			t.Errorf("tty=%v: --version = %q, want %q", tty, got, want)
+		}
+	}
+	if got := literalTemplate(`source build · /tmp/{{x}}/"q"`); !strings.HasPrefix(got, "{{") {
+		t.Errorf("literalTemplate = %q", got)
+	}
+}
+
+// Piped, a source build prints its description, path and all, even when the
+// path holds template syntax.
+func TestPipedSourceBuildVersionWithTemplateSyntax(t *testing.T) {
+	t.Setenv("RIGSMITH_DEV_SRC", "/tmp/{{ .Oops }}/wt")
+	was := isTerminal
+	isTerminal = func(io.Writer) bool { return false }
+	t.Cleanup(func() { isTerminal = was })
+
+	var buf bytes.Buffer
+	root := &cobra.Command{Use: "demo", Run: func(*cobra.Command, []string) {}}
+	root.SetOut(&buf)
+	root.SetArgs([]string{"--version"})
+	if err := Execute(context.Background(), root, WithVersion("dev")); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); !strings.Contains(got, "/tmp/{{ .Oops }}/wt") {
+		t.Errorf("--version = %q, want the source path as it is", got)
+	}
+}

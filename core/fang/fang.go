@@ -194,9 +194,9 @@ func Execute(ctx context.Context, root *cobra.Command, options ...Option) error 
 		case !isTerminal(root.OutOrStdout()):
 			// A script reading `--version` gets the bare number, as
 			// `changeset --version` prints it.
-			root.SetVersionTemplate(plainVersion(root.Version) + "\n")
+			root.SetVersionTemplate(literalTemplate(plainVersion(root.Version)))
 		case banner != "":
-			root.SetVersionTemplate(banner + "\n")
+			root.SetVersionTemplate(literalTemplate(banner))
 		}
 	}
 	root.SetHelpFunc(helpFunc)
@@ -238,6 +238,13 @@ func Execute(ctx context.Context, root *cobra.Command, options ...Option) error 
 		return err //nolint:wrapcheck
 	}
 	return nil
+}
+
+// literalTemplate is a cobra template that prints text as it is, then a
+// newline. Text can hold `{{` (a source build's path, say), so it goes in as a
+// quoted string literal rather than as template source.
+func literalTemplate(text string) string {
+	return fmt.Sprintf("{{%q}}\n", text)
 }
 
 // isTerminal reports whether w is a terminal. A variable, so a test can stand
