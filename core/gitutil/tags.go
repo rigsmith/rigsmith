@@ -105,6 +105,16 @@ func filepathToSlash(p string) string {
 	return strings.ReplaceAll(p, "\\", "/")
 }
 
+// AnyTagMatches reports whether any tag in the repo matches pattern, a
+// `git tag --list` glob.
+func AnyTagMatches(ctx context.Context, repoRoot, pattern string) bool {
+	out, err := runGit(ctx, repoRoot, "tag", "--list", pattern)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) != ""
+}
+
 // TagExists reports whether a tag already exists in the repo.
 func TagExists(ctx context.Context, repoRoot, tag string) bool {
 	out, err := runGit(ctx, repoRoot, "tag", "--list", tag)

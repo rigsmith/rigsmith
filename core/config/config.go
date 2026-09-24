@@ -91,6 +91,12 @@ type Versioning struct {
 	// members — or one whose versions are computed at build time. Absent means
 	// true, the historical behavior.
 	Stamp *bool `json:"stamp,omitempty"`
+	// Record, when true, keeps a release record in .changeset/versions.json:
+	// `version` writes the version every package it releases lands at, stamped
+	// or not, and `doctor` checks manifests and tags against it
+	// (release-please's manifest). Absent means false: canon @changesets keeps
+	// no record.
+	Record bool `json:"record,omitempty"`
 }
 
 // StampEnabled reports whether `version` writes versions into manifests

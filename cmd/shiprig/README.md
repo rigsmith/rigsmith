@@ -47,6 +47,11 @@ nothing into a member's manifest (the number is recorded in
 pushed. `shiprig version --no-stamp` (or `versioning.stamp: false`) does the
 same anywhere.
 
+`versioning.record: true` keeps a release record beside it (`released` in
+`.changeset/versions.json`): the version every package last released at,
+stamped or not, which `doctor` checks the manifests and tags against. It's
+never a version source, and it's off by default, as canon keeps no record.
+
 A release that stops partway records the step it stopped at, and a later
 `shiprig release --from <step>` past it is refused (`--force` overrides): the
 steps in between never ran, and `publish` ships what `build` produced. See

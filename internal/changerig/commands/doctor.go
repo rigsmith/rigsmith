@@ -16,6 +16,9 @@ import (
 	"github.com/rigsmith/rigsmith/core/doctor"
 	"github.com/rigsmith/rigsmith/core/doctorui"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/core/gitutil"
+	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/versionstate"
 	"github.com/spf13/cobra"
 )
 
@@ -134,7 +137,78 @@ func changesetChecks(ctx context.Context, ws *Workspace, disc Discovery) []docto
 			Detail: fmt.Sprintf("%d changeset(s)", len(css))})
 		rs = append(rs, checkStranded(ctx, ws, css))
 	}
+	if r, ok := checkReleaseRecord(ctx, ws); ok {
+		rs = append(rs, r)
+	}
 	return rs
+}
+
+// checkReleaseRecord compares the release record (versioning.record) with the
+// tree and the tags. Two things drift from it without anything else noticing:
+// a manifest edited by hand, which the next plan bumps from as if it had been
+// released, and a release that was versioned but never tagged, which leaves
+// the next commit-sourced plan counting from an older tag. It reports nothing
+// when no record is kept.
+func checkReleaseRecord(ctx context.Context, ws *Workspace) (doctor.Result, bool) {
+	const name = "release record"
+	if !ws.Config.Versioning.Record {
+		return doctor.Result{}, false
+	}
+	recorded, err := versionstate.Read(ws.ChangesetDir)
+	if err != nil {
+		return doctor.Result{Name: name, Status: doctor.Fail,
+			Detail: fmt.Sprintf("can't read .changeset/%s: %v", versionstate.FileName, err),
+			Hint:   "fix the JSON by hand; `version` rewrites it on the next release"}, true
+	}
+	names := recorded.ReleasedNames()
+	if len(names) == 0 {
+		return doctor.Result{Name: name, Status: doctor.Info,
+			Detail: "nothing recorded yet: the next `version` records what it releases"}, true
+	}
+	pkgs, ecoOf, err := ws.Discover(ctx)
+	if err != nil {
+		return doctor.Result{Name: name, Status: doctor.Info,
+			Detail: "not checked — package discovery failed"}, true
+	}
+	byName := make(map[string]plugin.Package, len(pkgs))
+	for _, p := range pkgs {
+		byName[p.Name] = p
+	}
+	solo := len(pkgs) == 1
+	var edited, untagged []string
+	for _, n := range names {
+		p, ok := byName[n]
+		if !ok {
+			continue // renamed or removed: nothing left to disagree with
+		}
+		v := recorded.ReleasedAt(n)
+		if p.Version != v {
+			edited = append(edited, fmt.Sprintf("%s (%s here, %s recorded)", n, p.Version, v))
+		}
+		if ws.Config.SkipsTag(n) {
+			continue
+		}
+		// Only a package that has been tagged before is expected to be
+		// tagged now: one that never is (tagging happens elsewhere, or
+		// not at all) says nothing by having no tag.
+		anyTag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[n], p.Dir, n, "*", solo)
+		tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[n], p.Dir, n, v, solo)
+		if gitutil.AnyTagMatches(ctx, ws.Root, anyTag) && !gitutil.TagExists(ctx, ws.Root, tag) {
+			untagged = append(untagged, tag)
+		}
+	}
+	switch {
+	case len(edited) > 0:
+		return doctor.Result{Name: name, Status: doctor.Warn,
+			Detail: fmt.Sprintf("%d version(s) differ from the record: %s", len(edited), previewNames(edited, 3)),
+			Hint:   "a manifest edited by hand is bumped from as if it had been released; put it back, or release it with a changeset"}, true
+	case len(untagged) > 0:
+		return doctor.Result{Name: name, Status: doctor.Warn,
+			Detail: fmt.Sprintf("%d recorded release(s) have no tag: %s", len(untagged), previewNames(untagged, 3)),
+			Hint:   "expected between the version PR's merge and the publish that tags it; otherwise that publish didn't finish — `shiprig tag` (or a re-run of the release) creates them"}, true
+	}
+	return doctor.Result{Name: name, Status: doctor.OK,
+		Detail: fmt.Sprintf("%d package(s) recorded; versions and tags agree", len(names))}, true
 }
 
 // checkStranded reports changesets that can never release — they name no

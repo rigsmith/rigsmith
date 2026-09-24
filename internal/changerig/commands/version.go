@@ -393,6 +393,13 @@ func NewVersionCmd() *cobra.Command {
 						stateChanged = true
 					}
 				}
+				// The release record: every release, stamped or not. A
+				// snapshot is throwaway, and a range-only rewrite releases
+				// nothing.
+				if ws.Config.Versioning.Record && !m.RangeOnly && mode != planner.ModeSnapshot {
+					recorded.SetReleased(m.Name, m.ResolvedVersion())
+					stateChanged = true
+				}
 				if m.RangeOnly {
 					continue // "none" release: ranges rewritten, no version bump, no changelog
 				}

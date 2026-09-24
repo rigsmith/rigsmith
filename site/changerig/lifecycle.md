@@ -271,6 +271,38 @@ Changelog generators are **pluggable** — the built-in renderer dogfoods the sa
 JSON contract external plugins speak. Set `"changelog": "<plugin>"` in config to
 swap it in.
 
+### A release record {#record}
+
+Canon @changesets keeps no record of what it released: the current version is
+whatever the manifest says, and a consumed changeset is the only trace of a
+release. `"versioning": { "record": true }` keeps one, as release-please's
+manifest does. Every `version` run writes the version each package it releases
+lands at into `.changeset/versions.json`, under `released`, whether or not the
+manifest is stamped:
+
+```json
+{
+  "packages": {},
+  "released": { "app": "1.0.1", "lib": "2.0.0" }
+}
+```
+
+The record is never a version source. The manifest (or `packages`, for the
+versions that don't live in the tree) stays that, so turning it on changes no
+release decision. A snapshot records nothing, and nor does a range-only
+rewrite, which releases nothing. A package enters the record the first time it
+releases with the flag on; nothing is seeded, so the record never claims a
+release that didn't go through `version`.
+
+`doctor` checks the tree and the tags against it:
+
+- a manifest whose version differs from the record was edited by hand, and the
+  next plan would bump from it as if it had been released;
+- a recorded release with no tag, for a package that has been tagged before,
+  never finished publishing. It's expected in the window between the version
+  PR's merge and the publish that tags it. A package that's never tagged is
+  not flagged.
+
 ## `pre`
 
 ```sh

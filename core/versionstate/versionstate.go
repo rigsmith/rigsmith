@@ -9,6 +9,12 @@
 // version, and it has to live somewhere the next plan can bump from and a
 // resumed pipeline can read back; this file, beside the changesets, is that
 // somewhere. It is written by `version` and read by discovery.
+//
+// With `versioning.record` on, the same file also keeps the release record:
+// the version every package last released at, stamped or not. The record is
+// never a version source (the manifest, or Packages above, stays that); it is
+// what `doctor` checks the manifests and tags against, and the commit that
+// last changed the file marks the last release.
 package versionstate
 
 import (
@@ -28,6 +34,10 @@ type State struct {
 	// Packages maps a package's name (the one changesets use) to the version
 	// the last release computed for it.
 	Packages map[string]string `json:"packages"`
+	// Released maps a package's name to the version it last released at,
+	// for every package a `version` run released while `versioning.record`
+	// was on. Absent when the record was never kept.
+	Released map[string]string `json:"released,omitempty"`
 }
 
 // Read returns the recorded versions; an absent file is an empty state.
@@ -88,6 +98,35 @@ func (s *State) Delete(name string) {
 	if s != nil {
 		delete(s.Packages, name)
 	}
+}
+
+// ReleasedAt returns the version the record says name last released at, or "".
+func (s *State) ReleasedAt(name string) string {
+	if s == nil {
+		return ""
+	}
+	return s.Released[name]
+}
+
+// SetReleased records that name released at version.
+func (s *State) SetReleased(name, version string) {
+	if s.Released == nil {
+		s.Released = map[string]string{}
+	}
+	s.Released[name] = version
+}
+
+// ReleasedNames lists the packages in the release record, sorted.
+func (s *State) ReleasedNames() []string {
+	if s == nil {
+		return nil
+	}
+	out := make([]string, 0, len(s.Released))
+	for n := range s.Released {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Names lists the recorded packages, sorted.
