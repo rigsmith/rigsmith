@@ -42,7 +42,7 @@ The whole workflow is wired:
   each package's registry is asked whether its version is already there, and a
   package released by its git tag alone (a Go module, a desktop app, a private
   package with `privatePackages.tag`) is listed `tag-only` when its tag is
-  missing. `--output <file>` writes @changesets v3's plan JSON, chunked in
+  missing, and so is a package already published whose tag never made it. `--output <file>` writes @changesets v3's plan JSON, chunked in
   dependency order, and `--tag` sets the npm dist-tag. A registry that can't be
   reached fails it rather than guessing
 - `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI

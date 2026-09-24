@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -117,6 +118,9 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 	if distTag == "" {
 		distTag = "latest"
 		if pre != nil && pre.Mode == prestate.ModePre {
+			if strings.TrimSpace(pre.Tag) == "" {
+				return nil, fmt.Errorf("%s/pre.json is in pre mode with no tag: set its tag, or pass --tag", ws.ChangesetDir)
+			}
 			distTag = pre.Tag
 		}
 	}
@@ -171,8 +175,14 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 			})
 			switch {
 			case err != nil:
-				errs[i] = fmt.Errorf("%s: %w", p.Name, err)
-			case resp.NoRegistry:
+				// An adapter's error can carry a registry URL with credentials
+				// in it (npm echoes --registry); keep them out of the output.
+				errs[i] = fmt.Errorf("%s: %s", p.Name, redactURLCredentials(err.Error()))
+			case resp.NoRegistry, resp.Published:
+				// Released by its tag alone, or already published: either
+				// way the tag may still be missing (a push that failed after
+				// the upload, say), and publish would create it, so the plan
+				// lists it for the job that does.
 				entries[i] = tagOnly(p)
 			case !resp.Published:
 				access := ws.Config.Access
@@ -271,4 +281,12 @@ func printPublishPlan(w io.Writer, plan [][]planRelease) {
 	if len(tagOnly) > 0 {
 		fmt.Fprintf(w, "Packages to tag:\n%s\n", strings.Join(tagOnly, "\n"))
 	}
+}
+
+// urlCredentials matches the user[:password]@ part of a URL.
+var urlCredentials = regexp.MustCompile(`(://)[^/@\s]+@`)
+
+// redactURLCredentials masks credentials embedded in any URL in s.
+func redactURLCredentials(s string) string {
+	return urlCredentials.ReplaceAllString(s, "${1}***@")
 }
