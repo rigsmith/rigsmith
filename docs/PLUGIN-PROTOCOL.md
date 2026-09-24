@@ -55,6 +55,7 @@ stdout. Methods (see `core/plugin/protocol.go` for the exact structs):
 | `discover` | `{repoRoot, sourcePath}` | `{packages: [Package]}` | enumerate releasable packages |
 | `set-version` | `{package, newVersion, dependencyUpdates}` | — | stamp a version (format-preserving) |
 | `publish` | `{package, packageSource, access, dryRun}` | `{published, skipped, message}` | publish via the native package manager (idempotent) |
+| `published` | `{package, packageSource}` | `{published, noRegistry}` | is this version already on the registry? Publishes nothing. `noRegistry` for an ecosystem released by its tag alone; a registry that can't be reached is an error, never `published: false` |
 
 `Package` carries `{name, displayName, version, dir, manifestPath, versionFile,
 private, dependencies[]}`. `versionFile` differs from `manifestPath` when the

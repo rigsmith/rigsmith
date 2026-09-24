@@ -60,6 +60,7 @@ stdout:
 | `discover` | `{repoRoot, sourcePath}` | `{packages: [Package]}` | enumerate releasable packages |
 | `set-version` | `{package, newVersion, dependencyUpdates}` | — | stamp a version (format-preserving) |
 | `publish` | `{package, packageSource, access, dryRun}` | `{published, skipped, message}` | publish via the native package manager (idempotent) |
+| `published` | `{package, packageSource}` | `{published, noRegistry}` | is this version already on the registry? Publishes nothing. `noRegistry` for an ecosystem released by its tag alone; a registry that can't be reached is an error, never `published: false` |
 
 ::: tip Full reference
 The complete protocol — every struct, the changelog-generator contract, and the

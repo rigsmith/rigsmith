@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -68,7 +69,8 @@ func TestPackageBaseAddress(t *testing.T) {
 			t.Errorf("packageBaseAddress(%q) = %q, %v", source, got, err)
 		}
 	}
-	if _, err := packageBaseAddress(context.Background(), "my-feed"); err == nil {
-		t.Error("a NuGet.config source name can't be resolved here; want an error")
+	// A NuGet.config source name can't be resolved here: say so, and how to fix it.
+	if _, err := packageBaseAddress(context.Background(), "my-feed"); err == nil || !strings.Contains(err.Error(), "service index URL") {
+		t.Errorf("packageBaseAddress(my-feed) error = %v, want the named-source explanation", err)
 	}
 }
