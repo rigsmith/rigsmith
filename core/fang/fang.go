@@ -9,7 +9,8 @@
 //   - evalGroups renders command groups that were never explicitly registered
 //     (upstream PR #97)
 //   - WithBanner, a brand header printed atop the root help and reused as the
-//     `--version` output (rigsmith-local)
+//     `--version` output in a terminal; piped, `--version` prints the bare
+//     version number (rigsmith-local)
 //
 // Keep this list current when re-syncing from upstream.
 package fang
@@ -26,6 +27,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/term"
 	mango "github.com/muesli/mango-cobra"
 	"github.com/muesli/roff"
 	"github.com/spf13/cobra"
@@ -188,8 +190,13 @@ func Execute(ctx context.Context, root *cobra.Command, options ...Option) error 
 	root.SilenceErrors = true
 	if !opts.skipVersion {
 		root.Version = buildVersion(opts)
-		if banner != "" {
-			root.SetVersionTemplate(banner + "\n")
+		switch {
+		case !isTerminal(root.OutOrStdout()):
+			// A script reading `--version` gets the bare number, as
+			// `changeset --version` prints it.
+			root.SetVersionTemplate(literalTemplate(plainVersion(root.Version)))
+		case banner != "":
+			root.SetVersionTemplate(literalTemplate(banner))
 		}
 	}
 	root.SetHelpFunc(helpFunc)
@@ -231,6 +238,31 @@ func Execute(ctx context.Context, root *cobra.Command, options ...Option) error 
 		return err //nolint:wrapcheck
 	}
 	return nil
+}
+
+// literalTemplate is a cobra template that prints text as it is, then a
+// newline. Text can hold `{{` (a source build's path, say), so it goes in as a
+// quoted string literal rather than as template source.
+func literalTemplate(text string) string {
+	return fmt.Sprintf("{{%q}}\n", text)
+}
+
+// isTerminal reports whether w is a terminal. A variable, so a test can stand
+// in for one.
+var isTerminal = func(w io.Writer) bool {
+	f, ok := w.(term.File)
+	return ok && term.IsTerminal(f.Fd())
+}
+
+// plainVersion is the bare version number in a resolved version string, for a
+// script to compare: "v1.2.3 (abc1234)" is "1.2.3". A source build has no
+// number, so its description is returned as it is.
+func plainVersion(version string) string {
+	fields := strings.Fields(version)
+	if len(fields) == 0 || strings.HasPrefix(version, "source build") {
+		return version
+	}
+	return strings.TrimPrefix(fields[0], "v")
 }
 
 func buildVersion(opts settings) string {
