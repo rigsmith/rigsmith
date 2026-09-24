@@ -1,9 +1,12 @@
 package gitutil
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -98,12 +101,91 @@ func FileHistory(ctx context.Context, dir, relPath string) ([]string, error) {
 	return shas, nil
 }
 
-// ShowFile returns relPath's content (relative to dir) at rev, and false when
-// the file (or rev) doesn't exist there.
-func ShowFile(ctx context.Context, dir, rev, relPath string) ([]byte, bool) {
-	out, err := runGit(ctx, dir, "show", rev+":./"+filepath.ToSlash(relPath))
+// IsShallow reports whether dir's repository is a shallow clone, whose
+// history stops at grafted commits that look parentless.
+func IsShallow(ctx context.Context, dir string) bool {
+	out, err := runGit(ctx, dir, "rev-parse", "--is-shallow-repository")
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
+// Parents returns each commit's parents (none for a root commit), read in one
+// git call. The parents are the commits' own, not the ones a path-limited
+// log rewrites them to.
+func Parents(ctx context.Context, dir string, shas []string) (map[string][]string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-list", "--no-walk", "--parents", "--stdin")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(strings.Join(shas, "\n") + "\n")
+	out, err := cmd.Output()
 	if err != nil {
-		return nil, false
+		return nil, fmt.Errorf("gitutil: parents: %w", err)
 	}
-	return []byte(out), true
+	parents := make(map[string][]string, len(shas))
+	for _, line := range strings.Split(string(out), "\n") {
+		if f := strings.Fields(line); len(f) > 0 {
+			parents[f[0]] = f[1:]
+		}
+	}
+	return parents, nil
+}
+
+// FileAtRevs reads relPath (relative to dir) at each of revs in one git call.
+// A rev where the file doesn't exist is absent from the result; a rev that
+// doesn't exist is an error, not an absent file.
+func FileAtRevs(ctx context.Context, dir string, revs []string, relPath string) (map[string][]byte, error) {
+	prefix, err := runGit(ctx, dir, "rev-parse", "--show-prefix")
+	if err != nil {
+		return nil, fmt.Errorf("gitutil: not a git repository: %w", err)
+	}
+	path := strings.TrimSpace(prefix) + filepath.ToSlash(relPath)
+	var in strings.Builder
+	for _, rev := range revs {
+		// A commit check first, so a missing file and a missing commit
+		// don't both read as "missing".
+		in.WriteString(rev + "^{commit}\n" + rev + ":" + path + "\n")
+	}
+	cmd := exec.CommandContext(ctx, "git", "cat-file", "--batch")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(in.String())
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("gitutil: reading %s: %w", path, err)
+	}
+	files := make(map[string][]byte, len(revs))
+	rest := out
+	next := func() (header string, body []byte, err error) {
+		nl := bytes.IndexByte(rest, '\n')
+		if nl < 0 {
+			return "", nil, fmt.Errorf("gitutil: truncated cat-file output")
+		}
+		header, rest = string(rest[:nl]), rest[nl+1:]
+		if strings.HasSuffix(header, " missing") || strings.HasSuffix(header, " ambiguous") {
+			return header, nil, nil
+		}
+		f := strings.Fields(header)
+		if len(f) != 3 {
+			return "", nil, fmt.Errorf("gitutil: unexpected cat-file header %q", header)
+		}
+		size, err := strconv.Atoi(f[2])
+		if err != nil || size+1 > len(rest) {
+			return "", nil, fmt.Errorf("gitutil: bad cat-file size in %q", header)
+		}
+		body, rest = rest[:size], rest[size+1:]
+		return header, body, nil
+	}
+	for _, rev := range revs {
+		commit, body, err := next()
+		if err != nil {
+			return nil, err
+		}
+		if body == nil {
+			return nil, fmt.Errorf("gitutil: no commit %s", strings.TrimSuffix(commit, " missing"))
+		}
+		if _, body, err = next(); err != nil {
+			return nil, err
+		}
+		if body != nil {
+			files[rev] = body
+		}
+	}
+	return files, nil
 }

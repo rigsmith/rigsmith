@@ -231,12 +231,14 @@ func collapseInitialRelease(sets []*changeset.Changeset, cfg *config.Config) []*
 }
 
 // recordBaselines finds, for each package in the committed release record
-// (versioning.record), the commit that recorded its current release: the
-// newest commit that changed its `released` entry in .changeset/versions.json.
-// That commit is the package's last release, so its commits since are what
-// the next release is made of; the record wins over a tag, which can be
-// deleted, never pushed, or (outside Go's module tags) not found at all. A
-// package with no record entry, or no record kept, falls back to its tag.
+// (versioning.record), the commit that recorded its current release: a commit
+// whose record holds the package's current version while none of its own
+// parents' records does. That commit is the package's last release, so its
+// commits since are what the next release is made of; the record wins over a
+// tag, which can be deleted or never pushed. A package with no record entry,
+// or no record kept, falls back to its tag, and so does every package in a
+// shallow clone, whose cut-off history would make its oldest commit look like
+// the one that recorded everything.
 func (w *Workspace) recordBaselines(ctx context.Context) (map[string]string, error) {
 	if !w.Config.Versioning.Record {
 		return nil, nil
@@ -249,36 +251,67 @@ func (w *Workspace) recordBaselines(ctx context.Context) (map[string]string, err
 	if err != nil || len(history) == 0 {
 		return nil, nil // not committed yet (or no git): tags, as before
 	}
-	released := func(rev string) (map[string]string, error) {
-		data, ok := gitutil.ShowFile(ctx, w.Root, rev, rel)
-		if !ok {
-			return nil, nil
-		}
-		s, err := versionstate.Parse(data)
-		if err != nil {
-			return nil, fmt.Errorf("reading %s at %.12s: %w", rel, rev, err)
-		}
-		return s.Released, nil
+	if gitutil.IsShallow(ctx, w.Root) {
+		return nil, nil
 	}
-	current, err := released(history[0])
+	parents, err := gitutil.Parents(ctx, w.Root, history)
 	if err != nil {
 		return nil, err
 	}
-	// Newest first, a package's baseline is the first commit whose previous
-	// record doesn't hold its current version: every newer commit left the
-	// entry as it is, so this one set it.
-	out := make(map[string]string, len(current))
-	for i, sha := range history {
-		// The record as it stood before this commit: at the next-older
-		// commit that changed it (nothing in between did).
-		var before map[string]string
-		if i+1 < len(history) {
-			if before, err = released(history[i+1]); err != nil {
-				return nil, err
+	// Every record the search can look at, read in one pass: HEAD's, each
+	// commit's that changed the file, and each of their parents'.
+	revs := append([]string{"HEAD"}, history...)
+	for _, sha := range history {
+		revs = append(revs, parents[sha]...)
+	}
+	files, err := gitutil.FileAtRevs(ctx, w.Root, revs, rel)
+	if err != nil {
+		return nil, err
+	}
+	records := map[string]map[string]string{}
+	released := func(rev string) (map[string]string, error) {
+		if r, ok := records[rev]; ok {
+			return r, nil
+		}
+		var r map[string]string
+		if data, ok := files[rev]; ok { // no file there is an empty record
+			s, err := versionstate.Parse(data)
+			if err != nil {
+				return nil, fmt.Errorf("reading %s at %.12s: %w", rel, rev, err)
 			}
+			r = s.Released
+		}
+		records[rev] = r
+		return r, nil
+	}
+	current, err := released("HEAD")
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(current))
+	for _, sha := range history { // newest first
+		after, err := released(sha)
+		if err != nil {
+			return nil, err
 		}
 		for name, v := range current {
-			if _, found := out[name]; !found && before[name] != v {
+			if _, found := out[name]; found || after[name] != v {
+				continue
+			}
+			// A merge that took the entry from one side didn't record it:
+			// that side's commit did, further down the history.
+			set := true
+			for _, p := range parents[sha] {
+				before, err := released(p)
+				if err != nil {
+					return nil, err
+				}
+				if before[name] == v {
+					set = false
+					break
+				}
+			}
+			if set {
 				out[name] = sha
 			}
 		}
