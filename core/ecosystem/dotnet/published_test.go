@@ -48,6 +48,7 @@ func TestPublishedReadsTheFlatContainer(t *testing.T) {
 		{"leading zeros", "01.02.0", 200, `{"versions":["1.2.0"]}`, true, false},
 		{"a fourth number that isn't zero", "1.2.0.1", 200, `{"versions":["1.2.0"]}`, false, false},
 		{"a 200 without the list", "1.2.0", 200, `{}`, false, true},
+		{"a 200 with an empty list", "1.2.0", 200, `{"versions":[]}`, false, true},
 		{"no such package", "1.2.0", 404, ``, false, false},
 		{"the feed failed", "1.2.0", 500, `oops`, false, true},
 	} {
@@ -76,5 +77,23 @@ func TestPackageBaseAddress(t *testing.T) {
 	// A NuGet.config source name can't be resolved here: say so, and how to fix it.
 	if _, err := packageBaseAddress(context.Background(), "my-feed"); err == nil || !strings.Contains(err.Error(), "service index URL") {
 		t.Errorf("packageBaseAddress(my-feed) error = %v, want the named-source explanation", err)
+	}
+}
+
+// Credentials in a feed URL never reach an error message.
+func TestFeedErrorsRedactCredentials(t *testing.T) {
+	// Nothing listens on port 1, so the request fails.
+	_, err := (&Adapter{}).Published(context.Background(), plugin.PublishedRequest{
+		Package:       plugin.Package{Name: "Acme.Lib", Version: "1.0.0"},
+		PackageSource: "http://user:s3cret@127.0.0.1:1/v3/index.json",
+	})
+	if err == nil {
+		t.Fatal("want an error from an unreachable feed")
+	}
+	if strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("error leaks the credential: %v", err)
+	}
+	if !strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Errorf("error should still name the feed: %v", err)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -174,6 +175,11 @@ func (s *SubprocessEcosystem) Publish(ctx context.Context, req PublishRequest) (
 // published field (unless it says noRegistry), or one claiming both, is an
 // error, never read as "not published".
 func (s *SubprocessEcosystem) Published(ctx context.Context, req PublishedRequest) (PublishedResponse, error) {
+	// A plugin written before the method existed would fail it with an
+	// unknown-method error; say what's missing instead.
+	if !slices.Contains(s.info.Capabilities, MethodPublished) {
+		return PublishedResponse{}, fmt.Errorf("plugin %s doesn't support %q (not in its capabilities), which publish-plan needs: update the plugin", s.info.ID, MethodPublished)
+	}
 	req.APIVersion = APIVersion
 	var raw struct {
 		Published  *bool  `json:"published"`

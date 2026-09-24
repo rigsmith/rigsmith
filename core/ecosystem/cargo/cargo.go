@@ -12,6 +12,7 @@ package cargo
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -197,7 +198,7 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 		return plugin.PublishedResponse{}, fmt.Errorf("can't check %s@%s on the registry %q: only crates.io can be asked whether a version is published", req.Package.Name, req.Package.Version, src)
 	}
 	url := cratesIOBase + "/api/v1/crates/" + req.Package.Name + "/" + req.Package.Version
-	return registryHas(ctx, url, req.Package.Name+"@"+req.Package.Version)
+	return registryHas(ctx, url, req.Package.Name+"@"+req.Package.Version, req.Package.Version)
 }
 
 // cratesIOBase is crates.io's API base: a variable so a test can point it
@@ -208,8 +209,10 @@ var cratesIOBase = "https://crates.io"
 // shorten its timeout.
 var registryHTTP = &http.Client{Timeout: 30 * time.Second}
 
-// registryHas GETs url: 200 means the version exists, 404 that it doesn't.
-func registryHas(ctx context.Context, url, what string) (plugin.PublishedResponse, error) {
+// registryHas GETs url: a 200 naming version means it exists, 404 that it
+// doesn't. A 200 that isn't that answer (a login page from a proxy, say) is
+// an error, not "published".
+func registryHas(ctx context.Context, url, what, version string) (plugin.PublishedResponse, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return plugin.PublishedResponse{}, err
@@ -223,6 +226,14 @@ func registryHas(ctx context.Context, url, what string) (plugin.PublishedRespons
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
+		var answer struct {
+			Version struct {
+				Num string `json:"num"`
+			} `json:"version"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&answer); err != nil || answer.Version.Num != version {
+			return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the registry: a 200 that isn't its version record", what)
+		}
 		return plugin.PublishedResponse{Published: true}, nil
 	case http.StatusNotFound:
 		return plugin.PublishedResponse{}, nil

@@ -3,9 +3,11 @@ package dotnet
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -36,9 +38,10 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 	if !found {
 		return plugin.PublishedResponse{}, nil
 	}
-	// A 200 without the list isn't an answer.
-	if index.Versions == nil {
-		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the feed: its version index has no versions list", what)
+	// A 200 means the package has versions (a package with none is a 404), so
+	// one without a list, or with an empty one, isn't an answer.
+	if index.Versions == nil || len(*index.Versions) == 0 {
+		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the feed: its version index lists no versions", what)
 	}
 	want := normalizeNuGetVersion(req.Package.Version)
 	for _, v := range *index.Versions {
@@ -102,42 +105,65 @@ func packageBaseAddress(ctx context.Context, source string) (string, error) {
 		return "", err
 	}
 	if !found {
-		return "", fmt.Errorf("%s: no v3 service index there", source)
+		return "", fmt.Errorf("%s: no v3 service index there", redactURL(source))
 	}
 	for _, r := range index.Resources {
 		if strings.HasPrefix(r.Type, "PackageBaseAddress/3.0.0") {
 			return strings.TrimSuffix(r.ID, "/") + "/", nil
 		}
 	}
-	return "", fmt.Errorf("%s: the service index names no PackageBaseAddress", source)
+	return "", fmt.Errorf("%s: the service index names no PackageBaseAddress", redactURL(source))
 }
 
 // registryHTTP is the client for feed queries: a variable so a test can
 // shorten its timeout.
 var registryHTTP = &http.Client{Timeout: 30 * time.Second}
 
-// getJSON GETs url into dst. It reports false, with no error, for a 404; any
-// other non-200 is an error.
-func getJSON(ctx context.Context, url string, dst any) (bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// redactURL hides credentials a feed URL may carry (https://user:token@…)
+// before it goes into an error.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
 	if err != nil {
-		return false, err
+		return "(unparseable feed URL)"
+	}
+	return u.Redacted()
+}
+
+// withoutURL drops the URL a *url.Error repeats, keeping its cause, so the
+// message names the (redacted) URL once. The client masks a password in its
+// own errors already; redactURL is what keeps credentials out of ours.
+func withoutURL(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err
+	}
+	return err
+}
+
+// getJSON GETs rawURL into dst. It reports false, with no error, for a 404;
+// any other non-200 is an error. Errors carry the URL with its credentials
+// redacted.
+func getJSON(ctx context.Context, rawURL string, dst any) (bool, error) {
+	shown := redactURL(rawURL)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return false, fmt.Errorf("%s: %w", shown, withoutURL(err))
 	}
 	resp, err := registryHTTP.Do(req)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%s: %w", shown, withoutURL(err))
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusOK:
 		if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
-			return false, fmt.Errorf("%s: %w", url, err)
+			return false, fmt.Errorf("%s: %w", shown, err)
 		}
 		return true, nil
 	case http.StatusNotFound:
 		return false, nil
 	default:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return false, fmt.Errorf("%s: %s %s", url, resp.Status, strings.TrimSpace(string(body)))
+		return false, fmt.Errorf("%s: %s %s", shown, resp.Status, strings.TrimSpace(string(body)))
 	}
 }

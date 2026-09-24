@@ -14,12 +14,15 @@ func TestPublishedAsksTheCratesAPI(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		status  int
+		body    string
 		want    bool
 		wantErr bool
 	}{
-		{"the version is there", http.StatusOK, true, false},
-		{"it isn't", http.StatusNotFound, false, false},
-		{"the registry failed", http.StatusInternalServerError, false, true},
+		{"the version is there", http.StatusOK, `{"version":{"num":"1.2.0"}}`, true, false},
+		{"it isn't", http.StatusNotFound, ``, false, false},
+		{"the registry failed", http.StatusInternalServerError, ``, false, true},
+		{"a 200 that isn't the answer", http.StatusOK, `<html>sign in</html>`, false, true},
+		{"a 200 for another version", http.StatusOK, `{"version":{"num":"1.1.0"}}`, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +33,7 @@ func TestPublishedAsksTheCratesAPI(t *testing.T) {
 					t.Error("crates.io refuses requests without a User-Agent")
 				}
 				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
 			was := cratesIOBase

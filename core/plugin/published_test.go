@@ -26,7 +26,7 @@ func helperEcosystem(t *testing.T, answer string) *SubprocessEcosystem {
 	t.Setenv("RIGSMITH_HELPER_PLUGIN", answer)
 	return &SubprocessEcosystem{
 		host: &Host{Path: os.Args[0], BaseArgs: []string{"-test.run=^TestHelperPlugin$", "--"}},
-		info: EcosystemInfo{ID: "helper"},
+		info: EcosystemInfo{ID: "helper", Capabilities: []string{MethodPublished}},
 	}
 }
 
@@ -55,5 +55,16 @@ func TestSubprocessPublishedInsistsOnAnAnswer(t *testing.T) {
 		if err != nil || resp.Published != tc.published || resp.NoRegistry != tc.noRegistry {
 			t.Errorf("%s: resp = %+v, err = %v", tc.answer, resp, err)
 		}
+	}
+}
+
+// A plugin that doesn't advertise the method gets a clear error, not an
+// unknown-method failure.
+func TestSubprocessPublishedNeedsTheCapability(t *testing.T) {
+	eco := helperEcosystem(t, `{"published": true}`)
+	eco.info.Capabilities = []string{MethodDiscover, MethodPublish}
+	_, err := eco.Published(context.Background(), PublishedRequest{Package: Package{Name: "lib", Version: "1.0.0"}})
+	if err == nil || !strings.Contains(err.Error(), "doesn't support") {
+		t.Errorf("err = %v, want the missing-capability error", err)
 	}
 }
