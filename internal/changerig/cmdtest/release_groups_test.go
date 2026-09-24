@@ -84,6 +84,9 @@ func TestVersionOnlyReleasesOneGroup(t *testing.T) {
 	dir := groupsRepo(t, "")
 	code, out := runChangerig(t, dir, "version", "--yes", "--only", "tool", "--only", "cli")
 	assertExitZero(t, code, out)
+	// Waiting for a later run, not ignored.
+	assertContains(t, out, "left 2 changeset(s) for a later run: they name only packages outside --only (lib, solo)")
+	assertNotContains(t, out, "ignored packages")
 
 	for pkg, version := range map[string]string{"tool": "1.1.0", "cli": "1.1.0", "lib": "1.0.0", "app": "1.0.0", "solo": "1.0.0"} {
 		assertContains(t, readFile(t, filepath.Join(dir, "packages", pkg, "package.json")), `"`+version+`"`)

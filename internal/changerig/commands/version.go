@@ -566,7 +566,12 @@ func NewVersionCmd() *cobra.Command {
 				}
 			}
 			if len(kept) > 0 {
-				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("kept %d changeset(s) naming only ignored packages.", len(kept))))
+				msg := fmt.Sprintf("kept %d changeset(s) naming only ignored packages.", len(kept))
+				if len(onlyFlag) > 0 {
+					// Under --only they're waiting, not ignored: say for what.
+					msg = fmt.Sprintf("left %d changeset(s) for a later run: they name only packages outside --only (%s).", len(kept), previewNames(keptPackages(kept), 4))
+				}
+				fmt.Fprintln(out, DimStyle.Render(msg))
 			}
 			if len(unstamped) > 0 {
 				why := "--no-stamp"
@@ -888,4 +893,20 @@ func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugi
 	}
 	sort.Strings(missing)
 	return fmt.Errorf("--only names part of a release group:\n%s\npass each package's whole release group (`status --output` lists them)", strings.Join(missing, "\n"))
+}
+
+// keptPackages lists the packages the kept changesets name, sorted.
+func keptPackages(kept []*changeset.Changeset) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, cs := range kept {
+		for _, r := range cs.Releases {
+			if !seen[r.Name] {
+				seen[r.Name] = true
+				names = append(names, r.Name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
 }

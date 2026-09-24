@@ -33,6 +33,7 @@ func TestVersionIgnoreLeavesAPackageForLater(t *testing.T) {
 
 	code, out := runChangerig(t, dir, "version", "--yes", "--ignore", "pkg-b")
 	assertExitZero(t, code, out)
+	assertContains(t, out, "kept 1 changeset(s) naming only ignored packages.")
 
 	assertContains(t, readFile(t, filepath.Join(dir, "packages", "pkg-a", "package.json")), `"1.1.0"`)
 	assertContains(t, readFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json")), `"1.0.0"`)
