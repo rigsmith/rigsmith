@@ -194,6 +194,12 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 	return os.WriteFile(path, []byte(updated), 0o644)
 }
 
+// Published answers NoRegistry: a Go module is published by its git tag, which the module proxy serves, so
+// there's no registry to ask.
+func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	return plugin.PublishedResponse{NoRegistry: true}, nil
+}
+
 // Publish for a Go module is a no-op at the registry level: there is no registry
 // push — a Go module is "published" by creating and pushing a git tag
 // (module/vX.Y.Z), which the module proxy then serves. The shiprig `publish`

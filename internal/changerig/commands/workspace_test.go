@@ -31,6 +31,9 @@ func (s stubEco) SetVersion(context.Context, plugin.SetVersionRequest) error { r
 func (s stubEco) Publish(context.Context, plugin.PublishRequest) (plugin.PublishResponse, error) {
 	return plugin.PublishResponse{}, nil
 }
+func (s stubEco) Published(context.Context, plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	return plugin.PublishedResponse{}, nil
+}
 func (s stubEco) Artifacts(context.Context, plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
 	return plugin.ArtifactsResponse{}, nil
 }

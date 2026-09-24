@@ -12,13 +12,17 @@ package cargo
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/cmderr"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -179,6 +183,66 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // failure is returned as an error. A non-crates.io req.PackageSource is passed as
 // --registry (the crates.io aliases "crates.io"/"crates" mean the default).
 //
+// Published asks crates.io's web API (GET /api/v1/crates/<name>/<version>)
+// whether the version exists: 200 is published, 404 isn't, anything else is
+// an error rather than a guess. Only crates.io is asked: publish passes any
+// other source to cargo as a named registry (--registry), whose API isn't
+// known here, and an alternate registry need not serve that endpoint at all,
+// so its 404 would read as "not published". A private (publish = false) crate
+// has no registry.
+func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	if req.Package.Private {
+		return plugin.PublishedResponse{NoRegistry: true}, nil
+	}
+	if src := req.PackageSource; src != "" && src != "crates.io" && src != "crates" {
+		return plugin.PublishedResponse{}, fmt.Errorf("can't check %s@%s on the registry %q: only crates.io can be asked whether a version is published", req.Package.Name, req.Package.Version, src)
+	}
+	url := cratesIOBase + "/api/v1/crates/" + req.Package.Name + "/" + req.Package.Version
+	return registryHas(ctx, url, req.Package.Name+"@"+req.Package.Version, req.Package.Version)
+}
+
+// cratesIOBase is crates.io's API base: a variable so a test can point it
+// at a local server.
+var cratesIOBase = "https://crates.io"
+
+// registryHTTP is the client for registry queries: a variable so a test can
+// shorten its timeout.
+var registryHTTP = &http.Client{Timeout: 30 * time.Second}
+
+// registryHas GETs url: a 200 naming version means it exists, 404 that it
+// doesn't. A 200 that isn't that answer (a login page from a proxy, say) is
+// an error, not "published".
+func registryHas(ctx context.Context, url, what, version string) (plugin.PublishedResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return plugin.PublishedResponse{}, err
+	}
+	// crates.io refuses requests without a User-Agent.
+	req.Header.Set("User-Agent", "shiprig (https://rigsmith.dev)")
+	resp, err := registryHTTP.Do(req)
+	if err != nil {
+		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the registry: %w", what, err)
+	}
+	defer resp.Body.Close()
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var answer struct {
+			Version struct {
+				Num string `json:"num"`
+			} `json:"version"`
+		}
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&answer); err != nil || answer.Version.Num != version {
+			return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the registry: a 200 that isn't its version record", what)
+		}
+		return plugin.PublishedResponse{Published: true}, nil
+	case http.StatusNotFound:
+		return plugin.PublishedResponse{}, nil
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the registry: %s: %s", what, resp.Status, cratesMessage(body))
+	}
+}
+
 // Credentials: cargo uses the caller's token (`cargo login` / CARGO_REGISTRY_TOKEN),
 // which we do not manage here.
 func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugin.PublishResponse, error) {

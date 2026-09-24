@@ -145,6 +145,7 @@ const (
 	MethodDiscover     = "discover"
 	MethodSetVersion   = "set-version"
 	MethodPublish      = "publish"
+	MethodPublished    = "published"
 	MethodArtifacts    = "artifacts"
 	MethodReleaseInit  = "release-init"
 	MethodLocalOverlay = "local-overlay"
@@ -233,6 +234,29 @@ type PublishResponse struct {
 	Published bool   `json:"published"` // false if skipped (already present)
 	Skipped   bool   `json:"skipped"`
 	Message   string `json:"message,omitempty"`
+}
+
+// PublishedRequest asks an adapter whether a package's version is already on
+// its registry, publishing nothing. It is what `shiprig publish-plan` builds
+// from, as @changesets' publish-plan asks npm, so it must be safe to call
+// concurrently for distinct packages and needs no credential beyond the
+// ambient one.
+type PublishedRequest struct {
+	APIVersion    int     `json:"apiVersion"`
+	RepoRoot      string  `json:"repoRoot"`
+	Package       Package `json:"package"`
+	PackageSource string  `json:"packageSource"` // as for PublishRequest: a feed name or URL
+}
+
+// PublishedResponse is the registry's answer. NoRegistry marks an ecosystem
+// that publishes nothing to a registry (a Go module ships as a tag, a desktop
+// app as release assets), so its release is its tag. A registry the adapter
+// couldn't reach, or an answer it couldn't read, is an error, never "not
+// published": a plan built on a guess would publish or skip the wrong thing.
+type PublishedResponse struct {
+	Published  bool   `json:"published"`
+	NoRegistry bool   `json:"noRegistry,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 // ArtifactsRequest asks an adapter to build a package's distributable artifacts

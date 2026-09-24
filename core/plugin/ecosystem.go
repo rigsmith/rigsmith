@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -35,6 +36,10 @@ type Ecosystem interface {
 	//
 	// A real publish is never called concurrently.
 	Publish(ctx context.Context, req PublishRequest) (PublishResponse, error)
+	// Published reports whether a package's version is already on its
+	// registry, without publishing: see PublishedRequest. An ecosystem with no
+	// registry answers NoRegistry.
+	Published(ctx context.Context, req PublishedRequest) (PublishedResponse, error)
 	// Artifacts builds the package's distributable files into req.OutputDir and
 	// returns them. Separate from Publish: it produces, it does not ship. An
 	// adapter with nothing to build (e.g. a Go module published by tag, with no
@@ -164,6 +169,35 @@ func (s *SubprocessEcosystem) Publish(ctx context.Context, req PublishRequest) (
 	var resp PublishResponse
 	err := s.host.Call(ctx, MethodPublish, req, &resp)
 	return resp, err
+}
+
+// Published calls the plugin and insists on an answer: a response without a
+// published field (unless it says noRegistry), or one claiming both, is an
+// error, never read as "not published".
+func (s *SubprocessEcosystem) Published(ctx context.Context, req PublishedRequest) (PublishedResponse, error) {
+	// A plugin written before the method existed would fail it with an
+	// unknown-method error; say what's missing instead.
+	if !slices.Contains(s.info.Capabilities, MethodPublished) {
+		return PublishedResponse{}, fmt.Errorf("plugin %s doesn't support %q (not in its capabilities), which publish-plan needs: update the plugin", s.info.ID, MethodPublished)
+	}
+	req.APIVersion = APIVersion
+	var raw struct {
+		Published  *bool  `json:"published"`
+		NoRegistry bool   `json:"noRegistry"`
+		Message    string `json:"message"`
+	}
+	if err := s.host.Call(ctx, MethodPublished, req, &raw); err != nil {
+		return PublishedResponse{}, err
+	}
+	switch {
+	case raw.NoRegistry && raw.Published != nil && *raw.Published:
+		return PublishedResponse{}, fmt.Errorf("plugin %s answered published and noRegistry for %s", s.Info().ID, req.Package.Name)
+	case raw.NoRegistry:
+		return PublishedResponse{NoRegistry: true, Message: raw.Message}, nil
+	case raw.Published == nil:
+		return PublishedResponse{}, fmt.Errorf("plugin %s gave no published answer for %s@%s", s.Info().ID, req.Package.Name, req.Package.Version)
+	}
+	return PublishedResponse{Published: *raw.Published, Message: raw.Message}, nil
 }
 
 func (s *SubprocessEcosystem) Artifacts(ctx context.Context, req ArtifactsRequest) (ArtifactsResponse, error) {

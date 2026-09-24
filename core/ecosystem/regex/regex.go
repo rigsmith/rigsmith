@@ -137,6 +137,12 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 	return os.WriteFile(path, []byte(updated), 0o644)
 }
 
+// Published answers NoRegistry: a regex package is released by its git tag, so
+// there's no registry to ask.
+func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	return plugin.PublishedResponse{NoRegistry: true}, nil
+}
+
 // Publish is a no-op at the registry level: a regex package is "published" by
 // the publish tagging phase (name@version), exactly like a Go module.
 func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugin.PublishResponse, error) {

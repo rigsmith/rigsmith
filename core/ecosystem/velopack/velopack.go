@@ -166,6 +166,12 @@ func (a *Adapter) resolveBase(dir string) (plugin.Ecosystem, error) {
 	return base, nil
 }
 
+// Published answers NoRegistry: a Velopack app is released by its git tag and forge release, so
+// there's no registry to ask.
+func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	return plugin.PublishedResponse{NoRegistry: true}, nil
+}
+
 // Publish is a no-op: a Velopack app is released by the tagging phase and the
 // forge release (Artifacts builds the installers + feeds to attach/upload), not
 // pushed to a registry. (Not advertised in Capabilities.)
