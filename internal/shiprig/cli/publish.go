@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -509,6 +510,9 @@ func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState) (stri
 	case flag != "" && inPre:
 		return "", errors.New("--tag can't be used in pre mode: prereleases go out under the prerelease tag (run `pre exit` to publish under another)")
 	case flag != "":
+		if err := checkDistTag(flag); err != nil {
+			return "", fmt.Errorf("--tag %q: %w", flag, err)
+		}
 		return flag, nil
 	case fromPackDir:
 		return "", nil
@@ -516,7 +520,33 @@ func publishDistTag(flag string, fromPackDir bool, pre *prestate.PreState) (stri
 		if strings.TrimSpace(pre.Tag) == "" {
 			return "", errors.New(".changeset/pre.json is in pre mode with no tag: set its tag")
 		}
+		if err := checkDistTag(pre.Tag); err != nil {
+			return "", fmt.Errorf(".changeset/pre.json's tag %q: %w", pre.Tag, err)
+		}
 		return pre.Tag, nil
 	}
 	return "", nil
 }
+
+// distTagChars is what a dist-tag is made of: npm refuses whitespace and
+// anything a URL would need to escape.
+var distTagChars = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// checkDistTag refuses a tag npm would refuse, before anything is published:
+// npm checks it per package, so a bad one would fail partway through a
+// release. Beyond the characters, npm refuses a tag that reads as a version
+// or range ("1", "v2", "1.x"), since `npm install pkg@<tag>` couldn't tell
+// the two apart.
+func checkDistTag(tag string) error {
+	if !distTagChars.MatchString(tag) {
+		return errors.New("a dist-tag is letters, digits, '.', '_' and '-', starting with a letter or digit")
+	}
+	if looksLikeVersion.MatchString(tag) {
+		return errors.New("npm refuses a dist-tag that reads as a version or range")
+	}
+	return nil
+}
+
+// looksLikeVersion matches what npm's semver would read as a version or
+// range: an optional v, a number, then more numbers or x wildcards.
+var looksLikeVersion = regexp.MustCompile(`^[vV]?\d+(\.(\d+|[xX*]))*([-+].*)?$`)

@@ -26,6 +26,13 @@ func TestPublishDistTag(t *testing.T) {
 		{"--tag is refused from a pack dir", "canary", true, nil, "", "--from-pack-dir"},
 		{"a pack dir's plan carries its own", "", true, pre, "", ""},
 		{"pre mode without a tag is refused", "", false, &prestate.PreState{Mode: prestate.ModePre}, "", "no tag"},
+		{"a blank --tag is refused", "  ", false, nil, "", "letters, digits"},
+		{"a --tag with a space is refused", "my tag", false, nil, "", "letters, digits"},
+		{"a --tag like a version is refused", "1.2", false, nil, "", "version or range"},
+		{"a --tag like a v-version is refused", "v2", false, nil, "", "version or range"},
+		{"a --tag like a range is refused", "1.x", false, nil, "", "version or range"},
+		{"a tag with digits is fine", "next-2", false, nil, "next-2", ""},
+		{"a bad prerelease tag is refused", "", false, &prestate.PreState{Mode: prestate.ModePre, Tag: "beta 1"}, "", "pre.json's tag"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := publishDistTag(tc.flag, tc.packDir, tc.pre)
