@@ -1,0 +1,9 @@
+internal/shiprig/cli/publishplan_test.go
+  ai_agent 254-255,267-268,272,276
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b6e0dad56a1b32d0fb5606757032b0df9fccbb40",
+  "prompts": {}
+}
