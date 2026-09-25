@@ -87,12 +87,25 @@ generator that ignores both still renders correctly; the bundled
 `examples/plugins/changeset-changelog-changelogen` honours them, and is the
 reference for what "correctly" looks like.
 
+Options: configured as a `[name, options]` tuple, as @changesets has it
+(`"changelog": ["my-generator", { "style": "terse" }]`), the options value
+reaches the generator as the request's `options` field: the same JSON,
+whitespace aside, for the generator to interpret, as @changesets passes it to
+`getReleaseLine`. The string form (`"changelog": "my-generator"`) sends no
+`options`, and neither does a `null` in the tuple. The engine reads nothing
+in it, except `repo` for the built-in `@changesets/changelog-github`.
+
 Resolution: `default` → in-process built-in; a path → executed; a bare name →
 `changeset-changelog-<name>` on `$PATH`.
 
 ## Status
 
-The protocol types, subprocess host, registry, and in-process built-ins exist
-and compile. What remains: route the built-in changelog
-renderer through `ChangelogRequest` (the dogfooding step), and ship a reference
-external plugin of each kind as a conformance test.
+The protocol types, subprocess host, registry and in-process built-ins are in
+place, and the built-in changelog renderer runs through `ChangelogRequest`
+(`planner.RenderEntry` builds the request a subprocess would get and hands it
+to the built-in generator), so it dogfoods the contract. The reference
+changelog plugin is `examples/plugins/changeset-changelog-changelogen`, and
+the tests drive a compiled one (`internal/changerig/cmdtest/testdata/optionsplugin`)
+through the CLI. What remains: a reference external *ecosystem* plugin as a
+conformance test; the tests drive the subprocess host with an in-binary
+helper today (`core/plugin/published_test.go`).

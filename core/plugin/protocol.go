@@ -448,6 +448,11 @@ type ChangelogRequest struct {
 	// — a change's scope alone does not say which tool a repo wants read first.
 	// Empty means alphabetical; unscoped changes come last either way.
 	ScopeOrder []string `json:"scopeOrder,omitempty"`
+	// Options is the generator's own options value, as configured (the same
+	// JSON, whitespace aside): the second element of a
+	// `"changelog": ["<name>", { … }]` tuple, as @changesets passes it to
+	// getReleaseLine. Absent for the string form.
+	Options json.RawMessage `json:"options,omitempty"`
 }
 
 // Author identifies a changelog contributor. Email is carried for de-duplication

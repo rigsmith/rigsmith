@@ -339,7 +339,7 @@ func NewVersionCmd() *cobra.Command {
 
 			if dryRun {
 				if showChangelog {
-					printChangelogPreview(out, cmd.Context(), gen, plan, ws.Config.Scopes())
+					printChangelogPreview(out, cmd.Context(), gen, plan, ws.Config)
 				}
 				fmt.Fprintln(out, DimStyle.Render("\n(dry run — no files written)"))
 				return nil
@@ -442,7 +442,7 @@ func NewVersionCmd() *cobra.Command {
 				if m.RangeOnly {
 					continue // "none" release: ranges rewritten, no version bump, no changelog
 				}
-				entry, err := gen.Render(cmd.Context(), planner.ModuleToRequestScoped(m, ws.Config.Scopes()))
+				entry, err := gen.Render(cmd.Context(), changelogRequest(ws.Config, m))
 				if err != nil {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
@@ -635,12 +635,12 @@ func NewVersionCmd() *cobra.Command {
 // preview is byte-identical to the written entry (honoring changelog groups,
 // lockstep grouping baked into the plan, and the contributors section attached
 // above). "none" releases (RangeOnly) get no changelog, so they are skipped.
-func printChangelogPreview(out io.Writer, ctx context.Context, gen plugin.ChangelogGenerator, plan []*planner.Module, scopeOrder []string) {
+func printChangelogPreview(out io.Writer, ctx context.Context, gen plugin.ChangelogGenerator, plan []*planner.Module, cfg *config.Config) {
 	for _, m := range plan {
 		if m.RangeOnly {
 			continue
 		}
-		entry, err := gen.Render(ctx, planner.ModuleToRequestScoped(m, scopeOrder))
+		entry, err := gen.Render(ctx, changelogRequest(cfg, m))
 		if err != nil {
 			fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("\n  (changelog render failed for %s: %v)", m.Name, err)))
 			continue
@@ -930,4 +930,14 @@ func keptPackages(kept []*changeset.Changeset) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// changelogRequest is the request the changelog generator renders m from:
+// the configured scope order, and the generator's own options from a
+// `[name, options]` tuple. The real write and the preview both use it, so
+// they stay byte-identical.
+func changelogRequest(cfg *config.Config, m *planner.Module) plugin.ChangelogRequest {
+	req := planner.ModuleToRequestScoped(m, cfg.Scopes())
+	req.Options = cfg.ChangelogOptions()
+	return req
 }

@@ -492,6 +492,21 @@ func (c *Config) ChangelogSpec() string {
 	return "default"
 }
 
+// ChangelogOptions returns the options object of a `[name, options]`
+// `changelog` tuple, verbatim, for the generator to interpret (as @changesets
+// hands it to getReleaseLine); nil for any other shape, or a null options
+// element.
+func (c *Config) ChangelogOptions() json.RawMessage {
+	var tuple []json.RawMessage
+	if err := json.Unmarshal(bytesTrim(c.Changelog), &tuple); err != nil || len(tuple) < 2 {
+		return nil
+	}
+	if opts := bytesTrim(tuple[1]); len(opts) > 0 && string(opts) != "null" {
+		return opts
+	}
+	return nil
+}
+
 // CommitEnabled interprets the polymorphic `commit` value (mirroring
 // @changesets): false/null/absent → false; true → true; a [resolver, options]
 // tuple → true (the run auto-commits; rigsmith uses its default message, the

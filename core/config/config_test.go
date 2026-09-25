@@ -501,3 +501,20 @@ func TestSkipsTag(t *testing.T) {
 		})
 	}
 }
+
+func TestChangelogOptions(t *testing.T) {
+	for raw, want := range map[string]string{
+		``:                                  "",
+		`false`:                             "",
+		`"@changesets/changelog-git"`:       "",
+		`["@changesets/changelog-github"]`:  "",
+		`["x", null]`:                       "",
+		`["x", { "repo": "acme/widgets" }]`: `{ "repo": "acme/widgets" }`,
+		`["x", { "a": [1, 2] }, "extra"]`:   `{ "a": [1, 2] }`,
+	} {
+		c := &Config{Changelog: []byte(raw)}
+		if got := string(c.ChangelogOptions()); got != want {
+			t.Errorf("ChangelogOptions(%s) = %q, want %q", raw, got, want)
+		}
+	}
+}

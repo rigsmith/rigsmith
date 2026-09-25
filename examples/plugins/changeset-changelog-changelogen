@@ -12,6 +12,8 @@
 // The engine resolves a bare name to `changeset-changelog-<name>` on PATH.
 //
 // Invocation: `changeset-changelog-changelogen render` with the request on stdin.
+// Configured as ["changelogen", { … }], the options object arrives as
+// request.options; this plugin takes none.
 //
 // changelogen groups by conventional-commit TYPE with emoji headings. rigsmith
 // changesets currently carry a bump (major/minor/patch), not a commit type, so

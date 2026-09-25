@@ -284,7 +284,10 @@ by the next ordinary one.
 
 Changelog generators are **pluggable** — the built-in renderer dogfoods the same
 JSON contract external plugins speak. Set `"changelog": "<plugin>"` in config to
-swap it in.
+swap it in, or `"changelog": ["<plugin>", { … }]` to hand it options (as
+@changesets does): the generator receives them as its request's `options`. A
+bare name runs `changeset-changelog-<name>` from `$PATH`, and a path runs that
+file. See [the plugin protocol](/core/plugin-protocol#changelog-generators).
 
 ### A release record {#record}
 
