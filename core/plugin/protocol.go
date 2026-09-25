@@ -262,8 +262,9 @@ type PublishedRequest struct {
 	// checks it (the ecosystem block's `user`).
 	User string `json:"user,omitempty"`
 	// AuthUnavailable says a credential is configured but couldn't be
-	// resolved (a plan job without the secret): send none, and don't fall
-	// back to an ambient one in its place.
+	// resolved (a plan job without the secret): don't fall back to an ambient
+	// one (an environment variable) in its place. Credentials written into
+	// PackageSource itself are the source's own and still apply.
 	AuthUnavailable bool `json:"authUnavailable,omitempty"`
 }
 

@@ -2,6 +2,7 @@ package dotnet
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -147,6 +148,19 @@ func withoutURL(err error) error {
 // the configured source's host.
 type feedCreds struct {
 	host, user, token string
+	// unavailable: a configured dotnet.auth couldn't be resolved, so there
+	// is no token, and NUGET_API_KEY wasn't taken in its place.
+	unavailable bool
+}
+
+// mask hides the token, and the Basic value carrying it, in s: a feed may
+// echo what it was sent.
+func (c *feedCreds) mask(s string) string {
+	if c == nil || c.token == "" {
+		return s
+	}
+	basic := base64.StdEncoding.EncodeToString([]byte(c.user + ":" + c.token))
+	return strings.NewReplacer(basic, "***", c.token, "***").Replace(s)
 }
 
 // feedCredentials works out the credentials for a feed read: those in the
@@ -159,7 +173,7 @@ func feedCredentials(req plugin.PublishedRequest) *feedCreds {
 	if err != nil || !strings.HasPrefix(u.Scheme, "http") || strings.EqualFold(u.Hostname(), "api.nuget.org") {
 		return nil
 	}
-	c := &feedCreds{host: strings.ToLower(u.Host), user: req.User}
+	c := &feedCreds{host: strings.ToLower(u.Host), user: req.User, unavailable: req.AuthUnavailable}
 	if u.User != nil {
 		c.user = u.User.Username()
 		c.token, _ = u.User.Password()
@@ -184,6 +198,16 @@ func feedCredentials(req plugin.PublishedRequest) *feedCreds {
 // else, and never unasked. Errors carry the URL with its credentials
 // redacted.
 func getJSON(ctx context.Context, rawURL string, dst any, creds *feedCreds) (bool, error) {
+	found, err := getJSONUnmasked(ctx, rawURL, dst, creds)
+	if err != nil {
+		// Whatever the credential's source (dotnet.auth, the source URL,
+		// NUGET_API_KEY), it never reaches the message.
+		err = errors.New(creds.mask(err.Error()))
+	}
+	return found, err
+}
+
+func getJSONUnmasked(ctx context.Context, rawURL string, dst any, creds *feedCreds) (bool, error) {
 	shown := redactURL(rawURL)
 	resp, err := feedGet(ctx, rawURL, nil)
 	if err != nil {
@@ -191,7 +215,12 @@ func getJSON(ctx context.Context, rawURL string, dst any, creds *feedCreds) (boo
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
-		if !creds.allows(rawURL) || creds.token == "" {
+		switch {
+		case creds != nil && creds.token != "" && !creds.allows(rawURL):
+			return false, fmt.Errorf("%s: %s: this host asks for credentials, but they're only sent to the package source's own host, %s (over https, or plain http on loopback)", shown, resp.Status, creds.host)
+		case creds != nil && creds.token == "" && creds.unavailable:
+			return false, fmt.Errorf("%s: %s: the feed needs credentials, and the configured `dotnet.auth` couldn't be resolved (NUGET_API_KEY isn't used in its place)", shown, resp.Status)
+		case creds == nil || creds.token == "":
 			return false, fmt.Errorf("%s: %s: the feed needs credentials. Set `dotnet.auth` (op://…, env:NAME, cmd:…) or NUGET_API_KEY to a token it accepts for reading, and `dotnet.user` if it checks the account name", shown, resp.Status)
 		}
 		if resp, err = feedGet(ctx, rawURL, creds); err != nil {
@@ -199,7 +228,7 @@ func getJSON(ctx context.Context, rawURL string, dst any, creds *feedCreds) (boo
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			resp.Body.Close()
-			return false, fmt.Errorf("%s: %s: the feed turned down the credentials (from `dotnet.auth`, the source URL or NUGET_API_KEY, as user %q): does the token have read access to it?", shown, resp.Status, creds.user)
+			return false, fmt.Errorf("%s: %s: the feed turned down the credentials (from the source URL, `dotnet.auth` or NUGET_API_KEY, as user %q): does the token have read access to it?", shown, resp.Status, creds.user)
 		}
 	}
 	defer resp.Body.Close()

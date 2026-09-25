@@ -22,6 +22,9 @@ type privateFeed struct {
 	// redirect, when set, sends an authenticated flat-container read there
 	// (a 302 to redirect + the path).
 	redirect string
+	// echo, when set, fails an authenticated flat-container read with a 500
+	// whose body repeats the credential it was sent.
+	echo bool
 }
 
 func (f *privateFeed) auths() []string {
@@ -53,6 +56,12 @@ func newPrivateFeed(t *testing.T, user, token, base string, open bool) *privateF
 			}
 			fmt.Fprintf(w, `{"resources":[{"@id":"%s","@type":"PackageBaseAddress/3.0.0"}]}`, b)
 		case "/flat/acme.lib/index.json":
+			if f.echo {
+				_, p, _ := r.BasicAuth()
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, "bad request with %s (password %s)", r.Header.Get("Authorization"), p)
+				return
+			}
 			if f.redirect != "" {
 				http.Redirect(w, r, f.redirect+r.URL.Path+"?moved", http.StatusFound)
 				return
@@ -153,8 +162,8 @@ func TestPublishedSendsCredentialsOnlyWhenAskedAndOnlyToTheSource(t *testing.T) 
 
 	elsewhere := newPrivateFeed(t, "shiprig", "tok", "", false)
 	f := newPrivateFeed(t, "shiprig", "tok", elsewhere.url+"/flat", false)
-	if _, err := published(t, f.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"}); err == nil || !strings.Contains(err.Error(), "needs credentials") {
-		t.Errorf("another host: err = %v, want it refused without sending", err)
+	if _, err := published(t, f.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"}); err == nil || !strings.Contains(err.Error(), "only sent to the package source's own host") {
+		t.Errorf("another host: err = %v, want it refused without sending, saying why", err)
 	}
 	for _, a := range elsewhere.auths() {
 		if a != "" {
@@ -183,8 +192,8 @@ func TestPublishedDoesNotSubstituteTheEnvironmentForAnUnresolvedCredential(t *te
 		PackageSource:   f.url + "/index.json",
 		AuthUnavailable: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "needs credentials") || resp.Published {
-		t.Errorf("published = %v, %v; want the feed's 401 reported", resp.Published, err)
+	if err == nil || !strings.Contains(err.Error(), "`dotnet.auth` couldn't be resolved") || resp.Published {
+		t.Errorf("published = %v, %v; want the 401 reported against the unresolved dotnet.auth", resp.Published, err)
 	}
 	for _, a := range f.auths() {
 		if a != "" {
@@ -229,5 +238,48 @@ func TestFeedCredentialsStayOnHTTPS(t *testing.T) {
 		if got := c.allows(rawURL); got != want {
 			t.Errorf("allows(%s) = %v, want %v", rawURL, got, want)
 		}
+	}
+}
+
+// Credentials in the source URL are the source's own: they still apply when a
+// configured dotnet.auth couldn't be resolved.
+func TestPublishedKeepsURLCredentialsWhenAuthIsUnavailable(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	f := newPrivateFeed(t, "me", "url-tok", "", false)
+	resp, err := (&Adapter{}).Published(context.Background(), plugin.PublishedRequest{
+		Package:         plugin.Package{Name: "Acme.Lib", Version: "1.2.0"},
+		PackageSource:   strings.Replace(f.url, "http://", "http://me:url-tok@", 1) + "/index.json",
+		AuthUnavailable: true,
+	})
+	if err != nil || !resp.Published {
+		t.Errorf("published = %v, %v", resp.Published, err)
+	}
+}
+
+// Whichever credential the adapter chose, a feed that echoes it doesn't put
+// it in the error, raw or Basic-encoded.
+func TestPublishedMasksTheCredentialInErrors(t *testing.T) {
+	for name, setup := range map[string]func(f *privateFeed) (string, *plugin.AuthCredential){
+		"NUGET_API_KEY": func(f *privateFeed) (string, *plugin.AuthCredential) {
+			t.Setenv("NUGET_API_KEY", "echoed-value")
+			return f.url + "/index.json", nil
+		},
+		"source URL": func(f *privateFeed) (string, *plugin.AuthCredential) {
+			t.Setenv("NUGET_API_KEY", "")
+			return strings.Replace(f.url, "http://", "http://shiprig:echoed-value@", 1) + "/index.json", nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newPrivateFeed(t, "shiprig", "echoed-value", "", false)
+			f.echo = true
+			source, auth := setup(f)
+			_, err := published(t, source, "", auth)
+			if err == nil || !strings.Contains(err.Error(), "500") {
+				t.Fatalf("err = %v, want the 500", err)
+			}
+			if strings.Contains(err.Error(), "echoed-value") || strings.Contains(err.Error(), "c2hpcHJpZzplY2hvZWQtdmFsdWU=") {
+				t.Errorf("the error leaks the credential: %v", err)
+			}
+		})
 	}
 }
