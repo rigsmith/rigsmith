@@ -177,13 +177,21 @@ func TestStatusOutputGroupsOnlyActiveChangesets(t *testing.T) {
 	}
 }
 
-// A package --only names but the config ignores is held back by the ignore,
-// so its changeset is reported as ignored, not as outside --only.
-func TestVersionOnlyReportsAnIgnoredNamedPackageAsIgnored(t *testing.T) {
-	dir := groupsRepo(t, "")
-	writeChangeset(t, dir, "extra-change", "extra", "patch", "An extra fix")
-	code, out := runChangerig(t, dir, "version", "--yes", "--only", "solo", "--only", "extra")
-	assertExitZero(t, code, out)
-	assertContains(t, out, "naming only ignored packages")
-	assertNotContains(t, out, "outside --only")
+// A changeset the config's ignore holds back is reported as ignored, whether
+// or not --only names its package; only the ones --only alone held back wait
+// for a later run.
+func TestVersionOnlySeparatesIgnoredFromWaiting(t *testing.T) {
+	for _, only := range [][]string{{"solo"}, {"solo", "extra"}} {
+		dir := groupsRepo(t, "")
+		writeChangeset(t, dir, "extra-change", "extra", "patch", "An extra fix")
+		args := []string{"version", "--yes"}
+		for _, n := range only {
+			args = append(args, "--only", n)
+		}
+		code, out := runChangerig(t, dir, args...)
+		assertExitZero(t, code, out)
+		// lib-change and pair.md wait; extra-change is ignored.
+		assertContains(t, out, "left 2 changeset(s) for a later run: they name only packages outside --only (cli, lib, tool)")
+		assertContains(t, out, "kept 1 changeset(s) naming only ignored packages.")
+	}
 }
