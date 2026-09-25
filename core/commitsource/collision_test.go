@@ -21,6 +21,15 @@ import (
 // messages), found by a birthday search over their object hashes and written
 // with hash-object; a merge puts both in HEAD's history.
 func TestSynthesizeIDsFromARealPrefixCollision(t *testing.T) {
+	// Repository-location variables (set inside a git hook, say) would point
+	// both the fixture's git and LogSince at another repository. t.Setenv
+	// restores them afterwards.
+	for _, v := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_CEILING_DIRECTORIES"} {
+		if _, set := os.LookupEnv(v); set {
+			t.Setenv(v, "")
+			os.Unsetenv(v)
+		}
+	}
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +51,12 @@ func TestSynthesizeIDsFromARealPrefixCollision(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run("", "init", "-q", "-b", "main")
+	// SHA-1 explicitly: the search below hashes as SHA-1, whatever the
+	// machine's default object format.
+	run("", "init", "-q", "-b", "main", "--object-format=sha1")
+	if f := run("", "rev-parse", "--show-object-format"); f != "sha1" {
+		t.Fatalf("fixture: object format %q, want sha1", f)
+	}
 	if err := os.WriteFile(file, []byte("a\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +101,14 @@ func TestSynthesizeIDsFromARealPrefixCollision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	short := map[string]string{}
+	for _, c := range commits {
+		short[c.Hash] = c.Short
+	}
+	// git lengthened both past 7, since 7 is ambiguous between them.
+	if len(short[first]) <= 7 || len(short[second]) <= 7 {
+		t.Fatalf("LogSince abbreviations %q, %q: want both longer than 7", short[first], short[second])
+	}
 	got := Synthesize(commits, pkgs(), dir, config.Default())
 	idOf := map[string]string{}
 	for _, cs := range got {
@@ -99,7 +121,7 @@ func TestSynthesizeIDsFromARealPrefixCollision(t *testing.T) {
 	if one == two {
 		t.Errorf("both commits got ID %q", one)
 	}
-	if !strings.HasPrefix(first, one) || !strings.HasPrefix(second, two) {
-		t.Errorf("IDs %q, %q aren't prefixes of %s, %s", one, two, first, second)
+	if one != short[first] || two != short[second] {
+		t.Errorf("IDs %q, %q, want git's abbreviations %q, %q", one, two, short[first], short[second])
 	}
 }
