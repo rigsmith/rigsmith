@@ -116,10 +116,15 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 	var out []*changeset.Changeset
 	for _, c := range commits {
 		h, ok := parseHeader(c.Subject)
-		if !ok || !recognized[h.typ] || isHousekeeping(h) {
+		if !ok || !recognized[h.typ] {
 			continue
 		}
+		// Breaking by its `!` or a BREAKING CHANGE footer; decided before the
+		// housekeeping rule, which never skips a breaking commit.
 		breaking := h.breaking || breakingFooterRe.MatchString(c.Body)
+		if isHousekeeping(h, breaking) {
+			continue
+		}
 
 		// changelogen-style: when the body carries a `BREAKING CHANGE:` footer,
 		// surface its description as a continuation line under the bullet (the
@@ -233,13 +238,22 @@ func shortHash(hash string) string {
 	return hash
 }
 
-// releaseDescRe matches a release commit's description: a bare "release"
-// (shiprig's own commit step), or "release" and what it released —
-// shiprig-action's version PR titles ("release 1.2.0", "release
-// core@1.2.0, ui@0.5.0", "release 5 packages") and release-please's
-// ("release 1.2.0", "release core 1.2.0"). A "release notes …" chore isn't
-// one.
-var releaseDescRe = regexp.MustCompile(`^release(?:$|\s+(?:v?\d|\S+@\S|\S+\s+v?\d))`)
+// releaseSemver is a full version, as release tools write one.
+const releaseSemver = `v?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?`
+
+// releaseDescRe matches a whole release commit description: a bare "release"
+// (shiprig's own commit step), or "release" and exactly what it released, as
+// shiprig-action's version PR titles it ("release 1.2.0", "release
+// core@1.2.0, ui@0.5.0", "release 5 packages") and release-please does
+// ("release 1.2.0"). "release notes 1.2.0" isn't one.
+var releaseDescRe = regexp.MustCompile(`^release(?:\s+(?:` + releaseSemver +
+	`|\S+@` + releaseSemver + `(?:,\s*\S+@` + releaseSemver + `)*` +
+	`|\d+ packages))?$`)
+
+// scopedReleaseDescRe is release-please's monorepo form, "release <component>
+// <version>", which it writes with a scope (the branch: `chore(main):`). Only
+// with a scope, since unscoped it reads like any chore naming a version.
+var scopedReleaseDescRe = regexp.MustCompile(`^release\s+\S+\s+` + releaseSemver + `$`)
 
 // isHousekeeping reports a commit that releases nothing of its own, as
 // @unjs/changelogen skips it: a non-breaking chore scoped `deps` (a
@@ -247,10 +261,14 @@ var releaseDescRe = regexp.MustCompile(`^release(?:$|\s+(?:v?\d|\S+@\S|\S+\s+v?\
 // release commit. The release commit touches every package it versioned, so
 // counted, it would be a phantom patch of all of them wherever the last
 // release's baseline doesn't cover it (before the release is tagged, a
-// first release, a missing tag).
-func isHousekeeping(h header) bool {
-	if h.typ != "chore" || h.breaking {
+// first release, a missing tag). breaking is the commit's whole breaking
+// status: its `!` or a BREAKING CHANGE footer.
+func isHousekeeping(h header, breaking bool) bool {
+	if h.typ != "chore" || breaking {
 		return false
 	}
-	return h.scope == "deps" || h.scope == "release" || releaseDescRe.MatchString(strings.ToLower(h.desc))
+	desc := strings.ToLower(strings.TrimSpace(h.desc))
+	return h.scope == "deps" || h.scope == "release" ||
+		releaseDescRe.MatchString(desc) ||
+		(h.scope != "" && scopedReleaseDescRe.MatchString(desc))
 }
