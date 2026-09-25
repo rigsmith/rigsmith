@@ -58,3 +58,24 @@ func TestIgnoredDependentOfAReleaseStillGetsItsRange(t *testing.T) {
 	assertContains(t, app, `"^2.0.0"`)
 	assertContains(t, app, `"version": "1.0.0"`)
 }
+
+// status warns about a dependent of a skipped package, which version refuses;
+// its plan only leaves the skipped package's release out.
+func TestStatusWarnsAboutADependentOfAnIgnoredPackage(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"lib": "1.0.0"})
+	writeFile(t, filepath.Join(dir, "packages", "app", "package.json"),
+		`{ "name": "app", "version": "1.0.0", "dependencies": { "lib": "^1.0.0" } }`)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "updateInternalDependencies": "patch", "ignore": ["lib"] }`)
+	writeChangeset(t, dir, "lib-change", "lib", "major", "A breaking lib change")
+	gitInit(t, dir)
+
+	code, out := runChangerig(t, dir, "status")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "app depends on the skipped package lib")
+	assertContains(t, out, "`version` will refuse to run")
+	code, out = runChangerig(t, dir, "version", "--yes")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "app depends on the skipped package lib")
+}

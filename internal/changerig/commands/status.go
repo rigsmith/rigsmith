@@ -75,6 +75,12 @@ func NewStatusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A package that depends on a skipped one is refused by version;
+			// say so here too, since the plan below simply leaves the skipped
+			// package's release out (on stderr, so --output's stdout is clean).
+			for _, msg := range planner.SkippedDependents(pkgs, ws.Config, false) {
+				fmt.Fprintln(cmd.ErrOrStderr(), DimStyle.Render("warn "+msg+" (`version` will refuse to run)"))
+			}
 			// --since narrows the plan to what the branch adds since the ref:
 			// its changesets (as @changesets and net-changesets do) and, with
 			// commits as a source, its commits. An explicit ref is validated
