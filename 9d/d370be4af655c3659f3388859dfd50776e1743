@@ -1,0 +1,28 @@
+core/commitsource/commitsource.go
+  s_505a2cfce9114c::t_a919f176e31fbc 119,235-255
+site/changerig/lifecycle.md
+  s_505a2cfce9114c::t_94ad074ea48a23 19-22,27
+  ai_agent 23-26
+internal/changerig/cmdtest/housekeeping_commits_test.go
+  s_505a2cfce9114c::t_e0296763af2f69 1-21
+core/commitsource/commitsource_test.go
+  s_505a2cfce9114c::t_a919f176e31fbc 230-261
+.changeset/skip-housekeeping-commits.md
+  s_505a2cfce9114c::t_94ad074ea48a23 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9dd370be4af655c3659f3388859dfd50776e1743",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
