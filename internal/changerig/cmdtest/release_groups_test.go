@@ -84,6 +84,9 @@ func TestVersionOnlyReleasesOneGroup(t *testing.T) {
 	dir := groupsRepo(t, "")
 	code, out := runChangerig(t, dir, "version", "--yes", "--only", "tool", "--only", "cli")
 	assertExitZero(t, code, out)
+	// Waiting for a later run, not ignored.
+	assertContains(t, out, "left 2 changeset(s) for a later run: they name only packages outside --only (lib, solo)")
+	assertNotContains(t, out, "ignored packages")
 
 	for pkg, version := range map[string]string{"tool": "1.1.0", "cli": "1.1.0", "lib": "1.0.0", "app": "1.0.0", "solo": "1.0.0"} {
 		assertContains(t, readFile(t, filepath.Join(dir, "packages", pkg, "package.json")), `"`+version+`"`)
@@ -171,5 +174,24 @@ func TestStatusOutputGroupsOnlyActiveChangesets(t *testing.T) {
 	got := statusGroups(t, dir)
 	if got["tool"] != "tool" || got["cli"] != "cli" {
 		t.Errorf("groups = %v, want tool and cli apart", got)
+	}
+}
+
+// A changeset the config's ignore holds back is reported as ignored, whether
+// or not --only names its package; only the ones --only alone held back wait
+// for a later run.
+func TestVersionOnlySeparatesIgnoredFromWaiting(t *testing.T) {
+	for _, only := range [][]string{{"solo"}, {"solo", "extra"}} {
+		dir := groupsRepo(t, "")
+		writeChangeset(t, dir, "extra-change", "extra", "patch", "An extra fix")
+		args := []string{"version", "--yes"}
+		for _, n := range only {
+			args = append(args, "--only", n)
+		}
+		code, out := runChangerig(t, dir, args...)
+		assertExitZero(t, code, out)
+		// lib-change and pair.md wait; extra-change is ignored.
+		assertContains(t, out, "left 2 changeset(s) for a later run: they name only packages outside --only (cli, lib, tool)")
+		assertContains(t, out, "kept 1 changeset(s) naming only ignored packages.")
 	}
 }

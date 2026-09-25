@@ -565,8 +565,18 @@ func NewVersionCmd() *cobra.Command {
 					fmt.Fprintf(out, "\nVersioned %d package(s)%s.\n", len(plan), removedSuffix(removed, fromCommits))
 				}
 			}
-			if len(kept) > 0 {
-				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("kept %d changeset(s) naming only ignored packages.", len(kept))))
+			// A kept changeset is waiting when --only alone held it back: the
+			// config's ignore (or an unversioned private package) would have
+			// let it release. The rest are ignored, as without --only.
+			ignored, waiting := kept, []*changeset.Changeset(nil)
+			if len(onlyFlag) > 0 {
+				ignored, waiting = splitKept(kept, ws.Config, configIgnore)
+			}
+			if len(waiting) > 0 {
+				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("left %d changeset(s) for a later run: they name only packages outside --only (%s).", len(waiting), previewNames(keptPackages(waiting), 4))))
+			}
+			if len(ignored) > 0 {
+				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("kept %d changeset(s) naming only ignored packages.", len(ignored))))
 			}
 			if len(unstamped) > 0 {
 				why := "--no-stamp"
@@ -888,4 +898,36 @@ func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugi
 	}
 	sort.Strings(missing)
 	return fmt.Errorf("--only names part of a release group:\n%s\npass each package's whole release group (`status --output` lists them)", strings.Join(missing, "\n"))
+}
+
+// splitKept divides the changesets an --only run kept into those the
+// config's own ignore holds back (or an unversioned private package does) and
+// those only --only did, which a later run releases.
+func splitKept(kept []*changeset.Changeset, cfg *config.Config, configIgnore []string) (ignored, waiting []*changeset.Changeset) {
+	own := *cfg
+	own.Ignore = configIgnore
+	for _, cs := range kept {
+		if slices.ContainsFunc(cs.Releases, func(r changeset.Release) bool { return own.IsIgnored(r.Name) }) {
+			ignored = append(ignored, cs)
+		} else {
+			waiting = append(waiting, cs)
+		}
+	}
+	return ignored, waiting
+}
+
+// keptPackages lists the packages the kept changesets name, sorted.
+func keptPackages(kept []*changeset.Changeset) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, cs := range kept {
+		for _, r := range cs.Releases {
+			if !seen[r.Name] {
+				seen[r.Name] = true
+				names = append(names, r.Name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
 }
