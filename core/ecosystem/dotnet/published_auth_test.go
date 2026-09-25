@@ -1,0 +1,233 @@
+package dotnet
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/rigsmith/rigsmith/core/plugin"
+)
+
+// privateFeed serves a feed that answers only user:token (401 otherwise),
+// with its flat container at base (this server's own unless given). It
+// records every Authorization header it sees, anonymous requests as "".
+type privateFeed struct {
+	url  string
+	mu   sync.Mutex
+	seen []string
+	// redirect, when set, sends an authenticated flat-container read there
+	// (a 302 to redirect + the path).
+	redirect string
+}
+
+func (f *privateFeed) auths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.seen...)
+}
+
+func newPrivateFeed(t *testing.T, user, token, base string, open bool) *privateFeed {
+	t.Helper()
+	f := &privateFeed{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.seen = append(f.seen, r.Header.Get("Authorization"))
+		f.mu.Unlock()
+		if u, p, ok := r.BasicAuth(); !open && (!ok || u != user || p != token) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.RawQuery == "moved" {
+			fmt.Fprint(w, `{"versions":["1.2.0"]}`)
+			return
+		}
+		switch r.URL.Path {
+		case "/index.json":
+			b := base
+			if b == "" {
+				b = f.url + "/flat"
+			}
+			fmt.Fprintf(w, `{"resources":[{"@id":"%s","@type":"PackageBaseAddress/3.0.0"}]}`, b)
+		case "/flat/acme.lib/index.json":
+			if f.redirect != "" {
+				http.Redirect(w, r, f.redirect+r.URL.Path+"?moved", http.StatusFound)
+				return
+			}
+			fmt.Fprint(w, `{"versions":["1.2.0"]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	f.url = srv.URL
+	return f
+}
+
+func published(t *testing.T, source, user string, auth *plugin.AuthCredential) (bool, error) {
+	t.Helper()
+	resp, err := (&Adapter{}).Published(context.Background(), plugin.PublishedRequest{
+		Package:       plugin.Package{Name: "Acme.Lib", Version: "1.2.0"},
+		PackageSource: source,
+		Auth:          auth,
+		User:          user,
+	})
+	return resp.Published, err
+}
+
+func TestPublishedAsksAPrivateFeedWithThePublishCredential(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	f := newPrivateFeed(t, "shiprig", "tok", "", false)
+	ok, err := published(t, f.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"})
+	if err != nil || !ok {
+		t.Fatalf("published = %v, %v", ok, err)
+	}
+	// Anonymous first, credentials only once asked.
+	if got := f.auths(); len(got) != 4 || got[0] != "" || got[1] == "" || got[2] != "" || got[3] == "" {
+		t.Errorf("Authorization headers = %q, want anonymous then Basic, per request", got)
+	}
+}
+
+func TestPublishedSendsTheConfiguredUser(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	f := newPrivateFeed(t, "acme-bot", "tok", "", false)
+	if ok, err := published(t, f.url+"/index.json", "acme-bot", &plugin.AuthCredential{Token: "tok"}); err != nil || !ok {
+		t.Fatalf("published = %v, %v", ok, err)
+	}
+}
+
+func TestPublishedFallsBackToNuGetAPIKey(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "env-tok")
+	f := newPrivateFeed(t, "shiprig", "env-tok", "", false)
+	if ok, err := published(t, f.url+"/index.json", "", nil); err != nil || !ok {
+		t.Fatalf("published = %v, %v", ok, err)
+	}
+}
+
+// Credentials in the source URL reach the flat container too, not only the
+// service index.
+func TestPublishedCarriesURLCredentialsToTheFlatContainer(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	f := newPrivateFeed(t, "me", "url-tok", "", false)
+	source := strings.Replace(f.url, "http://", "http://me:url-tok@", 1) + "/index.json"
+	if ok, err := published(t, source, "", nil); err != nil || !ok {
+		t.Fatalf("published = %v, %v", ok, err)
+	}
+	// Like any credential, they wait to be asked for.
+	if got := f.auths(); len(got) == 0 || got[0] != "" {
+		t.Errorf("Authorization headers = %q, want the first request anonymous", got)
+	}
+}
+
+func TestPublishedExplainsAMissingOrRejectedCredential(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	f := newPrivateFeed(t, "shiprig", "tok", "", false)
+	if _, err := published(t, f.url+"/index.json", "", nil); err == nil || !strings.Contains(err.Error(), "needs credentials") {
+		t.Errorf("no credential: err = %v", err)
+	}
+	_, err := published(t, f.url+"/index.json", "", &plugin.AuthCredential{Token: "wrong"})
+	if err == nil || !strings.Contains(err.Error(), "turned down the credentials") {
+		t.Errorf("wrong credential: err = %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "wrong") {
+		t.Errorf("the error leaks the token: %v", err)
+	}
+}
+
+// A public feed is never sent the credential, and neither is another host
+// the service index points at.
+func TestPublishedSendsCredentialsOnlyWhenAskedAndOnlyToTheSource(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	public := newPrivateFeed(t, "", "", "", true)
+	if ok, err := published(t, public.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"}); err != nil || !ok {
+		t.Fatalf("public feed: published = %v, %v", ok, err)
+	}
+	for _, a := range public.auths() {
+		if a != "" {
+			t.Errorf("a public feed was sent credentials: %q", a)
+		}
+	}
+
+	elsewhere := newPrivateFeed(t, "shiprig", "tok", "", false)
+	f := newPrivateFeed(t, "shiprig", "tok", elsewhere.url+"/flat", false)
+	if _, err := published(t, f.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"}); err == nil || !strings.Contains(err.Error(), "needs credentials") {
+		t.Errorf("another host: err = %v, want it refused without sending", err)
+	}
+	for _, a := range elsewhere.auths() {
+		if a != "" {
+			t.Errorf("another host was sent credentials: %q", a)
+		}
+	}
+}
+
+// nuget.org's reads are public and its key is for pushing: no credentials.
+func TestFeedCredentialsNeverForNuGetOrg(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "push-key")
+	for _, source := range []string{"", "nuget.org", "https://api.nuget.org/v3/index.json"} {
+		if c := feedCredentials(plugin.PublishedRequest{PackageSource: source, Auth: &plugin.AuthCredential{Token: "tok"}}); c != nil {
+			t.Errorf("feedCredentials(%q) = %+v, want none", source, c)
+		}
+	}
+}
+
+// A configured credential that couldn't be resolved isn't replaced by
+// NUGET_API_KEY, which may be a key for another feed.
+func TestPublishedDoesNotSubstituteTheEnvironmentForAnUnresolvedCredential(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "tok")
+	f := newPrivateFeed(t, "shiprig", "tok", "", false)
+	resp, err := (&Adapter{}).Published(context.Background(), plugin.PublishedRequest{
+		Package:         plugin.Package{Name: "Acme.Lib", Version: "1.2.0"},
+		PackageSource:   f.url + "/index.json",
+		AuthUnavailable: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "needs credentials") || resp.Published {
+		t.Errorf("published = %v, %v; want the feed's 401 reported", resp.Published, err)
+	}
+	for _, a := range f.auths() {
+		if a != "" {
+			t.Errorf("sent %q in place of the unresolved credential", a)
+		}
+	}
+}
+
+// A credentialed request follows a redirect only where its credentials may
+// go: the same host is fine, another host is refused before anything is sent.
+func TestPublishedFollowsCredentialedRedirectsOnlyToTheSource(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	same := newPrivateFeed(t, "shiprig", "tok", "", false)
+	same.redirect = same.url
+	if ok, err := published(t, same.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"}); err != nil || !ok {
+		t.Errorf("same-host redirect: published = %v, %v", ok, err)
+	}
+
+	elsewhere := newPrivateFeed(t, "", "", "", true)
+	f := newPrivateFeed(t, "shiprig", "tok", "", false)
+	f.redirect = elsewhere.url
+	_, err := published(t, f.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"})
+	if err == nil || !strings.Contains(err.Error(), "where its credentials may not go") {
+		t.Errorf("cross-host redirect: err = %v", err)
+	}
+	for _, a := range elsewhere.auths() {
+		if a != "" {
+			t.Errorf("another host was sent credentials through a redirect: %q", a)
+		}
+	}
+}
+
+// Credentials go over https only (loopback aside, for tests like these).
+func TestFeedCredentialsStayOnHTTPS(t *testing.T) {
+	c := &feedCreds{host: "feed.example.com", token: "tok"}
+	for rawURL, want := range map[string]bool{
+		"https://feed.example.com/x":     true,
+		"http://feed.example.com/x":      false,
+		"https://sub.feed.example.com/x": false,
+		"https://feed.example.com:8443/": false,
+	} {
+		if got := c.allows(rawURL); got != want {
+			t.Errorf("allows(%s) = %v, want %v", rawURL, got, want)
+		}
+	}
+}

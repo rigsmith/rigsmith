@@ -293,7 +293,7 @@
         },
         "auth": {
           "type": "string",
-          "description": "Registry credential as a secret ref: \"op://\u2026\", \"env:NAME\", or \"cmd:\u2026\"."
+          "description": "Registry credential as a secret ref: \"op://\u2026\", \"env:NAME\", or \"cmd:\u2026\". For dotnet it also answers a private feed's read (publish-plan's version check), sent only when the feed asks."
         },
         "oidc": {
           "type": "string",
@@ -305,7 +305,7 @@
         },
         "user": {
           "type": "string",
-          "description": "Registry account/subject some OIDC exchanges require (e.g. NuGet)."
+          "description": "Registry account/subject some OIDC exchanges require (e.g. NuGet), and, for dotnet, the account name sent with `auth` to a private feed that checks it."
         },
         "publishDirs": {
          "type": "array",

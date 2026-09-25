@@ -70,12 +70,12 @@ func TestPublishedReadsTheFlatContainer(t *testing.T) {
 
 func TestPackageBaseAddress(t *testing.T) {
 	for _, source := range []string{"", "nuget", "NuGet.org"} {
-		if got, err := packageBaseAddress(context.Background(), source); err != nil || got != nugetOrgBase {
+		if got, err := packageBaseAddress(context.Background(), source, nil); err != nil || got != nugetOrgBase {
 			t.Errorf("packageBaseAddress(%q) = %q, %v", source, got, err)
 		}
 	}
 	// A NuGet.config source name can't be resolved here: say so, and how to fix it.
-	if _, err := packageBaseAddress(context.Background(), "my-feed"); err == nil || !strings.Contains(err.Error(), "service index URL") {
+	if _, err := packageBaseAddress(context.Background(), "my-feed", nil); err == nil || !strings.Contains(err.Error(), "service index URL") {
 		t.Errorf("packageBaseAddress(my-feed) error = %v, want the named-source explanation", err)
 	}
 }

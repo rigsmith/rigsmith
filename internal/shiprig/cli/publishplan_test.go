@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -21,11 +22,29 @@ type fakeRegistry struct {
 	plugin.Ecosystem
 	published map[string]bool
 	fail      map[string]bool
+	// asked, when set, records each request's credential and user.
+	asked *sync.Map
 }
 
 func (f fakeRegistry) Published(_ context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	if f.asked != nil {
+		token := ""
+		if req.Auth != nil {
+			token = req.Auth.Token
+		}
+		unavailable := ""
+		if req.AuthUnavailable {
+			unavailable = "/unavailable"
+		}
+		f.asked.Store(req.Package.Name, token+"/"+req.User+unavailable)
+	}
 	if f.fail[req.Package.Name] {
-		return plugin.PublishedResponse{}, errors.New("registry unreachable at https://bot:s3cret@npm.example.com/")
+		// A registry error that echoes the credential it was sent.
+		token := ""
+		if req.Auth != nil {
+			token = " with " + req.Auth.Token
+		}
+		return plugin.PublishedResponse{}, errors.New("registry unreachable at https://bot:s3cret@npm.example.com/" + token)
 	}
 	return plugin.PublishedResponse{Published: f.published[req.Package.Name]}, nil
 }
@@ -289,5 +308,38 @@ func TestRedactURLCredentials(t *testing.T) {
 		if got := redactURLCredentials(in); got != want {
 			t.Errorf("redactURLCredentials(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The ecosystem's configured credential reaches the registry check, for a
+// private registry, with its user; one echoed in an error is masked.
+func TestPublishPlanAsksWithTheConfiguredCredential(t *testing.T) {
+	t.Setenv("PLAN_TOKEN", "zzzzzzzz")
+	planRepo(t, `{ "node": { "auth": "env:PLAN_TOKEN", "user": "bot" } }`)
+	asked := &sync.Map{}
+	_, err := planFor(t, fakeRegistry{asked: asked, fail: map[string]bool{"lib": true}}, "")
+	if got, _ := asked.Load("app"); got != "zzzzzzzz/bot" {
+		t.Errorf("app was asked with %v, want the configured token and user", got)
+	}
+	if err == nil || strings.Contains(err.Error(), "zzzzzzzz") {
+		t.Errorf("err = %v, want a failure with the token masked", err)
+	}
+}
+
+// A credential that can't be resolved (a plan job without the secret) sends
+// none: the plan still works against a registry that doesn't need one, and
+// names the reference when one fails.
+func TestPublishPlanGoesOnWithoutAnUnresolvableCredential(t *testing.T) {
+	planRepo(t, `{ "node": { "auth": "env:PLAN_MISSING_TOKEN" } }`)
+	asked := &sync.Map{}
+	if _, err := planFor(t, fakeRegistry{asked: asked}, ""); err != nil {
+		t.Fatalf("plan failed over an unused credential: %v", err)
+	}
+	if got, _ := asked.Load("app"); got != "//unavailable" {
+		t.Errorf("app was asked with %v, want no credential, marked unavailable", got)
+	}
+	_, err := planFor(t, fakeRegistry{fail: map[string]bool{"lib": true}}, "")
+	if err == nil || !strings.Contains(err.Error(), "`node.auth` couldn't be resolved") {
+		t.Errorf("err = %v, want the unresolved reference named", err)
 	}
 }

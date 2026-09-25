@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/rigsmith/rigsmith/core/auth"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/prestate"
@@ -178,6 +179,27 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 		return &planRelease{Kind: "tag-only", Name: p.Name, Version: p.Version, Ecosystem: ecoOf[p.Name]}
 	}
 
+	// Each ecosystem's configured credential, for a registry that won't
+	// answer an anonymous read. Resolved once, up front, so a secret manager
+	// prompts once; one that can't be resolved (a plan job without the
+	// secret) sends none, and is named if the registry then asks for it.
+	redactor := auth.NewRedactor()
+	readCreds := map[string]*plugin.AuthCredential{}
+	credErrs := map[string]error{}
+	credCache := map[string]*plugin.AuthCredential{}
+	for _, p := range candidates {
+		eco := ecoOf[p.Name]
+		if _, done := readCreds[eco]; done || credErrs[eco] != nil || ws.Config.EcoConfig(eco).Auth == "" {
+			continue
+		}
+		cred, _, err := resolvePublishCreds(ctx, ws.Config, eco, "", credCache, redactor)
+		if err != nil {
+			credErrs[eco] = err
+			continue
+		}
+		readCreds[eco] = cred
+	}
+
 	entries := make([]*planRelease, len(candidates))
 	errs := make([]error, len(candidates))
 	sem := make(chan struct{}, dryRunProbeLimit)
@@ -203,15 +225,23 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 			defer func() { <-sem }()
 			ecoID := ecoOf[p.Name]
 			resp, err := eco.Published(ctx, plugin.PublishedRequest{
-				RepoRoot:      ws.Root,
-				Package:       p,
-				PackageSource: packageSourceFor(ws.Config, ecoID),
+				RepoRoot:        ws.Root,
+				Package:         p,
+				PackageSource:   packageSourceFor(ws.Config, ecoID),
+				Auth:            readCreds[ecoID],
+				User:            ws.Config.EcoConfig(ecoID).User,
+				AuthUnavailable: credErrs[ecoID] != nil,
 			})
 			switch {
 			case err != nil:
 				// An adapter's error can carry a registry URL with credentials
-				// in it (npm echoes --registry); keep them out of the output.
-				errs[i] = fmt.Errorf("%s: %s", p.Name, redactURLCredentials(err.Error()))
+				// in it (npm echoes --registry); keep them out of the output,
+				// and any resolved token too.
+				msg := redactor.Redact(redactURLCredentials(err.Error()))
+				if credErr := credErrs[ecoID]; credErr != nil {
+					msg += fmt.Sprintf(" (the configured `%s.auth` couldn't be resolved: %s)", ecoID, redactor.Redact(credErr.Error()))
+				}
+				errs[i] = fmt.Errorf("%s: %s", p.Name, msg)
 			case resp.NoRegistry, resp.Published:
 				// Released by its tag alone, or already published: either
 				// way the tag may still be missing (a push that failed after
