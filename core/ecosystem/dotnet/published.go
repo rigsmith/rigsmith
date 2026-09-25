@@ -208,14 +208,16 @@ func getJSON(ctx context.Context, rawURL string, dst any, creds *feedCreds) (boo
 	return found, err
 }
 
-// maskedError is err with its message masked.
+// maskedError is err with its message masked. It unwraps to err's own cause
+// (a cancelled context, a deadline, a transport or decode error), not to err:
+// err's message is the unmasked one, which may carry a feed's response body.
 type maskedError struct {
 	msg string
 	err error
 }
 
 func (e *maskedError) Error() string { return e.msg }
-func (e *maskedError) Unwrap() error { return e.err }
+func (e *maskedError) Unwrap() error { return errors.Unwrap(e.err) }
 
 func getJSONUnmasked(ctx context.Context, rawURL string, dst any, creds *feedCreds) (bool, error) {
 	shown := redactURL(rawURL)
@@ -229,7 +231,9 @@ func getJSONUnmasked(ctx context.Context, rawURL string, dst any, creds *feedCre
 		// redirected, and only the source's own host is answered.
 		asked := resp.Request.URL.String()
 		switch {
-		case creds != nil && creds.token != "" && !creds.allows(asked):
+		// Both the host that asked and the URL the retry goes to must be the
+		// source's: the retry is sent to rawURL, before any redirect check.
+		case creds != nil && creds.token != "" && (!creds.allows(asked) || !creds.allows(rawURL)):
 			return false, fmt.Errorf("%s: %s: this host asks for credentials, but they're only sent to the package source's own host, %s (over https, or plain http on loopback)", shown, resp.Status, creds.host)
 		case creds != nil && creds.token == "" && creds.unavailable:
 			return false, fmt.Errorf("%s: %s: the feed needs credentials, and the configured `dotnet.auth` couldn't be resolved (NUGET_API_KEY isn't used in its place)", shown, resp.Status)
@@ -290,6 +294,10 @@ func feedGet(ctx context.Context, rawURL string, creds *feedCreds) (*http.Respon
 	req.URL.User = nil
 	if creds == nil {
 		return registryHTTP.Do(req)
+	}
+	// CheckRedirect guards every hop but the first: guard that one here.
+	if !creds.allows(rawURL) {
+		return nil, fmt.Errorf("refusing to send the feed's credentials to %s", redactURL(rawURL))
 	}
 	req.SetBasicAuth(creds.user, creds.token)
 	client := *registryHTTP

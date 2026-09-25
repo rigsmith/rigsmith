@@ -323,3 +323,53 @@ func TestPublishedErrorsKeepTheirCause(t *testing.T) {
 		t.Errorf("err = %v, want it to wrap context.Canceled", err)
 	}
 }
+
+// An out-of-scope flat container that redirects to a 401 on the source host
+// isn't retried with credentials: the retry would go to the out-of-scope URL
+// first, before any redirect check.
+func TestPublishedNeverRetriesAnOutOfScopeURLWithCredentials(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	outside := newPrivateFeed(t, "", "", "", true)
+	// The source's index names the outside host's flat container, which
+	// redirects anonymous reads back to the source, which answers 401.
+	src := newPrivateFeed(t, "shiprig", "tok", outside.url+"/flat", false)
+	outside.anonRedirect = src.url
+	_, err := published(t, src.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"})
+	if err == nil || !strings.Contains(err.Error(), "only sent to the package source's own host") {
+		t.Fatalf("err = %v, want the scope explained", err)
+	}
+	for _, a := range outside.auths() {
+		if a != "" {
+			t.Errorf("the out-of-scope host was sent credentials: %q", a)
+		}
+	}
+}
+
+// Nothing in the chain under a masked error carries the credential: a caller
+// that unwraps it doesn't reach the unmasked message.
+func TestPublishedErrorChainIsMasked(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "echoed-value")
+	f := newPrivateFeed(t, "shiprig", "echoed-value", "", false)
+	f.echo = true
+	_, err := published(t, f.url+"/index.json", "", nil)
+	if err == nil {
+		t.Fatal("want the 500")
+	}
+	for e := err; e != nil; e = errors.Unwrap(e) {
+		if strings.Contains(e.Error(), "echoed-value") {
+			t.Errorf("an error in the chain leaks the credential: %v", e)
+		}
+	}
+}
+
+// feedGet itself won't put credentials on a request to a URL out of scope.
+func TestFeedGetRefusesToSendCredentialsOutOfScope(t *testing.T) {
+	outside := newPrivateFeed(t, "", "", "", true)
+	c := &feedCreds{host: "feed.example.com", user: "shiprig", token: "tok"}
+	if _, err := feedGet(context.Background(), outside.url+"/index.json", c); err == nil {
+		t.Error("feedGet sent credentials out of scope")
+	}
+	if len(outside.auths()) != 0 {
+		t.Errorf("the request went out: %q", outside.auths())
+	}
+}
