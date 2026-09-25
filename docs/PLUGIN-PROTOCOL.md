@@ -95,10 +95,11 @@ What an external generator gets beyond the built-in's own inputs:
   on GitHub. The `summary` is as authored; the built-in `changelog-git` and
   `changelog-github` decorate their summaries instead, as @changesets does.
 - `dependencyUpdates`: the released dependencies behind the entry,
-  `{name, displayName, newVersion}`, sorted as the built-in lists them, in
-  place of an "Updated dependencies" change, as @changesets hands
-  `getDependencyReleaseLine` its own list. The built-in renders the same
-  field.
+  `{name, displayName, newVersion}`, sorted as the built-in lists them (ties
+  by name), as @changesets hands `getDependencyReleaseLine` its own list. The
+  built-in renders from this field. The "Updated dependencies" change is still
+  in `changes`, flagged `dependencies: true`, so a generator written before
+  the field keeps working; one that renders `dependencyUpdates` skips it.
 - the output is normalized to end in exactly one newline, however many the
   generator prints, so the next entry starts on a line of its own.
 

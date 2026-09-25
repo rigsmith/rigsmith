@@ -93,7 +93,10 @@ func TestChangelogPluginReceivesRefsAndDependencies(t *testing.T) {
 	assertExitZero(t, code, out)
 	assertContains(t, out, "change: A breaking lib change commit="+head+" pr=0 author=")
 	assertContains(t, out, "dependency: lib (lib) @ 2.0.0")
+	// Still in changes, flagged, for a generator written before
+	// dependencyUpdates existed.
 	assertNotContains(t, out, "change: Updated dependencies")
+	assertContains(t, out, "flagged as dependencies: Updated dependencies")
 }
 
 // Two released dependencies are listed in the same order, whether the entry is

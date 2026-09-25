@@ -21,6 +21,7 @@ func main() {
 			Commit  string `json:"commit"`
 			PR      int    `json:"pr"`
 			Author  string `json:"author"`
+			Deps    bool   `json:"dependencies"`
 		} `json:"changes"`
 		DependencyUpdates []struct {
 			Name        string `json:"name"`
@@ -41,6 +42,10 @@ func main() {
 		commit := c.Commit
 		if len(commit) > 7 {
 			commit = commit[:7]
+		}
+		if c.Deps {
+			fmt.Printf("flagged as dependencies: %s\n", strings.SplitN(c.Summary, "\n", 2)[0])
+			continue
 		}
 		fmt.Printf("change: %s commit=%s pr=%d author=%s\n", strings.TrimSpace(c.Summary), commit, c.PR, c.Author)
 	}

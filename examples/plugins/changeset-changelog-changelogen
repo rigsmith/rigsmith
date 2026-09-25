@@ -59,9 +59,14 @@ function read(stream) {
 // rest of the summary indented beneath it, and a reference to the pull
 // request, else the commit, linked when options.repo names the GitHub repo.
 function renderLine(c, repo) {
-  const [first, ...rest] = (c.summary || "").replace(/\r\n/g, "\n").trimEnd().split("\n");
-  const head = first.replace(/^[a-zA-Z]+(\([^)]*\))?!?:\s*/, "").trim();
-  if (!head) return null;
+  const lines = (c.summary || "").replace(/\r\n/g, "\n").trimEnd().split("\n");
+  lines[0] = lines[0].replace(/^[a-zA-Z]+(\([^)]*\))?!?:\s*/, "");
+  // The headline is the first line with text: "feat:" alone on the first
+  // line, then a blank, then the text, is still a change.
+  const at = lines.findIndex((l) => l.trim());
+  if (at < 0) return null;
+  const head = lines[at].trim();
+  const rest = lines.slice(at + 1);
   const lead = c.scope ? `**${c.scope}:** ` : "";
   let ref = "";
   if (c.pr) ref = repo ? `[#${c.pr}](https://github.com/${repo}/pull/${c.pr})` : `#${c.pr}`;
@@ -95,8 +100,11 @@ function renderLine(c, repo) {
   // file's "# Title"); we render the "## <version>" entry block.
   const lines = [`## ${req.package.newVersion}`];
 
+  // The "Updated dependencies" change is flagged; this plugin renders the
+  // same thing from dependencyUpdates.
   const byType = {};
   for (const c of req.changes || []) {
+    if (c.dependencies) continue;
     (byType[sectionKey(c)] ||= []).push(c);
   }
 

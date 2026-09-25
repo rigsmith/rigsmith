@@ -487,10 +487,14 @@ type ChangelogChange struct {
 	// so a generator can group bullets within a section by tool.
 	Scope string `json:"scope,omitempty"`
 	// Breaking marks a breaking change (a `!` on the type).
-	Breaking bool   `json:"breaking,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	PR       int    `json:"pr,omitempty"`
-	Author   string `json:"author,omitempty"`
+	Breaking bool `json:"breaking,omitempty"`
+	// Dependencies marks the engine's "Updated dependencies" entry. It stays
+	// in `changes` for a generator that predates DependencyUpdates; one that
+	// renders DependencyUpdates skips it.
+	Dependencies bool   `json:"dependencies,omitempty"`
+	Commit       string `json:"commit,omitempty"`
+	PR           int    `json:"pr,omitempty"`
+	Author       string `json:"author,omitempty"`
 }
 
 // ChangelogContext mirrors the release-command context where meaningful.

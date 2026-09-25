@@ -477,7 +477,11 @@ func (m *Module) materializeDeps(exact bool) {
 	m.Changes = mergeDependencyUpdates(changes)
 	// The order the merged entry lists them in: by "<display>@<version>".
 	sort.SliceStable(m.DepReleases, func(i, j int) bool {
-		return m.DepReleases[i].DisplayName+"@"+m.DepReleases[i].NewVersion < m.DepReleases[j].DisplayName+"@"+m.DepReleases[j].NewVersion
+		a, b := m.DepReleases[i], m.DepReleases[j]
+		if ka, kb := a.DisplayName+"@"+a.NewVersion, b.DisplayName+"@"+b.NewVersion; ka != kb {
+			return ka < kb
+		}
+		return a.Name < b.Name // same text either way: the name keeps the payload stable
 	})
 }
 

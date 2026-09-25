@@ -31,21 +31,20 @@ func ModuleToRequest(m *Module) plugin.ChangelogRequest {
 func ModuleToRequestScoped(m *Module, scopeOrder []string) plugin.ChangelogRequest {
 	changes := make([]plugin.ChangelogChange, 0, len(m.Changes))
 	for _, c := range m.Changes {
-		// The engine's "Updated dependencies" entry travels as
+		// The engine's "Updated dependencies" entry also travels as
 		// DependencyUpdates, as @changesets hands getDependencyReleaseLine its
-		// own list: a generator lays it out, rather than re-parsing text.
-		if c.Dependencies {
-			continue
-		}
+		// own list; the change stays, flagged, for a generator written before
+		// that field (apiVersion 1 doesn't change).
 		changes = append(changes, plugin.ChangelogChange{
-			Bump:     c.Bump.String(),
-			Summary:  c.Description,
-			Type:     c.Type,
-			Scope:    c.Scope,
-			Breaking: c.Breaking,
-			Commit:   c.Ref.Commit,
-			PR:       c.Ref.PR,
-			Author:   c.Ref.Author,
+			Bump:         c.Bump.String(),
+			Summary:      c.Description,
+			Type:         c.Type,
+			Scope:        c.Scope,
+			Breaking:     c.Breaking,
+			Dependencies: c.Dependencies,
+			Commit:       c.Ref.Commit,
+			PR:           c.Ref.PR,
+			Author:       c.Ref.Author,
 		})
 	}
 	return plugin.ChangelogRequest{
@@ -141,9 +140,11 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 		return "", false
 	}
 
+	// Typed if any change that will render is: one whose summary is only a
+	// conventional prefix renders nothing, and mustn't restyle the entry.
 	typed := false
 	for _, c := range changes {
-		if c.Breaking || c.Type != "" {
+		if (c.Breaking || c.Type != "") && strings.TrimSpace(changeset.StripConventional(c.Summary)) != "" {
 			typed = true
 			break
 		}
@@ -178,6 +179,11 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 			}
 		default:
 			bump, _ := changeset.ParseBump(c.Bump)
+			// A "none" change releases nothing, and @changesets' changelog
+			// has no section for it.
+			if bump == changeset.BumpNone {
+				continue
+			}
 			add(bumpSection(bump), c)
 		}
 	}

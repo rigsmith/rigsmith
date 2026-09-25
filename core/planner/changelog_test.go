@@ -187,3 +187,40 @@ func TestDepReleasesFollowTheEntrysOrder(t *testing.T) {
 		t.Errorf("entry:\n%s", entry)
 	}
 }
+
+// A typed change whose summary is only a prefix renders nothing, so it
+// doesn't switch the entry to typed sections; and a "none" change has no
+// section, in either style.
+func TestRenderSectionsIgnoresEmptyTypedAndNoneChanges(t *testing.T) {
+	got := renderSections("1.0.1", []plugin.ChangelogChange{
+		{Bump: "patch", Type: "fix", Summary: "fix:"},
+		{Bump: "patch", Summary: "A fix"},
+		{Bump: "none", Summary: "Nothing to release"},
+	}, config.DefaultChangelogGroups, nil)
+	if !strings.Contains(got, "### Patch Changes\n\n- A fix") {
+		t.Errorf("an empty typed change restyled the entry:\n%s", got)
+	}
+	typed := renderSections("1.1.0", []plugin.ChangelogChange{
+		{Bump: "minor", Type: "feat", Summary: "A feature"},
+		{Bump: "none", Summary: "Nothing to release"},
+	}, config.DefaultChangelogGroups, nil)
+	for _, entry := range []string{got, typed} {
+		if strings.Contains(entry, "None Changes") || strings.Contains(entry, "Nothing to release") {
+			t.Errorf("a none change was rendered:\n%s", entry)
+		}
+	}
+}
+
+// Dependencies that render the same text are ordered by name, so the
+// request's bytes don't depend on the manifest's order.
+func TestDepReleasesBreakTiesByName(t *testing.T) {
+	for _, order := range [][2]string{{"a.pkg", "b.pkg"}, {"b.pkg", "a.pkg"}} {
+		one := &Module{Name: order[0], DisplayName: "Same", VersionOverride: "2.0.0"}
+		two := &Module{Name: order[1], DisplayName: "Same", VersionOverride: "2.0.0"}
+		m := &Module{Name: "app", DisplayName: "app", depLinks: []depLink{{dep: one}, {dep: two}}}
+		m.materializeDeps(false)
+		if m.DepReleases[0].Name != "a.pkg" || m.DepReleases[1].Name != "b.pkg" {
+			t.Errorf("manifest order %v: DepReleases = %+v", order, m.DepReleases)
+		}
+	}
+}

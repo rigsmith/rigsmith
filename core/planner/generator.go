@@ -44,9 +44,18 @@ func (g BuiltinGenerator) Render(_ context.Context, req plugin.ChangelogRequest)
 	if groups == nil {
 		groups = config.DefaultChangelogGroups
 	}
+	// The dependency entry is rendered from DependencyUpdates, as a
+	// generator reading that field would; the flagged change is its
+	// apiVersion 1 copy.
 	changes := req.Changes
 	if dep := dependencyChange(req.DependencyUpdates); dep != nil {
-		changes = append(append([]plugin.ChangelogChange(nil), changes...), *dep)
+		changes = make([]plugin.ChangelogChange, 0, len(req.Changes)+1)
+		for _, c := range req.Changes {
+			if !c.Dependencies {
+				changes = append(changes, c)
+			}
+		}
+		changes = append(changes, *dep)
 	}
 	out := renderSections(req.Package.NewVersion, changes, groups, g.scopes)
 	out += renderContributors(req.Contributors, req.ContributorsSection)

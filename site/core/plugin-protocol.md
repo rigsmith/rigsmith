@@ -81,8 +81,9 @@ stdin, and prints the entry on stdout. A tuple's options value arrives as the
 request's `options`, for the generator to interpret, as @changesets passes it
 to `getReleaseLine`; the string form sends none. Each change carries its
 `commit` (and, with a `repo` in the options, its `pr` and `author`), and the
-released dependencies arrive as `dependencyUpdates` rather than as a change,
-so a generator can render everything the built-in does.
+released dependencies arrive as `dependencyUpdates`, so a generator can render
+everything the built-in does. The "Updated dependencies" change stays in
+`changes`, flagged `dependencies: true`, for generators written before that.
 `"@changesets/cli/changelog"`, @changesets' own default, is the built-in
 layout.
 
