@@ -160,7 +160,7 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 			Type:     h.typ,
 			Scope:    h.scope,
 			Breaking: breaking,
-			ID:       shortHash(c.Hash),
+			ID:       changesetID(c),
 			Commit:   c.Hash,
 		})
 	}
@@ -230,12 +230,19 @@ func isUnder(file, dir string) bool {
 	return file == dir || strings.HasPrefix(file, dir+string(filepath.Separator))
 }
 
-// shortHash abbreviates a commit SHA to 7 chars for the synthetic changeset ID.
-func shortHash(hash string) string {
-	if len(hash) > 7 {
-		return hash[:7]
+// changesetID is a commit-sourced changeset's ID: git's unique abbreviation of
+// the commit, which keys the run's per-changeset lookups (the commit, PR and
+// author a changelog shows; contributors; consumed tracking). A bare 7-character
+// prefix could be two commits' at once and mix them up. A commit read without
+// one (built by hand) falls back to 7 characters.
+func changesetID(c gitutil.Commit) string {
+	if c.Short != "" {
+		return c.Short
 	}
-	return hash
+	if len(c.Hash) > 7 {
+		return c.Hash[:7]
+	}
+	return c.Hash
 }
 
 // releaseSemver is a full version, as release tools write one.
