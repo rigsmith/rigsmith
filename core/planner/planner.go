@@ -158,8 +158,12 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 		byName[p.Name] = p
 	}
 
-	// 1. Direct releases from the changesets.
-	directOrder := generateModules(changesets, byName, cfg.Groups())
+	// 1. Direct releases from the changesets. An ignored package's release is
+	// dropped first, as @changesets' flattenReleases does ("Filter out ignored
+	// packages because they should not trigger a release"): planned and dropped
+	// later, its bump would still rewrite its dependents' ranges to a version
+	// that is never released.
+	directOrder := generateModules(withoutIgnored(changesets, cfg), byName, cfg.Groups())
 	rel := map[string]*Module{}
 	order := make([]string, 0, len(directOrder))
 	for _, m := range directOrder {
@@ -640,4 +644,27 @@ func highestCurrentVersion(names []string, byName map[string]plugin.Package) sem
 		}
 	}
 	return highest
+}
+
+// withoutIgnored returns the changesets with every ignored package's release
+// removed, leaving the inputs untouched. A changeset left with no releases
+// plans nothing.
+func withoutIgnored(changesets []*changeset.Changeset, cfg *config.Config) []*changeset.Changeset {
+	out := make([]*changeset.Changeset, 0, len(changesets))
+	for _, cs := range changesets {
+		kept := make([]changeset.Release, 0, len(cs.Releases))
+		for _, r := range cs.Releases {
+			if !cfg.IsIgnored(r.Name) {
+				kept = append(kept, r)
+			}
+		}
+		if len(kept) == len(cs.Releases) {
+			out = append(out, cs)
+			continue
+		}
+		clone := *cs
+		clone.Releases = kept
+		out = append(out, &clone)
+	}
+	return out
 }
