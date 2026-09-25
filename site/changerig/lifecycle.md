@@ -23,10 +23,11 @@ housekeeping, as @unjs/changelogen skips it: a non-breaking `chore(deps)` (a
 dependency bot's bump) or `chore(release)`, and a release commit itself, which
 touches every package it versioned: `chore: release`, `chore: release 1.2.0`,
 `chore: release core@1.2.0, ui@0.5.0`, `chore: release 5 packages`, or
-release-please's `chore(main): release 1.2.0` and `chore(main): release core 1.2.0`.
-The description must be exactly one of those, so `chore: release notes 1.2.0`
-still counts, and so does a breaking one, by its `!` or a `BREAKING CHANGE:`
-footer.
+release-please's `chore(main): release 1.2.0`. The description must be exactly
+one of those, so `chore: release notes 1.2.0` still counts (and so does
+release-please's per-component `release core 1.2.0`, whose component can't be
+told from a word), and so does a breaking one, by its `!` or a
+`BREAKING CHANGE:` footer.
 
 ### Where the config lives
 

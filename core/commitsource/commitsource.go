@@ -245,15 +245,12 @@ const releaseSemver = `v?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?`
 // (shiprig's own commit step), or "release" and exactly what it released, as
 // shiprig-action's version PR titles it ("release 1.2.0", "release
 // core@1.2.0, ui@0.5.0", "release 5 packages") and release-please does
-// ("release 1.2.0"). "release notes 1.2.0" isn't one.
+// ("release 1.2.0"). "release notes 1.2.0" isn't one. release-please's
+// per-component "release core 1.2.0" isn't matched either: a component name
+// can't be told from a word like "notes", and a false match hides a change.
 var releaseDescRe = regexp.MustCompile(`^release(?:\s+(?:` + releaseSemver +
 	`|\S+@` + releaseSemver + `(?:,\s*\S+@` + releaseSemver + `)*` +
 	`|\d+ packages))?$`)
-
-// scopedReleaseDescRe is release-please's monorepo form, "release <component>
-// <version>", which it writes with a scope (the branch: `chore(main):`). Only
-// with a scope, since unscoped it reads like any chore naming a version.
-var scopedReleaseDescRe = regexp.MustCompile(`^release\s+\S+\s+` + releaseSemver + `$`)
 
 // isHousekeeping reports a commit that releases nothing of its own, as
 // @unjs/changelogen skips it: a non-breaking chore scoped `deps` (a
@@ -268,7 +265,5 @@ func isHousekeeping(h header, breaking bool) bool {
 		return false
 	}
 	desc := strings.ToLower(strings.TrimSpace(h.desc))
-	return h.scope == "deps" || h.scope == "release" ||
-		releaseDescRe.MatchString(desc) ||
-		(h.scope != "" && scopedReleaseDescRe.MatchString(desc))
+	return h.scope == "deps" || h.scope == "release" || releaseDescRe.MatchString(desc)
 }

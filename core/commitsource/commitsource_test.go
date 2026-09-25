@@ -244,7 +244,8 @@ func TestSynthesizeSkipsHousekeeping(t *testing.T) {
 		"chore: release core@1.2.0, ui@0.5.0":               false,
 		"chore: release 5 packages":                         false,
 		"chore(main): release 1.2.0":                        false,
-		"chore(main): release core 1.2.0":                   false,
+		"chore(main): release core 1.2.0":                   true, // a component can't be told from a word
+		"chore(main): release notes 1.2.0":                  true,
 		"chore: Release 1.2.0":                              false,
 		"chore: release 1.2.0-next.0":                       false,
 		"chore: release @acme/core@1.2.0":                   false,
