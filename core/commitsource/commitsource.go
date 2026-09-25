@@ -119,7 +119,12 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 		if !ok || !recognized[h.typ] {
 			continue
 		}
+		// Breaking by its `!` or a BREAKING CHANGE footer; decided before the
+		// housekeeping rule, which never skips a breaking commit.
 		breaking := h.breaking || breakingFooterRe.MatchString(c.Body)
+		if isHousekeeping(h, breaking) {
+			continue
+		}
 
 		// changelogen-style: when the body carries a `BREAKING CHANGE:` footer,
 		// surface its description as a continuation line under the bullet (the
@@ -231,4 +236,34 @@ func shortHash(hash string) string {
 		return hash[:7]
 	}
 	return hash
+}
+
+// releaseSemver is a full version, as release tools write one.
+const releaseSemver = `v?\d+\.\d+\.\d+(?:-[0-9a-z.-]+)?(?:\+[0-9a-z.-]+)?`
+
+// releaseDescRe matches a whole release commit description: a bare "release"
+// (shiprig's own commit step), or "release" and exactly what it released, as
+// shiprig-action's version PR titles it ("release 1.2.0", "release
+// core@1.2.0, ui@0.5.0", "release 5 packages") and release-please does
+// ("release 1.2.0"). "release notes 1.2.0" isn't one. release-please's
+// per-component "release core 1.2.0" isn't matched either: a component name
+// can't be told from a word like "notes", and a false match hides a change.
+var releaseDescRe = regexp.MustCompile(`^release(?:\s+(?:` + releaseSemver +
+	`|\S+@` + releaseSemver + `(?:,\s*\S+@` + releaseSemver + `)*` +
+	`|\d+ packages))?$`)
+
+// isHousekeeping reports a commit that releases nothing of its own, as
+// @unjs/changelogen skips it: a non-breaking chore scoped `deps` (a
+// dependency bot's bump) or `release`, or any non-breaking chore that is a
+// release commit. The release commit touches every package it versioned, so
+// counted, it would be a phantom patch of all of them wherever the last
+// release's baseline doesn't cover it (before the release is tagged, a
+// first release, a missing tag). breaking is the commit's whole breaking
+// status: its `!` or a BREAKING CHANGE footer.
+func isHousekeeping(h header, breaking bool) bool {
+	if h.typ != "chore" || breaking {
+		return false
+	}
+	desc := strings.ToLower(strings.TrimSpace(h.desc))
+	return h.scope == "deps" || h.scope == "release" || releaseDescRe.MatchString(desc)
 }
