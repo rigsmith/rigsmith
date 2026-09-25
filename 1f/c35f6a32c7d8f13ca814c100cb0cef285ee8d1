@@ -1,0 +1,45 @@
+internal/changerig/cmdtest/changelogen_example_test.go
+  s_505a2cfce9114c::t_eb1cfe1296997e 1-50
+core/plugin/protocol.go
+  s_505a2cfce9114c::t_b8af26828e8348 490-497
+.changeset/changelog-no-mixed-headings.md
+  s_505a2cfce9114c::t_696e87416844e1 7
+docs/PLUGIN-PROTOCOL.md
+  s_505a2cfce9114c::t_696e87416844e1 98-102
+site/core/plugin-protocol.md
+  s_505a2cfce9114c::t_696e87416844e1 84-86
+examples/plugins/changeset-changelog-changelogen
+  s_505a2cfce9114c::t_b8af26828e8348 62-69,103-104,107
+core/planner/planner.go
+  s_505a2cfce9114c::t_b8af26828e8348 480-484
+core/planner/changelog.go
+  s_505a2cfce9114c::t_b8af26828e8348 34,36-37,39-47,143-144,147,182-186
+internal/changerig/cmdtest/testdata/optionsplugin/main.go
+  s_505a2cfce9114c::t_b8af26828e8348 24,46,48
+  s_505a2cfce9114c::t_5f5a8075dd3af4 47
+.changeset/changelog-plugin-refs.md
+  s_505a2cfce9114c::t_696e87416844e1 7
+core/planner/generator.go
+  s_505a2cfce9114c::t_b8af26828e8348 47-49,52-58
+internal/changerig/cmdtest/changelog_options_test.go
+  s_505a2cfce9114c::t_b8af26828e8348 96-97
+  s_505a2cfce9114c::t_5f5a8075dd3af4 99
+core/planner/changelog_test.go
+  s_505a2cfce9114c::t_eb1cfe1296997e 190-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "1fc35f6a32c7d8f13ca814c100cb0cef285ee8d1",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
