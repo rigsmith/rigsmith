@@ -1,0 +1,61 @@
+site/changerig/lifecycle.md
+  s_505a2cfce9114c::t_aa72a71fe44612 74-80
+core/plugin/changelog.go
+  s_505a2cfce9114c::t_c41c5d78254e39 41-44
+.changeset/changelog-canon-default.md
+  s_505a2cfce9114c::t_aa72a71fe44612 1-7
+core/changeset/changeset.go
+  s_505a2cfce9114c::t_9b53eeb86c6b1e 101-104,365-370
+internal/changerig/commands/version.go
+  s_505a2cfce9114c::t_8337aefdb4b827 262-264
+  s_505a2cfce9114c::t_1fcbfc3cbdb01a 233-245,255-256,261
+core/planner/planner.go
+  s_505a2cfce9114c::t_9b53eeb86c6b1e 37-41,56-59,403,453,458,463-465,467,478-481,490,504
+core/planner/generator.go
+  s_505a2cfce9114c::t_3a554f28d6bb30 5-6,8
+  s_505a2cfce9114c::t_9b53eeb86c6b1e 47-51,68-85
+docs/PLUGIN-PROTOCOL.md
+  s_505a2cfce9114c::t_aa72a71fe44612 90-104
+internal/changerig/cmdtest/testdata/optionsplugin/main.go
+  s_505a2cfce9114c::t_1fcbfc3cbdb01a 19-29,40-44,46-49
+  s_505a2cfce9114c::t_9355d1fd9be691 10,45
+core/planner/changelog.go
+  s_505a2cfce9114c::t_4e826d8b1b9e35 103-108,144-168,181
+  s_505a2cfce9114c::t_9b53eeb86c6b1e 34-39,46-48,61
+core/config/config_test.go
+  s_505a2cfce9114c::t_27a59e204f9458 278
+internal/changerig/cmdtest/changelog_options_test.go
+  s_505a2cfce9114c::t_1fcbfc3cbdb01a 76-97
+  s_505a2cfce9114c::t_8337aefdb4b827 98-124
+examples/plugins/changeset-changelog-changelogen
+  s_505a2cfce9114c::t_c41c5d78254e39 15-17,19-21,57-75,90-93,96,117,122-125,128-132,135-145
+.changeset/changelog-no-mixed-headings.md
+  s_505a2cfce9114c::t_aa72a71fe44612 1-7
+core/planner/changelog_test.go
+  s_505a2cfce9114c::t_a47b54e563a821 169-189
+  s_505a2cfce9114c::t_7c700d71d9645e 113-168
+core/plugin/changelog_test.go
+  s_505a2cfce9114c::t_adbb57a73f5ec3 1-23
+.changeset/changelog-plugin-refs.md
+  s_505a2cfce9114c::t_aa72a71fe44612 1-7
+site/core/plugin-protocol.md
+  s_505a2cfce9114c::t_aa72a71fe44612 82-87
+core/plugin/protocol.go
+  s_505a2cfce9114c::t_9b53eeb86c6b1e 200-202
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2473e2f46efe258ce118a4c9649b986be88684d1",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
