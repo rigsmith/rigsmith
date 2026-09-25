@@ -253,6 +253,19 @@ type PublishedRequest struct {
 	RepoRoot      string  `json:"repoRoot"`
 	Package       Package `json:"package"`
 	PackageSource string  `json:"packageSource"` // as for PublishRequest: a feed name or URL
+	// Auth is the publish credential, for a registry that won't answer an
+	// anonymous read (a private feed). An adapter sends it only when the
+	// registry asks, and only to the registry's own host. Nil when none is
+	// configured or it couldn't be resolved.
+	Auth *AuthCredential `json:"auth,omitempty"`
+	// User is the account name to send with Auth, for a registry that
+	// checks it (the ecosystem block's `user`).
+	User string `json:"user,omitempty"`
+	// AuthUnavailable says a credential is configured but couldn't be
+	// resolved (a plan job without the secret): don't fall back to an ambient
+	// one (an environment variable) in its place. Credentials written into
+	// PackageSource itself are the source's own and still apply.
+	AuthUnavailable bool `json:"authUnavailable,omitempty"`
 }
 
 // PublishedResponse is the registry's answer. NoRegistry marks an ecosystem

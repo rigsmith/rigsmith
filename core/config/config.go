@@ -684,7 +684,9 @@ type EcosystemConfig struct {
 	OIDC string `json:"oidc,omitempty"`
 	// User is the registry account/subject an OIDC exchange requires for some
 	// registries — NuGet keys its trusted-publishing token to the policy
-	// creator's username. Unused by npm/crates.
+	// creator's username — and, for dotnet, the account name sent with the
+	// credential when a private feed asks for one on a read. Unused by
+	// npm/crates.
 	User string `json:"user,omitempty"`
 	// PublishDirs are repo-relative globs naming package directories that do not
 	// exist until a build has produced them — binary wrappers generated from

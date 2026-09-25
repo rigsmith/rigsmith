@@ -2,12 +2,15 @@ package dotnet
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -24,14 +27,15 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 		return plugin.PublishedResponse{NoRegistry: true}, nil
 	}
 	what := req.Package.Name + "@" + req.Package.Version
-	base, err := packageBaseAddress(ctx, req.PackageSource)
+	creds := feedCredentials(req)
+	base, err := packageBaseAddress(ctx, req.PackageSource, creds)
 	if err != nil {
 		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the feed: %w", what, err)
 	}
 	var index struct {
 		Versions *[]string `json:"versions"`
 	}
-	found, err := getJSON(ctx, base+strings.ToLower(req.Package.Name)+"/index.json", &index)
+	found, err := getJSON(ctx, base+strings.ToLower(req.Package.Name)+"/index.json", &index, creds)
 	if err != nil {
 		return plugin.PublishedResponse{}, fmt.Errorf("checking %s on the feed: %w", what, err)
 	}
@@ -87,7 +91,7 @@ const nugetOrgBase = "https://api.nuget.org/v3-flatcontainer/"
 // (with a trailing slash): nuget.org for the default names, else the
 // PackageBaseAddress resource the source's v3 service index names. A source
 // given by its NuGet.config name can't be resolved from here.
-func packageBaseAddress(ctx context.Context, source string) (string, error) {
+func packageBaseAddress(ctx context.Context, source string, creds *feedCreds) (string, error) {
 	switch {
 	case source == "" || strings.EqualFold(source, "nuget") || strings.EqualFold(source, "nuget.org"):
 		return nugetOrgBase, nil
@@ -100,7 +104,7 @@ func packageBaseAddress(ctx context.Context, source string) (string, error) {
 			Type string `json:"@type"`
 		} `json:"resources"`
 	}
-	found, err := getJSON(ctx, source, &index)
+	found, err := getJSON(ctx, source, &index, creds)
 	if err != nil {
 		return "", err
 	}
@@ -140,18 +144,109 @@ func withoutURL(err error) error {
 	return err
 }
 
+// feedCreds is what a private feed is asked with: HTTP Basic auth, scoped to
+// the configured source's host.
+type feedCreds struct {
+	host, user, token string
+	// unavailable: a configured dotnet.auth couldn't be resolved, so there
+	// is no token, and NUGET_API_KEY wasn't taken in its place.
+	unavailable bool
+}
+
+// mask hides the token, and the Basic value carrying it, in s: a feed may
+// echo what it was sent.
+func (c *feedCreds) mask(s string) string {
+	if c == nil || c.token == "" {
+		return s
+	}
+	basic := base64.StdEncoding.EncodeToString([]byte(c.user + ":" + c.token))
+	return strings.NewReplacer(basic, "***", c.token, "***").Replace(s)
+}
+
+// feedCredentials works out the credentials for a feed read: those in the
+// source URL (https://user:token@…), else the publish credential (the
+// resolved `dotnet.auth`, else NUGET_API_KEY), which private feeds (GitHub
+// Packages, Azure Artifacts, feedz) accept as the password. Never for
+// nuget.org, whose reads are public and whose key is for pushing only.
+func feedCredentials(req plugin.PublishedRequest) *feedCreds {
+	u, err := url.Parse(req.PackageSource)
+	if err != nil || !strings.HasPrefix(u.Scheme, "http") || strings.EqualFold(u.Hostname(), "api.nuget.org") {
+		return nil
+	}
+	c := &feedCreds{host: strings.ToLower(u.Host), user: req.User, unavailable: req.AuthUnavailable}
+	if u.User != nil {
+		c.user = u.User.Username()
+		c.token, _ = u.User.Password()
+	}
+	if c.token == "" && req.Auth != nil {
+		c.token = req.Auth.Token
+	}
+	// A configured credential that couldn't be resolved isn't replaced by
+	// the environment's: that key may be for somewhere else entirely.
+	if c.token == "" && !req.AuthUnavailable {
+		c.token = os.Getenv("NUGET_API_KEY")
+	}
+	if c.user == "" {
+		c.user = "shiprig" // most feeds take any name with a token
+	}
+	return c
+}
+
 // getJSON GETs rawURL into dst. It reports false, with no error, for a 404;
-// any other non-200 is an error. Errors carry the URL with its credentials
+// any other non-200 is an error. A 401 from the source's own host is retried
+// once with creds, when there are any; the credentials never go anywhere
+// else, and never unasked. Errors carry the URL with its credentials
 // redacted.
-func getJSON(ctx context.Context, rawURL string, dst any) (bool, error) {
+func getJSON(ctx context.Context, rawURL string, dst any, creds *feedCreds) (bool, error) {
+	found, err := getJSONUnmasked(ctx, rawURL, dst, creds)
+	if err != nil {
+		// Whatever the credential's source (dotnet.auth, the source URL,
+		// NUGET_API_KEY), it never reaches the message; the cause stays
+		// reachable for errors.Is (a cancelled context, a deadline).
+		err = &maskedError{msg: creds.mask(err.Error()), err: err}
+	}
+	return found, err
+}
+
+// maskedError is err with its message masked. It unwraps to err's own cause
+// (a cancelled context, a deadline, a transport or decode error), not to err:
+// err's message is the unmasked one, which may carry a feed's response body.
+type maskedError struct {
+	msg string
+	err error
+}
+
+func (e *maskedError) Error() string { return e.msg }
+func (e *maskedError) Unwrap() error { return errors.Unwrap(e.err) }
+
+func getJSONUnmasked(ctx context.Context, rawURL string, dst any, creds *feedCreds) (bool, error) {
 	shown := redactURL(rawURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	resp, err := feedGet(ctx, rawURL, nil)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", shown, withoutURL(err))
 	}
-	resp, err := registryHTTP.Do(req)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", shown, withoutURL(err))
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		// The host that asked: an anonymous request may have been
+		// redirected, and only the source's own host is answered.
+		asked := resp.Request.URL.String()
+		switch {
+		// Both the host that asked and the URL the retry goes to must be the
+		// source's: the retry is sent to rawURL, before any redirect check.
+		case creds != nil && creds.token != "" && (!creds.allows(asked) || !creds.allows(rawURL)):
+			return false, fmt.Errorf("%s: %s: this host asks for credentials, but they're only sent to the package source's own host, %s (over https, or plain http on loopback)", shown, resp.Status, creds.host)
+		case creds != nil && creds.token == "" && creds.unavailable:
+			return false, fmt.Errorf("%s: %s: the feed needs credentials, and the configured `dotnet.auth` couldn't be resolved (NUGET_API_KEY isn't used in its place)", shown, resp.Status)
+		case creds == nil || creds.token == "":
+			return false, fmt.Errorf("%s: %s: the feed needs credentials. Set `dotnet.auth` (op://…, env:NAME, cmd:…) or NUGET_API_KEY to a token it accepts for reading, and `dotnet.user` if it checks the account name", shown, resp.Status)
+		}
+		if resp, err = feedGet(ctx, rawURL, creds); err != nil {
+			return false, fmt.Errorf("%s: %w", shown, withoutURL(err))
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return false, fmt.Errorf("%s: %s: the feed turned down the credentials (from the source URL, `dotnet.auth` or NUGET_API_KEY, as user %q): does the token have read access to it?", shown, resp.Status, creds.user)
+		}
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
@@ -166,4 +261,54 @@ func getJSON(ctx context.Context, rawURL string, dst any) (bool, error) {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return false, fmt.Errorf("%s: %s %s", shown, resp.Status, strings.TrimSpace(string(body)))
 	}
+}
+
+// allows reports whether creds may be sent to rawURL: the source's own host,
+// over https (or plain http to a local test server).
+func (c *feedCreds) allows(rawURL string) bool {
+	if c == nil {
+		return false
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || !strings.EqualFold(u.Host, c.host) {
+		return false
+	}
+	return u.Scheme == "https" || isLoopback(u.Hostname())
+}
+
+func isLoopback(host string) bool {
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
+}
+
+// feedGet is one GET, with Basic auth when creds are given. Credentials in
+// the URL itself are dropped: creds carries them, scoped to the host. A
+// credentialed request follows a redirect only where the credentials may go:
+// Go keeps Authorization across a redirect to a subdomain, or from https to
+// http on the same host, and either would send them where they don't belong.
+func feedGet(ctx context.Context, rawURL string, creds *feedCreds) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.URL.User = nil
+	if creds == nil {
+		return registryHTTP.Do(req)
+	}
+	// CheckRedirect guards every hop but the first: guard that one here.
+	if !creds.allows(rawURL) {
+		return nil, fmt.Errorf("refusing to send the feed's credentials to %s", redactURL(rawURL))
+	}
+	req.SetBasicAuth(creds.user, creds.token)
+	client := *registryHTTP
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if !creds.allows(next.URL.String()) {
+			return fmt.Errorf("the feed redirected a credentialed request to %s, where its credentials may not go", redactURL(next.URL.String()))
+		}
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return client.Do(req)
 }

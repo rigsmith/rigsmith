@@ -28,9 +28,16 @@ new plugin method, `published`:
 - **NuGet**: the feed's flat container (`PackageBaseAddress/3.0.0` from the
   v3 service index; nuget.org by default), compared in NuGet's normalized form
   (`1.0.0.0` is `1.0.0`). A source given by its NuGet.config name can't be
-  resolved and is an error, and so is a 200 without a versions list. The
-  query sends no credentials, so an authenticated feed answers 401 and the
-  plan fails; asking it with the publish credentials is a follow-up.
+  resolved and is an error, and so is a 200 without a versions list. A
+  private feed is asked with the publish credential, as HTTP Basic auth:
+  credentials written into the source URL, else the resolved `dotnet.auth`,
+  else `NUGET_API_KEY`, as the password (GitHub Packages, Azure Artifacts and
+  feedz take a token there), and `dotnet.user` (or a placeholder) as the
+  name. They're sent only after the feed answers 401, and only to the
+  source's own host over https (a redirect elsewhere is refused), never to
+  nuget.org, whose reads are public and whose key only pushes. A reference
+  the plan job can't resolve sends none, `NUGET_API_KEY` doesn't stand in
+  for it, and it's named if the feed then asks.
 - **crates.io**: `GET /api/v1/crates/<name>/<version>`. Only crates.io: an
   alternate registry is named for cargo (`--registry`) and need not serve that
   endpoint, so its 404 would read as "not published". Checking one is an error.
