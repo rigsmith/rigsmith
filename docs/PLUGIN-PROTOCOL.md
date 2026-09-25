@@ -87,6 +87,21 @@ generator that ignores both still renders correctly; the bundled
 `examples/plugins/changeset-changelog-changelogen` honours them, and is the
 reference for what "correctly" looks like.
 
+What an external generator gets beyond the built-in's own inputs:
+
+- each change's `commit` (the one that added the changeset, or a commit-sourced
+  change's own), and, when the options carry a `repo` (as
+  `@changesets/changelog-github`'s do), its `pr` and `author` login, looked up
+  on GitHub. The `summary` is as authored; the built-in `changelog-git` and
+  `changelog-github` decorate their summaries instead, as @changesets does.
+- `dependencyUpdates`: the released dependencies behind the entry,
+  `{name, displayName, newVersion}`, sorted as the built-in lists them, in
+  place of an "Updated dependencies" change, as @changesets hands
+  `getDependencyReleaseLine` its own list. The built-in renders the same
+  field.
+- the output is normalized to end in exactly one newline, however many the
+  generator prints, so the next entry starts on a line of its own.
+
 Options: configured as a `[name, options]` tuple, as @changesets has it
 (`"changelog": ["my-generator", { "style": "terse" }]`), the options value
 reaches the generator as the request's `options` field: the same JSON,

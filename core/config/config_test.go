@@ -275,7 +275,7 @@ func TestChangelogSpec(t *testing.T) {
 		`{ "changelog": false }`: "default",
 		`{ "changelog": null }`:  "default",
 		`{ "changelog": "" }`:    "default",
-		`{ "changelog": "@changesets/cli/changelog" }`:                         "@changesets/cli/changelog",
+		`{ "changelog": "@changesets/cli/changelog" }`:                         "default", // canon's default module is the built-in
 		`{ "changelog": "@changesets/changelog-git" }`:                         "@changesets/changelog-git",
 		`{ "changelog": ["@changesets/changelog-github", { "repo": "o/r" }] }`: "@changesets/changelog-github",
 		`{ "changelog": [] }`: "default",

@@ -230,7 +230,19 @@ func NewVersionCmd() *cobra.Command {
 			unmentioned := FindUnmentioned(active, ws.Config)
 
 			setting := changelog.ParseSetting(ws.Config)
-			if setting.Kind != changelog.KindDefault {
+			// An external generator gets each change's commit (and, with a
+			// `repo` in its options, its PR and author) as request fields,
+			// to render as it likes; the built-in git/github kinds decorate
+			// the summary itself, as @changesets does.
+			external := setting.Kind == changelog.KindDefault && ws.Config.ChangelogSpec() != "default"
+			if setting.Kind != changelog.KindDefault || external {
+				resolveAs := setting
+				if external {
+					resolveAs.Kind = changelog.KindGit
+					if setting.Repo != "" {
+						resolveAs.Kind = changelog.KindGitHub
+					}
+				}
 				fileIDs := make([]string, 0, len(active))
 				commitIDs := map[string]string{}
 				for _, cs := range active {
@@ -240,12 +252,16 @@ func NewVersionCmd() *cobra.Command {
 						fileIDs = append(fileIDs, cs.ID)
 					}
 				}
-				infos := changelog.Resolve(fileIDs, setting, ws.Root, execRunner(cmd))
-				for id, info := range changelog.ResolveFromCommits(commitIDs, setting, ws.Root, execRunner(cmd)) {
+				infos := changelog.Resolve(fileIDs, resolveAs, ws.Root, execRunner(cmd))
+				for id, info := range changelog.ResolveFromCommits(commitIDs, resolveAs, ws.Root, execRunner(cmd)) {
 					infos[id] = info
 				}
 				for _, cs := range active {
 					if info, ok := infos[cs.ID]; ok {
+						cs.Ref = changeset.Ref{Commit: info.Commit, PR: info.PullRequest, Author: info.Author}
+						// Decorates for the built-in git/github kinds only: an
+						// external generator's setting is the default kind, so
+						// its summaries stay as authored.
 						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)
 					}
 				}

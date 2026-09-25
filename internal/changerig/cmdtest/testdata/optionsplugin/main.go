@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -15,6 +16,17 @@ func main() {
 			NewVersion string `json:"newVersion"`
 		} `json:"package"`
 		Options json.RawMessage `json:"options"`
+		Changes []struct {
+			Summary string `json:"summary"`
+			Commit  string `json:"commit"`
+			PR      int    `json:"pr"`
+			Author  string `json:"author"`
+		} `json:"changes"`
+		DependencyUpdates []struct {
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
+			NewVersion  string `json:"newVersion"`
+		} `json:"dependencyUpdates"`
 	}
 	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -25,4 +37,14 @@ func main() {
 		opts = string(req.Options)
 	}
 	fmt.Printf("## %s\n\noptions: %s\n", req.Package.NewVersion, opts)
+	for _, c := range req.Changes {
+		commit := c.Commit
+		if len(commit) > 7 {
+			commit = commit[:7]
+		}
+		fmt.Printf("change: %s commit=%s pr=%d author=%s\n", strings.TrimSpace(c.Summary), commit, c.PR, c.Author)
+	}
+	for _, d := range req.DependencyUpdates {
+		fmt.Printf("dependency: %s (%s) @ %s\n", d.Name, d.DisplayName, d.NewVersion)
+	}
 }

@@ -12,14 +12,13 @@
 // The engine resolves a bare name to `changeset-changelog-<name>` on PATH.
 //
 // Invocation: `changeset-changelog-changelogen render` with the request on stdin.
-// Configured as ["changelogen", { … }], the options object arrives as
-// request.options; this plugin takes none.
+// Configured as ["changelogen", { "repo": "owner/name" }], the options object
+// arrives as request.options, and its repo turns PR and commit references into
+// links.
 //
-// changelogen groups by conventional-commit TYPE with emoji headings. rigsmith
-// changesets currently carry a bump (major/minor/patch), not a commit type, so
-// this maps bump → the nearest changelogen section. Once optional `type:`
-// changeset frontmatter lands (see PORTING-PLAN.md / changelog-grouping design),
-// this plugin can group by real types with no contract change.
+// changelogen groups by conventional-commit TYPE with emoji headings: a
+// changeset's `type:` frontmatter (or its summary's conventional prefix) picks
+// the section, and an untyped one maps its bump to the nearest section.
 
 // Group by conventional TYPE (the request now carries change.type). A breaking
 // change (change.breaking, i.e. a `!` on the type) always wins. Untyped changes
@@ -55,6 +54,25 @@ function read(stream) {
   });
 }
 
+// renderLine is one bullet: the scope as a lead-in, the summary's first line
+// without its conventional prefix (the heading and lead-in say that), the
+// rest of the summary indented beneath it, and a reference to the pull
+// request, else the commit, linked when options.repo names the GitHub repo.
+function renderLine(c, repo) {
+  const [first, ...rest] = (c.summary || "").replace(/\r\n/g, "\n").trimEnd().split("\n");
+  const head = first.replace(/^[a-zA-Z]+(\([^)]*\))?!?:\s*/, "").trim();
+  if (!head) return null;
+  const lead = c.scope ? `**${c.scope}:** ` : "";
+  let ref = "";
+  if (c.pr) ref = repo ? `[#${c.pr}](https://github.com/${repo}/pull/${c.pr})` : `#${c.pr}`;
+  else if (c.commit) {
+    const short = c.commit.slice(0, 7);
+    ref = repo ? `[${short}](https://github.com/${repo}/commit/${c.commit})` : short;
+  }
+  const body = rest.map((l) => (l.trim() ? `  ${l.trimEnd()}` : "")).join("\n");
+  return `- ${lead}${head}${ref ? ` (${ref})` : ""}${body ? `\n${body}` : ""}`;
+}
+
 (async () => {
   let req;
   try {
@@ -69,10 +87,13 @@ function read(stream) {
     process.exit(1);
   }
 
-  const lines = [];
+  // Options arrive as req.options when configured as ["changelogen", { … }]:
+  // { "repo": "owner/name" } links pull requests and commits.
+  const repo = (req.options && req.options.repo) || "";
+
   // changelogen leads with the version as a heading (the engine still owns the
   // file's "# Title"); we render the "## <version>" entry block.
-  lines.push(`## ${req.package.newVersion}`);
+  const lines = [`## ${req.package.newVersion}`];
 
   const byType = {};
   for (const c of req.changes || []) {
@@ -93,42 +114,35 @@ function read(stream) {
     return ra !== rb ? ra - rb : sa < sb ? -1 : 1;
   };
 
+  let rendered = 0;
   // Known sections in changelogen order, then any unknown types alphabetically.
   const seen = new Set(ORDER);
   const extra = Object.keys(byType).filter((k) => !seen.has(k)).sort();
   for (const key of [...ORDER, ...extra]) {
-    const changes = byType[key];
-    if (!changes || changes.length === 0) continue;
-    lines.push("", TYPE_SECTIONS[key] || `### ${key}`);
-    for (const c of [...changes].sort(byScope)) {
-      // The type and scope are structure — the heading and the lead-in — so an
-      // authored `feat(rig):` prefix left in the prose would repeat both.
-      const first = (c.summary || "")
-        .split("\n")[0]
-        .replace(/^[a-zA-Z]+(\([^)]*\))?!?:\s*/, "")
-        .trim();
-      if (!first) continue;
-      const lead = c.scope ? `**${c.scope}:** ` : "";
-      const refs = [];
-      if (c.pr) refs.push(`#${c.pr}`);
-      else if (c.commit) refs.push(c.commit.slice(0, 7));
-      const suffix = refs.length ? ` (${refs.join(", ")})` : "";
-      lines.push(`- ${lead}${first}${suffix}`);
-    }
+    const bullets = [...(byType[key] || [])].sort(byScope).map((c) => renderLine(c, repo)).filter(Boolean);
+    if (!bullets.length) continue;
+    lines.push("", TYPE_SECTIONS[key] || `### ${key}`, "", ...bullets);
+    rendered += bullets.length;
   }
 
-  // Dependency updates (pre-resolved by the engine).
-  if (req.dependencyUpdates && req.dependencyUpdates.length) {
-    lines.push("", "### 🌊 Dependencies");
-    for (const d of req.dependencyUpdates) {
-      lines.push(`- ${d.name}@${d.newVersion}`);
-    }
+  // The released dependencies, as the engine lists them.
+  const deps = req.dependencyUpdates || [];
+  if (deps.length) {
+    lines.push("", "### 🌊 Dependencies", "", ...deps.map((d) => `- ${d.displayName || d.name}@${d.newVersion}`));
+    rendered += deps.length;
   }
 
-  // changelogen-style contributors line, when authors are present.
-  const authors = [...new Set((req.changes || []).map((c) => c.author).filter(Boolean))];
-  if (authors.length) {
-    lines.push("", "### ❤️ Contributors", ...authors.map((a) => `- ${a}`));
+  if (!rendered) lines.push("", "No changes in this release.");
+
+  // The release's contributors, as the engine resolved them (the
+  // `contributors` config), linked when a GitHub login is known.
+  const contributors = req.contributors || [];
+  if (contributors.length) {
+    lines.push("", `### ${req.contributorsSection || "❤️ Contributors"}`, "");
+    for (const a of contributors) {
+      const name = a.name || a.login;
+      lines.push(a.login ? `- ${name} ([@${a.login}](https://github.com/${a.login}))` : `- ${name}`);
+    }
   }
 
   process.stdout.write(lines.join("\n") + "\n");

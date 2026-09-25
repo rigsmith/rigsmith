@@ -197,6 +197,9 @@ type SetVersionRequest struct {
 type DependencyUpdate struct {
 	Name       string `json:"name"`
 	NewVersion string `json:"newVersion"`
+	// DisplayName is the dependency's human title, as its own changelog
+	// heading shows it. Set in a ChangelogRequest; defaults to Name.
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // PublishRequest asks an adapter to publish a package via its native package

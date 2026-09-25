@@ -468,7 +468,20 @@ func Spec(changesetDir string) cfgfind.Spec {
 // ChangelogSpec interprets the polymorphic `changelog` config value and returns
 // the generator id: false/null/absent → "default"; a string → that string; a
 // [name, options] tuple → name. Options handling is the generator's concern.
+// @changesets' own default module, "@changesets/cli/changelog" (what
+// `changeset init` writes), is the built-in default too: it's a module name,
+// not a command to run.
 func (c *Config) ChangelogSpec() string {
+	if spec := c.changelogSpec(); spec != canonDefaultChangelog {
+		return spec
+	}
+	return "default"
+}
+
+// canonDefaultChangelog is @changesets' default changelog module.
+const canonDefaultChangelog = "@changesets/cli/changelog"
+
+func (c *Config) changelogSpec() string {
 	raw := bytesTrim(c.Changelog)
 	if len(raw) == 0 || string(raw) == "false" || string(raw) == "null" {
 		return "default"
