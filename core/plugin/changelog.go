@@ -38,8 +38,10 @@ func (g *SubprocessChangelogGenerator) Render(ctx context.Context, req Changelog
 	if err != nil {
 		return "", err
 	}
-	// The engine trims a single trailing newline and owns insertion position.
-	return strings.TrimRight(out, "\n"), nil
+	// The engine owns insertion: an entry ends in exactly one newline, as the
+	// built-in's does, however many the plugin printed, so the next entry or
+	// title starts on a line of its own.
+	return strings.TrimRight(out, "\n") + "\n", nil
 }
 
 var _ ChangelogGenerator = (*SubprocessChangelogGenerator)(nil)

@@ -110,3 +110,117 @@ func TestEmptySummariesRenderNoBullet(t *testing.T) {
 		t.Errorf("bullets = %d, want 1 (only the real one):\n%s", n, got)
 	}
 }
+
+// An entry with typed changes doesn't mix in bump headings: its untyped ones
+// join the typed section their bump stands for.
+func TestRenderSectionsFoldsUntypedChangesIntoTypedSections(t *testing.T) {
+	got := renderSections("2.0.0", []plugin.ChangelogChange{
+		{Bump: "patch", Summary: "Document exit codes", Type: "docs"},
+		{Bump: "minor", Summary: "Add a --json flag"},
+		{Bump: "major", Summary: "Drop Node 18"},
+		{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0"},
+	}, config.DefaultChangelogGroups, nil)
+	for _, heading := range []string{"Minor Changes", "Patch Changes", "Major Changes"} {
+		if strings.Contains(got, heading) {
+			t.Errorf("a typed entry mixes in %q:\n%s", heading, got)
+		}
+	}
+	for _, want := range []string{
+		"### " + config.BreakingGroup.Section + "\n\n- Drop Node 18",
+		"### " + sectionFor(t, "feat") + "\n\n- Add a --json flag",
+		"### " + sectionFor(t, "fix") + "\n\n- Updated dependencies\n  - core@2.0.0",
+		"### " + sectionFor(t, "docs") + "\n\n- Document exit codes",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+// Without a typed change, the canon bump headings stay; and groups that name
+// no feat/fix section fall back to them.
+func TestRenderSectionsKeepsBumpHeadingsWhenUntypedOrUngrouped(t *testing.T) {
+	untyped := renderSections("1.1.0", []plugin.ChangelogChange{
+		{Bump: "minor", Summary: "Add a flag"},
+		{Bump: "patch", Summary: "Fix a bug"},
+	}, config.DefaultChangelogGroups, nil)
+	if !strings.Contains(untyped, "### Minor Changes") || !strings.Contains(untyped, "### Patch Changes") {
+		t.Errorf("untyped entry:\n%s", untyped)
+	}
+	ungrouped := renderSections("1.1.0", []plugin.ChangelogChange{
+		{Bump: "patch", Summary: "Document it", Type: "docs"},
+		{Bump: "minor", Summary: "Add a flag"},
+	}, []config.ChangelogGroup{{Type: "docs", Section: "Docs", Bump: "patch"}}, nil)
+	if !strings.Contains(ungrouped, "### Minor Changes\n\n- Add a flag") {
+		t.Errorf("no feat group should fall back to the bump heading:\n%s", ungrouped)
+	}
+}
+
+func sectionFor(t *testing.T, typ string) string {
+	t.Helper()
+	for _, g := range config.DefaultChangelogGroups {
+		if g.Type == typ {
+			return g.Section
+		}
+	}
+	t.Fatalf("no default group for %s", typ)
+	return ""
+}
+
+// The dependencies a request carries are in the order the built-in's merged
+// entry lists them, by display name, which needn't follow the package names
+// (.NET's can differ).
+func TestDepReleasesFollowTheEntrysOrder(t *testing.T) {
+	zeta := &Module{Name: "a.pkg", DisplayName: "Zeta", VersionOverride: "2.0.0"}
+	alpha := &Module{Name: "b.pkg", DisplayName: "Alpha", VersionOverride: "3.0.0"}
+	m := &Module{Name: "app", DisplayName: "app", depLinks: []depLink{{dep: zeta}, {dep: alpha}}}
+	m.materializeDeps(false)
+
+	var got []string
+	for _, d := range m.DepReleases {
+		got = append(got, d.DisplayName)
+	}
+	if strings.Join(got, ",") != "Alpha,Zeta" {
+		t.Errorf("DepReleases = %v, want Alpha then Zeta", got)
+	}
+	if entry := RenderEntry(m); !strings.Contains(entry, "- Updated dependencies\n  - Alpha@3.0.0\n  - Zeta@2.0.0") {
+		t.Errorf("entry:\n%s", entry)
+	}
+}
+
+// A typed change whose summary is only a prefix renders nothing, so it
+// doesn't switch the entry to typed sections; and a "none" change has no
+// section, in either style.
+func TestRenderSectionsIgnoresEmptyTypedAndNoneChanges(t *testing.T) {
+	got := renderSections("1.0.1", []plugin.ChangelogChange{
+		{Bump: "patch", Type: "fix", Summary: "fix:"},
+		{Bump: "patch", Summary: "A fix"},
+		{Bump: "none", Summary: "Nothing to release"},
+	}, config.DefaultChangelogGroups, nil)
+	if !strings.Contains(got, "### Patch Changes\n\n- A fix") {
+		t.Errorf("an empty typed change restyled the entry:\n%s", got)
+	}
+	typed := renderSections("1.1.0", []plugin.ChangelogChange{
+		{Bump: "minor", Type: "feat", Summary: "A feature"},
+		{Bump: "none", Summary: "Nothing to release"},
+	}, config.DefaultChangelogGroups, nil)
+	for _, entry := range []string{got, typed} {
+		if strings.Contains(entry, "None Changes") || strings.Contains(entry, "Nothing to release") {
+			t.Errorf("a none change was rendered:\n%s", entry)
+		}
+	}
+}
+
+// Dependencies that render the same text are ordered by name, so the
+// request's bytes don't depend on the manifest's order.
+func TestDepReleasesBreakTiesByName(t *testing.T) {
+	for _, order := range [][2]string{{"a.pkg", "b.pkg"}, {"b.pkg", "a.pkg"}} {
+		one := &Module{Name: order[0], DisplayName: "Same", VersionOverride: "2.0.0"}
+		two := &Module{Name: order[1], DisplayName: "Same", VersionOverride: "2.0.0"}
+		m := &Module{Name: "app", DisplayName: "app", depLinks: []depLink{{dep: one}, {dep: two}}}
+		m.materializeDeps(false)
+		if m.DepReleases[0].Name != "a.pkg" || m.DepReleases[1].Name != "b.pkg" {
+			t.Errorf("manifest order %v: DepReleases = %+v", order, m.DepReleases)
+		}
+	}
+}

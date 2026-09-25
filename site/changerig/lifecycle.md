@@ -71,9 +71,13 @@ They do different jobs. The **type** picks the changelog section and, when no
 explicit bump is given, decides the bump (`feat` → minor, `fix` → patch, per
 [`changelogGroups`](./index)). The **scope** names which tool the entry belongs
 to: it becomes the bullet's lead-in and groups that tool's lines together
-within a section. Neither is required — an untyped changeset still
-renders under the section for its bump (`Minor Changes`, `Patch Changes`) as
-before.
+within a section. Neither is required — an entry with no typed changes still
+renders under the sections for its bumps (`Minor Changes`, `Patch Changes`),
+exactly as @changesets does. An entry that does have typed changes doesn't mix
+the two styles: its untyped changes join the typed section their bump stands
+for (a major the 💥 Breaking section, a minor the `feat` group's, a patch,
+"Updated dependencies" included, the `fix` group's), and keep the bump heading
+only when `changelogGroups` names no such section.
 
 Note the package line above carries no bump. Leave it off and the type decides;
 give one and it wins, per package — which is how one changeset can be a feature
@@ -284,7 +288,10 @@ by the next ordinary one.
 
 Changelog generators are **pluggable** — the built-in renderer dogfoods the same
 JSON contract external plugins speak. Set `"changelog": "<plugin>"` in config to
-swap it in.
+swap it in, or `"changelog": ["<plugin>", { … }]` to hand it options (as
+@changesets does): the generator receives them as its request's `options`. A
+bare name runs `changeset-changelog-<name>` from `$PATH`, and a path runs that
+file. See [the plugin protocol](/core/plugin-protocol#changelog-generators).
 
 ### A release record {#record}
 

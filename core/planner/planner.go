@@ -34,6 +34,11 @@ type Change struct {
 	Type        string // conventional type (feat/fix/…), empty when untyped
 	Scope       string // which tool the change belongs to, empty when unscoped
 	Breaking    bool   // a `!` breaking change
+	// Dependencies marks the engine's "Updated dependencies" entry, which a
+	// changelog request carries as DependencyUpdates rather than as a change.
+	Dependencies bool
+	// Ref is where the change came from (commit, PR, author), when resolved.
+	Ref changeset.Ref
 }
 
 // Module is the per-package release entry — the generalized ModuleChangelog.
@@ -48,6 +53,10 @@ type Module struct {
 	// package's manifest (e.g. "^1.2.0" → "^1.3.0"). Empty for rangeless
 	// ecosystems (.NET ProjectReference, Go require resolved by tag).
 	DepUpdates []plugin.DependencyUpdate
+	// DepReleases are the released dependencies behind the "Updated
+	// dependencies" entry: each non-dev dependency and the version it
+	// released at, sorted as the entry lists them.
+	DepReleases []plugin.DependencyUpdate
 	// VersionOverride, when set, is the literal version string written instead of
 	// the stable bump — used by prerelease and snapshot runs whose versions carry
 	// a suffix the stable bump can't express (e.g. 1.1.0-next.0, 0.0.0-canary-…).
@@ -391,7 +400,7 @@ func generateModules(changesets []*changeset.Changeset, byName map[string]plugin
 			if bump == changeset.BumpNone && hasType {
 				bump = deriveBump(typ, breaking, groups)
 			}
-			m.Changes = append(m.Changes, Change{Description: desc, Bump: bump, Type: typ, Scope: cs.EffectiveScope(), Breaking: breaking})
+			m.Changes = append(m.Changes, Change{Description: desc, Bump: bump, Type: typ, Scope: cs.EffectiveScope(), Breaking: breaking, Ref: cs.Ref})
 		}
 	}
 
@@ -441,18 +450,21 @@ func newModule(p plugin.Package) *Module {
 func (m *Module) materializeDeps(exact bool) {
 	changes := m.Changes[:0]
 	for _, c := range m.Changes {
-		if !strings.HasPrefix(c.Description, dependencyUpdatesHeader) {
+		if !c.Dependencies {
 			changes = append(changes, c)
 		}
 	}
 	m.DepUpdates = nil
+	m.DepReleases = nil
 	for _, l := range m.depLinks {
 		ver := l.dep.ResolvedVersion()
 		if !l.dev && !m.RangeOnly {
 			changes = append(changes, Change{
-				Description: fmt.Sprintf("%s\n  - %s@%s", dependencyUpdatesHeader, l.dep.DisplayName, ver),
-				Bump:        changeset.BumpPatch,
+				Description:  fmt.Sprintf("%s\n  - %s@%s", dependencyUpdatesHeader, l.dep.DisplayName, ver),
+				Bump:         changeset.BumpPatch,
+				Dependencies: true,
 			})
+			m.DepReleases = append(m.DepReleases, plugin.DependencyUpdate{Name: l.dep.Name, DisplayName: l.dep.DisplayName, NewVersion: ver})
 		}
 		if l.rng != "" {
 			nv := rewriteRange(l.rng, ver)
@@ -463,6 +475,14 @@ func (m *Module) materializeDeps(exact bool) {
 		}
 	}
 	m.Changes = mergeDependencyUpdates(changes)
+	// The order the merged entry lists them in: by "<display>@<version>".
+	sort.SliceStable(m.DepReleases, func(i, j int) bool {
+		a, b := m.DepReleases[i], m.DepReleases[j]
+		if ka, kb := a.DisplayName+"@"+a.NewVersion, b.DisplayName+"@"+b.NewVersion; ka != kb {
+			return ka < kb
+		}
+		return a.Name < b.Name // same text either way: the name keeps the payload stable
+	})
 }
 
 // mergeDependencyUpdates collapses multiple "Updated dependencies" changes into
@@ -471,7 +491,7 @@ func mergeDependencyUpdates(changes []Change) []Change {
 	var deps []Change
 	var rest []Change
 	for _, c := range changes {
-		if strings.HasPrefix(c.Description, dependencyUpdatesHeader) {
+		if c.Dependencies {
 			deps = append(deps, c)
 		} else {
 			rest = append(rest, c)
@@ -485,7 +505,7 @@ func mergeDependencyUpdates(changes []Change) []Change {
 	for _, d := range deps {
 		nested.WriteString(strings.TrimPrefix(d.Description, dependencyUpdatesHeader))
 	}
-	return append(rest, Change{Description: dependencyUpdatesHeader + nested.String(), Bump: changeset.BumpPatch})
+	return append(rest, Change{Description: dependencyUpdatesHeader + nested.String(), Bump: changeset.BumpPatch, Dependencies: true})
 }
 
 // coordinate forces a module to a shared version+bump (group coordination).

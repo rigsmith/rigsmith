@@ -275,7 +275,7 @@ func TestChangelogSpec(t *testing.T) {
 		`{ "changelog": false }`: "default",
 		`{ "changelog": null }`:  "default",
 		`{ "changelog": "" }`:    "default",
-		`{ "changelog": "@changesets/cli/changelog" }`:                         "@changesets/cli/changelog",
+		`{ "changelog": "@changesets/cli/changelog" }`:                         "default", // canon's default module is the built-in
 		`{ "changelog": "@changesets/changelog-git" }`:                         "@changesets/changelog-git",
 		`{ "changelog": ["@changesets/changelog-github", { "repo": "o/r" }] }`: "@changesets/changelog-github",
 		`{ "changelog": [] }`: "default",
@@ -499,5 +499,22 @@ func TestSkipsTag(t *testing.T) {
 				t.Errorf("SkipsTag = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestChangelogOptions(t *testing.T) {
+	for raw, want := range map[string]string{
+		``:                                  "",
+		`false`:                             "",
+		`"@changesets/changelog-git"`:       "",
+		`["@changesets/changelog-github"]`:  "",
+		`["x", null]`:                       "",
+		`["x", { "repo": "acme/widgets" }]`: `{ "repo": "acme/widgets" }`,
+		`["x", { "a": [1, 2] }, "extra"]`:   `{ "a": [1, 2] }`,
+	} {
+		c := &Config{Changelog: []byte(raw)}
+		if got := string(c.ChangelogOptions()); got != want {
+			t.Errorf("ChangelogOptions(%s) = %q, want %q", raw, got, want)
+		}
 	}
 }

@@ -31,12 +31,20 @@ func ModuleToRequest(m *Module) plugin.ChangelogRequest {
 func ModuleToRequestScoped(m *Module, scopeOrder []string) plugin.ChangelogRequest {
 	changes := make([]plugin.ChangelogChange, 0, len(m.Changes))
 	for _, c := range m.Changes {
+		// The engine's "Updated dependencies" entry also travels as
+		// DependencyUpdates, as @changesets hands getDependencyReleaseLine its
+		// own list; the change stays, flagged, for a generator written before
+		// that field (apiVersion 1 doesn't change).
 		changes = append(changes, plugin.ChangelogChange{
-			Bump:     c.Bump.String(),
-			Summary:  c.Description,
-			Type:     c.Type,
-			Scope:    c.Scope,
-			Breaking: c.Breaking,
+			Bump:         c.Bump.String(),
+			Summary:      c.Description,
+			Type:         c.Type,
+			Scope:        c.Scope,
+			Breaking:     c.Breaking,
+			Dependencies: c.Dependencies,
+			Commit:       c.Ref.Commit,
+			PR:           c.Ref.PR,
+			Author:       c.Ref.Author,
 		})
 	}
 	return plugin.ChangelogRequest{
@@ -49,6 +57,7 @@ func ModuleToRequestScoped(m *Module, scopeOrder []string) plugin.ChangelogReque
 		},
 		Bump:                m.HighestBump().String(),
 		Changes:             changes,
+		DependencyUpdates:   m.DepReleases,
 		Contributors:        m.Contributors,
 		ContributorsSection: m.ContributorsSection,
 		ScopeOrder:          scopeOrder,
@@ -90,6 +99,12 @@ func renderContributors(authors []plugin.Author, section string) string {
 // section ("Major/Minor/Patch Changes"). Sections are ordered: Breaking, then
 // the configured group order, then Major, Minor, Patch — so an untyped changelog
 // is byte-identical to the bump-only layout.
+//
+// An entry that has typed changes doesn't mix in the bump-based headings: its
+// untyped changes (the dependency entry among them) join the typed section
+// their bump stands for — a major the Breaking section, a minor the `feat`
+// group's, a patch the `fix` group's — falling back to the bump heading only
+// when the groups name no such section.
 func renderSections(newVersion string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
 	// Ordered list of (sectionHeading) and the bucket of bullets in it.
 	type bullet struct {
@@ -125,6 +140,33 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 		return "", false
 	}
 
+	// Typed if any change that will render is: one whose summary is only a
+	// conventional prefix renders nothing, and mustn't restyle the entry.
+	typed := false
+	for _, c := range changes {
+		if (c.Breaking || c.Type != "") && strings.TrimSpace(changeset.StripConventional(c.Summary)) != "" {
+			typed = true
+			break
+		}
+	}
+	bumpSection := func(bump changeset.Bump) string {
+		if typed {
+			switch bump {
+			case changeset.BumpMajor:
+				return config.BreakingGroup.Section
+			case changeset.BumpMinor:
+				if s, ok := groupSection("feat"); ok {
+					return s
+				}
+			case changeset.BumpPatch:
+				if s, ok := groupSection("fix"); ok {
+					return s
+				}
+			}
+		}
+		return title(bump) + " Changes"
+	}
+
 	for _, c := range changes {
 		switch {
 		case c.Breaking:
@@ -137,7 +179,12 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 			}
 		default:
 			bump, _ := changeset.ParseBump(c.Bump)
-			add(title(bump)+" Changes", c)
+			// A "none" change releases nothing, and @changesets' changelog
+			// has no section for it.
+			if bump == changeset.BumpNone {
+				continue
+			}
+			add(bumpSection(bump), c)
 		}
 	}
 

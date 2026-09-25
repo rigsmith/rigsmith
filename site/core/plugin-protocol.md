@@ -62,6 +62,31 @@ stdout:
 | `publish` | `{package, packageSource, access, dryRun}` | `{published, skipped, message}` | publish via the native package manager (idempotent) |
 | `published` | `{package, packageSource, auth?, user?, authUnavailable?}` | `{published, noRegistry}` | is this version already on the registry? Publishes nothing. `noRegistry` for an ecosystem released by its tag alone; a registry that can't be reached is an error, never `published: false`. `auth` (`{token, method}`) is the ecosystem's resolved publish credential and `user` its account name, for a registry that won't answer an anonymous read: send them only when the registry asks (a 401), only to its own host, over https, and never across a redirect elsewhere. `authUnavailable` means one is configured but couldn't be resolved: don't substitute an ambient credential (an environment variable) for it. Credentials written into `packageSource` itself are the source's own and still apply. Mask whichever credential is used in any error |
 
+## Changelog generators
+
+The `changelog` key in the changeset config picks the generator, in any of
+@changesets' forms:
+
+```jsonc
+{ "changelog": "@changesets/cli/changelog" }             // the default layout
+{ "changelog": ["@changesets/changelog-github", { "repo": "acme/widgets" }] }
+{ "changelog": "changelogen" }                          // changeset-changelog-changelogen on $PATH
+{ "changelog": ["./scripts/changelog.js", { "style": "terse" }] }  // a path, with options
+```
+
+`changelog-git` and `changelog-github` are built in. Any other name runs
+`changeset-changelog-<name>` from `$PATH`, and a path runs that file. The
+generator is called once per released package with a `ChangelogRequest` on
+stdin, and prints the entry on stdout. A tuple's options value arrives as the
+request's `options`, for the generator to interpret, as @changesets passes it
+to `getReleaseLine`; the string form sends none. Each change carries its
+`commit` (and, with a `repo` in the options, its `pr` and `author`), and the
+released dependencies arrive as `dependencyUpdates`, so a generator can render
+everything the built-in does. The "Updated dependencies" change stays in
+`changes`, flagged `dependencies: true`, for generators written before that.
+`"@changesets/cli/changelog"`, @changesets' own default, is the built-in
+layout.
+
 ::: tip Full reference
 The complete protocol — every struct, the changelog-generator contract, and the
 reference Node plugin — is in

@@ -98,6 +98,10 @@ type Changeset struct {
 	// the commit IS the provenance — instead of hunting for the commit that added
 	// a changeset file.
 	Commit string
+	// Ref is the commit, pull request and author the changeset came from,
+	// when the run resolved them for a changelog generator that renders
+	// references. Zero otherwise.
+	Ref Ref
 }
 
 // EffectiveType resolves the changeset's conventional type: the explicit
@@ -357,4 +361,11 @@ func isChangesetFile(name, interopExt string) bool {
 		return true
 	}
 	return strings.HasSuffix(strings.ToLower(name), ".md")
+}
+
+// Ref is where a changeset came from, for changelog references.
+type Ref struct {
+	Commit string // the commit that added the changeset (or its source commit)
+	PR     int    // its pull request, 0 when unknown
+	Author string // its author's login, when resolved
 }

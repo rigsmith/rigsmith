@@ -87,12 +87,41 @@ generator that ignores both still renders correctly; the bundled
 `examples/plugins/changeset-changelog-changelogen` honours them, and is the
 reference for what "correctly" looks like.
 
+What an external generator gets beyond the built-in's own inputs:
+
+- each change's `commit` (the one that added the changeset, or a commit-sourced
+  change's own), and, when the options carry a `repo` (as
+  `@changesets/changelog-github`'s do), its `pr` and `author` login, looked up
+  on GitHub. The `summary` is as authored; the built-in `changelog-git` and
+  `changelog-github` decorate their summaries instead, as @changesets does.
+- `dependencyUpdates`: the released dependencies behind the entry,
+  `{name, displayName, newVersion}`, sorted as the built-in lists them (ties
+  by name), as @changesets hands `getDependencyReleaseLine` its own list. The
+  built-in renders from this field. The "Updated dependencies" change is still
+  in `changes`, flagged `dependencies: true`, so a generator written before
+  the field keeps working; one that renders `dependencyUpdates` skips it.
+- the output is normalized to end in exactly one newline, however many the
+  generator prints, so the next entry starts on a line of its own.
+
+Options: configured as a `[name, options]` tuple, as @changesets has it
+(`"changelog": ["my-generator", { "style": "terse" }]`), the options value
+reaches the generator as the request's `options` field: the same JSON,
+whitespace aside, for the generator to interpret, as @changesets passes it to
+`getReleaseLine`. The string form (`"changelog": "my-generator"`) sends no
+`options`, and neither does a `null` in the tuple. The engine reads nothing
+in it, except `repo` for the built-in `@changesets/changelog-github`.
+
 Resolution: `default` → in-process built-in; a path → executed; a bare name →
 `changeset-changelog-<name>` on `$PATH`.
 
 ## Status
 
-The protocol types, subprocess host, registry, and in-process built-ins exist
-and compile. What remains: route the built-in changelog
-renderer through `ChangelogRequest` (the dogfooding step), and ship a reference
-external plugin of each kind as a conformance test.
+The protocol types, subprocess host, registry and in-process built-ins are in
+place, and the built-in changelog renderer runs through `ChangelogRequest`
+(`planner.RenderEntry` builds the request a subprocess would get and hands it
+to the built-in generator), so it dogfoods the contract. The reference
+changelog plugin is `examples/plugins/changeset-changelog-changelogen`, and
+the tests drive a compiled one (`internal/changerig/cmdtest/testdata/optionsplugin`)
+through the CLI. What remains: a reference external *ecosystem* plugin as a
+conformance test; the tests drive the subprocess host with an in-binary
+helper today (`core/plugin/published_test.go`).

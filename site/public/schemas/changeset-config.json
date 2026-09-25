@@ -98,7 +98,7 @@
       ]
     },
     "changelog": {
-      "description": "Changelog generator: null/false (off), a string name, or a [name, options] tuple.",
+      "description": "Changelog generator: null/false (the default layout), a name (a built-in, `changeset-changelog-<name>` on $PATH, or a path), or a [name, options] tuple, whose options value the generator receives as its request's `options`.",
       "type": [
         "boolean",
         "string",

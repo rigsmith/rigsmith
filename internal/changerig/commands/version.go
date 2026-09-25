@@ -230,7 +230,19 @@ func NewVersionCmd() *cobra.Command {
 			unmentioned := FindUnmentioned(active, ws.Config)
 
 			setting := changelog.ParseSetting(ws.Config)
-			if setting.Kind != changelog.KindDefault {
+			// An external generator gets each change's commit (and, with a
+			// `repo` in its options, its PR and author) as request fields,
+			// to render as it likes; the built-in git/github kinds decorate
+			// the summary itself, as @changesets does.
+			external := setting.Kind == changelog.KindDefault && ws.Config.ChangelogSpec() != "default"
+			if setting.Kind != changelog.KindDefault || external {
+				resolveAs := setting
+				if external {
+					resolveAs.Kind = changelog.KindGit
+					if setting.Repo != "" {
+						resolveAs.Kind = changelog.KindGitHub
+					}
+				}
 				fileIDs := make([]string, 0, len(active))
 				commitIDs := map[string]string{}
 				for _, cs := range active {
@@ -240,12 +252,16 @@ func NewVersionCmd() *cobra.Command {
 						fileIDs = append(fileIDs, cs.ID)
 					}
 				}
-				infos := changelog.Resolve(fileIDs, setting, ws.Root, execRunner(cmd))
-				for id, info := range changelog.ResolveFromCommits(commitIDs, setting, ws.Root, execRunner(cmd)) {
+				infos := changelog.Resolve(fileIDs, resolveAs, ws.Root, execRunner(cmd))
+				for id, info := range changelog.ResolveFromCommits(commitIDs, resolveAs, ws.Root, execRunner(cmd)) {
 					infos[id] = info
 				}
 				for _, cs := range active {
 					if info, ok := infos[cs.ID]; ok {
+						cs.Ref = changeset.Ref{Commit: info.Commit, PR: info.PullRequest, Author: info.Author}
+						// Decorates for the built-in git/github kinds only: an
+						// external generator's setting is the default kind, so
+						// its summaries stay as authored.
 						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)
 					}
 				}
@@ -339,7 +355,7 @@ func NewVersionCmd() *cobra.Command {
 
 			if dryRun {
 				if showChangelog {
-					printChangelogPreview(out, cmd.Context(), gen, plan, ws.Config.Scopes())
+					printChangelogPreview(out, cmd.Context(), gen, plan, ws.Config)
 				}
 				fmt.Fprintln(out, DimStyle.Render("\n(dry run — no files written)"))
 				return nil
@@ -442,7 +458,7 @@ func NewVersionCmd() *cobra.Command {
 				if m.RangeOnly {
 					continue // "none" release: ranges rewritten, no version bump, no changelog
 				}
-				entry, err := gen.Render(cmd.Context(), planner.ModuleToRequestScoped(m, ws.Config.Scopes()))
+				entry, err := gen.Render(cmd.Context(), changelogRequest(ws.Config, m))
 				if err != nil {
 					txn.rollback()
 					return fmt.Errorf("changelog for %s: %w", m.Name, err)
@@ -635,12 +651,12 @@ func NewVersionCmd() *cobra.Command {
 // preview is byte-identical to the written entry (honoring changelog groups,
 // lockstep grouping baked into the plan, and the contributors section attached
 // above). "none" releases (RangeOnly) get no changelog, so they are skipped.
-func printChangelogPreview(out io.Writer, ctx context.Context, gen plugin.ChangelogGenerator, plan []*planner.Module, scopeOrder []string) {
+func printChangelogPreview(out io.Writer, ctx context.Context, gen plugin.ChangelogGenerator, plan []*planner.Module, cfg *config.Config) {
 	for _, m := range plan {
 		if m.RangeOnly {
 			continue
 		}
-		entry, err := gen.Render(ctx, planner.ModuleToRequestScoped(m, scopeOrder))
+		entry, err := gen.Render(ctx, changelogRequest(cfg, m))
 		if err != nil {
 			fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("\n  (changelog render failed for %s: %v)", m.Name, err)))
 			continue
@@ -930,4 +946,14 @@ func keptPackages(kept []*changeset.Changeset) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// changelogRequest is the request the changelog generator renders m from:
+// the configured scope order, and the generator's own options from a
+// `[name, options]` tuple. The real write and the preview both use it, so
+// they stay byte-identical.
+func changelogRequest(cfg *config.Config, m *planner.Module) plugin.ChangelogRequest {
+	req := planner.ModuleToRequestScoped(m, cfg.Scopes())
+	req.Options = cfg.ChangelogOptions()
+	return req
 }

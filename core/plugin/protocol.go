@@ -197,6 +197,9 @@ type SetVersionRequest struct {
 type DependencyUpdate struct {
 	Name       string `json:"name"`
 	NewVersion string `json:"newVersion"`
+	// DisplayName is the dependency's human title, as its own changelog
+	// heading shows it. Set in a ChangelogRequest; defaults to Name.
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // PublishRequest asks an adapter to publish a package via its native package
@@ -448,6 +451,11 @@ type ChangelogRequest struct {
 	// — a change's scope alone does not say which tool a repo wants read first.
 	// Empty means alphabetical; unscoped changes come last either way.
 	ScopeOrder []string `json:"scopeOrder,omitempty"`
+	// Options is the generator's own options value, as configured (the same
+	// JSON, whitespace aside): the second element of a
+	// `"changelog": ["<name>", { … }]` tuple, as @changesets passes it to
+	// getReleaseLine. Absent for the string form.
+	Options json.RawMessage `json:"options,omitempty"`
 }
 
 // Author identifies a changelog contributor. Email is carried for de-duplication
@@ -479,10 +487,14 @@ type ChangelogChange struct {
 	// so a generator can group bullets within a section by tool.
 	Scope string `json:"scope,omitempty"`
 	// Breaking marks a breaking change (a `!` on the type).
-	Breaking bool   `json:"breaking,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	PR       int    `json:"pr,omitempty"`
-	Author   string `json:"author,omitempty"`
+	Breaking bool `json:"breaking,omitempty"`
+	// Dependencies marks the engine's "Updated dependencies" entry. It stays
+	// in `changes` for a generator that predates DependencyUpdates; one that
+	// renders DependencyUpdates skips it.
+	Dependencies bool   `json:"dependencies,omitempty"`
+	Commit       string `json:"commit,omitempty"`
+	PR           int    `json:"pr,omitempty"`
+	Author       string `json:"author,omitempty"`
 }
 
 // ChangelogContext mirrors the release-command context where meaningful.

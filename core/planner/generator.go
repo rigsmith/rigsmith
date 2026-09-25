@@ -2,7 +2,10 @@ package planner
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
+	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
@@ -41,7 +44,20 @@ func (g BuiltinGenerator) Render(_ context.Context, req plugin.ChangelogRequest)
 	if groups == nil {
 		groups = config.DefaultChangelogGroups
 	}
-	out := renderSections(req.Package.NewVersion, req.Changes, groups, g.scopes)
+	// The dependency entry is rendered from DependencyUpdates, as a
+	// generator reading that field would; the flagged change is its
+	// apiVersion 1 copy.
+	changes := req.Changes
+	if dep := dependencyChange(req.DependencyUpdates); dep != nil {
+		changes = make([]plugin.ChangelogChange, 0, len(req.Changes)+1)
+		for _, c := range req.Changes {
+			if !c.Dependencies {
+				changes = append(changes, c)
+			}
+		}
+		changes = append(changes, *dep)
+	}
+	out := renderSections(req.Package.NewVersion, changes, groups, g.scopes)
 	out += renderContributors(req.Contributors, req.ContributorsSection)
 	return out, nil
 }
@@ -57,4 +73,23 @@ func Builtins(groups []config.ChangelogGroup) map[string]plugin.ChangelogGenerat
 // BuiltinsScoped is Builtins with a configured scope order.
 func BuiltinsScoped(groups []config.ChangelogGroup, scopes []string) map[string]plugin.ChangelogGenerator {
 	return map[string]plugin.ChangelogGenerator{"default": NewBuiltinGeneratorScoped(groups, scopes)}
+}
+
+// dependencyChange is @changesets' dependency release line as a patch change:
+// "Updated dependencies" with one nested bullet per released dependency, in
+// the order given. Nil when there are none.
+func dependencyChange(deps []plugin.DependencyUpdate) *plugin.ChangelogChange {
+	if len(deps) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString(dependencyUpdatesHeader)
+	for _, d := range deps {
+		name := d.DisplayName
+		if name == "" {
+			name = d.Name
+		}
+		fmt.Fprintf(&b, "\n  - %s@%s", name, d.NewVersion)
+	}
+	return &plugin.ChangelogChange{Bump: changeset.BumpPatch.String(), Summary: b.String()}
 }
