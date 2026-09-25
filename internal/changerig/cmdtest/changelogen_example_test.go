@@ -25,6 +25,7 @@ func TestChangelogenExamplePlugin(t *testing.T) {
 		"options": { "repo": "acme/widgets" },
 		"changes": [
 			{ "bump": "minor", "type": "feat", "scope": "cli", "summary": "feat:\n\nAdd a --json flag\nwith a second line", "commit": "abcdef1234567", "pr": 42 },
+			{ "bump": "patch", "type": "fix", "summary": "\nfix: Keep line endings" },
 			{ "bump": "patch", "summary": "Updated dependencies\n  - lib@2.0.0", "dependencies": true }
 		],
 		"dependencyUpdates": [ { "name": "lib", "displayName": "lib", "newVersion": "2.0.0" } ],
@@ -37,6 +38,7 @@ func TestChangelogenExamplePlugin(t *testing.T) {
 	got := string(out)
 	for _, want := range []string{
 		"## 1.1.0\n\n### 🚀 Enhancements\n\n- **cli:** Add a --json flag ([#42](https://github.com/acme/widgets/pull/42))\n  with a second line",
+		"### 🩹 Fixes\n\n- Keep line endings",
 		"### 🌊 Dependencies\n\n- lib@2.0.0",
 		"### ❤️ Contributors\n\n- Ada Lovelace ([@ada](https://github.com/ada))",
 	} {

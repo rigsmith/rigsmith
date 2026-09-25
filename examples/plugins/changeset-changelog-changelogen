@@ -60,12 +60,17 @@ function read(stream) {
 // request, else the commit, linked when options.repo names the GitHub repo.
 function renderLine(c, repo) {
   const lines = (c.summary || "").replace(/\r\n/g, "\n").trimEnd().split("\n");
-  lines[0] = lines[0].replace(/^[a-zA-Z]+(\([^)]*\))?!?:\s*/, "");
-  // The headline is the first line with text: "feat:" alone on the first
-  // line, then a blank, then the text, is still a change.
-  const at = lines.findIndex((l) => l.trim());
-  if (at < 0) return null;
-  const head = lines[at].trim();
+  // The headline is the first line with text once its conventional prefix is
+  // off: "feat:" alone, then a blank, then the text, is still a change, and so
+  // is a summary that opens with a blank line.
+  let at = -1;
+  let head = "";
+  for (let i = 0; i < lines.length && !head; i++) {
+    if (!lines[i].trim()) continue;
+    head = lines[i].replace(/^[a-zA-Z]+(\([^)]*\))?!?:\s*/, "").trim();
+    at = i;
+  }
+  if (!head) return null;
   const rest = lines.slice(at + 1);
   const lead = c.scope ? `**${c.scope}:** ` : "";
   let ref = "";
