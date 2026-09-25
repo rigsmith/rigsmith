@@ -16,6 +16,15 @@ Creates the `.changeset/` directory with a `config.json`. The config schema
 `--source` picks where releases are sourced from — accumulated changeset files,
 conventional-commit messages, or both (interactive when the flag is omitted).
 
+With commits as a source, a conventional commit whose type is a changelog
+group's (or `ci`, `style`, `revert`) releases the packages whose files it
+touches; a merge or a freeform message releases nothing. Neither does
+housekeeping, as @unjs/changelogen skips it: a non-breaking `chore(deps)` (a
+dependency bot's bump) or `chore(release)`, and a release commit itself, which
+touches every package it versioned: `chore: release`, `chore: release 1.2.0`,
+`chore: release core@1.2.0, ui@0.5.0`, or release-please's
+`chore(main): release 1.2.0`. A breaking one (`chore(deps)!:`) still counts.
+
 ### Where the config lives
 
 `init` writes the canonical `.changeset/config.json`, but the config is

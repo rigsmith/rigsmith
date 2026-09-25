@@ -116,7 +116,7 @@ func Synthesize(commits []gitutil.Commit, packages []plugin.Package, repoRoot st
 	var out []*changeset.Changeset
 	for _, c := range commits {
 		h, ok := parseHeader(c.Subject)
-		if !ok || !recognized[h.typ] {
+		if !ok || !recognized[h.typ] || isHousekeeping(h) {
 			continue
 		}
 		breaking := h.breaking || breakingFooterRe.MatchString(c.Body)
@@ -231,4 +231,26 @@ func shortHash(hash string) string {
 		return hash[:7]
 	}
 	return hash
+}
+
+// releaseDescRe matches a release commit's description: a bare "release"
+// (shiprig's own commit step), or "release" and what it released —
+// shiprig-action's version PR titles ("release 1.2.0", "release
+// core@1.2.0, ui@0.5.0", "release 5 packages") and release-please's
+// ("release 1.2.0", "release core 1.2.0"). A "release notes …" chore isn't
+// one.
+var releaseDescRe = regexp.MustCompile(`^release(?:$|\s+(?:v?\d|\S+@\S|\S+\s+v?\d))`)
+
+// isHousekeeping reports a commit that releases nothing of its own, as
+// @unjs/changelogen skips it: a non-breaking chore scoped `deps` (a
+// dependency bot's bump) or `release`, or any non-breaking chore that is a
+// release commit. The release commit touches every package it versioned, so
+// counted, it would be a phantom patch of all of them wherever the last
+// release's baseline doesn't cover it (before the release is tagged, a
+// first release, a missing tag).
+func isHousekeeping(h header) bool {
+	if h.typ != "chore" || h.breaking {
+		return false
+	}
+	return h.scope == "deps" || h.scope == "release" || releaseDescRe.MatchString(strings.ToLower(h.desc))
 }

@@ -227,3 +227,35 @@ func TestParseHeaderTrimsScope(t *testing.T) {
 		t.Fatalf("scope = %q, want %q", h.scope, "rig")
 	}
 }
+
+// Housekeeping commits release nothing, as @unjs/changelogen has it: a
+// non-breaking chore(deps) or chore(release), and release commits by their
+// description, whoever wrote them. A breaking one, or a chore that merely
+// talks about releases, still counts.
+func TestSynthesizeSkipsHousekeeping(t *testing.T) {
+	file := []string{abs("packages/pkg-a/x.go")}
+	for subject, want := range map[string]bool{
+		"chore(deps): update dependency lodash to v4.17.21": false,
+		"chore(release): 1.2.0 [skip ci]":                   false,
+		"chore: release":                                    false,
+		"chore: release 1.2.0":                              false,
+		"chore: release v1.2.0":                             false,
+		"chore: release core@1.2.0, ui@0.5.0":               false,
+		"chore: release 5 packages":                         false,
+		"chore(main): release 1.2.0":                        false,
+		"chore(main): release core 1.2.0":                   false,
+		"chore: Release 1.2.0":                              false,
+		"chore(deps)!: drop Node 18":                        true,
+		"chore!: release 2.0.0":                             true,
+		"chore: release notes tweak":                        true,
+		"chore: tidy the release script":                    true,
+		"chore(ci): speed up tests":                         true,
+		"fix(deps): pin a vulnerable transitive dependency": true,
+		"feat(release): add a --dry-run flag":               true,
+	} {
+		got := Synthesize([]gitutil.Commit{{Hash: "abcdefabcd", Subject: subject, Files: file}}, pkgs(), root, config.Default())
+		if (len(got) == 1) != want {
+			t.Errorf("%q: released = %v, want %v", subject, len(got) == 1, want)
+		}
+	}
+}
