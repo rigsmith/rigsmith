@@ -201,11 +201,21 @@ func getJSON(ctx context.Context, rawURL string, dst any, creds *feedCreds) (boo
 	found, err := getJSONUnmasked(ctx, rawURL, dst, creds)
 	if err != nil {
 		// Whatever the credential's source (dotnet.auth, the source URL,
-		// NUGET_API_KEY), it never reaches the message.
-		err = errors.New(creds.mask(err.Error()))
+		// NUGET_API_KEY), it never reaches the message; the cause stays
+		// reachable for errors.Is (a cancelled context, a deadline).
+		err = &maskedError{msg: creds.mask(err.Error()), err: err}
 	}
 	return found, err
 }
+
+// maskedError is err with its message masked.
+type maskedError struct {
+	msg string
+	err error
+}
+
+func (e *maskedError) Error() string { return e.msg }
+func (e *maskedError) Unwrap() error { return e.err }
 
 func getJSONUnmasked(ctx context.Context, rawURL string, dst any, creds *feedCreds) (bool, error) {
 	shown := redactURL(rawURL)
@@ -215,8 +225,11 @@ func getJSONUnmasked(ctx context.Context, rawURL string, dst any, creds *feedCre
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
+		// The host that asked: an anonymous request may have been
+		// redirected, and only the source's own host is answered.
+		asked := resp.Request.URL.String()
 		switch {
-		case creds != nil && creds.token != "" && !creds.allows(rawURL):
+		case creds != nil && creds.token != "" && !creds.allows(asked):
 			return false, fmt.Errorf("%s: %s: this host asks for credentials, but they're only sent to the package source's own host, %s (over https, or plain http on loopback)", shown, resp.Status, creds.host)
 		case creds != nil && creds.token == "" && creds.unavailable:
 			return false, fmt.Errorf("%s: %s: the feed needs credentials, and the configured `dotnet.auth` couldn't be resolved (NUGET_API_KEY isn't used in its place)", shown, resp.Status)

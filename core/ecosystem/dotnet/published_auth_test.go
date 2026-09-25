@@ -2,6 +2,7 @@ package dotnet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,8 @@ type privateFeed struct {
 	// echo, when set, fails an authenticated flat-container read with a 500
 	// whose body repeats the credential it was sent.
 	echo bool
+	// anonRedirect, when set, sends an anonymous flat-container read there.
+	anonRedirect string
 }
 
 func (f *privateFeed) auths() []string {
@@ -40,6 +43,10 @@ func newPrivateFeed(t *testing.T, user, token, base string, open bool) *privateF
 		f.mu.Lock()
 		f.seen = append(f.seen, r.Header.Get("Authorization"))
 		f.mu.Unlock()
+		if f.anonRedirect != "" && r.URL.Path == "/flat/acme.lib/index.json" && r.Header.Get("Authorization") == "" {
+			http.Redirect(w, r, f.anonRedirect+r.URL.Path, http.StatusFound)
+			return
+		}
 		if u, p, ok := r.BasicAuth(); !open && (!ok || u != user || p != token) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -281,5 +288,38 @@ func TestPublishedMasksTheCredentialInErrors(t *testing.T) {
 				t.Errorf("the error leaks the credential: %v", err)
 			}
 		})
+	}
+}
+
+// A 401 from a host an anonymous request was redirected to isn't the
+// source's: the source isn't re-asked with credentials on its behalf.
+func TestPublishedAnswersOnlyTheSourcesOwn401(t *testing.T) {
+	t.Setenv("NUGET_API_KEY", "")
+	elsewhere := newPrivateFeed(t, "someone", "else", "", false)
+	f := newPrivateFeed(t, "", "", "", true)
+	f.anonRedirect = elsewhere.url
+	_, err := published(t, f.url+"/index.json", "", &plugin.AuthCredential{Token: "tok"})
+	if err == nil || !strings.Contains(err.Error(), "only sent to the package source's own host") {
+		t.Errorf("err = %v, want the other host's 401 left unanswered", err)
+	}
+	for _, a := range append(f.auths(), elsewhere.auths()...) {
+		if a != "" {
+			t.Errorf("credentials were sent: %q", a)
+		}
+	}
+}
+
+// The mask keeps the cause: a cancelled context is still recognisable.
+func TestPublishedErrorsKeepTheirCause(t *testing.T) {
+	f := newPrivateFeed(t, "", "", "", true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := (&Adapter{}).Published(ctx, plugin.PublishedRequest{
+		Package:       plugin.Package{Name: "Acme.Lib", Version: "1.2.0"},
+		PackageSource: f.url + "/index.json",
+		Auth:          &plugin.AuthCredential{Token: "tok"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want it to wrap context.Canceled", err)
 	}
 }
