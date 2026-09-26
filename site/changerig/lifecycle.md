@@ -281,8 +281,10 @@ that package a changeset with the bump you want instead, so the cascade runs.
 
 The release is labelled by the move it makes, not by its changesets: a patch
 changeset released at `2.0.0` is `major` in the plan `version` prints, and in
-an untyped changelog the changes that decided the release are listed under
-**Major Changes** (smaller ones keep their own headings). A version that only
+the built-in untyped changelog the changes that decided the release are listed
+under **Major Changes** (smaller ones keep their own headings). A changelog
+plugin gets the same `bump` with `exactVersion` set and decides for itself; one
+that groups by type, as the changelogen example does, keeps its sections. A version that only
 drops a prerelease suffix (`1.1.0-next.3` → `1.1.0`) moves nothing, so it keeps
 the bump its changes planned, as graduating does. `status` takes no
 `--release-as`, so it always reports the planned bump. Typed sections stay
