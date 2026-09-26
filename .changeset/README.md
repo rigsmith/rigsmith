@@ -57,9 +57,9 @@ Fix the tray's profile list
 (`patch  github.com/rigsmith/rigsmith/ui  0.4.0 → 0.4.1`). When the shiprig[bot]
 "chore: release" PR carrying it is merged, `changerig version` has already
 bumped `ui/go.mod` and written `ui/CHANGELOG.md`, and
-[`release.yml`](../.github/workflows/release.yml)'s `shiprig tag` pushes
-`ui/vX.Y.Z`, which starts `release-ui.yml`. A UI-only release makes no `vX.Y.Z`
-tag, so GoReleaser doesn't run; a change that touches both needs both packages
+the release workflow ([`goreleaser.yml`](../.github/workflows/goreleaser.yml))
+pushes `ui/vX.Y.Z` with `shiprig tag`, which starts `release-ui.yml`. A UI-only
+release makes no `vX.Y.Z` tag, so the CLI build doesn't run; a change that touches both needs both packages
 (repeat `-p`, or one changeset each so each changelog gets its own wording).
 
 ## What `add` writes

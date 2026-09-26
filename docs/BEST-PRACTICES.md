@@ -195,14 +195,16 @@ Enforced by the `clauderig guard` PreToolUse hook. Full spec:
 - **Changesets drive versions.** Add a changeset on PRs that change behavior
   (`changerig add`); the `require-changeset` Action blocks merge if one is missing
   (label `skip-changeset` to opt out). See [`GITHUB-ACTIONS.md`](GITHUB-ACTIONS.md).
-- **Release by merging the "chore: release" PR.** `.github/workflows/release.yml`
-  (rigsmith/shiprig-action, as the shipRig App) keeps it open while changesets
-  are pending; merging it tags `vX.Y.Z` and/or `ui/vX.Y.Z`, and those tags start
-  `goreleaser.yml` and `release-ui.yml`. Review the PR's version bumps and
-  changelog — that's the release. Other pushes tag nothing. If the Release run
-  failed before its tags reached GitHub, re-run that run (Re-run jobs): a
-  re-run keeps its own commit, so the tags still land on the release commit.
-  If the tags are there but GoReleaser failed, re-run the GoReleaser run.
+- **Release by merging the "chore: release" PR.** The one release workflow,
+  `.github/workflows/goreleaser.yml` (rigsmith/shiprig-action, as the shipRig
+  App), keeps it open while changesets are pending. Merging it waits for CI to
+  pass on the merge commit, tags `vX.Y.Z` and/or `ui/vX.Y.Z`, and for `vX.Y.Z`
+  builds and publishes in the same run, with the changelog entry as the GitHub
+  release's notes; `ui/vX.Y.Z` starts `release-ui.yml`. Review the PR's version
+  bumps and changelog — that's the release, notes included. Other pushes tag
+  nothing. If the run fails, re-run its failed jobs: a re-run keeps its own
+  commit, so the tags still land on the release commit. For a tag that's out
+  but never built, run the workflow in `release-tag` mode with that tag.
 - **Rehearse before going live.** `shiprig release --dry-run` previews the plan;
   `shiprig release --rehearse` does a real local build to `dist/` that commits and
   publishes nothing. See [`RELEASE-PIPELINE-DESIGN.md`](RELEASE-PIPELINE-DESIGN.md).

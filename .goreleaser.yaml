@@ -270,6 +270,9 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# A release's notes are the changelog entry for its version, passed as
+# --release-notes by the release workflow (scripts/release-notes.sh), which
+# skips this. It only describes what a snapshot would list.
 changelog:
   use: git
   sort: asc

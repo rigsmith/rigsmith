@@ -121,11 +121,35 @@ func TestWingetSubmissionIsIndependentOfOtherChannels(t *testing.T) {
 }
 
 // Tag-only remains part of the CLI contract: a manual dry run publishes no
-// release for komac to point at.
+// release for komac to point at. The release now runs on the push to main that
+// tagged it, not on the tag, so "tag-only" is the step requiring RELEASE_TAG,
+// and RELEASE_TAG being empty for a dry run.
 func TestCLIWingetSubmissionIsTagOnly(t *testing.T) {
 	winget := stepNamed(t, workflowSteps(t, cliWorkflow), "Submit to winget")
-	if !strings.Contains(winget.If, "refs/tags/v") {
-		t.Errorf("the winget step must stay tag-only. Got: %q", winget.If)
+	if !strings.Contains(winget.If, "env.RELEASE_TAG != ''") {
+		t.Errorf("the winget step must run only for a release tag (env.RELEASE_TAG != ''). Got: %q", winget.If)
+	}
+	raw, err := os.ReadFile(cliWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Env map[string]string `yaml:"env"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatal(err)
+	}
+	tag := wf.Jobs["goreleaser"].Env["RELEASE_TAG"]
+	if tag == "" {
+		t.Fatal("the goreleaser job sets no RELEASE_TAG; the winget step's condition would name nothing")
+	}
+	// A manual run carries a tag only in release-tag mode; a dry run must
+	// leave it empty, or it would submit to winget.
+	if !strings.Contains(tag, "inputs.mode == 'release-tag'") {
+		t.Errorf("RELEASE_TAG = %q; a manual run should only carry a tag in release-tag mode, "+
+			"so a dry run never reaches winget", tag)
 	}
 }
 

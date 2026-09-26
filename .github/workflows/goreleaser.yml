@@ -1,26 +1,40 @@
-# Build and publish the four CLI binaries on a version tag.
+# The one release workflow. On every push to main it runs as the shipRig App
+# (rigsmith/shiprig-action driving shiprig):
 #
-# The release flow is two moments:
-#   1. release.yml keeps a "chore: release" PR open with the version bumps and
-#      changelogs; merging it makes release.yml push the `vX.Y.Z` tag as the
-#      shipRig App. (By hand still works: `shiprig version`, commit, push, and
-#      push the tag.)
-#   2. This workflow fires on that tag, runs GoReleaser, and creates the GitHub
-#      Release with the cross-platform archives + checksums.
+#   - Changesets pending: keep a standing "chore: release" PR open with the
+#     version bumps and changelog. Nothing is tagged.
+#   - The push that merges that PR: wait for CI to pass on this exact commit,
+#     then `shiprig tag` tags each package it releases (vX.Y.Z for the CLIs,
+#     ui/vX.Y.Z for the UI). For a CLI tag the jobs below then build, sign and
+#     publish in this same run: GoReleaser makes the GitHub release, with the
+#     changelog's entry for the version as its notes, plus the tap, the Scoop
+#     bucket and winget; then npm. The UI tag starts release-ui.yml, which the
+#     App token makes possible (a tag pushed with GITHUB_TOKEN starts nothing).
+#   - Any other push with nothing pending: nothing happens.
 #
-# scripts/install.sh (the `curl | sh` installer) downloads exactly the archives
-# GoReleaser produces here (rig_<version>_<os>_<arch>.tar.gz). Uses the built-in
-# GITHUB_TOKEN — no extra secret needed.
+# The file is still named goreleaser.yml, and that matters: npm's trusted
+# publishing binds each wrapper package to this repository AND this workflow
+# filename (see scripts/npmoidc_test.go). Renaming it means updating every
+# package's trusted publisher on npmjs.com first.
 #
-# Run it manually (Actions → Release binaries → Run workflow) for a dry run: it
-# builds + signs everything with the real secrets but publishes nothing (no
-# GitHub release, no tap push), and uploads the signed artifacts to inspect.
-name: Release binaries
+# Recovery:
+#   - A failed run: re-run it (Actions → the run → Re-run failed jobs). A re-run
+#     uses the run's own commit, so tags land on the release commit even after
+#     main has moved, and a job that already succeeded isn't repeated.
+#   - A tag that's published but whose build failed, or a tag pushed by hand:
+#     Run workflow → mode "release-tag" with the tag. It builds and publishes
+#     that tag, once CI has passed on its commit.
+#   - npm a version behind an otherwise good release: mode "republish-npm".
+#   - A dry run (build + sign everything, publish nothing): mode "dry-run".
+#
+# Needs the shipRig App installed on this repository, with its client ID in the
+# org variable SHIPRIG_APP_CLIENT_ID and its private key in the org secret
+# SHIPRIG_APP_PRIVATE_KEY.
+name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
   workflow_dispatch:
     inputs:
       mode:
@@ -29,9 +43,10 @@ on:
         default: dry-run
         options:
           - dry-run # build + sign everything, publish nothing
+          - release-tag # build + publish an existing vX.Y.Z tag (a failed build, or a tag pushed by hand)
           - republish-npm # re-publish the npm wrappers for an ALREADY published release
       tag:
-        description: "republish-npm only: the release tag to republish from (e.g. v1.19.0)"
+        description: "release-tag and republish-npm: the release tag (e.g. v1.22.0)"
         type: string
         required: false
 
@@ -49,13 +64,135 @@ env:
 # packages without a stored token.
 permissions: {}
 
+# One at a time, never cancelled, and every push gets its run. A running job
+# can't be cancelled (it could leave the PR branch half-updated, or tag without
+# building), and a waiting one can't be replaced: by default a newer push drops
+# the pending run, and if that run was the release PR's merge, its versions
+# would never be tagged. `queue: max` keeps up to 100 waiting, first in first
+# out; each run checks out its own commit, so a merge run still tags that
+# commit.
+concurrency:
+  group: release
+  cancel-in-progress: false
+  queue: max
+
 jobs:
+  # The release PR, and the tags when it merges. On every push to main.
+  release:
+    name: Release PR or tags
+    if: ${{ github.event_name == 'push' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    # Waiting for CI on a release commit takes most of this.
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      pull-requests: read # which pull request this commit merged
+      actions: read # CI's runs for this commit
+    outputs:
+      # vX.Y.Z when this run tagged a CLI release, empty otherwise. The build
+      # jobs run only when it's set.
+      tag: ${{ steps.cli-tag.outputs.tag }}
+    steps:
+      - name: Get a shipRig App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.SHIPRIG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SHIPRIG_APP_PRIVATE_KEY }}
+          permission-contents: write # the release PR branch and the tags
+          permission-pull-requests: write # the release PR, and "released in" comments
+
+      # Full history and every tag, so `shiprig tag` sees what's already
+      # released. No stored credentials: the action writes through the GitHub
+      # API with the App token and never pushes with git.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Tag only what CI passed. The release PR's own CI tested this tree, but
+      # main can have moved under it, and a tag is public the moment it's
+      # pushed, so the release commit itself has to be green first. A release
+      # commit always changes a go.mod (the version stamp), so CI always runs
+      # on it. Every other push skips this: it only updates the release PR.
+      # Fails closed: a CI failure, or no finished run in time, tags nothing.
+      - name: Wait for CI on a release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          merged=$(gh api "repos/$GH_REPO/commits/$SHA/pulls" \
+            --jq '[.[] | select(.head.ref | startswith("changeset-release/"))] | length')
+          if [ "$merged" = 0 ]; then
+            echo "Not a release PR merge; nothing to tag, so no need to wait for CI."
+            exit 0
+          fi
+          echo "Release PR merge at $SHA; waiting for CI to pass on it before tagging."
+          for i in $(seq 1 90); do
+            state=$(gh run list --workflow ci.yml --commit "$SHA" --event push --limit 1 \
+              --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
+            echo "$(date -u +%H:%M:%S) CI: ${state:-not started}"
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*) echo "::error::CI finished as '${state#completed }' on $SHA; not tagging. Fix main and merge a new release PR."; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "::error::CI hasn't finished on $SHA after 45 minutes; not tagging. Re-run this job once it has."
+          exit 1
+
+      # The released shiprig, pinned, not the one in this tree: a broken main
+      # must not be able to write the release PR or cut a release.
+      - name: Install shiprig
+        run: .github/actions/release/install-shiprig.sh
+        env:
+          INPUT_SHIPRIG_VERSION: v1.22.0
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Release PR or tags
+        id: shiprig
+        uses: rigsmith/shiprig-action@e09e426ff41e452c331d15baecc1b414188613de # v0.5.0
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          publish-script: shiprig tag
+          # GoReleaser makes the GitHub release below, with the changelog entry
+          # as its notes.
+          create-github-releases: false
+
+      # The CLI's tag, for the build jobs. The UI's ui/vX.Y.Z tag goes to
+      # release-ui.yml by itself.
+      - name: The CLI tag, if one was pushed
+        id: cli-tag
+        env:
+          PUBLISHED: ${{ steps.shiprig.outputs.published-packages }}
+        run: |
+          version=$(printf '%s' "${PUBLISHED:-[]}" \
+            | jq -r '.[] | select(.name == "github.com/rigsmith/rigsmith") | .version')
+          if [ -n "$version" ]; then
+            echo "tag=v$version" >> "$GITHUB_OUTPUT"
+            echo "Tagged v$version; building and publishing it next."
+          else
+            echo "No CLI tag this run."
+          fi
+
   goreleaser:
-    # A tag release, or a manual dry run. Republishing npm is the other job.
-    if: ${{ github.event_name == 'push' || inputs.mode == 'dry-run' }}
+    # A tag the release job just pushed, a manual release of an existing tag,
+    # or a manual dry run. Republishing npm is its own job.
+    needs: release
+    if: >-
+      ${{ !cancelled() && (
+        (github.event_name == 'push' && needs.release.result == 'success' && needs.release.outputs.tag != '') ||
+        (github.event_name == 'workflow_dispatch' && (inputs.mode == 'dry-run' || inputs.mode == 'release-tag'))
+      ) }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     permissions:
       contents: write # create the GitHub Release and upload assets
+      actions: read # CI's runs for the tagged commit
+    env:
+      # The tag being released: the one the release job pushed, or the one a
+      # manual release-tag run names. Empty for a dry run.
+      RELEASE_TAG: ${{ github.event_name == 'push' && needs.release.outputs.tag || (inputs.mode == 'release-tag' && inputs.tag || '') }}
     steps:
       # Fail fast on half-configured Windows signing. scripts/sign-windows.sh
       # auto-enables once TRUSTED_SIGNING_ACCOUNT is set, then hard-requires the
@@ -88,9 +225,36 @@ jobs:
           fi
           echo "All Trusted Signing secrets present and non-empty."
 
+      # A release builds a tag that already exists, from a commit CI passed.
+      # The release job waited for that before tagging; this holds a manual
+      # release-tag run, and any re-run, to the same rule, so nothing is
+      # published that CI didn't pass. It replaces running the whole test suite
+      # again here: CI on the exact commit is the stronger gate (three OSes).
+      - name: Require a tag CI passed
+        if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$RELEASE_TAG' isn't a CLI release tag (vX.Y.Z)."
+            exit 1
+          fi
+          sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+          state=$(gh run list --workflow ci.yml --commit "$sha" --event push --limit 1 \
+            --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
+          echo "$RELEASE_TAG is $sha; CI there: ${state:-no run}"
+          if [ "$state" != "completed success" ]; then
+            echo "::error::CI hasn't passed on $RELEASE_TAG's commit ($sha); not publishing it."
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # full history so GoReleaser's git changelog is complete
+          # The release commit itself, by its tag. A dry run builds the ref it
+          # was started on.
+          ref: ${{ env.RELEASE_TAG != '' && format('refs/tags/{0}', env.RELEASE_TAG) || '' }}
+          fetch-depth: 0 # every tag, so a dry run can name itself after the last release
           # GoReleaser publishes through the API with its own tokens; nothing
           # here pushes with git, so no credential is left on disk.
           persist-credentials: false
@@ -99,23 +263,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # a release build restores nothing a PR could have written
-
-      # The gitrepo tests need a git identity + a `main` default branch, same as
-      # ci.yml. Without this the temp repos default to `master` and the
-      # main-based fetch/merge tests fail.
-      - name: Configure git for tests
-        run: |
-          git config --global user.email ci@rigsmith.test
-          git config --global user.name rigsmith-ci
-          git config --global init.defaultBranch main
-
-      # CI runs on main/PRs but not on tags, so gate the release on the tests
-      # passing at the exact tagged commit — never publish binaries that fail.
-      - name: Test
-        run: go test ./... -count=1
-
-      - name: Vet
-        run: go vet ./...
 
       # jsign signs the Windows .exe with Azure Trusted Signing during the build
       # (see scripts/sign-windows.sh); it's a Java jar and needs a JRE.
@@ -182,7 +329,7 @@ jobs:
       # see the same shape a release would. --match 'v*' passes over the
       # window's tags without knowing anything about them.
       - name: Name the dry run after the last CLI release
-        if: github.event_name == 'workflow_dispatch'
+        if: ${{ env.RELEASE_TAG == '' }}
         run: |
           # The newest vX.Y.Z this ref actually contains. Three constraints,
           # each of which was a separate wrong answer on the way here:
@@ -214,16 +361,30 @@ jobs:
           echo "GORELEASER_CURRENT_TAG=$tag" >> "$GITHUB_ENV"
           echo "dry run will build as $tag"
 
+      # The ui/vX.Y.Z tag sits on the same release commit, so GoReleaser is told
+      # which tag it's releasing rather than left to pick one.
+      - name: Release the tag, not whichever sits on the commit
+        if: ${{ env.RELEASE_TAG != '' }}
+        run: echo "GORELEASER_CURRENT_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+
+      # The GitHub release's notes are the changelog's entry for this version:
+      # what the changesets say, written for the people who use rig, rather
+      # than GoReleaser's list of commits. No entry, no release.
+      - name: Release notes from the changelog
+        if: ${{ env.RELEASE_TAG != '' }}
+        run: sh scripts/release-notes.sh "$RELEASE_TAG" CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: "~> v2"
-          # A manual run is a snapshot: it builds + signs but skips every publish
-          # (no GitHub release, tap push, or npm). A tag does the real release.
+          # A dry run is a snapshot: it builds + signs but skips every publish
+          # (no GitHub release, tap push, or npm). A tag does the real release,
+          # with the changelog entry as its notes.
           args: >-
-            ${{ github.event_name == 'workflow_dispatch'
+            ${{ env.RELEASE_TAG == ''
                 && 'release --snapshot --clean'
-                || 'release --clean' }}
+                || format('release --clean --release-notes={0}/release-notes.md', runner.temp) }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Cross-repo token so GoReleaser can commit the casks to
@@ -266,7 +427,7 @@ jobs:
       # them in the `npm` job below instead, on a GitHub-hosted runner: npm
       # refuses a provenance-signed publish from this one (see that job).
       - name: npm wrapper packages (dry run)
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+        if: ${{ env.RELEASE_TAG == '' }}
         run: node scripts/npm/build-packages.mjs --dry-publish
 
       # Submit to winget via komac, which updates the PUBLISHED manifest rather
@@ -294,7 +455,7 @@ jobs:
       # can fail — or any other step between here and there — without deciding
       # whether winget gets its update.
       - name: Submit to winget (komac)
-        if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ !cancelled() && env.RELEASE_TAG != '' }}
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
@@ -312,10 +473,10 @@ jobs:
           # winget while the release and its assets sat right there. Checked
           # before komac is downloaded, so a run with nothing to submit costs
           # nothing.
-          assets="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+          assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --json assets -q '.assets | length' 2>/dev/null || echo 0)"
           if [ "${assets:-0}" -eq 0 ]; then
-            echo "::warning::$GITHUB_REF_NAME has no published assets — nothing for winget to point at, skipping."
+            echo "::warning::$RELEASE_TAG has no published assets — nothing for winget to point at, skipping."
             exit 0
           fi
           curl -fsSL -o /tmp/komac.tar.gz \
@@ -323,13 +484,13 @@ jobs:
           tar -xzf /tmp/komac.tar.gz -C /tmp
           sudo install -m 0755 /tmp/komac /usr/local/bin/komac
           komac --version
-          sh scripts/winget-submit.sh "${GITHUB_REF_NAME#v}" --submit
+          sh scripts/winget-submit.sh "${RELEASE_TAG#v}" --submit
 
       # Dry run only: hand back the built + signed artifacts to inspect locally
       # (codesign --verify / spctl on the mac binaries, the casks, checksums).
       # Nothing was published.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' }}
+        if: ${{ !cancelled() && env.RELEASE_TAG == '' }}
         with:
           name: dryrun-dist
           path: |
@@ -365,17 +526,25 @@ jobs:
   # provenance", E422, v1.20.0). The trusted publisher is bound to this
   # workflow FILE, not the runner, so moving the job changes nothing there.
   npm:
-    # A tag release publishes the npm wrappers from the release the goreleaser
-    # job just made: the same checksum-verified archives republish-npm uses.
-    needs: goreleaser
-    if: ${{ github.event_name == 'push' }}
+    # A release publishes the npm wrappers from the GitHub release the
+    # goreleaser job just made: the same checksum-verified archives
+    # republish-npm uses. Not for a dry run, which publishes nothing.
+    needs: [release, goreleaser]
+    if: >-
+      ${{ !cancelled() && needs.goreleaser.result == 'success' && (
+        github.event_name == 'push' ||
+        (github.event_name == 'workflow_dispatch' && inputs.mode == 'release-tag')
+      ) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read # read the release's assets
       id-token: write # mint the OIDC token npm exchanges
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && needs.release.outputs.tag || inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -386,10 +555,10 @@ jobs:
       - name: npm with trusted-publishing support
         run: npm install -g "npm@$NPM_VERSION" # zizmor: ignore[adhoc-packages] exact version, pinned in env
 
-      - name: Publish npm wrappers from ${{ github.ref_name }}
+      - name: Publish npm wrappers from ${{ env.RELEASE_TAG }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node scripts/npm/build-packages.mjs --from-release "$GITHUB_REF_NAME" --publish
+        run: node scripts/npm/build-packages.mjs --from-release "$RELEASE_TAG" --publish
 
   republish-npm:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'republish-npm' }}
