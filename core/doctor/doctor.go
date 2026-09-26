@@ -31,7 +31,7 @@ type Result struct {
 	ID       string
 	Name     string
 	Status   Status
-	Detail   string
+	Detail   string                      // may span lines: one per item of a list that must be read in full
 	Hint     string                      // manual remediation when Fix is nil
 	Fix      func(context.Context) error // nil ⇒ not auto-fixable (report-only)
 	FixLabel string

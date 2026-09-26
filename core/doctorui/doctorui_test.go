@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/doctor"
@@ -28,6 +29,28 @@ func TestRenderSections(t *testing.T) {
 	for _, want := range []string{"env", "git", "2.50", "broken", "missing", "→ install it"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("RenderSections output missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestRenderSections_MultiLineDetail: a Detail's later lines sit under its
+// first, not at column 0 where they'd read as a new section.
+func TestRenderSections_MultiLineDetail(t *testing.T) {
+	var buf bytes.Buffer
+	RenderSections(&buf, []doctor.Section{{Title: "s", Results: []doctor.Result{
+		{Name: "list", Status: doctor.Fail, Detail: "2 things:\none\ntwo"},
+	}}})
+	out := buf.String()
+	first := strings.Index(out, "2 things:")
+	if first < 0 {
+		t.Fatalf("first line missing:\n%s", out)
+	}
+	// Visible column, in runes: the status glyph is multi-byte.
+	col := utf8.RuneCountInString(out[strings.LastIndex(out[:first], "\n")+1 : first])
+	for _, line := range []string{"one", "two"} {
+		want := "\n" + strings.Repeat(" ", col) + line + "\n"
+		if !strings.Contains(out, want) {
+			t.Errorf("line %q not aligned at column %d:\n%s", line, col, out)
 		}
 	}
 }
