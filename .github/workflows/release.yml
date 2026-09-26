@@ -58,10 +58,9 @@ env:
 # Nothing at the workflow level; each job asks for what it needs. The npm jobs'
 # id-token lets them mint an OIDC token, which npm exchanges for a short-lived
 # publish credential (trusted publishing). A trusted publisher is bound to a
-# repository and a WORKFLOW FILENAME, and npm allows one configuration per
+# repository and a WORKFLOW FILENAME, and each workflow needs its own on every
 # package — which is why republishing lives in this file as a second job rather
-# than in a workflow of its own. A separate file could not publish these
-# packages without a stored token.
+# than in a workflow of its own, which would need 41 more registrations.
 permissions: {}
 
 # One at a time, never cancelled, and every push gets its run. A running job
