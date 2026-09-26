@@ -1,0 +1,9 @@
+.changeset/doctor-reports-everything.md
+  ai_agent 2-4,7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "537ce0f5861550aeeca93c72d36b95a480d7ca1f",
+  "prompts": {}
+}
