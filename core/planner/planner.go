@@ -82,7 +82,10 @@ type Module struct {
 	cascadeBump changeset.Bump
 	// bumpOverride, when set, coordinates the version of packages in a
 	// fixed/linked/lockstep group.
-	bumpOverride    changeset.Bump
+	bumpOverride changeset.Bump
+	// minorPreMajor is versioning.bumpMinorPreMajor: a major on a package
+	// below 1.0.0 releases as a minor.
+	minorPreMajor   bool
 	hasBumpOverride bool
 }
 
@@ -104,6 +107,11 @@ func (m *Module) HighestBump() changeset.Bump {
 	highest := m.cascadeBump
 	for _, c := range m.Changes {
 		highest = highest.Max(c.Bump)
+	}
+	// Before 1.0.0, with bumpMinorPreMajor, a breaking change moves the
+	// minor. The bump itself becomes minor, so the plan says what it does.
+	if highest == changeset.BumpMajor && m.minorPreMajor && m.Current.Major == 0 {
+		return changeset.BumpMinor
 	}
 	return highest
 }
@@ -173,6 +181,12 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 	// later, its bump would still rewrite its dependents' ranges to a version
 	// that is never released.
 	directOrder := generateModules(withoutIgnored(changesets, cfg), byName, cfg.Groups())
+	// Only these carry a major (a cascade adds patches, and a group's
+	// members take its coordinated bump), so they're the modules the
+	// pre-1.0 rule applies to; set before the cascade reads their versions.
+	for _, m := range directOrder {
+		m.minorPreMajor = cfg.Versioning.BumpMinorPreMajor
+	}
 	rel := map[string]*Module{}
 	order := make([]string, 0, len(directOrder))
 	for _, m := range directOrder {

@@ -97,6 +97,13 @@ type Versioning struct {
 	// (release-please's manifest). Absent means false: canon @changesets keeps
 	// no record.
 	Record bool `json:"record,omitempty"`
+	// BumpMinorPreMajor, when true, releases a major bump on a package below
+	// 1.0.0 as a minor (0.3.0 → 0.4.0, not 1.0.0), as release-please's
+	// `bump-minor-pre-major` does: before 1.0 a breaking change moves the
+	// minor. Going to 1.0.0 is then an explicit `--release-as 1.0.0` (or
+	// `releaseAs`). Absent means false: canon @changesets takes a major on
+	// 0.x to 1.0.0.
+	BumpMinorPreMajor bool `json:"bumpMinorPreMajor,omitempty"`
 }
 
 // StampEnabled reports whether `version` writes versions into manifests
