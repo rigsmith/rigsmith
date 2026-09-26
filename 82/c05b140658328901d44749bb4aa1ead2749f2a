@@ -1,0 +1,9 @@
+.changeset/bump-minor-pre-major-labels.md
+  ai_agent 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "82c05b140658328901d44749bb4aa1ead2749f2a",
+  "prompts": {}
+}
