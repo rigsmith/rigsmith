@@ -281,7 +281,8 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 		{`"a#b": patch`, "a#b", BumpPatch},
 		{"lib:\tpatch", "lib", BumpPatch},
 	} {
-		cs, err := Parse("---\n# which packages\n\n"+tc.line+"\n---\n\nA change\n", "x")
+		// The type lets a bare line (no bump) take one; an explicit bump wins.
+		cs, err := Parse("---\n# which packages\ntype: fix\n\n"+tc.line+"\n---\n\nA change\n", "x")
 		if err != nil {
 			t.Errorf("%q: %v", tc.line, err)
 			continue
@@ -360,6 +361,12 @@ func TestParseRefusesWhatCanonRefuses(t *testing.T) {
 		{"tab-indented second package", "a: patch\n\tlib: patch", "indented with a tab"},
 		{"tab-indented bare package", "type: fix\n\t\"lib\"", "indented with a tab"},
 		{"tab-indented type", "\ttype: fix\n\"lib\"", "indented with a tab"},
+		{"bare package, no type", `"lib"`, `"lib" has no bump`},
+		{"bare plain package, no type", "lib", `"lib" has no bump`},
+		{"bare package with a comment, no type", "'lib' # a note", `"lib" has no bump`},
+		{"bare package, a scope but no type", "scope: rig\n\"lib\"", `"lib" has no bump`},
+		{"bare package beside a bumped one", "a: patch\n\"lib\"", `"lib" has no bump`},
+		{"bare package after a bumped one of the same name", "lib: patch\n\"lib\"", `"lib" is listed more than once`},
 	} {
 		_, err := Parse("---\n"+tc.frontmatter+"\n---\n\nA change\n", "neg")
 		if err == nil {
@@ -387,6 +394,8 @@ func TestParseStillAcceptsCanonForms(t *testing.T) {
 			[]Release{{"@x/y", BumpPatch}, {"lib", BumpMinor}, {"it's", BumpPatch}}},
 		{"bare name, no colon, derives from the type", "type: feat\n\"lib\"", []Release{{"lib", BumpNone}}},
 		{"bare name with a comment", "type: feat\nlib # a note", []Release{{"lib", BumpNone}}},
+		{"bare name under a type written after it", "\"lib\"\ntype: fix", []Release{{"lib", BumpNone}}},
+		{"bare name beside a bumped one, under a type", "type: fix\na: major\n\"lib\"", []Release{{"a", BumpMajor}, {"lib", BumpNone}}},
 		{"tab after the colon", "lib:\tpatch", []Release{{"lib", BumpPatch}}},
 		{"tab before a trailing comment", "lib: patch\t# note", []Release{{"lib", BumpPatch}}},
 		{"tab-only blank line", "a: patch\n\t\nlib: minor", []Release{{"a", BumpPatch}, {"lib", BumpMinor}}},
@@ -401,6 +410,43 @@ func TestParseStillAcceptsCanonForms(t *testing.T) {
 		}
 		if !reflect.DeepEqual(cs.Releases, tc.want) {
 			t.Errorf("%s: releases = %+v, want %+v", tc.name, cs.Releases, tc.want)
+		}
+	}
+}
+
+// A bare line takes its bump from the changeset's type, which may come from the
+// summary's conventional prefix rather than a `type:` line.
+func TestParseBareNameTypedBySummary(t *testing.T) {
+	cs, err := Parse("---\n\"lib\"\n---\n\nfeat: a thing\n", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.Type != "feat" || len(cs.Releases) != 1 || cs.Releases[0] != (Release{"lib", BumpNone}) {
+		t.Errorf("type = %q, releases = %+v; want feat and a bare lib", cs.Type, cs.Releases)
+	}
+}
+
+// Render writes a bumpless release bare only when there is a type for it to
+// take its bump from; otherwise it writes `: none`, which Parse reads back.
+func TestRenderBumplessRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name, typ, summary, wantLine string
+	}{
+		{"typed", "fix", "a change", "\"lib\"\n"},
+		{"typed by the summary", "", "fix: a change", "\"lib\"\n"},
+		{"untyped", "", "a change", "\"lib\": none\n"},
+	} {
+		out := Render([]Release{{"lib", BumpNone}}, tc.summary, tc.typ, false)
+		if !strings.Contains(out, "\n"+tc.wantLine) {
+			t.Errorf("%s: rendered %q, want the line %q", tc.name, out, tc.wantLine)
+		}
+		cs, err := Parse(out, "x")
+		if err != nil {
+			t.Errorf("%s: rendered changeset does not parse: %v", tc.name, err)
+			continue
+		}
+		if len(cs.Releases) != 1 || cs.Releases[0] != (Release{"lib", BumpNone}) {
+			t.Errorf("%s: releases = %+v", tc.name, cs.Releases)
 		}
 	}
 }

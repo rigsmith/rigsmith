@@ -336,6 +336,7 @@ func Parse(content, id string) (*Changeset, error) {
 	}
 
 	seen := map[string]bool{}
+	bare := "" // the first package line with no bump, which needs a type
 	for i < len(lines) && lines[i] != "---" {
 		line := lines[i]
 		// A tab in the indentation of anything but a blank or comment line is
@@ -378,6 +379,9 @@ func Parse(content, id string) (*Changeset, error) {
 		seen[name] = true
 		// Missing bump (`"Name"` with no `: bump`) means BumpNone → derive from type.
 		bump := BumpNone
+		if bumpText == "" && bare == "" {
+			bare = name
+		}
 		if bumpText != "" {
 			b, ok := ParseBump(bumpText)
 			if !ok {
@@ -394,6 +398,13 @@ func Parse(content, id string) (*Changeset, error) {
 
 	cs.Summary = summaryAfter(lines, i)
 	normalizeConventional(cs)
+	// A bare package line takes its bump from the type. With no type, from
+	// the frontmatter or the summary's prefix, it has no bump at all and would
+	// strand the changeset; @changesets refuses it too, as a frontmatter that
+	// isn't a mapping.
+	if bare != "" && cs.Type == "" {
+		return nil, fmt.Errorf("changeset %q: %q has no bump; give it one (`: patch`, `: minor`, `: major` or `: none`), or add a `type:` line for it to take the bump from", id, bare)
+	}
 	return cs, nil
 }
 
@@ -421,6 +432,8 @@ func joinFrom(lines []string, start int) string {
 // Render produces the canonical on-disk representation of a changeset. A
 // conventional type (with the breaking flag) is written as a `type:` line; a
 // release with BumpNone is written bare (no `: bump`), meaning "derive from type".
+// With no type to derive from, BumpNone is written as `: none`, since Parse
+// refuses a bare line that has no type.
 func Render(releases []Release, summary, typ string, breaking bool) string {
 	return RenderScoped(releases, summary, typ, "", breaking)
 }
@@ -439,8 +452,10 @@ func RenderScoped(releases []Release, summary, typ, scope string, breaking bool)
 	if scope != "" {
 		fmt.Fprintf(&b, "scope: %s\n", scope)
 	}
+	_, _, prefixed := ParseConventional(summary)
+	typed := typ != "" || prefixed
 	for _, r := range releases {
-		if r.Bump == BumpNone {
+		if r.Bump == BumpNone && typed {
 			fmt.Fprintf(&b, "%q\n", r.Name)
 		} else {
 			fmt.Fprintf(&b, "%q: %s\n", r.Name, r.Bump.String())
