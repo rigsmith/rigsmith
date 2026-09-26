@@ -57,7 +57,7 @@ func (g BuiltinGenerator) Render(_ context.Context, req plugin.ChangelogRequest)
 		}
 		changes = append(changes, *dep)
 	}
-	out := renderSections(req.Package.NewVersion, req.Bump, changes, groups, g.scopes)
+	out := renderSections(req.Package.NewVersion, req.Bump, req.ExactVersion, changes, groups, g.scopes)
 	out += renderContributors(req.Contributors, req.ContributorsSection)
 	return out, nil
 }

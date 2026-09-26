@@ -100,6 +100,12 @@ What an external generator gets beyond the built-in's own inputs:
   built-in renders from this field. The "Updated dependencies" change is still
   in `changes`, flagged `dependencies: true`, so a generator written before
   the field keeps working; one that renders `dependencyUpdates` skips it.
+- `exactVersion`: `true` when the version was chosen by hand
+  (`--release-as`, the version prompt). `bump` is then the move it makes
+  (`major` for a patch forced to 2.0.0), not what the changes asked for, and
+  the built-in lists the changes that decided the release under that bump.
+  @changesets has no such override; a prerelease, a snapshot or a linked or
+  fixed group's coordinated version never sets it.
 - the output is normalized to end in exactly one newline, however many the
   generator prints, so the next entry starts on a line of its own.
 

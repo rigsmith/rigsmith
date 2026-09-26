@@ -438,9 +438,13 @@ type BuildConfigSpec struct {
 // package being released. The generator returns the rendered release entry
 // (the block under the package's "# Title", excluding the title) on stdout.
 type ChangelogRequest struct {
-	APIVersion        int                `json:"apiVersion"`
-	Package           ChangelogPackage   `json:"package"`
-	Bump              string             `json:"bump"` // major | minor | patch
+	APIVersion int              `json:"apiVersion"`
+	Package    ChangelogPackage `json:"package"`
+	Bump       string           `json:"bump"` // major | minor | patch
+	// ExactVersion says NewVersion was chosen by hand (--release-as, the
+	// version prompt), and Bump is the move it makes rather than what the
+	// changes asked for. @changesets has no such override.
+	ExactVersion      bool               `json:"exactVersion,omitempty"`
 	Changes           []ChangelogChange  `json:"changes"`
 	DependencyUpdates []DependencyUpdate `json:"dependencyUpdates,omitempty"`
 	Context           ChangelogContext   `json:"context"`

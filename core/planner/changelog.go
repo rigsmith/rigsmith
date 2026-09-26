@@ -56,6 +56,7 @@ func ModuleToRequestScoped(m *Module, scopeOrder []string) plugin.ChangelogReque
 			NewVersion:     m.ResolvedVersion(),
 		},
 		Bump:                m.HighestBump().String(),
+		ExactVersion:        m.ExactVersion,
 		Changes:             changes,
 		DependencyUpdates:   m.DepReleases,
 		Contributors:        m.Contributors,
@@ -107,14 +108,17 @@ func renderContributors(authors []plugin.Author, section string) string {
 // when the groups name no such section.
 //
 // releaseBump is the bump the release is made at (the request's Bump). In an
-// untyped entry the headings name bumps, so the changes that decided the
-// release are listed under the bump it actually makes: under bumpMinorPreMajor
-// a major change on 0.x releases as a minor (Minor Changes, as status reports
-// it), and a patch forced to 2.0.0 by --release-as is a Major Change. Smaller
-// changes keep their own headings. A typed entry keeps its sections: they
-// name what each change is (a breaking change is breaking whatever the
-// version does), not the version's move.
-func renderSections(newVersion, releaseBump string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
+// untyped entry the headings name bumps, so none names a bigger one than the
+// release makes: under bumpMinorPreMajor a major change on 0.x releases as a
+// minor, and is listed under Minor Changes, as status reports it. A heading is
+// raised only for a hand-chosen version (exactVersion: --release-as, the
+// prompt), where a patch forced to 2.0.0 is a Major Change; a group's
+// coordinated bump raises none, as in @changesets, whose linked and fixed
+// members keep their changes under their own bump. Only the changes that
+// decided the release move; smaller ones keep their headings. A typed entry
+// keeps its sections: they name what each change is (a breaking change is
+// breaking whatever the version does), not the version's move.
+func renderSections(newVersion, releaseBump string, exactVersion bool, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
 	// Ordered list of (sectionHeading) and the bucket of bullets in it.
 	type bullet struct {
 		scope   string
@@ -184,7 +188,8 @@ func renderSections(newVersion, releaseBump string, changes []plugin.ChangelogCh
 		}
 	}
 	released, knownRelease := changeset.ParseBump(releaseBump)
-	moveTop := !typed && knownRelease && released != changeset.BumpNone && top != changeset.BumpNone && released != top
+	moveTop := !typed && knownRelease && released != changeset.BumpNone && top != changeset.BumpNone &&
+		(released < top || (exactVersion && released > top))
 
 	for _, c := range changes {
 		switch {

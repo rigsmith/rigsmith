@@ -283,7 +283,9 @@ The release is labelled by the move it makes, not by its changesets: a patch
 changeset released at `2.0.0` is `major` in the plan and `status`, and in an
 untyped changelog the changes that decided the release are listed under
 **Major Changes** (smaller ones keep their own headings). Typed sections stay
-as they are, since they name what each change is.
+as they are, since they name what each change is. Only a version given this
+way is relabelled: a linked or fixed group's coordinated version keeps each
+member's changes under their own bump, as @changesets does.
 
 It's for normal releases only; a prerelease or snapshot sets its own suffix. @changesets has no equivalent (there you write a changeset with
 the bump you want), so without the flag nothing changes.

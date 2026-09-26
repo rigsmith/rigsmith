@@ -61,6 +61,12 @@ type Module struct {
 	// the stable bump — used by prerelease and snapshot runs whose versions carry
 	// a suffix the stable bump can't express (e.g. 1.1.0-next.0, 0.0.0-canary-…).
 	VersionOverride string
+	// ExactVersion says VersionOverride was chosen by hand (--release-as, the
+	// override prompt) rather than derived (prerelease, snapshot). Only then
+	// does the release get labelled, and its changelog headed, by the move it
+	// makes: @changesets has no such override, while a derived version, and a
+	// group's coordinated bump, keep canon's labels and headings.
+	ExactVersion bool
 	// Contributors are the release's authors for the changelog "Contributors"
 	// section, already de-duplicated, excluded, and sorted by the caller. Empty
 	// unless the `contributors` config is enabled.
@@ -98,11 +104,11 @@ func (m *Module) EffectiveVersionFile() string {
 	return m.ManifestPath
 }
 
-// HighestBump is the bump this release makes. Planned, it is the override if
-// present, otherwise the max of the direct changes and the cascade-determined
-// bump. Once a VersionOverride moves the version (--release-as, the override
-// prompt, a prerelease), it is that move instead: the plan's label and the
-// changelog's heading say what the release does, not what its changesets
+// HighestBump is the bump this release makes. Planned, it is the group's
+// coordinated bump if present, otherwise the max of the direct changes and the
+// cascade-determined bump. A version chosen by hand (ExactVersion:
+// --release-as, the override prompt) is labelled by the move it makes
+// instead: the plan says what the release does, not what its changesets
 // asked for.
 func (m *Module) HighestBump() changeset.Bump {
 	if moved, ok := m.overrideMove(); ok {
@@ -128,14 +134,13 @@ func (m *Module) plannedBump() changeset.Bump {
 	return highest
 }
 
-// overrideMove is the level VersionOverride moves the version by, judged on
-// the stable part of each (major.minor.patch, prerelease label dropped): major
-// if the major changes, minor if the minor does, else patch. Only a move up
-// counts. A prerelease run that stays on its stable base (1.3.0-next.0 →
-// 1.3.0-next.1) or a snapshot below the current version (0.0.0-canary-…)
-// says nothing about the bump, so the planned one stands.
+// overrideMove is the level a hand-chosen VersionOverride moves the version
+// by, judged on the stable part of each (major.minor.patch, prerelease label
+// dropped): major if the major changes, minor if the minor does, else patch.
+// Only a move up counts. A derived override (a prerelease, a snapshot) isn't
+// one: its labels stay canon's, the planned bump.
 func (m *Module) overrideMove() (changeset.Bump, bool) {
-	if m.VersionOverride == "" {
+	if m.VersionOverride == "" || !m.ExactVersion {
 		return changeset.BumpNone, false
 	}
 	v, ok := semver.Parse(m.VersionOverride)

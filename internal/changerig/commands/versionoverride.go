@@ -39,6 +39,7 @@ func promptVersionOverrides(out io.Writer, plan []*planner.Module) (bool, error)
 		// shared version file isn't left inconsistent (last write wins).
 		for _, m := range group {
 			m.VersionOverride = target
+			m.ExactVersion = true
 		}
 		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("  override %s → %s", groupLabel(group), target)))
 		changed = true
@@ -193,6 +194,7 @@ func applyReleaseAs(out io.Writer, plan []*planner.Module, specs []string) error
 		chosen[rep] = v.String()
 		for _, m := range group {
 			m.VersionOverride = v.String()
+			m.ExactVersion = true
 		}
 		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("  release as %s → %s", groupLabel(group), v)))
 	}
