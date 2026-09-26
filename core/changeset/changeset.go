@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -340,6 +341,13 @@ func parseReleaseLine(line string) (name, bump string, err error) {
 	// @changesets refuses a package name that is empty once trimmed, which a
 	// quoted name ("  ", "\u0020") can be.
 	if strings.TrimSpace(name) == "" {
+		return "", "", errMalformedLine
+	}
+	// No package name holds a control character or invalid UTF-8, and one
+	// that did would reach the terminal wherever a name is printed (an
+	// escape like \e or \n decodes to exactly that). The error quotes the
+	// line with %q, so the refusal itself prints safely.
+	if !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
 		return "", "", errMalformedLine
 	}
 	s = strings.TrimSpace(stripComment(s))
