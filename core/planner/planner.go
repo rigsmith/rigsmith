@@ -452,11 +452,7 @@ func generateModules(changesets []*changeset.Changeset, byName map[string]plugin
 				index[rel.Name] = m
 				order = append(order, rel.Name)
 			}
-			// Explicit per-package bump wins; otherwise derive from the type.
-			bump := rel.Bump
-			if bump == changeset.BumpNone && hasType {
-				bump = deriveBump(typ, breaking, groups)
-			}
+			bump := releaseBump(rel, typ, breaking, hasType, groups)
 			m.Changes = append(m.Changes, Change{Description: desc, Bump: bump, Type: typ, Scope: cs.EffectiveScope(), Breaking: breaking, Ref: cs.Ref})
 		}
 	}
@@ -466,6 +462,23 @@ func generateModules(changesets []*changeset.Changeset, byName map[string]plugin
 		out = append(out, index[name])
 	}
 	return out
+}
+
+// ReleaseBump is the bump a changeset gives one of the packages it names, as
+// the plan counts it: the explicit per-package bump, or, for a bare name in a
+// typed changeset, the bump its conventional type stands for.
+func ReleaseBump(cs *changeset.Changeset, rel changeset.Release, cfg *config.Config) changeset.Bump {
+	typ, breaking, hasType := cs.EffectiveType()
+	return releaseBump(rel, typ, breaking, hasType, cfg.Groups())
+}
+
+// releaseBump is ReleaseBump with the changeset's type already resolved.
+// Explicit per-package bump wins; otherwise derive from the type.
+func releaseBump(rel changeset.Release, typ string, breaking, hasType bool, groups []config.ChangelogGroup) changeset.Bump {
+	if rel.Bump == changeset.BumpNone && hasType {
+		return deriveBump(typ, breaking, groups)
+	}
+	return rel.Bump
 }
 
 // deriveBump maps a conventional type (and breaking flag) to a version bump via

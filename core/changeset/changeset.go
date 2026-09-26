@@ -420,13 +420,39 @@ const readmeName = "README.md"
 
 // Dir reads every changeset file in a directory. interopExt, when non-empty,
 // additionally includes files with that extension (the interop mode where the
-// JS tool owns .md and this tool owns e.g. ".net.mkd").
+// JS tool owns .md and this tool owns e.g. ".net.mkd"). It fails on the first
+// file that can't be read or parsed; DirLenient reads past them.
 func Dir(changesetDir, interopExt string) ([]*Changeset, error) {
-	entries, err := os.ReadDir(changesetDir)
+	out, bad, err := DirLenient(changesetDir, interopExt)
 	if err != nil {
 		return nil, err
 	}
-	var out []*Changeset
+	if len(bad) > 0 {
+		return nil, bad[0].Err
+	}
+	return out, nil
+}
+
+// FileError is a changeset file that could not be read or parsed. Path is the
+// file's full path; Err is the read or parse error, unwrapped.
+type FileError struct {
+	Path string
+	Err  error
+}
+
+func (e *FileError) Error() string { return e.Path + ": " + e.Err.Error() }
+func (e *FileError) Unwrap() error { return e.Err }
+
+// DirLenient reads a directory the way Dir does, but keeps going past a file
+// that can't be read or parsed: it returns the changesets that did parse and,
+// separately, every file that didn't, in directory order. err is reserved for
+// the directory itself being unreadable. A health check uses it to name every
+// broken file rather than stopping at the first, or at none.
+func DirLenient(changesetDir, interopExt string) (out []*Changeset, bad []*FileError, err error) {
+	entries, err := os.ReadDir(changesetDir)
+	if err != nil {
+		return nil, nil, err
+	}
 	for _, e := range entries {
 		if e.IsDir() || !isChangesetFile(e.Name(), interopExt) {
 			continue
@@ -434,16 +460,18 @@ func Dir(changesetDir, interopExt string) ([]*Changeset, error) {
 		path := filepath.Join(changesetDir, e.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			bad = append(bad, &FileError{Path: path, Err: err})
+			continue
 		}
 		id := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
 		cs, err := Parse(string(data), id)
 		if err != nil {
-			return nil, err
+			bad = append(bad, &FileError{Path: path, Err: err})
+			continue
 		}
 		out = append(out, cs)
 	}
-	return out, nil
+	return out, bad, nil
 }
 
 func isChangesetFile(name, interopExt string) bool {
@@ -458,7 +486,7 @@ func isChangesetFile(name, interopExt string) bool {
 
 // Ref is where a changeset came from, for changelog references.
 type Ref struct {
-	Commit string // the commit that added the changeset (or its source commit)
+	Commit string // the full SHA of the commit that added the changeset (or its source commit)
 	PR     int    // its pull request, 0 when unknown
 	Author string // its author's login, when resolved
 }

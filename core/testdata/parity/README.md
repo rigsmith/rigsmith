@@ -55,8 +55,8 @@ else — blank lines between sections, bullet indentation — is significant.
   `expectedRanges`). A package with no golden is one Node did not release; the
   harness asserts no CHANGELOG was written for it.
 - **`TestStatusPlan`** (per scenario) — runs `changerig status --output plan.json`
-  on a fresh materialization and asserts the JSON plan (`{ releases: [{ name,
-  type, newVersion }] }`) lists exactly the packages that change, at the right
+  on a fresh materialization and asserts the JSON plan's releases (`{ releases: [{ name,
+  type, newVersion }] }`) list exactly the packages that change, at the right
   versions.
 - **`TestPrereleaseParity`** — drives the full prerelease lifecycle (`pre enter
   next` → `version` → +changeset → `version` → `pre exit` → `version`) and checks

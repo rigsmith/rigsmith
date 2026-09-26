@@ -54,7 +54,7 @@ func TestResolveDeepensAShallowCloneToFindTheAddingCommit(t *testing.T) {
 		}
 		gitIn(t, origin, "add", "-A")
 		gitIn(t, origin, "commit", "-q", "-m", msg)
-		return gitIn(t, origin, "rev-parse", "--short", "HEAD")
+		return gitIn(t, origin, "rev-parse", "HEAD")
 	}
 	add("readme.md", "base") // a root commit for the history to start from
 	first := add("first-change.md", "first change")

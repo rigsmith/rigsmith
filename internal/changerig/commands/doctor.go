@@ -2,9 +2,12 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -18,6 +21,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/prestate"
 	"github.com/rigsmith/rigsmith/core/versionstate"
 	"github.com/spf13/cobra"
 )
@@ -131,16 +135,96 @@ func changesetChecks(ctx context.Context, ws *Workspace, disc Discovery) []docto
 
 	rs = append(rs, checkChangesetConfig(ws), checkWorkspace(disc))
 
-	// Pending changesets — neutral context, never a problem.
-	if css, err := changeset.Dir(ws.ChangesetDir, ""); err == nil {
-		rs = append(rs, doctor.Result{Name: "pending", Status: doctor.Info,
-			Detail: fmt.Sprintf("%d changeset(s)", len(css))})
-		rs = append(rs, checkStranded(ctx, ws, css))
+	rs = append(rs, pendingChecks(ctx, ws)...)
+	rs = append(rs, checkReleaseRecord(ctx, ws)...)
+	return rs
+}
+
+// pendingChecks reports the pending changesets: how many there are (neutral
+// context), any that can't be parsed, and any that can never release. It reads
+// exactly the files status and version read: .changeset/*.md only when
+// changesets are a source, plus .changeset/pre/ on the run after `pre exit`.
+// It reads them leniently, so one broken file neither hides the others nor
+// stops the targets check from running on the ones that did parse. A missing
+// .changeset/ says nothing here — checkChangesetConfig already reports it.
+func pendingChecks(ctx context.Context, ws *Workspace) []doctor.Result {
+	if !ws.Config.UsesChangesets() {
+		// The loader never opens a changeset file in this mode, so none can
+		// be pending, stranded or broken.
+		return []doctor.Result{{Name: "pending", Status: doctor.Info,
+			Detail: fmt.Sprintf("changeset files not read (versioning.source: %q); releases come from commits", ws.Config.CommitSource())}}
 	}
-	if r, ok := checkReleaseRecord(ctx, ws); ok {
+	css, bad, err := changeset.DirLenient(ws.ChangesetDir, "")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return []doctor.Result{{Name: "pending", Status: doctor.Fail,
+			Detail: "can't read .changeset/: " + err.Error(),
+			Hint:   "status and version read every changeset there; check the directory's permissions"}}
+	}
+	rs := []doctor.Result{{Name: "pending", Status: doctor.Info,
+		Detail: fmt.Sprintf("%d changeset(s)", len(css)+len(bad))}}
+	gradBad, gradRs := graduatingChecks(ws)
+	rs = append(rs, gradRs...)
+	if r, ok := checkUnparseable(ws, append(bad, gradBad...)); ok {
 		rs = append(rs, r)
 	}
-	return rs
+	if len(css) == 0 && len(bad) > 0 {
+		// Every file is broken: "no pending changesets" would contradict the
+		// row above, and there is nothing parsed to check targets on.
+		return rs
+	}
+	return append(rs, checkStranded(ctx, ws, css))
+}
+
+// graduatingChecks reads .changeset/pre/ when status and version will
+// (graduatesPre): the run after `pre exit` graduates every changeset the
+// prerelease consumed, and one broken file there stops them as surely as one
+// at the top level. It returns those broken files for checkUnparseable, and a
+// row for anything that stops the read itself.
+func graduatingChecks(ws *Workspace) ([]*changeset.FileError, []doctor.Result) {
+	pre, err := prestate.Read(ws.ChangesetDir)
+	if err != nil {
+		return nil, []doctor.Result{{Name: "prerelease state", Status: doctor.Fail,
+			Detail: "can't read .changeset/pre.json: " + err.Error(),
+			Hint:   "fix the JSON by hand; status and version refuse to run until it parses"}}
+	}
+	if !graduatesPre(ws, pre) {
+		return nil, nil
+	}
+	_, bad, err := changeset.DirLenient(prestate.Dir(ws.ChangesetDir), "")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, []doctor.Result{{Name: "prerelease state", Status: doctor.Fail,
+			Detail: "can't read .changeset/pre/: " + err.Error(),
+			Hint:   "the run after `pre exit` graduates every changeset there; check the directory's permissions"}}
+	}
+	return bad, nil
+}
+
+// checkUnparseable reports changeset files that can't be read or parsed, each
+// on its own line with its path under the repo and its error — every one, as
+// a fix needs to find them all. It is a failure, not a warning: status and
+// version refuse to run while any one of them is there.
+func checkUnparseable(ws *Workspace, bad []*changeset.FileError) (doctor.Result, bool) {
+	if len(bad) == 0 {
+		return doctor.Result{}, false
+	}
+	lines := make([]string, 0, len(bad)+1)
+	lines = append(lines, fmt.Sprintf("%d changeset(s) can't be parsed:", len(bad)))
+	for _, b := range bad {
+		file := b.Path
+		if rel, err := filepath.Rel(ws.Root, b.Path); err == nil {
+			file = filepath.ToSlash(rel)
+		}
+		lines = append(lines, fmt.Sprintf("%s: %v", file, b.Err))
+	}
+	return doctor.Result{Name: "changeset files", Status: doctor.Fail,
+		Detail: strings.Join(lines, "\n"),
+		Hint:   "fix the frontmatter by hand (`\"package\": patch|minor|major` per line), or delete the file; status and version refuse to run until every changeset parses"}, true
 }
 
 // checkReleaseRecord compares the release record (versioning.record) with the
@@ -149,26 +233,26 @@ func changesetChecks(ctx context.Context, ws *Workspace, disc Discovery) []docto
 // released, and a release that was versioned but never tagged, which leaves
 // the next commit-sourced plan counting from an older tag. It reports nothing
 // when no record is kept.
-func checkReleaseRecord(ctx context.Context, ws *Workspace) (doctor.Result, bool) {
+func checkReleaseRecord(ctx context.Context, ws *Workspace) []doctor.Result {
 	const name = "release record"
 	if !ws.Config.Versioning.Record {
-		return doctor.Result{}, false
+		return nil
 	}
 	recorded, err := versionstate.Read(ws.ChangesetDir)
 	if err != nil {
-		return doctor.Result{Name: name, Status: doctor.Fail,
+		return []doctor.Result{{Name: name, Status: doctor.Fail,
 			Detail: fmt.Sprintf("can't read .changeset/%s: %v", versionstate.FileName, err),
-			Hint:   "fix the JSON by hand; `version` rewrites it on the next release"}, true
+			Hint:   "fix the JSON by hand; `version` rewrites it on the next release"}}
 	}
 	names := recorded.ReleasedNames()
 	if len(names) == 0 {
-		return doctor.Result{Name: name, Status: doctor.Info,
-			Detail: "nothing recorded yet: the next `version` records what it releases"}, true
+		return []doctor.Result{{Name: name, Status: doctor.Info,
+			Detail: "nothing recorded yet: the next `version` records what it releases"}}
 	}
 	pkgs, ecoOf, err := ws.Discover(ctx)
 	if err != nil {
-		return doctor.Result{Name: name, Status: doctor.Info,
-			Detail: "not checked — package discovery failed"}, true
+		return []doctor.Result{{Name: name, Status: doctor.Info,
+			Detail: "not checked — package discovery failed"}}
 	}
 	byName := make(map[string]plugin.Package, len(pkgs))
 	for _, p := range pkgs {
@@ -197,18 +281,24 @@ func checkReleaseRecord(ctx context.Context, ws *Workspace) (doctor.Result, bool
 			untagged = append(untagged, tag)
 		}
 	}
-	switch {
-	case len(edited) > 0:
-		return doctor.Result{Name: name, Status: doctor.Warn,
+	// Each drift is its own problem with its own remedy, so each gets its own
+	// row: a hand-edited manifest must not hide a release that was never tagged.
+	var rs []doctor.Result
+	if len(edited) > 0 {
+		rs = append(rs, doctor.Result{Name: name, Status: doctor.Warn,
 			Detail: fmt.Sprintf("%d version(s) differ from the record: %s", len(edited), previewNames(edited, 3)),
-			Hint:   "a manifest edited by hand is bumped from as if it had been released; put it back, or release it with a changeset"}, true
-	case len(untagged) > 0:
-		return doctor.Result{Name: name, Status: doctor.Warn,
-			Detail: fmt.Sprintf("%d recorded release(s) have no tag: %s", len(untagged), previewNames(untagged, 3)),
-			Hint:   "expected between the version PR's merge and the publish that tags it; otherwise that publish didn't finish — `shiprig tag` (or a re-run of the release) creates them"}, true
+			Hint:   "a manifest edited by hand is bumped from as if it had been released; put it back, or release it with a changeset"})
 	}
-	return doctor.Result{Name: name, Status: doctor.OK,
-		Detail: fmt.Sprintf("%d package(s) recorded; versions and tags agree", len(names))}, true
+	if len(untagged) > 0 {
+		rs = append(rs, doctor.Result{Name: name, Status: doctor.Warn,
+			Detail: fmt.Sprintf("%d recorded release(s) have no tag: %s", len(untagged), previewNames(untagged, 3)),
+			Hint:   "expected between the version PR's merge and the publish that tags it; otherwise that publish didn't finish — `shiprig tag` (or a re-run of the release) creates them"})
+	}
+	if len(rs) > 0 {
+		return rs
+	}
+	return []doctor.Result{{Name: name, Status: doctor.OK,
+		Detail: fmt.Sprintf("%d package(s) recorded; versions and tags agree", len(names))}}
 }
 
 // checkStranded reports changesets that can never release — they name no

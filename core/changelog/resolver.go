@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,13 +20,30 @@ import (
 type Runner func(dir, name string, args ...string) (string, error)
 
 // CommitInfo is the version-control facts about a changeset used by the
-// git/github changelog generators: the short commit that added it, and (for
-// github) the pull request number and author login. Zero values (empty string,
-// 0) mean the fact could not be resolved.
+// git/github changelog generators: the commit that added it, and (for github)
+// the pull request number and author login. Zero values (empty string, 0) mean
+// the fact could not be resolved.
 type CommitInfo struct {
-	Commit      string
+	// Commit is the full SHA, as @changesets hands getReleaseLine
+	// (changeset.commit): what a generator plugin receives and what a commit
+	// link points at.
+	Commit string
+	// Short is the form a changelog displays: git's unique abbreviation of
+	// Commit, at least 7 characters. That's @changesets' commit.slice(0, 7)
+	// except where 7 characters name more than one object in the repository,
+	// where it's as long as git needs to tell them apart.
+	Short       string
 	PullRequest int
 	Author      string
+}
+
+// Display is the commit as a changelog shows it: Short, or when that wasn't
+// resolved, the first 7 characters of Commit, as @changesets shows it.
+func (c CommitInfo) Display() string {
+	if c.Short != "" {
+		return c.Short
+	}
+	return shortSHA(c.Commit)
 }
 
 // changesetExtensions are the changeset file extensions tried, in order, when
@@ -53,18 +71,18 @@ func Resolve(changesetIDs []string, setting Setting, dir string, run Runner) map
 		}
 		seen[id] = true
 
-		shortHash := commitThatAddedChangeset(run, dir, id, "%h")
-		if shortHash == "" {
+		// One lookup gives both forms: the full SHA and git's unique
+		// abbreviation of it (at least 7 characters, --abbrev=7 below).
+		hashes := commitThatAddedChangeset(run, dir, id, "%H %h")
+		full, short, _ := strings.Cut(hashes, " ")
+		if full == "" {
 			continue
 		}
 
-		info := CommitInfo{Commit: shortHash}
+		info := CommitInfo{Commit: full, Short: short}
 		if setting.Kind == KindGitHub && setting.Repo != "" {
-			fullHash := commitThatAddedChangeset(run, dir, id, "%H")
-			if fullHash != "" {
-				info.PullRequest = pullRequestForCommit(run, dir, setting.Repo, fullHash)
-				info.Author = authorForCommit(run, dir, setting.Repo, fullHash)
-			}
+			info.PullRequest = pullRequestForCommit(run, dir, setting.Repo, full)
+			info.Author = authorForCommit(run, dir, setting.Repo, full)
 		}
 
 		result[id] = info
@@ -79,17 +97,25 @@ func Resolve(changesetIDs []string, setting Setting, dir string, run Runner) map
 // changeset id to its full source SHA. For the github generator with a
 // configured repo it still looks up the PR number and author via `gh api`
 // (degrading each to a zero value on failure). The default generator returns an
-// empty map. An empty SHA is skipped.
+// empty map. An empty SHA is skipped. Each SHA's display form is git's unique
+// abbreviation of it, looked up in one `git log` for them all.
 func ResolveFromCommits(idToSHA map[string]string, setting Setting, dir string, run Runner) map[string]CommitInfo {
 	result := map[string]CommitInfo{}
 	if setting.Kind == KindDefault {
 		return result
 	}
+	var shas []string
+	for _, sha := range idToSHA {
+		if sha != "" {
+			shas = append(shas, sha)
+		}
+	}
+	short := uniqueAbbreviations(run, dir, shas)
 	for id, sha := range idToSHA {
 		if sha == "" {
 			continue
 		}
-		info := CommitInfo{Commit: shortSHA(sha)}
+		info := CommitInfo{Commit: sha, Short: short[sha]}
 		if setting.Kind == KindGitHub && setting.Repo != "" {
 			info.PullRequest = pullRequestForCommit(run, dir, setting.Repo, sha)
 			info.Author = authorForCommit(run, dir, setting.Repo, sha)
@@ -169,8 +195,52 @@ func authorsOfCommit(run Runner, dir, sha string) []plugin.Author {
 	return authors
 }
 
-// shortSHA abbreviates a full commit SHA to git's conventional 7 characters,
-// matching the `%h` abbreviation the file-based resolver uses.
+// uniqueAbbreviations maps each SHA to git's unique abbreviation of it in dir's
+// repository, at least 7 characters (--abbrev=7, pinned because git's automatic
+// length grows past 7 in a large repository). A SHA git can't abbreviate (not a
+// commit in the repository, no git) is left out, and shows as its first 7
+// characters.
+func uniqueAbbreviations(run Runner, dir string, shas []string) map[string]string {
+	result := map[string]string{}
+	if len(shas) == 0 {
+		return result
+	}
+	// Only full object ids go on the command line: anything else (a value
+	// starting with "-" above all) could read as an option, and git's own log
+	// is the only source these come from anyway. A copy, so the caller's
+	// slice keeps its order.
+	shas = slices.DeleteFunc(slices.Clone(shas), func(s string) bool { return !fullObjectID.MatchString(s) })
+	if len(shas) == 0 {
+		return result
+	}
+	slices.Sort(shas)
+	shas = slices.Compact(shas)
+	// One call for every SHA. (`rev-parse --short` takes a single revision.)
+	args := append([]string{"log", "--no-walk=unsorted", "--abbrev=7", "--format=%H %h"}, shas...)
+	if out, err := run(dir, "git", args...); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if full, short, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
+				result[full] = short
+			}
+		}
+		return result
+	}
+	// One unknown SHA fails the whole call: ask for each on its own, so it
+	// doesn't cost the others their abbreviation.
+	for _, sha := range shas {
+		if line := runFirstLine(run, dir, "git", "rev-parse", "--short=7", sha); line != "" {
+			result[sha] = line
+		}
+	}
+	return result
+}
+
+// fullObjectID is a whole SHA-1 or SHA-256 object id, lowercase hex as git
+// prints it.
+var fullObjectID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// shortSHA abbreviates a full commit SHA to @changesets' 7 characters, the
+// display form when git's unique abbreviation couldn't be found.
 func shortSHA(sha string) string {
 	if len(sha) > 7 {
 		return sha[:7]
@@ -191,8 +261,10 @@ func commitThatAddedChangeset(run Runner, dir, id, format string) string {
 	for _, extension := range changesetExtensions {
 		path := ".changeset/" + id + extension
 		for deepened := 0; ; deepened++ {
+			// --abbrev=7: a %h is at least 7 characters whatever core.abbrev
+			// says, and git lengthens it until it's unique.
 			line := runFirstLine(run, dir,
-				"git", "log", "--diff-filter=A", "--follow", "--max-count=1", "--format="+format+":%p", "--", path)
+				"git", "log", "--diff-filter=A", "--follow", "--max-count=1", "--abbrev=7", "--format="+format+":%p", "--", path)
 			if line == "" {
 				break
 			}

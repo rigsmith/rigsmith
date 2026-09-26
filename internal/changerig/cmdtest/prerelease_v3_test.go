@@ -39,16 +39,31 @@ func TestStatusReportsPrereleaseGraduation(t *testing.T) {
 	assertExitZero(t, code, out)
 
 	var plan struct {
+		Changesets []struct {
+			ID string `json:"id"`
+		} `json:"changesets"`
 		Releases []struct {
 			Name       string `json:"name"`
 			NewVersion string `json:"newVersion"`
 		} `json:"releases"`
+		PreState *struct {
+			Mode string `json:"mode"`
+			Tag  string `json:"tag"`
+		} `json:"preState"`
 	}
 	if err := json.Unmarshal([]byte(readFile(t, planPath)), &plan); err != nil {
 		t.Fatalf("parse plan.json: %v", err)
 	}
 	if len(plan.Releases) != 1 || plan.Releases[0].Name != "pkg-a" || plan.Releases[0].NewVersion != "1.1.0" {
 		t.Errorf("status should plan the graduation of pkg-a to 1.1.0, got %+v", plan.Releases)
+	}
+	// The graduating changeset is listed, and the plan carries the prerelease
+	// state as @changesets' does.
+	if len(plan.Changesets) != 1 || plan.Changesets[0].ID != "cs1" {
+		t.Errorf("changesets = %+v, want the graduating cs1", plan.Changesets)
+	}
+	if plan.PreState == nil || plan.PreState.Mode != "exit" || plan.PreState.Tag != "next" {
+		t.Errorf("preState = %+v, want mode exit, tag next", plan.PreState)
 	}
 }
 

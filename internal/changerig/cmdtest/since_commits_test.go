@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -154,5 +155,55 @@ func TestStatusSinceKeepsTheBranchsOwnGraduation(t *testing.T) {
 	got := planNames(t, dir, "--since", "main")
 	if len(got) != 1 || got[0] != "pkg-a" {
 		t.Fatalf("plan --since main = %v, want pkg-a graduating", got)
+	}
+}
+
+// With commits as a source, the plan's changesets include the ones the commits
+// stand for, beside the files: id (the commit's short hash), summary (the
+// subject without its prefix), and the bump its type gives the package, which
+// a bare name in the synthesized changeset doesn't carry itself.
+func TestStatusOutputListsCommitChangesets(t *testing.T) {
+	dir := sinceCommitsRepo(t, "both")
+	plan := filepath.Join(t.TempDir(), "plan.json")
+	code, out := runChangerig(t, dir, "status", "--since", "main", "--output", plan)
+	assertExitZero(t, code, out)
+	data, err := os.ReadFile(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type rel struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	var parsed struct {
+		Changesets []struct {
+			ID       string `json:"id"`
+			Summary  string `json:"summary"`
+			Releases []rel  `json:"releases"`
+		} `json:"changesets"`
+		Releases []struct {
+			Name       string   `json:"name"`
+			Type       string   `json:"type"`
+			Changesets []string `json:"changesets"`
+		} `json:"releases"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("plan: %v\n%s", err, data)
+	}
+	if len(parsed.Changesets) != 2 {
+		t.Fatalf("changesets = %d, want the branch's file and its commit:\n%s", len(parsed.Changesets), data)
+	}
+	// Sorted by id, so the plan is the same on every run: the commit's hex
+	// hash sorts before "pr-one".
+	commit, file := parsed.Changesets[0], parsed.Changesets[1]
+	if file.ID != "pr-one" || len(file.Releases) != 1 || file.Releases[0] != (rel{"pkg-b", "minor"}) {
+		t.Errorf("file changeset = %+v, want pr-one: pkg-b minor", file)
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{7,}$`).MatchString(commit.ID) || commit.Summary != "a fix on the branch" ||
+		len(commit.Releases) != 1 || commit.Releases[0] != (rel{"pkg-b", "patch"}) {
+		t.Errorf("commit changeset = %+v, want a short hash, the subject, and pkg-b patch from `fix:`", commit)
+	}
+	if len(parsed.Releases) != 1 || parsed.Releases[0].Name != "pkg-b" || len(parsed.Releases[0].Changesets) != 2 {
+		t.Errorf("releases = %+v, want pkg-b naming both changesets", parsed.Releases)
 	}
 }

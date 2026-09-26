@@ -75,7 +75,8 @@ func TestChangelogCanonDefaultModuleIsTheBuiltin(t *testing.T) {
 }
 
 // An external generator gets what the built-in renders from: each change's
-// commit (the one that added the changeset), and the released dependencies as
+// commit (the one that added the changeset) as its full SHA, as @changesets
+// hands getReleaseLine changeset.commit, and the released dependencies as
 // dependencyUpdates rather than as an "Updated dependencies" change.
 func TestChangelogPluginReceivesRefsAndDependencies(t *testing.T) {
 	plugin := buildOptionsPlugin(t)
@@ -87,7 +88,7 @@ func TestChangelogPluginReceivesRefsAndDependencies(t *testing.T) {
 		`{ "updateInternalDependencies": "patch", "changelog": "`+filepath.ToSlash(plugin)+`" }`)
 	writeChangeset(t, dir, "lib-change", "lib", "major", "A breaking lib change")
 	gitInit(t, dir)
-	head := git(t, dir, "rev-parse", "--short=7", "HEAD")
+	head := git(t, dir, "rev-parse", "HEAD")
 
 	code, out := runChangerig(t, dir, "version", "--changelog")
 	assertExitZero(t, code, out)
@@ -124,4 +125,24 @@ func TestChangelogDependenciesKeepTheEntrysOrder(t *testing.T) {
 			t.Errorf("changelog %s: CHANGELOG.md = %q, want %q", changelog, got, want)
 		}
 	}
+}
+
+// @changesets/changelog-git prefixes a commit's 7 characters: the unique
+// abbreviation is the same 7 wherever they are unambiguous, whatever
+// core.abbrev asks for. (Commits sharing 7 characters are covered in
+// core/changelog, where a colliding pair is built.)
+func TestChangelogGitShowsSevenCharactersForAnUnambiguousCommit(t *testing.T) {
+	dir := newWorkspace(t)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"), `{ "changelog": "@changesets/changelog-git" }`)
+	writeChangeset(t, dir, "a", "pkg-a", "minor", "A feature")
+	gitInit(t, dir)
+	git(t, dir, "config", "core.abbrev", "12")
+	head := git(t, dir, "rev-parse", "HEAD")
+	if got := git(t, dir, "rev-parse", "--disambiguate="+head[:7]); got != head {
+		t.Fatalf("fixture: %s is ambiguous:\n%s", head[:7], got)
+	}
+
+	code, out := runChangerig(t, dir, "version", "--yes")
+	assertExitZero(t, code, out)
+	assertContains(t, readFile(t, filepath.Join(dir, "packages", "pkg-a", "CHANGELOG.md")), "- "+head[:7]+": A feature")
 }

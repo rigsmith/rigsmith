@@ -180,7 +180,20 @@ Shows the pending release plan — every package that will bump, the level, and
 why (including the dependency **cascade**: a dependent is patch-bumped when one
 of its dependencies releases). Supports `--since` and `--output`.
 
-With `--output`, each release also carries a `group`: the packages that have
+`--output <file>` writes the plan as JSON in the shape of `changeset status
+--output`, and nothing to stdout (warnings go to stderr):
+
+- `changesets`: each changeset behind the plan, with its `id`, its `summary`,
+  and `releases`, every package it names with its bump, `none` included. With
+  commits as a source, each commit is one of these, its id the commit's short
+  hash and each package's bump the one its conventional type gives. A summary
+  written with a conventional prefix (`feat: …`) comes without it.
+- `releases`: each package that versions, with its `type`, `oldVersion`,
+  `newVersion`, and `changesets`, the ids of the changesets that name it
+  (empty for a release a dependency drives).
+- `preState`: the prerelease state (`mode`, `tag`), only while there is one.
+
+Each release also carries a `group`: the packages that have
 to be versioned together, named by the group's first member. Packages share a
 group when one changeset names both, when one depends on the other in the
 plan, when they're in the same fixed or linked group, or when they share a
@@ -200,8 +213,9 @@ It doubles as the CI gate, as `changeset status` does: it fails when a package
 that would version (not ignored, and not private unless `privatePackages.version`
 is set) changed since `--since`, or the base branch by default, and there is no
 changeset at all. Nothing pending with nothing changed is not a failure: it
-exits 0, and `--output` writes an empty plan (`{"releases": []}`), which is how a
-script tells "nothing to release" from an error.
+exits 0, and `--output` still writes the plan with empty `changesets` and
+`releases` lists (plus `preState` during a prerelease), which is how a script
+tells "nothing to release" from an error.
 
 ## `version`
 

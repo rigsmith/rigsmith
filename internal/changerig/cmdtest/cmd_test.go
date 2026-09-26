@@ -337,8 +337,8 @@ func TestStatusNoChangesetsNothingChangedSucceeds(t *testing.T) {
 	plan := filepath.Join(dir, "plan.json")
 	code, out = runChangerig(t, dir, "status", "--output", plan)
 	assertExitZero(t, code, out)
-	if got := strings.TrimSpace(readFile(t, plan)); got != "{\n  \"releases\": []\n}" {
-		t.Errorf("empty plan = %q, want an empty releases list", got)
+	if got := strings.TrimSpace(readFile(t, plan)); got != "{\n  \"changesets\": [],\n  \"releases\": []\n}" {
+		t.Errorf("empty plan = %q, want empty changesets and releases lists", got)
 	}
 }
 
@@ -356,9 +356,9 @@ func TestStatusVerboseShowsChangeSummary(t *testing.T) {
 	assertContains(t, out, "a very specific change line")
 }
 
-// Ported from StatusChangesetCommand_Output_WritesTheReleasePlanAsJson. The Go
-// plan shape is @changesets' { releases: [{ name, type, newVersion }] } —
-// changeset ids are not part of it (unlike the C# plan).
+// Ported from StatusChangesetCommand_Output_WritesTheReleasePlanAsJson: the
+// releases' names, types and new versions. The rest of @changesets' plan
+// shape is TestStatusOutputListsChangesetsAsCanonDoes.
 func TestStatusOutputWritesJSONPlan(t *testing.T) {
 	dir := newWorkspace(t)
 	writeChangeset(t, dir, "cs1", "pkg-a", "minor", "a change")
@@ -382,6 +382,98 @@ func TestStatusOutputWritesJSONPlan(t *testing.T) {
 	r := plan.Releases[0]
 	if r.Name != "pkg-a" || r.Type != "minor" || r.NewVersion != "1.1.0" {
 		t.Errorf("release = %+v, want {pkg-a minor 1.1.0}", r)
+	}
+}
+
+// The plan carries @changesets' ReleasePlan fields beyond the releases: the
+// changesets behind it, each with every package it names (`none` included,
+// which the releases list can't show), and per release its old version and the
+// ids of the changesets naming it (none for a dependency-driven release).
+func TestStatusOutputListsChangesetsAsCanonDoes(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0", "pkg-c": "2.0.0"})
+	writeFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json"),
+		`{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "1.0.0" } }`)
+	initChangesets(t, dir)
+	writeFile(t, filepath.Join(dir, ".changeset", "cs1.md"),
+		"---\n\"pkg-a\": minor\n\"pkg-c\": none\n---\n\nA change\n")
+	writeChangeset(t, dir, "cs2", "pkg-a", "patch", "Another")
+
+	code, stdout, stderr := runChangerigSplit(t, dir, "status", "--output", "plan.json")
+	assertExitZero(t, code, stdout+stderr)
+	// The plan goes to the file; stdout stays empty for scripts.
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing with --output", stdout)
+	}
+
+	type rel struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	var plan struct {
+		Changesets []struct {
+			ID       string `json:"id"`
+			Summary  string `json:"summary"`
+			Releases []rel  `json:"releases"`
+		} `json:"changesets"`
+		Releases []struct {
+			Name       string   `json:"name"`
+			Type       string   `json:"type"`
+			OldVersion string   `json:"oldVersion"`
+			Changesets []string `json:"changesets"`
+			NewVersion string   `json:"newVersion"`
+		} `json:"releases"`
+		PreState *struct{} `json:"preState"`
+	}
+	raw := readFile(t, filepath.Join(dir, "plan.json"))
+	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		t.Fatalf("parse plan.json: %v", err)
+	}
+	if len(plan.Changesets) != 2 {
+		t.Fatalf("changesets = %d, want 2:\n%s", len(plan.Changesets), raw)
+	}
+	cs1 := plan.Changesets[0]
+	if cs1.ID != "cs1" || cs1.Summary != "A change" ||
+		len(cs1.Releases) != 2 || cs1.Releases[0] != (rel{"pkg-a", "minor"}) || cs1.Releases[1] != (rel{"pkg-c", "none"}) {
+		t.Errorf("cs1 = %+v, want pkg-a minor and pkg-c none", cs1)
+	}
+	if len(plan.Releases) != 2 {
+		t.Fatalf("releases = %d, want pkg-a and pkg-b:\n%s", len(plan.Releases), raw)
+	}
+	a, b := plan.Releases[0], plan.Releases[1]
+	if a.Name != "pkg-a" || a.OldVersion != "1.0.0" || a.NewVersion != "1.1.0" ||
+		strings.Join(a.Changesets, ",") != "cs1,cs2" {
+		t.Errorf("pkg-a = %+v, want 1.0.0 → 1.1.0 from cs1,cs2", a)
+	}
+	// A dependency-driven release names no changeset, as an empty list.
+	if b.Name != "pkg-b" || b.Type != "patch" || b.Changesets == nil || len(b.Changesets) != 0 {
+		t.Errorf("pkg-b = %+v, want a patch with an empty changesets list", b)
+	}
+	if !strings.Contains(raw, `"changesets": []`) {
+		t.Errorf("pkg-b's changesets should serialize as [], got:\n%s", raw)
+	}
+	if plan.PreState != nil {
+		t.Errorf("preState = %+v, want it absent outside prerelease mode", plan.PreState)
+	}
+}
+
+// A warning about the plan goes to stderr, so --output leaves stdout empty even
+// when there is something to warn about.
+func TestStatusOutputWarnsOnStderrOnly(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	writeFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json"),
+		`{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "^1.0.0" } }`)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"), `{ "ignore": ["pkg-a"] }`)
+	writeChangeset(t, dir, "cs1", "pkg-b", "patch", "A change")
+
+	code, stdout, stderr := runChangerigSplit(t, dir, "status", "--output", "plan.json")
+	assertExitZero(t, code, stdout+stderr)
+	if !strings.Contains(stderr, "skipped package pkg-a") {
+		t.Fatalf("precondition: expected the skipped-dependent warning on stderr, got %q", stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing with --output", stdout)
 	}
 }
 
