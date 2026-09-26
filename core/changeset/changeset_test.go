@@ -344,11 +344,11 @@ func TestParseRefusesWhatCanonRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		name, frontmatter, want string
 	}{
-		{"repeated package", "lib: patch\nlib: minor", `"lib" is listed more than once`},
-		{"repeated with the same bump", "lib: patch\nlib: patch", `"lib" is listed more than once`},
-		{"repeated, quoted one way then another", "'lib': patch\n\"lib\": minor", `"lib" is listed more than once`},
-		{"repeated, plain then quoted", "lib: patch\n\"lib\"", `"lib" is listed more than once`},
-		{"repeated among others", "a: patch\nlib: minor\nb: patch\nlib: major", `"lib" is listed more than once`},
+		{"repeated package", "lib: patch\nlib: minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated with the same bump", "lib: patch\nlib: patch", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated, quoted one way then another", "'lib': patch\n\"lib\": minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated, plain then quoted", "lib: patch\n\"lib\"", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated among others", "a: patch\nlib: minor\nb: patch\nlib: major", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
 		{"colon, no bump", "lib:", `"lib" has a colon but no bump`},
 		{"quoted, colon, no bump", `"@acme/lib":`, `"@acme/lib" has a colon but no bump`},
 		{"single-quoted, colon, no bump", `'lib':`, `"lib" has a colon but no bump`},
@@ -366,7 +366,7 @@ func TestParseRefusesWhatCanonRefuses(t *testing.T) {
 		{"bare package with a comment, no type", "'lib' # a note", `"lib" has no bump`},
 		{"bare package, a scope but no type", "scope: rig\n\"lib\"", `"lib" has no bump`},
 		{"bare package beside a bumped one", "a: patch\n\"lib\"", `"lib" has no bump`},
-		{"bare package after a bumped one of the same name", "lib: patch\n\"lib\"", `"lib" is listed more than once`},
+		{"bare package after a bumped one of the same name", "lib: patch\n\"lib\"", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
 	} {
 		_, err := Parse("---\n"+tc.frontmatter+"\n---\n\nA change\n", "neg")
 		if err == nil {

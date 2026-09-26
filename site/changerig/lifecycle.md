@@ -108,7 +108,9 @@ double-quoted (`"@acme/lib": minor`), single-quoted (`'@acme/lib': minor`) or,
 without a leading `@`, plain (`lib: minor`); a bump can be quoted; and blank
 lines and `#` comments are fine. What that YAML refuses is refused here too:
 a package listed twice, a colon with no bump after it (`lib:`; leave the colon
-off to let the type decide), and a tab in a line's indentation. A package line
+off to let the type decide), and a tab in a line's indentation. A changeset
+that lists a package twice no longer loads, so keep one line per package, with
+the bump it needs; `lib`, `'lib'` and `"lib"` are the same package. A package line
 with no bump needs a type, from a `type:` line or the summary's `feat:`-style
 prefix; without one it is refused rather than releasing nothing.
 

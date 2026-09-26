@@ -374,7 +374,7 @@ func Parse(content, id string) (*Changeset, error) {
 		// YAML refuses a repeated mapping key, and so does @changesets, rather
 		// than letting the last one win.
 		if seen[name] {
-			return nil, fmt.Errorf("changeset %q: %q is listed more than once in the frontmatter", id, name)
+			return nil, fmt.Errorf("changeset %q: %q is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)", id, name)
 		}
 		seen[name] = true
 		// Missing bump (`"Name"` with no `: bump`) means BumpNone → derive from type.
