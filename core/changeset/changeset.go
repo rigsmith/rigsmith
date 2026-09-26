@@ -392,8 +392,10 @@ func indentOf(line string) int {
 // ---), skipping blank and comment lines. Their text joins with single spaces,
 // as YAML folds a plain scalar, and a value quoted whole loses its quotes. It
 // returns "" when no such line holds a value, and the index of the line after
-// the ones it read.
-func continuedValue(lines []string, start, column int) (string, int) {
+// the ones it read. tabbed is the first value line indented with a tab before
+// any space, which YAML refuses (a tab after the leading spaces is only
+// separation, and is fine).
+func continuedValue(lines []string, start, column int) (value string, next int, tabbed string) {
 	var parts []string
 	i := start
 	for ; i < len(lines) && lines[i] != "---"; i++ {
@@ -401,16 +403,19 @@ func continuedValue(lines []string, start, column int) (string, int) {
 		if t == "" || strings.HasPrefix(t, "#") {
 			continue
 		}
+		if strings.HasPrefix(lines[i], "\t") {
+			return "", i, lines[i]
+		}
 		if indentOf(lines[i]) <= column {
 			break
 		}
 		parts = append(parts, strings.TrimSpace(stripComment(t)))
 	}
-	value := strings.Join(parts, " ")
+	value = strings.Join(parts, " ")
 	if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
 		value = value[1 : len(value)-1]
 	}
-	return value, i
+	return value, i, ""
 }
 
 // stripComment drops a YAML comment: a # at the start, or after whitespace.
@@ -487,7 +492,11 @@ func Parse(content, id string) (*Changeset, error) {
 			// YAML lets a value continue on the lines below its key when they
 			// are indented deeper (`lib:` then `  patch`), comments and blank
 			// lines between included, as @changesets reads it.
-			if value, next := continuedValue(lines, i+1, column); value != "" {
+			value, next, tabbed := continuedValue(lines, i+1, column)
+			if tabbed != "" {
+				return nil, fmt.Errorf("changeset %q: frontmatter line %q is indented with a tab, which YAML does not allow", id, tabbed)
+			}
+			if value != "" {
 				bumpText, err, i = value, nil, next-1
 			}
 		}
