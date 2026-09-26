@@ -3,6 +3,7 @@ package changeset
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -269,7 +270,9 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 		{`'lib': 'patch'`, "lib", BumpPatch},
 		{`'it''s': patch`, "it's", BumpPatch},
 		{`"lib": patch # a comment`, "lib", BumpPatch},
-		{`  'lib'  :  minor  `, "lib", BumpMinor},
+		// Indented alone it would sit at a different column from `type:`,
+		// which YAML refuses; spacing around the colon is still fine.
+		{`'lib'  :  minor  `, "lib", BumpMinor},
 		{`'lib'`, "lib", BumpNone},
 		{`lib`, "lib", BumpNone},
 		{`github.com/acme/mod: patch`, "github.com/acme/mod", BumpPatch},
@@ -278,10 +281,10 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 		{"lib: patch\t# a tab, then a note", "lib", BumpPatch},
 		{"'lib':\tpatch", "lib", BumpPatch},
 		{`"a#b": patch`, "a#b", BumpPatch},
-		{`lib:`, "lib", BumpNone},
 		{"lib:\tpatch", "lib", BumpPatch},
 	} {
-		cs, err := Parse("---\n# which packages\n\n"+tc.line+"\n---\n\nA change\n", "x")
+		// The type lets a bare line (no bump) take one; an explicit bump wins.
+		cs, err := Parse("---\n# which packages\ntype: fix\n\n"+tc.line+"\n---\n\nA change\n", "x")
 		if err != nil {
 			t.Errorf("%q: %v", tc.line, err)
 			continue
@@ -290,7 +293,7 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 			t.Errorf("%q: releases = %+v, want %s %v", tc.line, cs.Releases, tc.name, tc.bump)
 		}
 	}
-	for _, line := range []string{`'unclosed: patch`, `"lib": patch extra`, `@scope/lib: patch`, `"lib" patch`, `'': patch`, `"lib": 'patch"`, `lib:patch`, `"lib":patch`, `lib: ""`, `'lib': ''`} {
+	for _, line := range []string{`'unclosed: patch`, `"lib": patch extra`, `@scope/lib: patch`, `"lib" patch`, `'': patch`, `"lib": 'patch"`, `lib:patch`, `"lib":patch`, `lib: ""`, `'lib': ''`, `lib:`} {
 		if _, err := Parse("---\n"+line+"\n---\n\nA change\n", "x"); err == nil {
 			t.Errorf("%q parsed; want it refused", line)
 		}
@@ -333,5 +336,156 @@ func TestDirLenient_KeepsGoingPastBadFiles(t *testing.T) {
 	}
 	if _, _, err := DirLenient(filepath.Join(dir, "missing"), ""); !os.IsNotExist(err) {
 		t.Fatalf("missing dir: err = %v, want not-exist", err)
+	}
+}
+
+// Where @changesets' YAML parser refuses a frontmatter, so does Parse: a
+// repeated package, a colon with no bump (YAML's null), and a tab in the
+// indentation. Each error names the changeset and says what is wrong.
+func TestParseRefusesWhatCanonRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name, frontmatter, want string
+	}{
+		{"repeated package", "lib: patch\nlib: minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated with the same bump", "lib: patch\nlib: patch", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated, quoted one way then another", "'lib': patch\n\"lib\": minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated, plain then quoted", "lib: patch\n\"lib\"", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated among others", "a: patch\nlib: minor\nb: patch\nlib: major", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated, one spelled with an escape", `"l\u0069b": patch` + "\nlib: minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"an escape YAML doesn't have", `"l\qb": patch`, "malformed frontmatter line"},
+		{"a \\u escape cut short", `"l\u006": patch`, "malformed frontmatter line"},
+		{"a surrogate escape", `"l\uD800b": patch`, "malformed frontmatter line"},
+		{"an escaped space for a name", `"\u0020": patch`, "malformed frontmatter line"},
+		{"a quoted blank name", "'  ': patch", "malformed frontmatter line"},
+		{"an escape decoding to ESC", `"lib\e[2J": patch`, "malformed frontmatter line"},
+		{"an escaped newline in a name", `"lib\nforged": patch`, "malformed frontmatter line"},
+		{"a raw control byte, single-quoted", "'lib\x07': patch", "malformed frontmatter line"},
+		{"invalid UTF-8 in a plain name", "lib\xff: patch", "malformed frontmatter line"},
+		{"an escape past U+10FFFF", `"l\U00110000b": patch`, "malformed frontmatter line"},
+		{"colon, no bump", "lib:", `"lib" has a colon but no bump`},
+		{"quoted, colon, no bump", `"@acme/lib":`, `"@acme/lib" has a colon but no bump`},
+		{"single-quoted, colon, no bump", `'lib':`, `"lib" has a colon but no bump`},
+		{"colon, spaces, no bump", "lib:   ", `"lib" has a colon but no bump`},
+		{"colon, tab, no bump", "\"lib\":\t", `"lib" has a colon but no bump`},
+		{"colon, then only a comment", "lib: # later", `"lib" has a colon but no bump`},
+		{"colon, no bump, under a type", "type: feat\nlib:", `"lib" has a colon but no bump`},
+		{"tab-indented package", "\tlib: patch", "indented with a tab"},
+		{"space then tab", " \tlib: patch", "indented with a tab"},
+		{"tab-indented second package", "a: patch\n\tlib: patch", "indented with a tab"},
+		{"tab-indented bare package", "type: fix\n\t\"lib\"", "indented with a tab"},
+		{"tab-indented type", "\ttype: fix\n\"lib\"", "indented with a tab"},
+		{"bare package, no type", `"lib"`, `"lib" has no bump`},
+		// Checked against @changesets/parse 1.0.0.
+		{"a key indented more than the first", "lib: patch\n quo: minor", "indented differently from the line above it"},
+		{"a key indented less than the first", "  lib: patch\nquo: minor", "indented differently from the line above it"},
+		{"a key indented under a type", "type: fix\n lib: patch", "indented differently from the line above it"},
+		{"bump on the next line, not indented", "lib:\npatch", `"lib" has a colon but no bump`},
+		{"bump at the key's own column", "  lib:\n  patch", `"lib" has a colon but no bump`},
+		{"two words across the next lines", "lib:\n  patch\n  more", `invalid bump type "patch more"`},
+		{"a next-line bump indented with a tab", "lib:\n\tpatch", "indented with a tab"},
+		{"a next-line bump, tab then space", "lib:\n\t patch", "indented with a tab"},
+		{"bare plain package, no type", "lib", `"lib" has no bump`},
+		{"bare package with a comment, no type", "'lib' # a note", `"lib" has no bump`},
+		{"bare package, a scope but no type", "scope: rig\n\"lib\"", `"lib" has no bump`},
+		{"bare package beside a bumped one", "a: patch\n\"lib\"", `"lib" has no bump`},
+		{"bare package after a bumped one of the same name", "lib: patch\n\"lib\"", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+	} {
+		_, err := Parse("---\n"+tc.frontmatter+"\n---\n\nA change\n", "neg")
+		if err == nil {
+			t.Errorf("%s: %q parsed; want it refused", tc.name, tc.frontmatter)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), `changeset "neg"`) {
+			t.Errorf("%s: error = %q, want it to name the changeset and say %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// What canon accepts still parses, including the forms #494 opened up and the
+// whitespace YAML allows: a tab after the colon or before a comment, a
+// tab-only blank line, a tab-indented comment line, and a mapping indented
+// with spaces throughout.
+func TestParseStillAcceptsCanonForms(t *testing.T) {
+	for _, tc := range []struct {
+		name, frontmatter string
+		want              []Release
+	}{
+		{"none is a bump", "lib: none", []Release{{"lib", BumpNone}}},
+		{"double-quoted escapes decode", `"l\u0069b": patch` + "\n" + `"\x40acme/\U00000078": minor`, []Release{{"lib", BumpPatch}, {"@acme/x", BumpMinor}}},
+		{"an escaped quote stays in the name", `"a\"b": patch`, []Release{{`a"b`, BumpPatch}}},
+		{"quoted none", `'lib': "none"`, []Release{{"lib", BumpNone}}},
+		{"#494 forms together", "# a comment line\n'@x/y': patch\n\nlib: 'minor'   # trailing comment\n'it''s': \"patch\"",
+			[]Release{{"@x/y", BumpPatch}, {"lib", BumpMinor}, {"it's", BumpPatch}}},
+		{"bare name, no colon, derives from the type", "type: feat\n\"lib\"", []Release{{"lib", BumpNone}}},
+		{"bare name with a comment", "type: feat\nlib # a note", []Release{{"lib", BumpNone}}},
+		{"bare name under a type written after it", "\"lib\"\ntype: fix", []Release{{"lib", BumpNone}}},
+		{"bare name beside a bumped one, under a type", "type: fix\na: major\n\"lib\"", []Release{{"a", BumpMajor}, {"lib", BumpNone}}},
+		{"tab after the colon", "lib:\tpatch", []Release{{"lib", BumpPatch}}},
+		// Checked against @changesets/parse 1.0.0: every key at one column,
+		// however indented, and a bump on the deeper-indented lines below.
+		{"every key indented the same", "  lib: patch\n  quo: minor", []Release{{"lib", BumpPatch}, {"quo", BumpMinor}}},
+		{"bump on the next line", "lib:\n  patch", []Release{{"lib", BumpPatch}}},
+		{"bump on the next line, one space in", "lib:\n patch", []Release{{"lib", BumpPatch}}},
+		{"quoted bump on the next line", "\"lib\":\n  \"patch\"", []Release{{"lib", BumpPatch}}},
+		{"next-line bump with a comment", "lib:\n  patch # why", []Release{{"lib", BumpPatch}}},
+		{"a comment between key and bump", "lib:\n  # note\n  patch", []Release{{"lib", BumpPatch}}},
+		{"a blank line between key and bump", "lib:\n\n  patch", []Release{{"lib", BumpPatch}}},
+		{"a space after the colon, bump below", "lib: \n  patch", []Release{{"lib", BumpPatch}}},
+		{"next-line bump, then a sibling", "lib:\n  patch\nquo: minor", []Release{{"lib", BumpPatch}, {"quo", BumpMinor}}},
+		{"indented keys, next-line bump", "  lib:\n    patch\n  quo: minor", []Release{{"lib", BumpPatch}, {"quo", BumpMinor}}},
+		{"a comment at another column", "lib: patch\n   # c\nquo: minor", []Release{{"lib", BumpPatch}, {"quo", BumpMinor}}},
+		{"a tab after the leading space, bump below", "lib:\n \tpatch", []Release{{"lib", BumpPatch}}},
+		{"a tab-indented comment between key and bump", "lib:\n\t# c\n  patch", []Release{{"lib", BumpPatch}}},
+		{"tab before a trailing comment", "lib: patch\t# note", []Release{{"lib", BumpPatch}}},
+		{"tab-only blank line", "a: patch\n\t\nlib: minor", []Release{{"a", BumpPatch}, {"lib", BumpMinor}}},
+		{"tab-indented comment line", "a: patch\n\t# note\nlib: minor", []Release{{"a", BumpPatch}, {"lib", BumpMinor}}},
+		{"space-indented throughout", "  a: patch\n  lib: minor", []Release{{"a", BumpPatch}, {"lib", BumpMinor}}},
+		{"distinct packages", "a: patch\nlib: minor\n'@acme/lib': major", []Release{{"a", BumpPatch}, {"lib", BumpMinor}, {"@acme/lib", BumpMajor}}},
+	} {
+		cs, err := Parse("---\n"+tc.frontmatter+"\n---\n\nA change\n", "x")
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if !reflect.DeepEqual(cs.Releases, tc.want) {
+			t.Errorf("%s: releases = %+v, want %+v", tc.name, cs.Releases, tc.want)
+		}
+	}
+}
+
+// A bare line takes its bump from the changeset's type, which may come from the
+// summary's conventional prefix rather than a `type:` line.
+func TestParseBareNameTypedBySummary(t *testing.T) {
+	cs, err := Parse("---\n\"lib\"\n---\n\nfeat: a thing\n", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs.Type != "feat" || len(cs.Releases) != 1 || cs.Releases[0] != (Release{"lib", BumpNone}) {
+		t.Errorf("type = %q, releases = %+v; want feat and a bare lib", cs.Type, cs.Releases)
+	}
+}
+
+// Render writes a bumpless release bare only when there is a type for it to
+// take its bump from; otherwise it writes `: none`, which Parse reads back.
+func TestRenderBumplessRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name, typ, summary, wantLine string
+	}{
+		{"typed", "fix", "a change", "\"lib\"\n"},
+		{"typed by the summary", "", "fix: a change", "\"lib\"\n"},
+		{"untyped", "", "a change", "\"lib\": none\n"},
+	} {
+		out := Render([]Release{{"lib", BumpNone}}, tc.summary, tc.typ, false)
+		if !strings.Contains(out, "\n"+tc.wantLine) {
+			t.Errorf("%s: rendered %q, want the line %q", tc.name, out, tc.wantLine)
+		}
+		cs, err := Parse(out, "x")
+		if err != nil {
+			t.Errorf("%s: rendered changeset does not parse: %v", tc.name, err)
+			continue
+		}
+		if len(cs.Releases) != 1 || cs.Releases[0] != (Release{"lib", BumpNone}) {
+			t.Errorf("%s: releases = %+v", tc.name, cs.Releases)
+		}
 	}
 }
