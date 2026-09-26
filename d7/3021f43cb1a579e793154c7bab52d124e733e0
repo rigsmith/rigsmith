@@ -1,0 +1,25 @@
+core/changeset/changeset.go
+  s_505a2cfce9114c::t_5218fa3684a17f 211-213,216,277
+  s_505a2cfce9114c::t_07d4dfa1bcb568 206-209,214-215,217-276,278-281,318-325,330-331,333,337
+internal/changerig/cmdtest/single_quoted_frontmatter_test.go
+  s_505a2cfce9114c::t_beb6cc242f13b2 1-22
+core/changeset/changeset_test.go
+  s_505a2cfce9114c::t_5218fa3684a17f 254-255,257-289
+  s_505a2cfce9114c::t_beb6cc242f13b2 256
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d73021f43cb1a579e793154c7bab52d124e733e0",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
