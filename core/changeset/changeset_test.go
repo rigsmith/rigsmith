@@ -349,6 +349,9 @@ func TestParseRefusesWhatCanonRefuses(t *testing.T) {
 		{"repeated, quoted one way then another", "'lib': patch\n\"lib\": minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
 		{"repeated, plain then quoted", "lib: patch\n\"lib\"", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
 		{"repeated among others", "a: patch\nlib: minor\nb: patch\nlib: major", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"repeated, one spelled with an escape", `"l\u0069b": patch` + "\nlib: minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
+		{"an escape YAML doesn't have", `"l\qb": patch`, "malformed frontmatter line"},
+		{"a \\u escape cut short", `"l\u006": patch`, "malformed frontmatter line"},
 		{"colon, no bump", "lib:", `"lib" has a colon but no bump`},
 		{"quoted, colon, no bump", `"@acme/lib":`, `"@acme/lib" has a colon but no bump`},
 		{"single-quoted, colon, no bump", `'lib':`, `"lib" has a colon but no bump`},
@@ -389,6 +392,8 @@ func TestParseStillAcceptsCanonForms(t *testing.T) {
 		want              []Release
 	}{
 		{"none is a bump", "lib: none", []Release{{"lib", BumpNone}}},
+		{"double-quoted escapes decode", `"l\u0069b": patch` + "\n" + `"\x40acme/\U00000078": minor`, []Release{{"lib", BumpPatch}, {"@acme/x", BumpMinor}}},
+		{"an escaped quote stays in the name", `"a\"b": patch`, []Release{{`a"b`, BumpPatch}}},
 		{"quoted none", `'lib': "none"`, []Release{{"lib", BumpNone}}},
 		{"#494 forms together", "# a comment line\n'@x/y': patch\n\nlib: 'minor'   # trailing comment\n'it''s': \"patch\"",
 			[]Release{{"@x/y", BumpPatch}, {"lib", BumpMinor}, {"it's", BumpPatch}}},

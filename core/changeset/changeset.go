@@ -12,7 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Bump is the version bump a changeset requests for a package.
@@ -204,6 +206,53 @@ func (c *Changeset) ChangedNames() []string {
 	return names
 }
 
+// yamlEscapes are YAML's double-quoted single-character escapes (JSON's, plus
+// \0 \a \v \e \N \_ \L \P, an escaped space and an escaped tab).
+var yamlEscapes = map[byte]string{
+	'0': "\x00", 'a': "\a", 'b': "\b", 't': "\t", '\t': "\t", 'n': "\n", 'v': "\v",
+	'f': "\f", 'r': "\r", 'e': "\x1b", ' ': " ", '"': `"`, '/': "/", '\\': `\`,
+	'N': "\u0085", '_': "\u00a0", 'L': "\u2028", 'P': "\u2029",
+}
+
+// decodeDoubleQuoted is a YAML double-quoted scalar's text with its escapes
+// decoded (\xXX, \uXXXX and \UXXXXXXXX included). ok is false for an escape
+// YAML doesn't have, which @changesets' YAML parser refuses too.
+func decodeDoubleQuoted(body string) (string, bool) {
+	if !strings.ContainsRune(body, '\\') {
+		return body, true
+	}
+	var b strings.Builder
+	for i := 0; i < len(body); i++ {
+		if body[i] != '\\' {
+			b.WriteByte(body[i])
+			continue
+		}
+		i++
+		if i >= len(body) {
+			return "", false
+		}
+		width := map[byte]int{'x': 2, 'u': 4, 'U': 8}[body[i]]
+		if width == 0 {
+			r, ok := yamlEscapes[body[i]]
+			if !ok {
+				return "", false
+			}
+			b.WriteString(r)
+			continue
+		}
+		if i+width >= len(body) { // not enough hex digits left
+			return "", false
+		}
+		cp, err := strconv.ParseUint(body[i+1:i+1+width], 16, 32)
+		if err != nil || cp > unicode.MaxRune {
+			return "", false
+		}
+		b.WriteRune(rune(cp))
+		i += width
+	}
+	return b.String(), true
+}
+
 // plainKeyRe is an unquoted package name as YAML reads a plain key: no
 // leading indicator character (so `@scope/name` has to be quoted, as it does
 // for @changesets' YAML parser).
@@ -232,11 +281,23 @@ func parseReleaseLine(line string) (name, bump string, err error) {
 	s := strings.TrimSpace(line)
 	switch {
 	case strings.HasPrefix(s, `"`):
-		end := strings.IndexByte(s[1:], '"')
-		if end < 1 {
+		// The closing quote is the first one no backslash escapes.
+		end := 1
+		for ; end < len(s) && s[end] != '"'; end++ {
+			if s[end] == '\\' {
+				end++
+			}
+		}
+		if end >= len(s) || end == 1 {
 			return "", "", errMalformedLine
 		}
-		name, s = s[1:1+end], s[2+end:]
+		decoded, ok := decodeDoubleQuoted(s[1:end])
+		if !ok {
+			return "", "", errMalformedLine
+		}
+		// YAML reads "l\u0069b" and lib as the same key, so the name is the
+		// decoded one: that's what the duplicate check and the release see.
+		name, s = decoded, s[end+1:]
 	case strings.HasPrefix(s, "'"):
 		var b strings.Builder
 		i := 1
