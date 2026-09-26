@@ -1,6 +1,8 @@
 package changeset
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -292,5 +294,44 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 		if _, err := Parse("---\n"+line+"\n---\n\nA change\n", "x"); err == nil {
 			t.Errorf("%q parsed; want it refused", line)
 		}
+	}
+}
+
+// TestDirLenient_KeepsGoingPastBadFiles: DirLenient returns the changesets that
+// parse and every file that doesn't, by path; Dir still fails, on the first.
+func TestDirLenient_KeepsGoingPastBadFiles(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"a-bad.md":  "---\nlib: \"\"\n---\n\nbad one",
+		"b-good.md": "---\n\"pkg\": patch\n---\n\ngood",
+		"c-bad.md":  "---\n\"pkg\": sideways\n---\n\nbad two",
+		"README.md": "not a changeset",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	css, bad, err := DirLenient(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(css) != 1 || css[0].ID != "b-good" {
+		t.Fatalf("parsed = %+v, want just b-good", css)
+	}
+	if len(bad) != 2 || filepath.Base(bad[0].Path) != "a-bad.md" || filepath.Base(bad[1].Path) != "c-bad.md" {
+		t.Fatalf("bad = %v, want a-bad.md then c-bad.md", bad)
+	}
+	if !strings.Contains(bad[0].Error(), "a-bad.md: ") {
+		t.Errorf("FileError %q should lead with its path", bad[0].Error())
+	}
+
+	_, derr := Dir(dir, "")
+	if derr == nil || derr.Error() != bad[0].Err.Error() {
+		t.Fatalf("Dir err = %v, want the first file's error %v", derr, bad[0].Err)
+	}
+	if _, _, err := DirLenient(filepath.Join(dir, "missing"), ""); !os.IsNotExist(err) {
+		t.Fatalf("missing dir: err = %v, want not-exist", err)
 	}
 }
