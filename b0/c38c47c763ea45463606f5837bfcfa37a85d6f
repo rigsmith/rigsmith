@@ -1,0 +1,20 @@
+core/changelog/resolver_test.go
+  s_505a2cfce9114c::t_98b0735673a728 57,62,80-81,87,95,101,111,116,124,131,139,150,152,154,168,170,173-174,189-190,192,197,204-205,208,210,216-245,259,286
+  s_505a2cfce9114c::t_1fba0d29808bae 19,33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b0c38c47c763ea45463606f5837bfcfa37a85d6f",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
