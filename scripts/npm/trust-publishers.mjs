@@ -6,20 +6,21 @@
 //   node scripts/npm/trust-publishers.mjs             # register
 //   node scripts/npm/trust-publishers.mjs --otp 123456 # ...without being asked for it
 //   node scripts/npm/trust-publishers.mjs --list      # what the registry holds
+//   node scripts/npm/trust-publishers.mjs --replace   # move packages bound to another
+//                                                      # workflow in this repo over to this one
 //
 // Trusted publishing lets the workflow mint a short-lived credential from its
 // OIDC identity instead of carrying a long-lived NPM_TOKEN — the token that
 // expired mid-month, left 1.19.0's npm packages unpublished, and whose failure
 // then skipped five winget submissions.
 //
-// ONE WORKFLOW, BY DESIGN. The registry supports a single trusted-publisher
-// configuration per package ("If you attempt to create a new trust relationship
-// when one already exists, it will result in an error" — npm trust docs), and a
-// configuration names a workflow FILE. So everything that publishes these
-// packages lives in goreleaser.yml: the tag release, and the republish-npm job
-// that recovers a release whose npm step alone failed. That job used to be a
-// workflow of its own, which would have left it needing a stored token forever —
-// folding it in is what makes NPM_TOKEN removable rather than merely reduced.
+// ONE WORKFLOW, BY DESIGN. A trusted-publisher configuration names a workflow
+// FILE, so every workflow that publishes these packages needs its own on all of
+// them. The registry used to hold one configuration per package; it now holds
+// several (seen 2026-09-26, when release.yml sat beside goreleaser.yml), but
+// one publishing file still means one set of 41 to keep right. So everything
+// that publishes lives in release.yml: the release itself, and the
+// republish-npm job that recovers a release whose npm step alone failed.
 //
 // RUN IT AGAIN WHENEVER A TOOL IS ADDED — a new tool means seven new packages,
 // none of which can publish via OIDC until registered. It is one more
@@ -47,9 +48,10 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, '..', '..')
-const OUT = path.join(REPO_ROOT, 'npm', 'dist')
+// TRUST_PUBLISHERS_DIST points at another build output, for testing.
+const OUT = process.env.TRUST_PUBLISHERS_DIST || path.join(REPO_ROOT, 'npm', 'dist')
 const REPOSITORY = 'rigsmith/rigsmith'
-const WORKFLOW = 'goreleaser.yml'
+const WORKFLOW = 'release.yml'
 const SCOPE = '@rigsmith'
 
 // `npm trust` is newer than trusted publishing itself: publishing via OIDC
@@ -60,7 +62,9 @@ const MIN_NPM = [11, 15, 0]
 // npm's own guidance: "We recommend adding a 2-second sleep between each call
 // to avoid rate limiting. With this approach, you can configure approximately
 // 80 packages within the 5-minute two-factor authentication skip window."
-const CALL_SPACING_MS = 2000
+// TRUST_SPACING_MS overrides it, for testing against a fake npm; leave it alone
+// against the real registry.
+const CALL_SPACING_MS = Number(process.env.TRUST_SPACING_MS ?? 2000)
 
 // A captured npm call must not wait forever. Without a usable one-time password
 // npm falls back to browser authorization: it prints a URL and polls, and with
@@ -77,6 +81,11 @@ const OTP = (() => {
   return i >= 0 ? process.argv[i + 1] : ''
 })()
 const LIST = process.argv.includes('--list')
+// --replace moves packages over to this workflow from another workflow in THIS
+// repository (the release workflow was goreleaser.yml until it and release.yml
+// became one file): it registers this one where it's missing, then revokes the
+// other. A configuration for any other repository is never touched.
+const REPLACE = process.argv.includes('--replace')
 
 function fail(msg) {
   console.error(`trust-publishers: ${msg}`)
@@ -234,53 +243,163 @@ async function promptOTP(message) {
   }
 }
 
+// isOurs is a configuration for this workflow of THIS repository. Both halves
+// matter: another repository's release.yml is not ours (counting it as ours is
+// how --replace revoked this repository's only publisher and registered
+// nothing), and neither is prerelease.yml, which ends with release.yml.
+function isOurs(c) {
+  return c.repository === REPOSITORY && (c.file === WORKFLOW || c.file.endsWith(`/${WORKFLOW}`))
+}
+
 // failureKind decides what a failed registration means by reading the registry,
 // since the command's own output goes to the terminal rather than to us:
-// "ours" (already registered for this workflow — success), "other" (the single
-// configuration a package may have is held by something else), or "error".
+// "ours" (already registered for this workflow — success), "other" (held by
+// something else), or "error".
 function failureKind(name, otp) {
-  const held = registeredWorkflows(name, otp)
-  if (held === null) return 'error'
-  if (held.some((w) => w.endsWith(WORKFLOW))) return 'ours'
-  if (held.length > 0) return 'other'
+  const configs = registeredConfigs(name, otp)
+  if (configs === null) return 'error'
+  if (configs.some(isOurs)) return 'ours'
+  if (configs.length > 0) return 'other'
   return 'error'
 }
 
-// registeredWorkflows returns the workflow filenames the registry holds for a
-// package, so an existing configuration is judged rather than assumed.
+// registeredConfigs returns the trusted-publisher configurations the registry
+// holds for a package (workflow file, repository, id), so an existing one is
+// judged rather than assumed.
 //
-// The shape is what `npm trust list <pkg> --json` actually returns, which is a
-// single object rather than a list — one configuration per package is the rule,
-// so there is nothing to wrap:
+// The shape is what `npm trust list <pkg> --json` actually returns: one object
+// per configuration, printed one after another (not as a list), so a package
+// with two prints two objects:
 //
 //   { "id": "…", "type": "github", "file": "goreleaser.yml",
 //     "repository": "rigsmith/rigsmith", "permissions": ["createPackage", …] }
+//   { "id": "…", "type": "github", "file": "release.yml", … }
 //
 // Guessing an array or a `trustedPublishers` wrapper is how a run that had
-// registered all 41 reported none of them.
-function registeredWorkflows(name, otp) {
+// registered all 41 reported none of them; parsing the output as one JSON value
+// is how a run reported every package with two as unreadable.
+// lastReadError is why the most recent read failed, in npm's words where it
+// gave any: "could not be read" alone sends you to run npm by hand to find out.
+let lastReadError = ''
+
+function readFailure(reason) {
+  lastReadError = reason
+  return null
+}
+
+function registeredConfigs(name, otp) {
   const r = spawnSync('npm', ['trust', 'list', name, '--json'],
     { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
   const body = (r.stdout || '').trim()
   // A package with no configuration prints nothing rather than an empty list,
   // and that is an answer — not a failure to read one.
   if (r.status === 0 && body === '') return []
-  if (r.status !== 0 && body === '') return null
-  let parsed
-  try {
-    parsed = JSON.parse(body)
-  } catch {
-    return null
+  if (r.status !== 0 && body === '') {
+    const said = (r.stderr || '').trim().split('\n')
+      .map((l) => l.replace(/^npm error\s*/, '').trim())
+      .filter((l) => l && !/^A complete log|^$/.test(l))
+    return readFailure(r.error ? `${r.error.message}` : (said.slice(0, 3).join(' / ') || `npm exited ${r.status}`))
   }
-  const rows = Array.isArray(parsed) ? parsed : [parsed]
-  const files = rows
+  const values = jsonValues(body)
+  if (values === null) return readFailure(`output isn't JSON: ${body.slice(0, 160)}`)
+  // With --json, npm reports an error as {"error": {"code", "summary"}} on
+  // stdout rather than as a configuration.
+  const failed = values.find((v) => v && typeof v === 'object' && !Array.isArray(v) && v.error)
+  if (failed) {
+    const e = failed.error
+    return readFailure([e.code, e.summary || e.message].filter(Boolean).join(': ') || JSON.stringify(e).slice(0, 160))
+  }
+  const parsed = values.flat()
+  const rows = parsed
+  const configs = rows
     .filter((row) => row && typeof row === 'object')
-    .map((row) => row.file ?? row.workflow ?? row.workflowFilename ?? '')
-    .filter(Boolean)
+    .map((row) => ({
+      id: row.id ?? '',
+      file: row.file ?? row.workflow ?? row.workflowFilename ?? '',
+      repository: row.repository ?? row.repo ?? '',
+    }))
+    .filter((c) => c.file)
   // Parsed, but nothing that names a workflow: better to say it could not be
   // read than to report a registered package as unregistered.
-  if (files.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) return null
-  return files
+  if (configs.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) {
+    return readFailure(`no workflow file in: ${body.slice(0, 160)}`)
+  }
+  return configs
+}
+
+// jsonValues parses output holding any number of JSON values one after another
+// (how `npm trust list --json` prints several configurations), or null when it
+// isn't that.
+function jsonValues(text) {
+  const values = []
+  let depth = 0
+  let start = -1
+  let inString = false
+  let escaped = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '{' || c === '[') {
+      if (depth === 0) start = i
+      depth++
+    } else if (c === '}' || c === ']') {
+      depth--
+      if (depth < 0) return null
+      if (depth === 0) {
+        try {
+          values.push(JSON.parse(text.slice(start, i + 1)))
+        } catch {
+          return null
+        }
+      }
+    } else if (depth === 0 && !/\s/.test(c)) {
+      return null // something outside any value
+    }
+  }
+  return depth === 0 && values.length > 0 ? values : null
+}
+
+// replace moves a package to this workflow from others in this repository:
+// registers this one if it's missing, then revokes the rest of this
+// repository's. Returns the workflows it revoked ('' for none), or null when it
+// couldn't finish; a configuration for another repository is left alone.
+let replaceOtpExpired = false
+
+function replace(name, otp) {
+  replaceOtpExpired = false
+  const otpFailed = (text) => /EOTP|one-time password|invalid otp|otp required/i.test(text || '')
+  let configs = registeredConfigs(name, otp)
+  if (configs === null) {
+    replaceOtpExpired = otpFailed(lastReadError)
+    return null
+  }
+  if (!configs.some(isOurs)) {
+    sleep(CALL_SPACING_MS)
+    const r = register(name, otp)
+    if (!r.ok) {
+      replaceOtpExpired = r.otpExpired
+      return null
+    }
+    configs = registeredConfigs(name, otp)
+    if (configs === null || !configs.some(isOurs)) return null
+  }
+  const stale = configs.filter((c) => c.repository === REPOSITORY && !isOurs(c) && c.id)
+  for (const c of stale) {
+    sleep(CALL_SPACING_MS)
+    const r = spawnSync('npm', ['trust', 'revoke', name, '--id', c.id],
+      { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
+    if (r.status !== 0) {
+      replaceOtpExpired = otpFailed(`${r.stdout}${r.stderr}`)
+      return null
+    }
+  }
+  return stale.map((c) => c.file).join(', ')
 }
 
 const npmVersion = requireNpm()
@@ -295,16 +414,29 @@ if (LIST) {
   }
   const listOtp = OTP || await promptOTP('npm one-time password (reading the list needs one too): ')
   const ours = []
+  const stale = []
+  const foreign = []
   const other = []
   const none = []
   const unreadable = []
   const all = packageNames()
   for (const [i, name] of all.entries()) {
     process.stdout.write(`\r  reading ${i + 1}/${all.length}  ${name.padEnd(34).slice(0, 34)}`)
-    const held = registeredWorkflows(name, listOtp)
-    if (held === null) unreadable.push(name)
-    else if (held.some((w) => w.endsWith(WORKFLOW))) ours.push(name)
-    else if (held.length > 0) other.push(`${name} (${held.join(', ')})`)
+    const configs = registeredConfigs(name, listOtp)
+    const held = configs === null ? null : configs.map((c) => c.file)
+    if (held === null) {
+      unreadable.push(name)
+      continue
+    }
+    // Another repository able to publish the package is worth saying whatever
+    // else holds it.
+    const elsewhere = configs.filter((c) => c.repository !== REPOSITORY)
+    if (elsewhere.length) foreign.push(`${name} (${elsewhere.map((c) => `${c.repository} ${c.file}`).join(', ')})`)
+    if (configs.some(isOurs)) {
+      ours.push(name)
+      const extra = configs.filter((c) => c.repository === REPOSITORY && !isOurs(c))
+      if (extra.length) stale.push(`${name} (also ${extra.map((c) => c.file).join(', ')})`)
+    } else if (held.length > 0) other.push(`${name} (${held.join(', ')})`)
     else none.push(name)
   }
   process.stdout.write('\r'.padEnd(60) + '\r')
@@ -314,10 +446,20 @@ if (LIST) {
     ['NOT registered', none],
     ['registered for a DIFFERENT workflow', other],
     ['could not be read', unreadable],
+    [`registered for ${WORKFLOW} but still also for another workflow here (--replace drops it)`, stale],
+    ['ALSO trusted by another repository, which can publish them too (revoke by hand if unexpected)', foreign],
   ]) {
     if (list.length) console.log(`\n${list.length} ${label}:\n  ${list.join('\n  ')}`)
   }
-  process.exit(none.length + other.length + unreadable.length > 0 ? 1 : 0)
+  if (unreadable.length) {
+    console.log(`\nThe last read failed with: ${lastReadError || '(npm gave no reason)'}`)
+    if (/EOTP|one-time password|otp/i.test(lastReadError)) {
+      console.log('That is the one-time password: run again with a fresh code, entered within its 30 seconds.')
+    }
+  }
+  // Done means release.yml of this repository is the only publisher: a stale
+  // entry, or another repository's, fails the check too.
+  process.exit(none.length + other.length + unreadable.length + stale.length + foreign.length > 0 ? 1 : 0)
 }
 
 const names = packageNames()
@@ -355,10 +497,33 @@ if (!DRY_RUN && !otp) {
 
 for (const [i, name] of names.entries()) {
   if (DRY_RUN) {
-    console.log(`would: npm ${registerArgs(name).join(' ')}${otp ? '   (npm_config_otp set)' : ''}`)
+    console.log(`would: npm ${registerArgs(name).join(' ')}${otp ? '   (npm_config_otp set)' : ''}` +
+      (REPLACE ? '   (revoking another workflow of this repository first, if it holds the package)' : ''))
     continue
   }
   if (i > 0) sleep(CALL_SPACING_MS)
+
+  if (REPLACE) {
+    let was = replace(name, otp)
+    if (was === null && replaceOtpExpired) {
+      const fresh = await promptOTP(`\nThe two-factor window closed at ${name}. New npm one-time password: `)
+      if (fresh === null) {
+        console.error(`\nThe two-factor window closed at ${name}, and there is no terminal to ask for ` +
+          `another code. Re-run with a fresh code; what's already moved is kept.`)
+        process.exit(1)
+      }
+      otp = fresh
+      was = replace(name, otp)
+    }
+    if (was === null) {
+      console.error(`✗ ${name}${lastReadError ? `: ${lastReadError}` : ''}`)
+      failures.push(name)
+    } else {
+      console.log(was ? `↻ ${name} (revoked ${was})` : `· ${name} (already only ${WORKFLOW})`)
+      done++
+    }
+    continue
+  }
 
   let result = register(name, otp)
   if (result.otpExpired) {
@@ -398,7 +563,8 @@ if (!DRY_RUN) {
   console.log(`\n${done}/${names.length} registered for ${WORKFLOW}`)
   if (mismatched.length) {
     console.error(`\nAlready configured for a different publisher — the registry allows one per package,\n` +
-      `so these need \`npm trust revoke --id <id> <package>\` before they can be re-registered:\n  ` +
+      `so these need \`npm trust revoke --id <id> <package>\` before they can be re-registered` +
+      (REPLACE ? ' (--replace moves only this repository\'s own)' : ', or --replace if the other is this repository\'s') + `:\n  ` +
       mismatched.join('\n  '))
   }
   if (failures.length) console.error(`\nfailed: ${failures.join(', ')}`)

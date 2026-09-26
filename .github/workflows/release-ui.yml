@@ -5,10 +5,11 @@
 # CLIs' `vX.Y.Z`. `shiprig tag` already renders that tag from the module
 # directory; nothing consumed it until this workflow.
 #
-# Two moments, the same shape as the CLI release:
+# Two moments:
 #   1. changerig bumps ui/go.mod's `// rigsmith:version` in release.yml's
 #      "chore: release" PR; merging it makes release.yml push the `ui/vX.Y.Z`
-#      tag. (By hand still works: commit, push, and push the tag.)
+#      tag as the shipRig App. (By hand still works: commit, push, and push
+#      the tag.)
 #   2. This workflow fires on that tag: GoReleaser builds and Authenticode-signs
 #      the Windows binaries, a macOS runner builds, signs and notarizes the .app,
 #      and the two are published together as one GitHub release, a Homebrew cask
