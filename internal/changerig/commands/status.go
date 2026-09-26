@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -24,21 +25,46 @@ import (
 )
 
 // statusRelease is one entry in the machine-readable release plan. The shape
-// ({ name, type, newVersion }) matches @changesets' `status --output` and
-// net-changesets, so the plan is a cross-implementation oracle for version
-// decisions independent of changelog formatting.
+// ({ name, type, oldVersion, changesets, newVersion }) is @changesets'
+// ComprehensiveRelease from `status --output`, so the plan is a
+// cross-implementation oracle for version decisions independent of changelog
+// formatting.
 type statusRelease struct {
 	Name       string `json:"name"`
 	Type       string `json:"type"`
-	NewVersion string `json:"newVersion"`
+	OldVersion string `json:"oldVersion"`
+	// Changesets are the ids of the changesets that name this package, `none`
+	// included; empty for a release only a dependency or a group drives.
+	Changesets []string `json:"changesets"`
+	NewVersion string   `json:"newVersion"`
 	// Group names the packages that have to be versioned together (see
 	// planner.ReleaseGroups): its alphabetically first member. shiprig's
 	// addition; canon's readers ignore it.
 	Group string `json:"group,omitempty"`
 }
 
+// statusChangeset is one changeset behind the plan, as @changesets'
+// NewChangeset: every package it names with its bump, `none` included, which
+// the releases list can't show (a `none` there releases nothing). One
+// difference from canon: a summary written with a conventional prefix
+// (`feat: …`) comes without it, as the changelog renders it.
+type statusChangeset struct {
+	ID       string                   `json:"id"`
+	Summary  string                   `json:"summary"`
+	Releases []statusChangesetRelease `json:"releases"`
+}
+
+type statusChangesetRelease struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// statusPlan is @changesets' ReleasePlan: the changesets, the releases, and
+// the prerelease state when there is one.
 type statusPlan struct {
-	Releases []statusRelease `json:"releases"`
+	Changesets []statusChangeset  `json:"changesets"`
+	Releases   []statusRelease    `json:"releases"`
+	PreState   *prestate.PreState `json:"preState,omitempty"`
 }
 
 // NewStatusCmd builds the `status` command.
@@ -140,7 +166,7 @@ func NewStatusCmd() *cobra.Command {
 			// is how a script tells "nothing to release" from an error.
 			if len(changesets) == 0 {
 				if output != "" {
-					return writeStatusPlan(ws.Root, output, nil, nil)
+					return writeStatusPlan(ws.Root, output, ws.Config, nil, nil, nil, pre)
 				}
 				if fromCommits || ws.Config.UsesCommits() {
 					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
@@ -166,7 +192,7 @@ func NewStatusCmd() *cobra.Command {
 			if output != "" {
 				// Grouped by the changesets that drive the plan: one a
 				// prerelease already consumed doesn't tie its packages now.
-				return writeStatusPlan(ws.Root, output, plan, planner.ReleaseGroups(plan, active, ws.Config))
+				return writeStatusPlan(ws.Root, output, ws.Config, plan, active, planner.ReleaseGroups(plan, active, ws.Config), pre)
 			}
 			if len(plan) == 0 {
 				out := cmd.OutOrStdout()
@@ -253,21 +279,45 @@ func printEmptyStatusPanel(cmd *cobra.Command, ws *Workspace, pkgs []plugin.Pack
 	printSetupNextStep(cmd, ws)
 }
 
-// writeStatusPlan serializes the plan as { releases: [{ name, type, newVersion }] }.
-// A relative path is resolved against the workspace root, matching @changesets.
-func writeStatusPlan(root, output string, plan []*planner.Module, groups map[string]string) error {
+// writeStatusPlan serializes the plan as @changesets' ReleasePlan
+// ({ changesets, releases, preState }), from the changesets that drive it. A
+// relative path is resolved against the workspace root, matching @changesets.
+func writeStatusPlan(root, output string, cfg *config.Config, plan []*planner.Module, changesets []*changeset.Changeset, groups map[string]string, pre *prestate.PreState) error {
+	// By id, as @changesets reads its files by name: the order they were
+	// loaded in isn't stable (commit-derived ones come off a map), and the
+	// plan must be byte-for-byte the same for the same tree.
+	changesets = slices.Clone(changesets)
+	slices.SortStableFunc(changesets, func(a, b *changeset.Changeset) int { return strings.Compare(a.ID, b.ID) })
+	named := map[string][]string{}
+	sets := make([]statusChangeset, 0, len(changesets))
+	for _, cs := range changesets {
+		rels := make([]statusChangesetRelease, 0, len(cs.Releases))
+		for _, r := range cs.Releases {
+			// The bump the plan counts: a bare name in a typed changeset (and
+			// every commit-derived one) takes its bump from the type.
+			rels = append(rels, statusChangesetRelease{Name: r.Name, Type: planner.ReleaseBump(cs, r, cfg).String()})
+			named[r.Name] = append(named[r.Name], cs.ID)
+		}
+		sets = append(sets, statusChangeset{ID: cs.ID, Summary: strings.TrimSpace(cs.Summary), Releases: rels})
+	}
 	releases := make([]statusRelease, 0, len(plan))
 	for _, m := range plan {
+		ids := named[m.Name]
+		if ids == nil {
+			ids = []string{}
+		}
 		releases = append(releases, statusRelease{
 			Name:       m.Name,
 			Type:       m.HighestBump().String(),
+			OldVersion: m.Current.String(),
+			Changesets: ids,
 			NewVersion: m.ResolvedVersion(),
 			Group:      groups[m.Name],
 		})
 	}
 	sort.Slice(releases, func(i, j int) bool { return releases[i].Name < releases[j].Name })
 
-	data, err := json.MarshalIndent(statusPlan{Releases: releases}, "", "  ")
+	data, err := json.MarshalIndent(statusPlan{Changesets: sets, Releases: releases, PreState: pre}, "", "  ")
 	if err != nil {
 		return err
 	}
