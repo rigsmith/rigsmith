@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
+	"unicode/utf8"
 )
 
 // Bump is the version bump a changeset requests for a package.
@@ -244,7 +244,9 @@ func decodeDoubleQuoted(body string) (string, bool) {
 			return "", false
 		}
 		cp, err := strconv.ParseUint(body[i+1:i+1+width], 16, 32)
-		if err != nil || cp > unicode.MaxRune {
+		// A surrogate (\uD800-\uDFFF) or anything past U+10FFFF isn't a
+		// character: refuse it rather than write U+FFFD as the name.
+		if err != nil || !utf8.ValidRune(rune(cp)) {
 			return "", false
 		}
 		b.WriteRune(rune(cp))

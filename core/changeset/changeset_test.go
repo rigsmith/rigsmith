@@ -352,6 +352,8 @@ func TestParseRefusesWhatCanonRefuses(t *testing.T) {
 		{"repeated, one spelled with an escape", `"l\u0069b": patch` + "\nlib: minor", `"lib" is listed more than once in the frontmatter; keep one line for it (quoted or not, it is the same package)`},
 		{"an escape YAML doesn't have", `"l\qb": patch`, "malformed frontmatter line"},
 		{"a \\u escape cut short", `"l\u006": patch`, "malformed frontmatter line"},
+		{"a surrogate escape", `"l\uD800b": patch`, "malformed frontmatter line"},
+		{"an escape past U+10FFFF", `"l\U00110000b": patch`, "malformed frontmatter line"},
 		{"colon, no bump", "lib:", `"lib" has a colon but no bump`},
 		{"quoted, colon, no bump", `"@acme/lib":`, `"@acme/lib" has a colon but no bump`},
 		{"single-quoted, colon, no bump", `'lib':`, `"lib" has a colon but no bump`},
