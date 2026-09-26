@@ -1,0 +1,9 @@
+scripts/releasesteps_test.go
+  ai_agent 340-341,343,349-360,362
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f4488848029a9708480c57a89652f63e563bc3d1",
+  "prompts": {}
+}
