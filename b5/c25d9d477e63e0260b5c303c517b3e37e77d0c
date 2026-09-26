@@ -1,0 +1,21 @@
+core/planner/changelog_test.go
+  s_505a2cfce9114c::t_40340cce9c1b62 271-293
+core/planner/changelog.go
+  s_505a2cfce9114c::t_40340cce9c1b62 178,213-217,272-276,303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b5c25d9d477e63e0260b5c303c517b3e37e77d0c",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
