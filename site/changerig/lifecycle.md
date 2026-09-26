@@ -102,6 +102,11 @@ Note the package line above carries no bump. Leave it off and the type decides;
 give one and it wins, per package — which is how one changeset can be a feature
 for an app and a patch for the library under it.
 
+The frontmatter is YAML, as @changesets reads it: a package name can be
+double-quoted (`"@acme/lib": minor`), single-quoted (`'@acme/lib': minor`) or,
+without a leading `@`, plain (`lib: minor`); a bump can be quoted; and blank
+lines and `#` comments are fine.
+
 `--scope` is inferred from what the branch changed, so it is one less thing to
 remember: a diff confined to `cmd/rig` or `internal/rig` infers `rig`, and a
 diff spanning several tools infers nothing rather than guessing.
