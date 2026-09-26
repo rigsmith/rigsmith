@@ -272,6 +272,15 @@ function registeredWorkflows(name, otp) {
 
 // registeredConfigs is registeredWorkflows with each configuration's id and
 // repository, which --replace needs to revoke the right one.
+// lastReadError is why the most recent read failed, in npm's words where it
+// gave any: "could not be read" alone sends you to run npm by hand to find out.
+let lastReadError = ''
+
+function readFailure(reason) {
+  lastReadError = reason
+  return null
+}
+
 function registeredConfigs(name, otp) {
   const r = spawnSync('npm', ['trust', 'list', name, '--json'],
     { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
@@ -279,12 +288,23 @@ function registeredConfigs(name, otp) {
   // A package with no configuration prints nothing rather than an empty list,
   // and that is an answer — not a failure to read one.
   if (r.status === 0 && body === '') return []
-  if (r.status !== 0 && body === '') return null
+  if (r.status !== 0 && body === '') {
+    const said = (r.stderr || '').trim().split('\n')
+      .map((l) => l.replace(/^npm error\s*/, '').trim())
+      .filter((l) => l && !/^A complete log|^$/.test(l))
+    return readFailure(r.error ? `${r.error.message}` : (said.slice(0, 3).join(' / ') || `npm exited ${r.status}`))
+  }
   let parsed
   try {
     parsed = JSON.parse(body)
   } catch {
-    return null
+    return readFailure(`output isn't JSON: ${body.slice(0, 160)}`)
+  }
+  // With --json, npm reports an error as {"error": {"code", "summary"}} on
+  // stdout rather than as a configuration.
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.error) {
+    const e = parsed.error
+    return readFailure([e.code, e.summary || e.message].filter(Boolean).join(': ') || JSON.stringify(e).slice(0, 160))
   }
   const rows = Array.isArray(parsed) ? parsed : [parsed]
   const configs = rows
@@ -297,7 +317,9 @@ function registeredConfigs(name, otp) {
     .filter((c) => c.file)
   // Parsed, but nothing that names a workflow: better to say it could not be
   // read than to report a registered package as unregistered.
-  if (configs.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) return null
+  if (configs.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) {
+    return readFailure(`no workflow file in: ${body.slice(0, 160)}`)
+  }
   return configs
 }
 
@@ -352,6 +374,12 @@ if (LIST) {
     ['could not be read', unreadable],
   ]) {
     if (list.length) console.log(`\n${list.length} ${label}:\n  ${list.join('\n  ')}`)
+  }
+  if (unreadable.length) {
+    console.log(`\nThe last read failed with: ${lastReadError || '(npm gave no reason)'}`)
+    if (/EOTP|one-time password|otp/i.test(lastReadError)) {
+      console.log('That is the one-time password: run again with a fresh code, entered within its 30 seconds.')
+    }
   }
   process.exit(none.length + other.length + unreadable.length > 0 ? 1 : 0)
 }
