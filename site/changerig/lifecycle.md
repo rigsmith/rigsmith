@@ -280,9 +280,12 @@ dependent that isn't releasing is refused, since nothing would update it. Give
 that package a changeset with the bump you want instead, so the cascade runs.
 
 The release is labelled by the move it makes, not by its changesets: a patch
-changeset released at `2.0.0` is `major` in the plan and `status`, and in an
-untyped changelog the changes that decided the release are listed under
-**Major Changes** (smaller ones keep their own headings). Typed sections stay
+changeset released at `2.0.0` is `major` in the plan `version` prints, and in
+an untyped changelog the changes that decided the release are listed under
+**Major Changes** (smaller ones keep their own headings). A version that only
+drops a prerelease suffix (`1.1.0-next.3` → `1.1.0`) moves nothing, so it keeps
+the bump its changes planned, as graduating does. `status` takes no
+`--release-as`, so it always reports the planned bump. Typed sections stay
 as they are, since they name what each change is. Only a version given this
 way is relabelled: a linked or fixed group's coordinated version keeps each
 member's changes under their own bump, as @changesets does.
