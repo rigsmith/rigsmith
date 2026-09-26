@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -118,7 +119,7 @@ func TestRenderSectionsFoldsUntypedChangesIntoTypedSections(t *testing.T) {
 		{Bump: "patch", Summary: "Document exit codes", Type: "docs"},
 		{Bump: "minor", Summary: "Add a --json flag"},
 		{Bump: "major", Summary: "Drop Node 18"},
-		{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0"},
+		{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0\n  - ui@1.1.0", Dependencies: true},
 	}, config.DefaultChangelogGroups, nil)
 	for _, heading := range []string{"Minor Changes", "Patch Changes", "Major Changes"} {
 		if strings.Contains(got, heading) {
@@ -128,7 +129,7 @@ func TestRenderSectionsFoldsUntypedChangesIntoTypedSections(t *testing.T) {
 	for _, want := range []string{
 		"### " + config.BreakingGroup.Section + "\n\n- Drop Node 18",
 		"### " + sectionFor(t, "feat") + "\n\n- Add a --json flag",
-		"### " + sectionFor(t, "fix") + "\n\n- Updated dependencies\n  - core@2.0.0",
+		"### " + dependenciesSection + "\n\n- core@2.0.0\n- ui@1.1.0\n",
 		"### " + sectionFor(t, "docs") + "\n\n- Document exit codes",
 	} {
 		if !strings.Contains(got, want) {
@@ -222,5 +223,71 @@ func TestDepReleasesBreakTiesByName(t *testing.T) {
 		if m.DepReleases[0].Name != "a.pkg" || m.DepReleases[1].Name != "b.pkg" {
 			t.Errorf("manifest order %v: DepReleases = %+v", order, m.DepReleases)
 		}
+	}
+}
+
+// The dependencies section comes last and holds nothing else: no 🩹 Fixes
+// section appears just for them; and an entry with no typed changes keeps
+// @changesets' "Updated dependencies" under Patch Changes.
+func TestRenderSectionsGivesTypedDependenciesTheirOwnSection(t *testing.T) {
+	deps := plugin.ChangelogChange{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0", Dependencies: true}
+	typed := renderSections("1.1.0", []plugin.ChangelogChange{
+		{Bump: "minor", Type: "feat", Summary: "A feature"},
+		deps,
+		{Bump: "patch", Type: "zzz", Summary: "An unusual type"},
+	}, config.DefaultChangelogGroups, nil)
+	if strings.Contains(typed, sectionFor(t, "fix")) || strings.Contains(typed, "Updated dependencies") {
+		t.Errorf("typed entry:\n%s", typed)
+	}
+	// After the configured groups, before sections for types no group names.
+	feat, depsAt, other := strings.Index(typed, sectionFor(t, "feat")), strings.Index(typed, "### "+dependenciesSection+"\n\n- core@2.0.0\n"), strings.Index(typed, "### Zzz")
+	if feat < 0 || depsAt < 0 || other < 0 || !(feat < depsAt && depsAt < other) {
+		t.Errorf("section order (feat %d, dependencies %d, Zzz %d):\n%s", feat, depsAt, other, typed)
+	}
+	untyped := renderSections("1.0.1", []plugin.ChangelogChange{{Bump: "patch", Summary: "A fix"}, deps}, config.DefaultChangelogGroups, nil)
+	if !strings.Contains(untyped, "### Patch Changes\n\n- A fix\n- Updated dependencies\n  - core@2.0.0") {
+		t.Errorf("untyped entry:\n%s", untyped)
+	}
+}
+
+// Through the built-in generator, as the engine calls it: a typed change and
+// released dependencies render the dependencies in their own section.
+func TestBuiltinRendersTypedDependenciesInTheirOwnSection(t *testing.T) {
+	got, err := NewBuiltinGenerator(nil).Render(context.Background(), plugin.ChangelogRequest{
+		Package: plugin.ChangelogPackage{NewVersion: "1.1.0"},
+		Changes: []plugin.ChangelogChange{
+			{Bump: "minor", Type: "feat", Summary: "A feature"},
+			{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0", Dependencies: true},
+		},
+		DependencyUpdates: []plugin.DependencyUpdate{{Name: "core", DisplayName: "core", NewVersion: "2.0.0"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "### "+dependenciesSection+"\n\n- core@2.0.0\n") || strings.Contains(got, sectionFor(t, "fix")) {
+		t.Errorf("entry:\n%s", got)
+	}
+}
+
+// A changelog group headed like the dependencies section keeps its own
+// bucket and rank: its changes never join the dependency list.
+func TestRenderSectionsKeepsAGroupNamedLikeTheDependencies(t *testing.T) {
+	groups := []config.ChangelogGroup{
+		{Type: "deps", Section: dependenciesSection, Bump: "patch"},
+		{Type: "feat", Section: "Features", Bump: "minor"},
+	}
+	got := renderSections("1.1.0", []plugin.ChangelogChange{
+		{Bump: "minor", Type: "feat", Summary: "A feature"},
+		{Bump: "patch", Type: "deps", Summary: "Pin the toolchain"},
+		{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0", Dependencies: true},
+	}, groups, nil)
+	group := "### " + dependenciesSection + "\n\n- Pin the toolchain\n"
+	list := "### " + dependenciesSection + "\n\n- core@2.0.0\n"
+	if !strings.Contains(got, group) || !strings.Contains(got, list) {
+		t.Errorf("want the group and the dependency list apart:\n%s", got)
+	}
+	// The group keeps its configured rank, ahead of Features.
+	if strings.Index(got, group) > strings.Index(got, "### Features") {
+		t.Errorf("the group lost its rank:\n%s", got)
 	}
 }

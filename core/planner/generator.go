@@ -91,5 +91,5 @@ func dependencyChange(deps []plugin.DependencyUpdate) *plugin.ChangelogChange {
 		}
 		fmt.Fprintf(&b, "\n  - %s@%s", name, d.NewVersion)
 	}
-	return &plugin.ChangelogChange{Bump: changeset.BumpPatch.String(), Summary: b.String()}
+	return &plugin.ChangelogChange{Bump: changeset.BumpPatch.String(), Summary: b.String(), Dependencies: true}
 }
