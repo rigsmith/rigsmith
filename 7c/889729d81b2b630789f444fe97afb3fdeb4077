@@ -1,0 +1,9 @@
+.changeset/status-output-changesets.md
+  ai_agent 2-4,7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "7c889729d81b2b630789f444fe97afb3fdeb4077",
+  "prompts": {}
+}
