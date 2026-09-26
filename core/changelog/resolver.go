@@ -205,10 +205,17 @@ func uniqueAbbreviations(run Runner, dir string, shas []string) map[string]strin
 	if len(shas) == 0 {
 		return result
 	}
+	// Only full object ids go on the command line: anything else (a value
+	// starting with "-" above all) could read as an option, and git's own log
+	// is the only source these come from anyway. A copy, so the caller's
+	// slice keeps its order.
+	shas = slices.DeleteFunc(slices.Clone(shas), func(s string) bool { return !fullObjectID.MatchString(s) })
+	if len(shas) == 0 {
+		return result
+	}
 	slices.Sort(shas)
 	shas = slices.Compact(shas)
 	// One call for every SHA. (`rev-parse --short` takes a single revision.)
-	// The SHAs are hex from git's own log, so none can read as an option.
 	args := append([]string{"log", "--no-walk=unsorted", "--abbrev=7", "--format=%H %h"}, shas...)
 	if out, err := run(dir, "git", args...); err == nil {
 		for _, line := range strings.Split(out, "\n") {
@@ -227,6 +234,10 @@ func uniqueAbbreviations(run Runner, dir string, shas []string) map[string]strin
 	}
 	return result
 }
+
+// fullObjectID is a whole SHA-1 or SHA-256 object id, lowercase hex as git
+// prints it.
+var fullObjectID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 // shortSHA abbreviates a full commit SHA to @changesets' 7 characters, the
 // display form when git's unique abbreviation couldn't be found.
