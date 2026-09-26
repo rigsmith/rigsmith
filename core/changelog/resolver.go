@@ -98,7 +98,7 @@ func Resolve(changesetIDs []string, setting Setting, dir string, run Runner) map
 // configured repo it still looks up the PR number and author via `gh api`
 // (degrading each to a zero value on failure). The default generator returns an
 // empty map. An empty SHA is skipped. Each SHA's display form is git's unique
-// abbreviation of it, looked up in one `git rev-parse` for them all.
+// abbreviation of it, looked up in one `git log` for them all.
 func ResolveFromCommits(idToSHA map[string]string, setting Setting, dir string, run Runner) map[string]CommitInfo {
 	result := map[string]CommitInfo{}
 	if setting.Kind == KindDefault {
@@ -196,10 +196,10 @@ func authorsOfCommit(run Runner, dir, sha string) []plugin.Author {
 }
 
 // uniqueAbbreviations maps each SHA to git's unique abbreviation of it in dir's
-// repository, at least 7 characters (`git rev-parse --short=7`, pinned at 7
-// because git's automatic length grows past it in a large repository). A SHA
-// git can't abbreviate (not in the repository, no git) is left out, and shows
-// as its first 7 characters.
+// repository, at least 7 characters (--abbrev=7, pinned because git's automatic
+// length grows past 7 in a large repository). A SHA git can't abbreviate (not a
+// commit in the repository, no git) is left out, and shows as its first 7
+// characters.
 func uniqueAbbreviations(run Runner, dir string, shas []string) map[string]string {
 	result := map[string]string{}
 	if len(shas) == 0 {
@@ -207,16 +207,16 @@ func uniqueAbbreviations(run Runner, dir string, shas []string) map[string]strin
 	}
 	slices.Sort(shas)
 	shas = slices.Compact(shas)
-	// One call for every SHA; rev-parse prints them in argument order. The
-	// SHAs are hex from git's own log, so none can read as an option.
-	if out, err := run(dir, "git", append([]string{"rev-parse", "--short=7"}, shas...)...); err == nil {
-		lines := strings.Fields(out)
-		if len(lines) == len(shas) {
-			for i, sha := range shas {
-				result[sha] = lines[i]
+	// One call for every SHA. (`rev-parse --short` takes a single revision.)
+	// The SHAs are hex from git's own log, so none can read as an option.
+	args := append([]string{"log", "--no-walk=unsorted", "--abbrev=7", "--format=%H %h"}, shas...)
+	if out, err := run(dir, "git", args...); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if full, short, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
+				result[full] = short
 			}
-			return result
 		}
+		return result
 	}
 	// One unknown SHA fails the whole call: ask for each on its own, so it
 	// doesn't cost the others their abbreviation.

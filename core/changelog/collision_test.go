@@ -167,11 +167,22 @@ func TestResolveTellsCommitsSharingSevenCharactersApart(t *testing.T) {
 	}
 }
 
-// The commit-mode resolver, handed the SHAs, abbreviates them the same way.
+// The commit-mode resolver, handed the SHAs, abbreviates them the same way,
+// in one git call against real git: a batch real git refuses would pass here
+// only by its per-SHA fallback, so the call count is asserted too.
 func TestResolveFromCommitsTellsCommitsSharingSevenCharactersApart(t *testing.T) {
 	repo := newCollisionRepo(t)
+	var calls []string
+	counting := func(dir, name string, args ...string) (string, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return execRun(dir, name, args...)
+	}
 
-	got := ResolveFromCommits(map[string]string{"first": repo.first, "second": repo.second, "base": repo.base}, Setting{Kind: KindGit}, repo.dir, execRun)
+	got := ResolveFromCommits(map[string]string{"first": repo.first, "second": repo.second, "base": repo.base}, Setting{Kind: KindGit}, repo.dir, counting)
+
+	if len(calls) != 1 {
+		t.Errorf("made %d git calls, want the one batched lookup:\n%s", len(calls), strings.Join(calls, "\n"))
+	}
 
 	for id, sha := range map[string]string{"first": repo.first, "second": repo.second, "base": repo.base} {
 		if got[id].Commit != sha {

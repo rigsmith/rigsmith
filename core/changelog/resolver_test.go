@@ -145,7 +145,7 @@ func TestResolveFromCommitsDefaultGeneratorIsEmptyAndSilent(t *testing.T) {
 
 func TestResolveFromCommitsGitUsesTheKnownShaWithoutArchaeology(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "rev-parse --short=7", output: "abc1234\n"},
+		{name: "git", marker: "--no-walk=unsorted --abbrev=7 --format=%H %h abc1234567890", output: "abc1234567890 abc1234\n"},
 	}}
 	result := ResolveFromCommits(map[string]string{"abc1234": "abc1234567890"}, Setting{Kind: KindGit}, "/repo", runner.run)
 
@@ -153,17 +153,17 @@ func TestResolveFromCommitsGitUsesTheKnownShaWithoutArchaeology(t *testing.T) {
 	if got := result["abc1234"]; got != want {
 		t.Errorf("result = %+v, want %+v", got, want)
 	}
-	// One rev-parse for the display form, and no --diff-filter=A archaeology:
+	// One git log for the display form, and no --diff-filter=A archaeology:
 	// the SHA is already known.
 	if runner.calls != 1 {
 		t.Errorf("git mode made %d calls, want 1 (the abbreviation lookup)", runner.calls)
 	}
 }
 
-// Every SHA is abbreviated in a single rev-parse, and each gets its own line.
+// Every SHA is abbreviated in a single git log, and each gets its own line.
 func TestResolveFromCommitsAbbreviatesEveryShaInOneCall(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "rev-parse --short=7 aaa1111222 bbb2222333", output: "aaa1111\nbbb2222\n"},
+		{name: "git", marker: "--format=%H %h aaa1111222 bbb2222333", output: "bbb2222333 bbb2222\naaa1111222 aaa1111\n"},
 	}}
 	result := ResolveFromCommits(map[string]string{"b": "bbb2222333", "a": "aaa1111222"}, Setting{Kind: KindGit}, "/repo", runner.run)
 
@@ -180,12 +180,12 @@ func TestResolveFromCommitsAbbreviatesEveryShaInOneCall(t *testing.T) {
 }
 
 // A SHA git can't abbreviate (not in this repository) fails the batched
-// rev-parse; the others still get theirs, and it shows as its first 7
+// git log; the others still get theirs, and it shows as its first 7
 // characters, as @changesets shows every commit.
 func TestResolveFromCommitsUnknownShaFallsBackToSevenCharacters(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "--short=7 aaa1111222 bbb2222333", err: errors.New("exit status 128")},
-		{name: "git", marker: "--short=7 aaa1111222", output: "aaa11112\n"},
+		{name: "git", marker: "--format=%H %h aaa1111222 bbb2222333", err: errors.New("exit status 128")},
+		{name: "git", marker: "rev-parse --short=7 aaa1111222", output: "aaa11112\n"},
 	}}
 	result := ResolveFromCommits(map[string]string{"a": "aaa1111222", "b": "bbb2222333"}, Setting{Kind: KindGit}, "/repo", runner.run)
 
@@ -199,7 +199,7 @@ func TestResolveFromCommitsUnknownShaFallsBackToSevenCharacters(t *testing.T) {
 
 func TestResolveFromCommitsGitHubLooksUpPrAndAuthorFromTheSha(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
-		{name: "git", marker: "rev-parse --short=7", output: "abc1234\n"},
+		{name: "git", marker: "--no-walk=unsorted --abbrev=7 --format=%H %h abc1234567890", output: "abc1234567890 abc1234\n"},
 		{name: "gh", marker: "commits/abc1234567890/pulls", output: "42"},
 		{name: "gh", marker: ".author.login", output: "octocat"},
 	}}
