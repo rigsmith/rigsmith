@@ -84,6 +84,14 @@ to `getReleaseLine`; the string form sends none. Each change carries its
 released dependencies arrive as `dependencyUpdates`, so a generator can render
 everything the built-in does. The "Updated dependencies" change stays in
 `changes`, flagged `dependencies: true`, for generators written before that.
+The request's `bump` is the release's bump. When the version was chosen by
+hand (`--release-as`, the version prompt), `exactVersion` is `true` and `bump`
+is the move that version makes (`major` for a patch forced to 2.0.0); each
+change keeps its own `bump`. The built-in untyped layout lists the deciding
+changes under the release's bump; a generator that groups by type, as the
+changelogen example does, can keep its sections. `exactVersion` is optional, so
+a generator that doesn't read it keeps working. A prerelease, a snapshot, or a
+linked or fixed group's coordinated version never sets it.
 `"@changesets/cli/changelog"`, @changesets' own default, is the built-in
 layout.
 
