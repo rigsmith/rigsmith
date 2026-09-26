@@ -337,15 +337,29 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 	ci := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, "ci-passed.sh") })
 	// The build checks out the commit the gate approved, not the tag again,
 	// and then confirms the tag still names it.
+	// Exact, not substrings: a near miss (another variable, a check that
+	// resolves the tag without comparing it) would otherwise pass.
 	tagCheckout := stepIndex(gr, func(s step) bool {
-		return strings.HasPrefix(s.Uses, "actions/checkout@") && strings.Contains(withString(s, "ref"), "RELEASE_SHA")
+		return strings.HasPrefix(s.Uses, "actions/checkout@") && withString(s, "ref") == "${{ env.RELEASE_SHA || '' }}"
 	})
 	stillThere := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, `refs/tags/$RELEASE_TAG^{commit}`) })
 	if stillThere < 0 || stillThere < tagCheckout || stillThere > build {
 		t.Errorf("after the checkout (step %d) and before GoReleaser (step %d), the build must confirm the tag still "+
 			"names the approved commit (step %d)", tagCheckout, build, stillThere)
+	} else {
+		body := gr.Steps[stillThere].Run
+		for _, guard := range []string{
+			`at=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")`,
+			`[ "$at" != "$RELEASE_SHA" ]`,
+			`[ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]`,
+			`exit 1`,
+		} {
+			if !strings.Contains(body, guard) {
+				t.Errorf("the tag check lacks %s; it must compare both the tag and HEAD to RELEASE_SHA and fail:\n%s", guard, body)
+			}
+		}
 	}
-	if ci >= 0 && !strings.Contains(gr.Steps[ci].Run, `RELEASE_SHA=$sha`) {
+	if ci >= 0 && !strings.Contains(gr.Steps[ci].Run, `echo "RELEASE_SHA=$sha" >> "$GITHUB_ENV"`) {
 		t.Errorf("the CI check should hand the approved commit on as RELEASE_SHA:\n%s", gr.Steps[ci].Run)
 	}
 	switch {
