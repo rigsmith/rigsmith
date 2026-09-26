@@ -12,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/doctor"
 	"github.com/rigsmith/rigsmith/core/ecosystem"
 	"github.com/rigsmith/rigsmith/core/gitutil"
+	"github.com/rigsmith/rigsmith/core/prestate"
 	"github.com/rigsmith/rigsmith/core/versionstate"
 )
 
@@ -207,5 +208,163 @@ func TestChangesetChecks_ReportsUnparseableChangeset(t *testing.T) {
 	}
 	if tg := byName["changeset targets"]; tg.Status != doctor.Warn || !strings.Contains(tg.Detail, "good") {
 		t.Errorf("targets check = %+v, want Warn naming good", tg)
+	}
+}
+
+// unparseableRow returns the "changeset files" row, if any, and every row by name.
+func unparseableRow(rs []doctor.Result) (doctor.Result, bool, map[string]doctor.Result) {
+	byName := map[string]doctor.Result{}
+	for _, r := range rs {
+		byName[r.Name] = r
+	}
+	r, ok := byName["changeset files"]
+	return r, ok, byName
+}
+
+// TestChangesetChecks_ReportsUnparseableGraduating: the run after `pre exit`
+// graduates .changeset/pre/, and status and version stop on a broken file
+// there. doctor must read pre/ exactly when they do: after `pre exit`, not
+// while still in pre mode.
+func TestChangesetChecks_ReportsUnparseableGraduating(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		mode       string
+		wantFailed bool
+	}{
+		{prestate.ModeExit, true},
+		{prestate.ModePre, false},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			dir := t.TempDir()
+			cd := filepath.Join(dir, ".changeset")
+			writeF(t, filepath.Join(cd, "config.json"), `{}`)
+			writeF(t, filepath.Join(dir, "go.mod"), "module example.com/lib\n\ngo 1.26\n")
+			writeChangeset(t, cd, "top", "---\n\"example.com/lib\": patch\n---\n\nfine")
+			writeF(t, filepath.Join(cd, "pre", "consumed.md"), "---\nlib: \"\"\n---\n\nbroken")
+			if err := prestate.Write(cd, &prestate.PreState{Mode: tc.mode, Tag: "next"}); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(cd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws := &Workspace{Root: dir, ChangesetDir: cd, Config: cfg, Registry: ecosystem.Default()}
+
+			// Preconditions: the top level parses, and status's own graduating
+			// step fails on pre/ exactly in the mode we expect doctor to fail.
+			if _, err := changeset.Dir(cd, ""); err != nil {
+				t.Fatalf("setup: top level should parse: %v", err)
+			}
+			pre, err := prestate.Read(cd)
+			if err != nil || pre == nil || pre.Mode != tc.mode {
+				t.Fatalf("setup: pre state %+v, err %v; want mode %s", pre, err, tc.mode)
+			}
+			if _, gerr := withGraduating(ws, nil, pre); (gerr != nil) != tc.wantFailed {
+				t.Fatalf("setup: withGraduating err = %v, want failure %v", gerr, tc.wantFailed)
+			}
+
+			bad, ok, _ := unparseableRow(changesetChecks(ctx, ws, discover(ctx, ws)))
+			if ok != tc.wantFailed {
+				t.Fatalf("changeset files row present = %v, want %v (%+v)", ok, tc.wantFailed, bad)
+			}
+			if !ok {
+				return
+			}
+			if bad.Status != doctor.Fail || !strings.Contains(bad.Detail, ".changeset/pre/consumed.md: ") {
+				t.Errorf("row %+v: want Fail naming .changeset/pre/consumed.md", bad)
+			}
+		})
+	}
+}
+
+// TestChangesetChecks_CommitsModeReadsNoChangesetFiles: with
+// versioning.source "commits" the loader never opens .changeset/*.md, so a
+// broken one there stops nothing and doctor must not fail on it; with "both"
+// it does, and doctor must.
+func TestChangesetChecks_CommitsModeReadsNoChangesetFiles(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		source     string
+		wantFailed bool
+	}{
+		{"commits", false},
+		{"both", true},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			dir := initGoRepo(t, "example.com/lib", "v1.0.0")
+			cd := filepath.Join(dir, ".changeset")
+			writeF(t, filepath.Join(cd, "config.json"), `{"versioning":{"source":"`+tc.source+`"}}`)
+			writeChangeset(t, cd, "neg", "---\nlib: \"\"\n---\n\nbroken")
+			cfg, err := config.Load(cd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws := &Workspace{Root: dir, ChangesetDir: cd, Config: cfg, Registry: ecosystem.Default()}
+
+			// Precondition: the loader status uses fails on this tree exactly
+			// when doctor should.
+			pkgs, _, err := ws.Discover(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, lerr := ws.LoadChangesets(ctx, pkgs); (lerr != nil) != tc.wantFailed {
+				t.Fatalf("setup: LoadChangesets err = %v, want failure %v", lerr, tc.wantFailed)
+			}
+
+			rs := changesetChecks(ctx, ws, discover(ctx, ws))
+			bad, ok, byName := unparseableRow(rs)
+			if ok != tc.wantFailed {
+				t.Fatalf("changeset files row present = %v, want %v (%+v)", ok, tc.wantFailed, bad)
+			}
+			if fails, _, _ := doctor.Counts([]doctor.Section{{Results: rs}}); (fails > 0) != tc.wantFailed {
+				t.Errorf("fails = %d, want failure %v: %+v", fails, tc.wantFailed, rs)
+			}
+			p := byName["pending"]
+			if tc.wantFailed {
+				if !strings.Contains(bad.Detail, ".changeset/neg.md: ") {
+					t.Errorf("detail %q should name .changeset/neg.md", bad.Detail)
+				}
+				if p.Detail != "1 changeset(s)" {
+					t.Errorf("pending = %+v, want 1 changeset(s)", p)
+				}
+			} else {
+				if p.Status != doctor.Info || !strings.Contains(p.Detail, "not read") {
+					t.Errorf("pending = %+v, want Info saying changeset files are not read", p)
+				}
+				if _, ok := byName["changeset targets"]; ok {
+					t.Errorf("targets check ran on files the loader never reads: %+v", byName["changeset targets"])
+				}
+			}
+		})
+	}
+}
+
+// TestCheckUnparseable_ListsEveryFile: every broken file is named with its
+// error, past the three a preview would show.
+func TestCheckUnparseable_ListsEveryFile(t *testing.T) {
+	dir := t.TempDir()
+	cd := filepath.Join(dir, ".changeset")
+	writeF(t, filepath.Join(cd, "config.json"), `{}`)
+	names := []string{"a1", "a2", "a3", "a4"}
+	for _, n := range names {
+		writeChangeset(t, cd, n, "---\nlib: \"\"\n---\n\nbroken "+n)
+	}
+	_, bad, err := changeset.DirLenient(cd, "")
+	if err != nil || len(bad) != 4 {
+		t.Fatalf("setup: %d bad file(s), err %v; want 4", len(bad), err)
+	}
+	ws := &Workspace{Root: dir, ChangesetDir: cd, Config: config.Default()}
+	r, ok := checkUnparseable(ws, bad)
+	if !ok {
+		t.Fatal("no row for four broken files")
+	}
+	for _, n := range names {
+		want := ".changeset/" + n + ".md: changeset \"" + n + "\": malformed frontmatter line"
+		if !strings.Contains(r.Detail, want) {
+			t.Errorf("detail missing %q:\n%s", want, r.Detail)
+		}
+	}
+	if strings.Contains(r.Detail, "more") {
+		t.Errorf("detail truncates the list:\n%s", r.Detail)
 	}
 }

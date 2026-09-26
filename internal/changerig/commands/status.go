@@ -321,7 +321,7 @@ func activeChangesets(changesets []*changeset.Changeset, pre *prestate.PreState)
 // consolidates every change since pre mode was entered (@changesets v3). Any
 // other run gets changesets back unchanged.
 func withGraduating(ws *Workspace, changesets []*changeset.Changeset, pre *prestate.PreState) ([]*changeset.Changeset, error) {
-	if pre == nil || pre.Mode != prestate.ModeExit || !ws.Config.UsesChangesets() || !ws.Graduates() {
+	if !graduatesPre(ws, pre) {
 		return changesets, nil
 	}
 	graduating, err := changeset.Dir(prestate.Dir(ws.ChangesetDir), "")
@@ -342,6 +342,14 @@ func withGraduating(ws *Workspace, changesets []*changeset.Changeset, pre *prest
 		}
 	}
 	return out, nil
+}
+
+// graduatesPre reports whether a run reads .changeset/pre/: the one after
+// `pre exit`, when on-disk changesets are a source and no --since scope
+// excludes the prerelease's. doctor asks the same question, so it checks the
+// files status and version will read, no more and no fewer.
+func graduatesPre(ws *Workspace, pre *prestate.PreState) bool {
+	return pre != nil && pre.Mode == prestate.ModeExit && ws.Config.UsesChangesets() && ws.Graduates()
 }
 
 func assemblePlan(ctx context.Context, ws *Workspace, changesets []*changeset.Changeset, pkgs []plugin.Package) ([]*planner.Module, error) {

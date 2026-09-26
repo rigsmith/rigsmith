@@ -21,6 +21,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/prestate"
 	"github.com/rigsmith/rigsmith/core/versionstate"
 	"github.com/spf13/cobra"
 )
@@ -141,10 +142,18 @@ func changesetChecks(ctx context.Context, ws *Workspace, disc Discovery) []docto
 
 // pendingChecks reports the pending changesets: how many there are (neutral
 // context), any that can't be parsed, and any that can never release. It reads
-// the directory leniently, so one broken file neither hides the others nor
+// exactly the files status and version read: .changeset/*.md only when
+// changesets are a source, plus .changeset/pre/ on the run after `pre exit`.
+// It reads them leniently, so one broken file neither hides the others nor
 // stops the targets check from running on the ones that did parse. A missing
 // .changeset/ says nothing here — checkChangesetConfig already reports it.
 func pendingChecks(ctx context.Context, ws *Workspace) []doctor.Result {
+	if !ws.Config.UsesChangesets() {
+		// The loader never opens a changeset file in this mode, so none can
+		// be pending, stranded or broken.
+		return []doctor.Result{{Name: "pending", Status: doctor.Info,
+			Detail: fmt.Sprintf("changeset files not read (versioning.source: %q); releases come from commits", ws.Config.CommitSource())}}
+	}
 	css, bad, err := changeset.DirLenient(ws.ChangesetDir, "")
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
@@ -156,7 +165,9 @@ func pendingChecks(ctx context.Context, ws *Workspace) []doctor.Result {
 	}
 	rs := []doctor.Result{{Name: "pending", Status: doctor.Info,
 		Detail: fmt.Sprintf("%d changeset(s)", len(css)+len(bad))}}
-	if r, ok := checkUnparseable(ws, bad); ok {
+	gradBad, gradRs := graduatingChecks(ws)
+	rs = append(rs, gradRs...)
+	if r, ok := checkUnparseable(ws, append(bad, gradBad...)); ok {
 		rs = append(rs, r)
 	}
 	if len(css) == 0 && len(bad) > 0 {
@@ -167,23 +178,52 @@ func pendingChecks(ctx context.Context, ws *Workspace) []doctor.Result {
 	return append(rs, checkStranded(ctx, ws, css))
 }
 
+// graduatingChecks reads .changeset/pre/ when status and version will
+// (graduatesPre): the run after `pre exit` graduates every changeset the
+// prerelease consumed, and one broken file there stops them as surely as one
+// at the top level. It returns those broken files for checkUnparseable, and a
+// row for anything that stops the read itself.
+func graduatingChecks(ws *Workspace) ([]*changeset.FileError, []doctor.Result) {
+	pre, err := prestate.Read(ws.ChangesetDir)
+	if err != nil {
+		return nil, []doctor.Result{{Name: "prerelease state", Status: doctor.Fail,
+			Detail: "can't read .changeset/pre.json: " + err.Error(),
+			Hint:   "fix the JSON by hand; status and version refuse to run until it parses"}}
+	}
+	if !graduatesPre(ws, pre) {
+		return nil, nil
+	}
+	_, bad, err := changeset.DirLenient(prestate.Dir(ws.ChangesetDir), "")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, []doctor.Result{{Name: "prerelease state", Status: doctor.Fail,
+			Detail: "can't read .changeset/pre/: " + err.Error(),
+			Hint:   "the run after `pre exit` graduates every changeset there; check the directory's permissions"}}
+	}
+	return bad, nil
+}
+
 // checkUnparseable reports changeset files that can't be read or parsed, each
-// by file and error. It is a failure, not a warning: status and version refuse
-// to run while any one of them is there, so no release can be planned.
+// on its own line with its path under the repo and its error — every one, as
+// a fix needs to find them all. It is a failure, not a warning: status and
+// version refuse to run while any one of them is there.
 func checkUnparseable(ws *Workspace, bad []*changeset.FileError) (doctor.Result, bool) {
 	if len(bad) == 0 {
 		return doctor.Result{}, false
 	}
-	items := make([]string, 0, len(bad))
+	lines := make([]string, 0, len(bad)+1)
+	lines = append(lines, fmt.Sprintf("%d changeset(s) can't be parsed:", len(bad)))
 	for _, b := range bad {
 		file := b.Path
 		if rel, err := filepath.Rel(ws.Root, b.Path); err == nil {
 			file = filepath.ToSlash(rel)
 		}
-		items = append(items, fmt.Sprintf("%s (%v)", file, b.Err))
+		lines = append(lines, fmt.Sprintf("%s: %v", file, b.Err))
 	}
 	return doctor.Result{Name: "changeset files", Status: doctor.Fail,
-		Detail: fmt.Sprintf("%d changeset(s) can't be parsed: %s", len(bad), previewNames(items, 3)),
+		Detail: strings.Join(lines, "\n"),
 		Hint:   "fix the frontmatter by hand (`\"package\": patch|minor|major` per line), or delete the file; status and version refuse to run until every changeset parses"}, true
 }
 

@@ -55,6 +55,10 @@ func glyph(s doctor.Status) string {
 	}
 }
 
+// detailIndent lines a Detail's continuation lines up with its first: the
+// "  ✓ " prefix plus the 22-column name and its trailing space.
+const detailIndent = "                           "
+
 // RenderSections prints the sectioned ✓/!/✗ report, each degraded/failing check
 // followed by its hint. Tools with their own checklist renderer (rig's live
 // spinner) skip this and render the checks themselves; the shared fix flow
@@ -63,7 +67,9 @@ func RenderSections(out io.Writer, sections []doctor.Section) {
 	for _, s := range sections {
 		fmt.Fprintln(out, dimStyle.Render(s.Title))
 		for _, r := range s.Results {
-			fmt.Fprintf(out, "  %s %-22s %s\n", glyph(r.Status), r.Name, r.Detail)
+			// A multi-line Detail keeps its later lines under the first.
+			detail := strings.ReplaceAll(r.Detail, "\n", "\n"+detailIndent)
+			fmt.Fprintf(out, "  %s %-22s %s\n", glyph(r.Status), r.Name, detail)
 			if r.Hint != "" && r.Status != doctor.OK {
 				fmt.Fprintf(out, "    %s\n", dimStyle.Render("→ "+r.Hint))
 			}
