@@ -1,0 +1,24 @@
+scripts/npm/trust-publishers.mjs
+  s_505a2cfce9114c::t_8e2ff4a45cd561 250-254,257-266,346-347,410-422,432-433,444,476,480,482
+scripts/trustpublishers_test.go
+  ai_agent 278-290
+  s_505a2cfce9114c::t_8e2ff4a45cd561 50-52,62-67,194-197,217-224,230,234,238
+  s_505a2cfce9114c::t_b66957c6835e9b 130-134
+  s_505a2cfce9114c::t_57cd6462e42d2d 103-114,118-119,183-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2a5e2d838de11a4ef970938478b4453a45adadb4",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
