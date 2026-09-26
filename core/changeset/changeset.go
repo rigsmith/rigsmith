@@ -486,7 +486,7 @@ func isChangesetFile(name, interopExt string) bool {
 
 // Ref is where a changeset came from, for changelog references.
 type Ref struct {
-	Commit string // the commit that added the changeset (or its source commit)
+	Commit string // the full SHA of the commit that added the changeset (or its source commit)
 	PR     int    // its pull request, 0 when unknown
 	Author string // its author's login, when resolved
 }
