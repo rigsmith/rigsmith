@@ -9,12 +9,18 @@ version bumps and a changelog.
 ```sh
 changerig init
 changerig init --source commits    # changesets | commits | both
+changerig init --changelog github  # link commits and pull requests (a GitHub repo)
 ```
 
 Creates the `.changeset/` directory with a `config.json`. The config schema
 (`.changeset/config.json`) covers changelog/format specs and ignore globs.
 `--source` picks where releases are sourced from — accumulated changeset files,
 conventional-commit messages, or both (interactive when the flag is omitted).
+On a GitHub repository, init also offers
+[commit and pull request links](#links) in the changelog: `--changelog github`
+turns them on, `--changelog default` keeps @changesets' plain layout, and
+without the flag it asks at a terminal. Run from a script, it keeps the plain
+layout and prints how to switch.
 
 With commits as a source, a conventional commit whose type is a changelog
 group's (or `ci`, `style`, `revert`) releases the packages whose files it
@@ -305,6 +311,25 @@ swap it in, or `"changelog": ["<plugin>", { … }]` to hand it options (as
 @changesets does): the generator receives them as its request's `options`. A
 bare name runs `changeset-changelog-<name>` from `$PATH`, and a path runs that
 file. See [the plugin protocol](/core/plugin-protocol#changelog-generators).
+
+### Links to commits and pull requests {#links}
+
+The default changelog lists each change as its author wrote it. On GitHub,
+`@changesets/changelog-github` is usually worth turning on: each entry links
+the commit that added it and its pull request, and thanks its author.
+
+```jsonc
+{ "changelog": ["@changesets/changelog-github", { "repo": "acme/widgets" }] }
+```
+
+The commit comes from git (the commit that added the changeset, or a
+commit-sourced change's own). The pull request and author are looked up with
+the GitHub CLI, so the release job needs `gh` signed in (`GH_TOKEN` set to a
+token that can read the repository, such as the workflow's `GITHUB_TOKEN`).
+Without it, entries still link their commits. `@changesets/changelog-git` is
+the lighter option: a commit hash on each line, no lookups. A GitHub
+repository's `changerig init` offers the github layout for you (see
+[`init`](#init)).
 
 ### A release record {#record}
 

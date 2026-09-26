@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/charmbracelet/huh"
+	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/spf13/cobra"
 )
 
@@ -19,10 +22,18 @@ with ` + "`changerig add`" + `; consume them with ` + "`changerig version`" + `.
 
 // NewInitCmd builds the `init` command.
 func NewInitCmd() *cobra.Command {
-	var sourceFlag string
+	var sourceFlag, changelogFlag string
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Create the .changeset folder and config",
+		Long: `Create the .changeset folder and its config.json.
+
+--source picks where releases come from: changeset files (the default),
+conventional commits, or both. On a GitHub repository, --changelog github
+writes @changesets/changelog-github, so each changelog entry links its commit
+and pull request and thanks its author; --changelog default keeps the plain
+layout. Without the flag, init asks on a terminal, and otherwise keeps the
+plain layout and says how to switch.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := Open()
 			if err != nil {
@@ -32,21 +43,71 @@ func NewInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			created, err := Scaffold(ws, source)
+			slug := gitutil.GitHubRepoSlug(cmd.Context(), ws.Root)
+			repo, err := resolveInitChangelog(changelogFlag, slug)
 			if err != nil {
 				return err
 			}
+			created, err := ScaffoldWith(ws, source, repo)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
 			if !created {
-				fmt.Fprintf(cmd.OutOrStdout(), "Already initialized at %s\n", ws.ChangesetDir)
+				fmt.Fprintf(out, "Already initialized at %s\n", ws.ChangesetDir)
 				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Initialized changesets in %s (source: %s)\n", ws.ChangesetDir, source)
+			fmt.Fprintf(out, "Initialized changesets in %s (source: %s)\n", ws.ChangesetDir, source)
+			if repo == "" && slug != "" && changelogFlag == "" {
+				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf(
+					"tip: this repository is on GitHub (%s). To link each changelog entry's commit and pull request, set "+
+						`"changelog": ["@changesets/changelog-github", { "repo": %q }] in config.json (or run init with --changelog github).`, slug, slug)))
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&sourceFlag, "source", "",
 		"release source: changesets (default), commits, or both")
+	cmd.Flags().StringVar(&changelogFlag, "changelog", "",
+		"changelog layout: github (link commits and pull requests; needs a GitHub remote) or default")
+	_ = cmd.RegisterFlagCompletionFunc("changelog", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return []string{"github\tlink commits and pull requests (@changesets/changelog-github)", "default\tthe plain layout"}, cobra.ShellCompDirectiveNoFileComp
+	})
 	return cmd
+}
+
+// resolveInitChangelog decides whether a fresh config links commits and pull
+// requests (@changesets/changelog-github), returning the GitHub repo to link
+// to, or "" for the plain layout. An explicit --changelog wins; otherwise, on
+// a GitHub repository at a terminal, the user is asked; anywhere else the
+// plain layout stays, as @changesets' own init writes it.
+func resolveInitChangelog(flag, slug string) (string, error) {
+	switch flag {
+	case "github":
+		if slug == "" {
+			return "", fmt.Errorf("--changelog github needs a GitHub remote to link to; this repository has none")
+		}
+		return slug, nil
+	case "default":
+		return "", nil
+	case "":
+	default:
+		return "", fmt.Errorf("invalid --changelog %q (want github or default)", flag)
+	}
+	if slug == "" || !addInteractive() {
+		return "", nil
+	}
+	link := true
+	err := huh.NewConfirm().
+		Title("Link commits and pull requests in the changelog?").
+		Description(fmt.Sprintf("This repository is on GitHub (%s). @changesets/changelog-github links each entry's commit and pull request and thanks its author.", slug)).
+		Value(&link).
+		WithTheme(brand.Theme(brand.AccentChange)).
+		Run()
+	if err != nil || !link {
+		return "", nil // aborted or declined: the plain layout
+	}
+	return slug, nil
 }
 
 // resolveInitSource picks the versioning source for a fresh workspace. An
@@ -75,6 +136,12 @@ func resolveInitSource(flag, where string) (config.VersioningSource, error) {
 // the workspace was already initialized — a benign no-op). Shared by `init` and
 // the inline setup offer the commands make in an uninitialized workspace.
 func Scaffold(ws *Workspace, source config.VersioningSource) (created bool, err error) {
+	return ScaffoldWith(ws, source, "")
+}
+
+// ScaffoldWith is Scaffold that, given a GitHub repo ("owner/name"), writes
+// @changesets/changelog-github linked to it, for commit and PR links.
+func ScaffoldWith(ws *Workspace, source config.VersioningSource, githubRepo string) (created bool, err error) {
 	if err := os.MkdirAll(ws.ChangesetDir, 0o755); err != nil {
 		return false, err
 	}
@@ -82,7 +149,7 @@ func Scaffold(ws *Workspace, source config.VersioningSource) (created bool, err 
 	if _, err := os.Stat(cfgPath); err == nil {
 		return false, nil
 	}
-	if err := os.WriteFile(cfgPath, []byte(renderConfig(source)), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(renderConfig(source, githubRepo)), 0o644); err != nil {
 		return false, err
 	}
 	readmePath := filepath.Join(ws.ChangesetDir, "README.md")
@@ -95,10 +162,13 @@ func Scaffold(ws *Workspace, source config.VersioningSource) (created bool, err 
 // renderConfig produces the default config.json. Changeset mode omits the
 // versioning block entirely (an empty source normalizes to changesets), so the
 // classic config round-trips byte-for-byte; commit/both modes inject the source.
-func renderConfig(source config.VersioningSource) string {
+func renderConfig(source config.VersioningSource, githubRepo string) string {
 	versioning := ""
 	if source == config.SourceCommits || source == config.SourceBoth {
 		versioning = fmt.Sprintf("  \"versioning\": { \"source\": %q },\n", source)
+	}
+	if githubRepo != "" {
+		versioning += fmt.Sprintf("  \"changelog\": [\"@changesets/changelog-github\", { \"repo\": %q }],\n", githubRepo)
 	}
 	return fmt.Sprintf(`{
   "$schema": "https://rigsmith.dev/schemas/changeset-config.json",
