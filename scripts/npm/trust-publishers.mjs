@@ -48,7 +48,8 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, '..', '..')
-const OUT = path.join(REPO_ROOT, 'npm', 'dist')
+// TRUST_PUBLISHERS_DIST points at another build output, for testing.
+const OUT = process.env.TRUST_PUBLISHERS_DIST || path.join(REPO_ROOT, 'npm', 'dist')
 const REPOSITORY = 'rigsmith/rigsmith'
 const WORKFLOW = 'release.yml'
 const SCOPE = '@rigsmith'
@@ -414,6 +415,7 @@ if (LIST) {
   const listOtp = OTP || await promptOTP('npm one-time password (reading the list needs one too): ')
   const ours = []
   const stale = []
+  const foreign = []
   const other = []
   const none = []
   const unreadable = []
@@ -422,13 +424,19 @@ if (LIST) {
     process.stdout.write(`\r  reading ${i + 1}/${all.length}  ${name.padEnd(34).slice(0, 34)}`)
     const configs = registeredConfigs(name, listOtp)
     const held = configs === null ? null : configs.map((c) => c.file)
-    if (held === null) unreadable.push(name)
-    else if (configs.some(isOurs)) {
+    if (held === null) {
+      unreadable.push(name)
+      continue
+    }
+    // Another repository able to publish the package is worth saying whatever
+    // else holds it.
+    const elsewhere = configs.filter((c) => c.repository !== REPOSITORY)
+    if (elsewhere.length) foreign.push(`${name} (${elsewhere.map((c) => `${c.repository} ${c.file}`).join(', ')})`)
+    if (configs.some(isOurs)) {
       ours.push(name)
       const extra = configs.filter((c) => c.repository === REPOSITORY && !isOurs(c))
       if (extra.length) stale.push(`${name} (also ${extra.map((c) => c.file).join(', ')})`)
-    }
-    else if (held.length > 0) other.push(`${name} (${held.join(', ')})`)
+    } else if (held.length > 0) other.push(`${name} (${held.join(', ')})`)
     else none.push(name)
   }
   process.stdout.write('\r'.padEnd(60) + '\r')
@@ -439,6 +447,7 @@ if (LIST) {
     ['registered for a DIFFERENT workflow', other],
     ['could not be read', unreadable],
     [`registered for ${WORKFLOW} but still also for another workflow here (--replace drops it)`, stale],
+    ['ALSO trusted by another repository, which can publish them too (revoke by hand if unexpected)', foreign],
   ]) {
     if (list.length) console.log(`\n${list.length} ${label}:\n  ${list.join('\n  ')}`)
   }
@@ -448,7 +457,9 @@ if (LIST) {
       console.log('That is the one-time password: run again with a fresh code, entered within its 30 seconds.')
     }
   }
-  process.exit(none.length + other.length + unreadable.length > 0 ? 1 : 0)
+  // Done means release.yml of this repository is the only publisher: a stale
+  // entry, or another repository's, fails the check too.
+  process.exit(none.length + other.length + unreadable.length + stale.length + foreign.length > 0 ? 1 : 0)
 }
 
 const names = packageNames()
