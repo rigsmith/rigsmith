@@ -105,6 +105,18 @@ which renders under **💥 Breaking Changes**, ahead of every other section, and
 derives a major bump. Like any derived bump, an explicit per-package bump on the
 changeset still wins, so `"pkg": patch` with `feat!` releases a patch.
 
+### Before 1.0.0 {#bump-minor-pre-major}
+
+As @changesets does, a major bump on a `0.x` package releases `1.0.0`. With
+`"versioning": { "bumpMinorPreMajor": true }` (release-please's
+`bump-minor-pre-major`), a major below `1.0.0` releases as a **minor** instead:
+`0.3.0` → `0.4.0`, and `status` reports it as the minor it is. That applies
+whether the major comes from a changeset's bump or a breaking type (`feat!`),
+and packages at `1.0.0` or above are unaffected. `^0.3.0` doesn't cover
+`0.4.0`, so dependents still follow it. Going to `1.0.0` is then a deliberate
+step: `version --release-as <pkg>=1.0.0` (or `releaseAs` in shiprig-action's
+config).
+
 ### Choosing the sections and their order
 
 `changelogGroups` maps each type to a heading and an implied bump, and the list
