@@ -196,7 +196,7 @@ Enforced by the `clauderig guard` PreToolUse hook. Full spec:
   (`changerig add`); the `require-changeset` Action blocks merge if one is missing
   (label `skip-changeset` to opt out). See [`GITHUB-ACTIONS.md`](GITHUB-ACTIONS.md).
 - **Release by merging the "chore: release" PR.** The one release workflow,
-  `.github/workflows/goreleaser.yml` (rigsmith/shiprig-action, as the shipRig
+  `.github/workflows/release.yml` (rigsmith/shiprig-action, as the shipRig
   App), keeps it open while changesets are pending. Merging it waits for CI to
   pass on the merge commit, tags `vX.Y.Z` and/or `ui/vX.Y.Z`, and for `vX.Y.Z`
   builds and publishes in the same run, with the changelog entry as the GitHub

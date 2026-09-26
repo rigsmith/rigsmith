@@ -16,13 +16,13 @@ import (
 // publishing appears in a second one, that second workflow cannot mint a
 // credential and needs a stored NPM_TOKEN, which is the thing being removed.
 //
-// This is why the npm recovery path is a job in goreleaser.yml rather than the
+// This is why the npm recovery path is a job in release.yml rather than the
 // separate npm-republish.yml it used to be. Nothing about that arrangement is
 // self-evident from reading either file, and the failure it prevents shows up as
 // a publish that quietly falls back to a token — or, once the token is gone, a
 // release that cannot publish npm at all.
 
-const publishingWorkflow = "goreleaser.yml"
+const publishingWorkflow = "release.yml"
 
 // workflowsThatPublishNpm returns every workflow file that runs an npm publish.
 //

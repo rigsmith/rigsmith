@@ -53,7 +53,7 @@ the registry:
 
   A configuration names a workflow FILE, so the practical consequence is that
   everything publishing a given package has to live in one file. rigsmith's
-  release and its npm recovery path are two jobs in `goreleaser.yml` for exactly
+  release and its npm recovery path are two jobs in `release.yml` for exactly
   this reason: as separate workflows, the second could never publish without a
   stored token, which is the thing trusted publishing exists to remove.
 - **crates.io** — crates.io → crate → Settings → Trusted Publishing

@@ -18,7 +18,7 @@
   ],
   "node": {
     "//": "The npm wrapper packages are not in this tree: scripts/npm/build-packages.mjs writes them under npm/dist/ from GoReleaser's signed archives, at release time. Discovery cannot see them, so publishDirs names where they land - published, never versioned, since the build that produced each binary stamped its manifest.",
-    "//oidc": "Trusted publishing, once each package has a publisher registered (npm trust github <pkg> --file <workflow>.yml --repo rigsmith/rigsmith --allow-publish) AND the workflow publishes through shiprig. Until both, goreleaser.yml publishes these with NPM_TOKEN and this key is inert.",
+    "//oidc": "Trusted publishing, once each package has a publisher registered (npm trust github <pkg> --file <workflow>.yml --repo rigsmith/rigsmith --allow-publish) AND the workflow publishes through shiprig. Until both, release.yml publishes these through build-packages.mjs and this key is inert.",
     "publishDirs": ["npm/dist/*"],
     "oidc": "auto"
   },

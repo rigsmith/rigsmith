@@ -6,6 +6,8 @@
 //   node scripts/npm/trust-publishers.mjs             # register
 //   node scripts/npm/trust-publishers.mjs --otp 123456 # ...without being asked for it
 //   node scripts/npm/trust-publishers.mjs --list      # what the registry holds
+//   node scripts/npm/trust-publishers.mjs --replace   # move packages bound to another
+//                                                      # workflow in this repo over to this one
 //
 // Trusted publishing lets the workflow mint a short-lived credential from its
 // OIDC identity instead of carrying a long-lived NPM_TOKEN — the token that
@@ -16,7 +18,7 @@
 // configuration per package ("If you attempt to create a new trust relationship
 // when one already exists, it will result in an error" — npm trust docs), and a
 // configuration names a workflow FILE. So everything that publishes these
-// packages lives in goreleaser.yml: the tag release, and the republish-npm job
+// packages lives in release.yml: the release itself, and the republish-npm job
 // that recovers a release whose npm step alone failed. That job used to be a
 // workflow of its own, which would have left it needing a stored token forever —
 // folding it in is what makes NPM_TOKEN removable rather than merely reduced.
@@ -49,7 +51,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, '..', '..')
 const OUT = path.join(REPO_ROOT, 'npm', 'dist')
 const REPOSITORY = 'rigsmith/rigsmith'
-const WORKFLOW = 'goreleaser.yml'
+const WORKFLOW = 'release.yml'
 const SCOPE = '@rigsmith'
 
 // `npm trust` is newer than trusted publishing itself: publishing via OIDC
@@ -77,6 +79,11 @@ const OTP = (() => {
   return i >= 0 ? process.argv[i + 1] : ''
 })()
 const LIST = process.argv.includes('--list')
+// --replace moves a package whose single trusted-publisher configuration names
+// another workflow in THIS repository (the release workflow was goreleaser.yml
+// until it and release.yml became one file): revoke that one, register this.
+// A configuration for any other repository is never touched.
+const REPLACE = process.argv.includes('--replace')
 
 function fail(msg) {
   console.error(`trust-publishers: ${msg}`)
@@ -253,12 +260,19 @@ function failureKind(name, otp) {
 // single object rather than a list — one configuration per package is the rule,
 // so there is nothing to wrap:
 //
-//   { "id": "…", "type": "github", "file": "goreleaser.yml",
+//   { "id": "…", "type": "github", "file": "release.yml",
 //     "repository": "rigsmith/rigsmith", "permissions": ["createPackage", …] }
 //
 // Guessing an array or a `trustedPublishers` wrapper is how a run that had
 // registered all 41 reported none of them.
 function registeredWorkflows(name, otp) {
+  const configs = registeredConfigs(name, otp)
+  return configs === null ? null : configs.map((c) => c.file)
+}
+
+// registeredConfigs is registeredWorkflows with each configuration's id and
+// repository, which --replace needs to revoke the right one.
+function registeredConfigs(name, otp) {
   const r = spawnSync('npm', ['trust', 'list', name, '--json'],
     { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
   const body = (r.stdout || '').trim()
@@ -273,14 +287,36 @@ function registeredWorkflows(name, otp) {
     return null
   }
   const rows = Array.isArray(parsed) ? parsed : [parsed]
-  const files = rows
+  const configs = rows
     .filter((row) => row && typeof row === 'object')
-    .map((row) => row.file ?? row.workflow ?? row.workflowFilename ?? '')
-    .filter(Boolean)
+    .map((row) => ({
+      id: row.id ?? '',
+      file: row.file ?? row.workflow ?? row.workflowFilename ?? '',
+      repository: row.repository ?? row.repo ?? '',
+    }))
+    .filter((c) => c.file)
   // Parsed, but nothing that names a workflow: better to say it could not be
   // read than to report a registered package as unregistered.
-  if (files.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) return null
-  return files
+  if (configs.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) return null
+  return configs
+}
+
+// replace revokes a package's configuration for another workflow in this
+// repository and registers this one. Returns the workflow it replaced, or null
+// when there was nothing it may replace (another repository's, or unreadable).
+function replace(name, otp) {
+  const configs = registeredConfigs(name, otp)
+  if (configs === null) return null
+  const ours = configs.filter((c) => c.repository === REPOSITORY && c.file !== WORKFLOW && c.id)
+  if (ours.length === 0 || ours.length !== configs.length) return null
+  for (const c of ours) {
+    sleep(CALL_SPACING_MS)
+    const r = spawnSync('npm', ['trust', 'revoke', name, '--id', c.id],
+      { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
+    if (r.status !== 0) return null
+  }
+  sleep(CALL_SPACING_MS)
+  return register(name, otp).ok ? ours.map((c) => c.file).join(', ') : null
 }
 
 const npmVersion = requireNpm()
@@ -355,7 +391,8 @@ if (!DRY_RUN && !otp) {
 
 for (const [i, name] of names.entries()) {
   if (DRY_RUN) {
-    console.log(`would: npm ${registerArgs(name).join(' ')}${otp ? '   (npm_config_otp set)' : ''}`)
+    console.log(`would: npm ${registerArgs(name).join(' ')}${otp ? '   (npm_config_otp set)' : ''}` +
+      (REPLACE ? '   (revoking another workflow of this repository first, if it holds the package)' : ''))
     continue
   }
   if (i > 0) sleep(CALL_SPACING_MS)
@@ -386,6 +423,14 @@ for (const [i, name] of names.entries()) {
   if (kind === 'ours') {
     console.log(`· ${name} (already registered for ${WORKFLOW})`)
     done++
+  } else if (kind === 'other' && REPLACE) {
+    const was = replace(name, otp)
+    if (was) {
+      console.log(`↻ ${name} (was ${was})`)
+      done++
+    } else {
+      mismatched.push(name)
+    }
   } else if (kind === 'other') {
     mismatched.push(name)
   } else {
@@ -398,7 +443,8 @@ if (!DRY_RUN) {
   console.log(`\n${done}/${names.length} registered for ${WORKFLOW}`)
   if (mismatched.length) {
     console.error(`\nAlready configured for a different publisher — the registry allows one per package,\n` +
-      `so these need \`npm trust revoke --id <id> <package>\` before they can be re-registered:\n  ` +
+      `so these need \`npm trust revoke --id <id> <package>\` before they can be re-registered` +
+      (REPLACE ? ' (--replace moves only this repository\'s own)' : ', or --replace if the other is this repository\'s') + `:\n  ` +
       mismatched.join('\n  '))
   }
   if (failures.length) console.error(`\nfailed: ${failures.join(', ')}`)

@@ -28,7 +28,7 @@ import (
 // workflows.
 
 const (
-	cliWorkflow = "../.github/workflows/goreleaser.yml"
+	cliWorkflow = "../.github/workflows/release.yml"
 	uiWorkflow  = "../.github/workflows/release-ui.yml"
 )
 

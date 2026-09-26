@@ -12,10 +12,10 @@
 #     App token makes possible (a tag pushed with GITHUB_TOKEN starts nothing).
 #   - Any other push with nothing pending: nothing happens.
 #
-# The file is still named goreleaser.yml, and that matters: npm's trusted
-# publishing binds each wrapper package to this repository AND this workflow
-# filename (see scripts/npmoidc_test.go). Renaming it means updating every
-# package's trusted publisher on npmjs.com first.
+# npm's trusted publishing binds each wrapper package to this repository AND
+# this workflow's filename (see scripts/npmoidc_test.go), so renaming the file
+# means moving every package's trusted publisher first:
+# node scripts/npm/trust-publishers.mjs --replace.
 #
 # Recovery:
 #   - A failed run: re-run it (Actions → the run → Re-run failed jobs). A re-run

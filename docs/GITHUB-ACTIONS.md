@@ -99,7 +99,7 @@ For same-repo PR flows, the Action gate is the complete bot with zero infrastruc
 
 rigsmith keeps a `.changeset/` folder and releases through
 [rigsmith/shiprig-action](https://github.com/rigsmith/shiprig-action), running as the shipRig GitHub
-App, in one workflow ([`.github/workflows/goreleaser.yml`](../.github/workflows/goreleaser.yml)):
+App, in one workflow ([`.github/workflows/release.yml`](../.github/workflows/release.yml)):
 changesets keep a `chore: release x.y.z` PR open, and merging it waits for CI on the merge
 commit, then tags each package that release bumps and hasn't tagged yet. For `vX.Y.Z` (the CLIs)
 the same run builds and publishes, with the changelog entry as the GitHub release's notes;
