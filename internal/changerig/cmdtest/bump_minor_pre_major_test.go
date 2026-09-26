@@ -126,3 +126,32 @@ func TestBumpMinorPreMajorTypedKeepsBreaking(t *testing.T) {
 	assertExitZero(t, code, out)
 	assertContains(t, out, "## 0.4.0\n\n### 💥 Breaking Changes\n\n- Drop the old API")
 }
+
+// A fixed or linked group of 0.x packages forced to 1.0.0 is a major too: the
+// group's coordinated bump was the minor the option held a member's major
+// back to, and the forced release undoes that as it does for a single package.
+func TestBumpMinorPreMajorGroupReleaseAsOneIsAMajor(t *testing.T) {
+	for _, kind := range []string{"fixed", "linked"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := tempDir(t)
+			writeNpmWorkspace(t, dir, map[string]string{"a": "0.3.0", "b": "0.3.0"})
+			writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+				`{ "`+kind+`": [["a", "b"]], "versioning": { "bumpMinorPreMajor": true } }`)
+			writeChangeset(t, dir, "a-change", "a", "major", "A breaking change")
+			// Linked coordinates only the members already releasing.
+			writeChangeset(t, dir, "b-change", "b", "patch", "A b fix")
+			gitInit(t, dir)
+
+			code, out := runChangerig(t, dir, "version", "--dry-run", "--changelog")
+			assertExitZero(t, code, out)
+			assertContains(t, out, "minor  a  0.3.0 → 0.4.0")
+			assertContains(t, out, "## 0.4.0\n\n### Minor Changes\n\n- A breaking change")
+
+			code, out = runChangerig(t, dir, "version", "--dry-run", "--changelog", "--release-as", "a=1.0.0", "--release-as", "b=1.0.0")
+			assertExitZero(t, code, out)
+			assertContains(t, out, "major  a  0.3.0 → 1.0.0")
+			assertContains(t, out, "major  b  0.3.0 → 1.0.0")
+			assertContains(t, out, "## 1.0.0\n\n### Major Changes\n\n- A breaking change")
+		})
+	}
+}

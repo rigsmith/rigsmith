@@ -186,6 +186,10 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 	redactor := auth.NewRedactor()
 	readCreds := map[string]*plugin.AuthCredential{}
 	credErrs := map[string]error{}
+	// credReasons is why each failed, credential-safe (auth.SafeReason): it
+	// goes to adapters and plugins, and into the error, so it carries the
+	// reference and never what resolving it printed.
+	credReasons := map[string]string{}
 	credCache := map[string]*plugin.AuthCredential{}
 	for _, p := range candidates {
 		eco := ecoOf[p.Name]
@@ -195,6 +199,7 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 		cred, _, err := resolvePublishCreds(ctx, ws.Config, eco, "", credCache, redactor)
 		if err != nil {
 			credErrs[eco] = err
+			credReasons[eco] = auth.SafeReason(ws.Config.EcoConfig(eco).Auth, err)
 			continue
 		}
 		readCreds[eco] = cred
@@ -226,10 +231,7 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 			ecoID := ecoOf[p.Name]
 			// Why the configured credential couldn't be resolved, for the
 			// adapter to name and for the error below when it doesn't.
-			authErr := ""
-			if credErr := credErrs[ecoID]; credErr != nil {
-				authErr = redactor.Redact(credErr.Error())
-			}
+			authErr := redactor.Redact(credReasons[ecoID])
 			resp, err := eco.Published(ctx, plugin.PublishedRequest{
 				RepoRoot:        ws.Root,
 				Package:         p,

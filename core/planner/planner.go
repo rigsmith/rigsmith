@@ -87,6 +87,9 @@ type Module struct {
 	// below 1.0.0 releases as a minor.
 	minorPreMajor   bool
 	hasBumpOverride bool
+	// overrideDemoted: bumpOverride is a group's minor that stands for a
+	// major bumpMinorPreMajor held back (a member's own major on 0.x).
+	overrideDemoted bool
 }
 
 // EffectiveVersionFile is where the bump is written: VersionFile when set, else
@@ -102,6 +105,11 @@ func (m *Module) EffectiveVersionFile() string {
 // changes and the cascade-determined bump.
 func (m *Module) HighestBump() changeset.Bump {
 	if m.hasBumpOverride {
+		// A group forced past 0.x (--release-as 1.0.0) is a major, as a
+		// single package is below.
+		if m.overrideDemoted && m.overriddenPastMajor() {
+			return changeset.BumpMajor
+		}
 		return m.bumpOverride
 	}
 	highest := m.cascadeBump
@@ -116,6 +124,36 @@ func (m *Module) HighestBump() changeset.Bump {
 		return changeset.BumpMinor
 	}
 	return highest
+}
+
+// demotedMajor says the bump HighestBump reports is a major that
+// bumpMinorPreMajor released as a minor.
+func (m *Module) demotedMajor() bool {
+	if m.hasBumpOverride {
+		return m.overrideDemoted
+	}
+	if !m.minorPreMajor || m.Current.Major != 0 {
+		return false
+	}
+	highest := m.cascadeBump
+	for _, c := range m.Changes {
+		highest = highest.Max(c.Bump)
+	}
+	return highest == changeset.BumpMajor
+}
+
+// demotedIn says a group's coordinated bump is a minor standing for a major
+// one of its releasing members had held back.
+func demotedIn(releasing []*Module, bump changeset.Bump) bool {
+	if bump != changeset.BumpMinor {
+		return false
+	}
+	for _, m := range releasing {
+		if m.demotedMajor() {
+			return true
+		}
+	}
+	return false
 }
 
 // overriddenPastMajor says VersionOverride (--release-as, the prompt's
@@ -535,10 +573,11 @@ func mergeDependencyUpdates(changes []Change) []Change {
 }
 
 // coordinate forces a module to a shared version+bump (group coordination).
-func coordinate(m *Module, version semver.Version, bump changeset.Bump) {
+func coordinate(m *Module, version semver.Version, bump changeset.Bump, demoted bool) {
 	m.Current = version
 	m.bumpOverride = bump
 	m.hasBumpOverride = true
+	m.overrideDemoted = demoted
 }
 
 // coordinateGroups applies linked/fixed/lockstep coordination to the working
@@ -557,11 +596,12 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 		}
 		return out
 	}
-	apply := func(m *Module, version semver.Version, bump changeset.Bump) {
+	apply := func(m *Module, version semver.Version, bump changeset.Bump, demoted bool) {
 		if m.hasBumpOverride && m.bumpOverride == bump && semver.Compare(m.Current, version) == 0 {
+			m.overrideDemoted = m.overrideDemoted || demoted
 			return // already coordinated — keeps the fixpoint terminating
 		}
-		coordinate(m, version, bump)
+		coordinate(m, version, bump, demoted)
 		changed = true
 	}
 
@@ -572,9 +612,10 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 			continue
 		}
 		bump := highestBump(releasing)
+		demoted := demotedIn(releasing, bump)
 		version := highestCurrentVersion(grp, byName)
 		for _, m := range releasing {
-			apply(m, version, bump)
+			apply(m, version, bump, demoted)
 		}
 	}
 
@@ -585,20 +626,21 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 			continue
 		}
 		bump := highestBump(releasing)
+		demoted := demotedIn(releasing, bump)
 		version := highestCurrentVersion(grp, byName)
 		for _, member := range grp {
 			if cfg.IsIgnored(member) {
 				continue
 			}
 			if m, ok := rel[member]; ok {
-				apply(m, version, bump)
+				apply(m, version, bump, demoted)
 				continue
 			}
 			if pkg, ok := byName[member]; ok {
 				m := newModule(pkg)
 				rel[member] = m
 				*order = append(*order, member)
-				apply(m, version, bump)
+				apply(m, version, bump, demoted)
 			}
 		}
 	}
@@ -632,20 +674,21 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 			continue
 		}
 		bump := highestBump(releasing)
+		demoted := demotedIn(releasing, bump)
 		version := highestCurrentVersion(names, byName)
 		for _, member := range names {
 			if cfg.IsIgnored(member) {
 				continue
 			}
 			if m, ok := rel[member]; ok {
-				apply(m, version, bump)
+				apply(m, version, bump, demoted)
 				continue
 			}
 			if pkg, ok := byName[member]; ok {
 				m := newModule(pkg)
 				rel[member] = m
 				*order = append(*order, member)
-				apply(m, version, bump)
+				apply(m, version, bump, demoted)
 			}
 		}
 	}

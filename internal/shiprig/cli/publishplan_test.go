@@ -27,9 +27,14 @@ type fakeRegistry struct {
 	// namesAuthError: a failure says why the credential couldn't be
 	// resolved itself, as the dotnet adapter's 401 does.
 	namesAuthError bool
+	// authErrs, when set, records each request's AuthError.
+	authErrs *sync.Map
 }
 
 func (f fakeRegistry) Published(_ context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
+	if f.authErrs != nil {
+		f.authErrs.Store(req.Package.Name, req.AuthError)
+	}
 	if f.asked != nil {
 		token := ""
 		if req.Auth != nil {
@@ -368,5 +373,30 @@ func TestPublishPlanNamesAnUnresolvedCredentialOnce(t *testing.T) {
 	}
 	if strings.Contains(msg, "`node.auth` couldn't be resolved") {
 		t.Errorf("the plan repeated the adapter's reason in a clause of its own:\n%s", msg)
+	}
+}
+
+// A cmd: reference whose command fails prints to stderr, and that output can
+// carry a secret: it reaches neither the adapter's AuthError (sent to plugins
+// too) nor the plan's error, whichever of them names the reason.
+func TestPublishPlanKeepsResolverOutputOutOfTheReason(t *testing.T) {
+	const leaked = "fixture-leak-7c1e9b"
+	for _, namesAuthError := range []bool{true, false} {
+		planRepo(t, `{ "node": { "auth": "cmd:echo `+leaked+` >&2; echo `+leaked+`; exit 3" } }`)
+		authErrs := &sync.Map{}
+		_, err := planFor(t, fakeRegistry{fail: map[string]bool{"lib": true}, namesAuthError: namesAuthError, authErrs: authErrs}, "")
+		if err == nil {
+			t.Fatal("want the registry's failure")
+		}
+		if strings.Contains(err.Error(), leaked) {
+			t.Errorf("namesAuthError=%v: the command's output reached the error:\n%s", namesAuthError, err)
+		}
+		if !strings.Contains(err.Error(), `auth ref "cmd:…" failed`) {
+			t.Errorf("namesAuthError=%v: err = %v, want the reference named by kind", namesAuthError, err)
+		}
+		got, _ := authErrs.Load("lib")
+		if got != `auth ref "cmd:…" failed` {
+			t.Errorf("AuthError = %q, want the credential-safe reason", got)
+		}
 	}
 }

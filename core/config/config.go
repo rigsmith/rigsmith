@@ -653,9 +653,13 @@ func (c *Config) SkipsTag(name string) bool {
 // released, tagged, or published — though their manifest dependency ranges are
 // still rewritten (a "none" release).
 func (c *Config) IsIgnored(name string) bool {
-	if c.unversioned[name] {
-		return true
-	}
+	return c.unversioned[name] || c.MatchesIgnore(name)
+}
+
+// MatchesIgnore reports whether name matches the `ignore` list itself, by
+// exact name or glob; unlike IsIgnored, not a private package left out by
+// `privatePackages.version`, which no `ignore` entry names.
+func (c *Config) MatchesIgnore(name string) bool {
 	for _, pat := range c.Ignore {
 		if ignoreGlobMatch(pat, name) {
 			return true

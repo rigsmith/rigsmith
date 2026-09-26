@@ -157,6 +157,24 @@ func TestVersionOnlyRefusesAnIgnoredPackage(t *testing.T) {
 	}
 }
 
+// A private package isn't versioned unless `privatePackages.version` says so,
+// and no `ignore` entry names it: the refusal says it's private and points at
+// that setting, not at an `ignore` entry to remove.
+func TestVersionOnlyRefusesAnUnversionedPrivatePackage(t *testing.T) {
+	dir := groupsRepo(t, `, "privatePackages": { "version": false }`)
+	writeFile(t, filepath.Join(dir, "packages", "priv", "package.json"), `{ "name": "priv", "version": "1.0.0", "private": true }`)
+	code, out := runChangerig(t, dir, "version", "--yes", "--only", "priv")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, "--only names priv, which is private")
+	assertContains(t, out, "`privatePackages.version`")
+	if strings.Contains(out, "take it out of `ignore`") {
+		t.Errorf("a private package was blamed on `ignore`:\n%s", out)
+	}
+	if len(changesetFiles(t, dir)) != 3 {
+		t.Fatal("a refused run consumed changesets")
+	}
+}
+
 // A fixed group splits with no mixed changeset and no dependency, so --only
 // checks the group itself.
 func TestVersionOnlyRefusesPartOfAFixedGroup(t *testing.T) {
