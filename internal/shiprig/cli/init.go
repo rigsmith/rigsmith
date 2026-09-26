@@ -33,7 +33,11 @@ func newInitCmd() *cobra.Command {
 		"release side: a starter release pipeline config, any build-config file an\n" +
 		"ecosystem needs to produce artifacts, and a preflight of the tokens a real\n" +
 		"release will require. It writes files and checks the environment — it never\n" +
-		"collects secrets or publishes anything."
+		"collects secrets or publishes anything.\n\n" +
+		"--source picks where releases come from (changesets, commits, or both), and on\n" +
+		"a GitHub repository --changelog github links each changelog entry's commit and\n" +
+		"pull request (--changelog default keeps the plain layout); without the flags,\n" +
+		"init asks at a terminal."
 	base := cmd.RunE
 	cmd.RunE = func(c *cobra.Command, args []string) error {
 		if err := base(c, args); err != nil {
