@@ -1,0 +1,21 @@
+internal/changerig/cmdtest/helpers_test.go
+  s_505a2cfce9114c::t_659567a0e9c711 12,124-125
+internal/clauderig/compatibility/harness_test.go
+  s_505a2cfce9114c::t_d55b3c81abc121 203-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d6f6f380113e30081e57fad176ca2d84d1ae7b2e",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
