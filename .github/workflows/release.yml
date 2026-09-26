@@ -11,6 +11,11 @@
 #     bucket and winget; then npm. The UI tag starts release-ui.yml, which the
 #     App token makes possible (a tag pushed with GITHUB_TOKEN starts nothing).
 #   - Any other push with nothing pending: nothing happens.
+#   - A vX.Y.Z tag pushed by hand (`shiprig release` ends with
+#     `git push --follow-tags`): the build and npm jobs release it, once CI has
+#     passed on its commit. The tag the release job itself pushes also starts a
+#     run; it queues behind the one that pushed it, finds that release already
+#     published, and does nothing.
 #
 # npm's trusted publishing binds each wrapper package to this repository AND
 # this workflow's filename (see scripts/npmoidc_test.go), so renaming the file
@@ -35,6 +40,7 @@ name: Release
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       mode:
@@ -79,7 +85,7 @@ jobs:
   # The release PR, and the tags when it merges. On every push to main.
   release:
     name: Release PR or tags
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     # Waiting for CI on a release commit takes most of this.
     timeout-minutes: 50
@@ -175,13 +181,41 @@ jobs:
             echo "No CLI tag this run."
           fi
 
+  # A vX.Y.Z tag pushed to the repository. Released unless it already is: the
+  # release job's own tag starts a run too, which queues behind the one that
+  # pushed it and so finds that release published by the time it gets here.
+  pushed-tag:
+    name: Pushed tag
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # the tag's GitHub release, if there is one
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: Release it unless it's out already
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          assets=$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo 0)
+          if [ "${assets:-0}" -gt 0 ]; then
+            echo "$TAG is already released ($assets assets): nothing to do."
+          else
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "$TAG has no release yet; releasing it."
+          fi
+
   goreleaser:
-    # A tag the release job just pushed, a manual release of an existing tag,
-    # or a manual dry run. Republishing npm is its own job.
-    needs: release
+    # A tag the release job just pushed, a tag pushed by hand, a manual release
+    # of an existing tag, or a manual dry run. Republishing npm is its own job.
+    needs: [release, pushed-tag]
     if: >-
       ${{ !cancelled() && (
-        (github.event_name == 'push' && needs.release.result == 'success' && needs.release.outputs.tag != '') ||
+        (needs.release.result == 'success' && needs.release.outputs.tag != '') ||
+        (needs.pushed-tag.result == 'success' && needs.pushed-tag.outputs.tag != '') ||
         (github.event_name == 'workflow_dispatch' && (inputs.mode == 'dry-run' || inputs.mode == 'release-tag'))
       ) }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
@@ -189,10 +223,20 @@ jobs:
       contents: write # create the GitHub Release and upload assets
       actions: read # CI's runs for the tagged commit
     env:
-      # The tag being released: the one the release job pushed, or the one a
-      # manual release-tag run names. Empty for a dry run.
-      RELEASE_TAG: ${{ github.event_name == 'push' && needs.release.outputs.tag || (inputs.mode == 'release-tag' && inputs.tag || '') }}
+      # The tag being released: the one the release job pushed, one pushed by
+      # hand, or the one a manual release-tag run names. Empty for a dry run.
+      RELEASE_TAG: ${{ needs.release.outputs.tag || needs.pushed-tag.outputs.tag || (inputs.mode == 'release-tag' && inputs.tag || '') }}
+      # What this run is for: a manual run's mode, or a release.
+      RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'release' }}
     steps:
+      # A release-tag run without a tag would otherwise look like a dry run:
+      # no tag, so a snapshot, and npm pointed at nothing.
+      - name: A release needs its tag
+        if: ${{ env.RELEASE_MODE != 'dry-run' && env.RELEASE_TAG == '' }}
+        run: |
+          echo "::error::'$RELEASE_MODE' needs a tag (the workflow's tag input, e.g. v1.22.0); nothing to release."
+          exit 1
+
       # Fail fast on half-configured Windows signing. scripts/sign-windows.sh
       # auto-enables once TRUSTED_SIGNING_ACCOUNT is set, then hard-requires the
       # rest — but only at the post-build hook, ~1.5 min in. This catches an
@@ -225,9 +269,11 @@ jobs:
           echo "All Trusted Signing secrets present and non-empty."
 
       # A release builds a tag that already exists, from a commit CI passed.
-      # The release job waited for that before tagging; this holds a manual
-      # release-tag run, and any re-run, to the same rule, so nothing is
-      # published that CI didn't pass. It replaces running the whole test suite
+      # The release job waited for that before tagging; this holds a tag pushed
+      # by hand (which arrives with its commit, CI still running), a manual
+      # release-tag run, and any re-run to the same rule, so nothing is
+      # published that CI didn't pass. It waits for CI rather than failing while
+      # it runs, and fails closed. It replaces running the whole test suite
       # again here: CI on the exact commit is the stronger gate (three OSes).
       - name: Require a tag CI passed
         if: ${{ env.RELEASE_TAG != '' }}
@@ -240,13 +286,19 @@ jobs:
             exit 1
           fi
           sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
-          state=$(gh run list --workflow ci.yml --commit "$sha" --event push --limit 1 \
-            --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
-          echo "$RELEASE_TAG is $sha; CI there: ${state:-no run}"
-          if [ "$state" != "completed success" ]; then
-            echo "::error::CI hasn't passed on $RELEASE_TAG's commit ($sha); not publishing it."
-            exit 1
-          fi
+          echo "$RELEASE_TAG is $sha; waiting for CI to pass there."
+          for i in $(seq 1 90); do
+            state=$(gh run list --workflow ci.yml --commit "$sha" --event push --limit 1 \
+              --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
+            echo "$(date -u +%H:%M:%S) CI: ${state:-not started}"
+            case "$state" in
+              "completed success") exit 0 ;;
+              completed*) echo "::error::CI finished as '${state#completed }' on $RELEASE_TAG's commit ($sha); not publishing it."; exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "::error::CI hasn't finished on $RELEASE_TAG's commit ($sha) after 45 minutes; not publishing it."
+          exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -328,7 +380,7 @@ jobs:
       # see the same shape a release would. --match 'v*' passes over the
       # window's tags without knowing anything about them.
       - name: Name the dry run after the last CLI release
-        if: ${{ env.RELEASE_TAG == '' }}
+        if: ${{ env.RELEASE_MODE == 'dry-run' }}
         run: |
           # The newest vX.Y.Z this ref actually contains. Three constraints,
           # each of which was a separate wrong answer on the way here:
@@ -381,7 +433,7 @@ jobs:
           # (no GitHub release, tap push, or npm). A tag does the real release,
           # with the changelog entry as its notes.
           args: >-
-            ${{ env.RELEASE_TAG == ''
+            ${{ env.RELEASE_MODE == 'dry-run'
                 && 'release --snapshot --clean'
                 || format('release --clean --release-notes={0}/release-notes.md', runner.temp) }}
         env:
@@ -426,7 +478,7 @@ jobs:
       # them in the `npm` job below instead, on a GitHub-hosted runner: npm
       # refuses a provenance-signed publish from this one (see that job).
       - name: npm wrapper packages (dry run)
-        if: ${{ env.RELEASE_TAG == '' }}
+        if: ${{ env.RELEASE_MODE == 'dry-run' }}
         run: node scripts/npm/build-packages.mjs --dry-publish
 
       # Submit to winget via komac, which updates the PUBLISHED manifest rather
@@ -489,7 +541,7 @@ jobs:
       # (codesign --verify / spctl on the mac binaries, the casks, checksums).
       # Nothing was published.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: ${{ !cancelled() && env.RELEASE_TAG == '' }}
+        if: ${{ !cancelled() && env.RELEASE_MODE == 'dry-run' }}
         with:
           name: dryrun-dist
           path: |
@@ -528,7 +580,7 @@ jobs:
     # A release publishes the npm wrappers from the GitHub release the
     # goreleaser job just made: the same checksum-verified archives
     # republish-npm uses. Not for a dry run, which publishes nothing.
-    needs: [release, goreleaser]
+    needs: [release, pushed-tag, goreleaser]
     if: >-
       ${{ !cancelled() && needs.goreleaser.result == 'success' && (
         github.event_name == 'push' ||
@@ -539,7 +591,7 @@ jobs:
       contents: read # read the release's assets
       id-token: write # mint the OIDC token npm exchanges
     env:
-      RELEASE_TAG: ${{ github.event_name == 'push' && needs.release.outputs.tag || inputs.tag }}
+      RELEASE_TAG: ${{ needs.release.outputs.tag || needs.pushed-tag.outputs.tag || inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
