@@ -224,6 +224,21 @@ func TestTrustListReadsSeveralConfigurationsAndFailsUntilExclusive(t *testing.T)
 		}
 	}
 
+	// Everything on release.yml, but with one leftover alongside: each alone
+	// still fails the check, since done means release.yml is the only publisher.
+	for _, extra := range []trustConfig{
+		{File: "goreleaser.yml", Repository: thisRepo},
+		{File: "release.yml", Repository: otherRepo},
+	} {
+		for _, name := range f.packages {
+			f.seed(name, trustConfig{File: "release.yml", Repository: thisRepo}, extra)
+		}
+		if out, code := f.run(nil, "--list", "--otp", "000000"); code == 0 {
+			t.Errorf("--list exited 0 with %s %s beside release.yml on every package:\n%s",
+				extra.Repository, extra.File, out)
+		}
+	}
+
 	// Exclusive everywhere: it passes.
 	for _, name := range f.packages {
 		f.seed(name, trustConfig{File: "release.yml", Repository: thisRepo})
