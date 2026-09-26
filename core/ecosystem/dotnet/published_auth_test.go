@@ -198,9 +198,19 @@ func TestPublishedDoesNotSubstituteTheEnvironmentForAnUnresolvedCredential(t *te
 		Package:         plugin.Package{Name: "Acme.Lib", Version: "1.2.0"},
 		PackageSource:   f.url + "/index.json",
 		AuthUnavailable: true,
+		AuthError:       `auth ref "env:FEED_TOKEN" resolved to an empty token`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "`dotnet.auth` couldn't be resolved") || resp.Published {
+	if err == nil || !strings.Contains(err.Error(), "`dotnet.auth`, which couldn't be resolved") || resp.Published {
 		t.Errorf("published = %v, %v; want the 401 reported against the unresolved dotnet.auth", resp.Published, err)
+	}
+	// Said once, with the reason the caller gave and the fallback not taken.
+	if err != nil {
+		msg := err.Error()
+		for _, want := range []string{`env:FEED_TOKEN`, "NUGET_API_KEY isn't used in place", "couldn't be resolved"} {
+			if n := strings.Count(msg, want); n != 1 {
+				t.Errorf("%q appears %d times, want once: %s", want, n, msg)
+			}
+		}
 	}
 	for _, a := range f.auths() {
 		if a != "" {

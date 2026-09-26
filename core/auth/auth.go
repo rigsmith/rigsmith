@@ -22,6 +22,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -82,7 +83,7 @@ func Resolve(ctx context.Context, req Request) (Credential, error) {
 			return Credential{}, err
 		}
 		if token == "" {
-			return Credential{}, fmt.Errorf("auth ref %q resolved to an empty token", ref)
+			return Credential{}, fmt.Errorf("auth ref %q %w", ref, ErrEmptyToken)
 		}
 		mask(req.Masker, token)
 		return Credential{Token: token, Method: method}, nil
@@ -96,6 +97,32 @@ func Resolve(ctx context.Context, req Request) (Credential, error) {
 	}
 
 	return Credential{Method: MethodNone}, nil
+}
+
+// ErrEmptyToken is a reference that resolved, to nothing (an unset
+// environment variable, a command that printed nothing).
+var ErrEmptyToken = errors.New("resolved to an empty token")
+
+// SafeReason says why ref couldn't be resolved without anything the
+// resolution produced: a failed command's stderr, or 1Password's, can carry a
+// secret (a helper that echoes the token it was given, say), so neither is in
+// it. A cmd: reference is shown by kind alone, since the command line itself
+// may hold one. For a message that outlives the terminal, such as a request
+// sent to a plugin, or one printed where the resolver's output isn't wanted.
+func SafeReason(ref string, err error) string {
+	ref = strings.TrimSpace(ref)
+	shown := ref
+	switch {
+	case strings.HasPrefix(ref, "cmd:"):
+		shown = "cmd:…"
+	case strings.HasPrefix(ref, "env:"), strings.HasPrefix(ref, "op://"):
+	default:
+		return "the auth ref isn't one of op://…, env:NAME or cmd:…"
+	}
+	if errors.Is(err, ErrEmptyToken) {
+		return fmt.Sprintf("auth ref %q %s", shown, ErrEmptyToken)
+	}
+	return fmt.Sprintf("auth ref %q failed", shown)
 }
 
 // resolveRef interprets a secret reference and returns its token plus the method

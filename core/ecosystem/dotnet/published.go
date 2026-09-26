@@ -149,8 +149,10 @@ func withoutURL(err error) error {
 type feedCreds struct {
 	host, user, token string
 	// unavailable: a configured dotnet.auth couldn't be resolved, so there
-	// is no token, and NUGET_API_KEY wasn't taken in its place.
+	// is no token, and NUGET_API_KEY wasn't taken in its place. why is the
+	// caller's reason, when it gave one.
 	unavailable bool
+	why         string
 }
 
 // mask hides the token, and the Basic value carrying it, in s: a feed may
@@ -173,7 +175,7 @@ func feedCredentials(req plugin.PublishedRequest) *feedCreds {
 	if err != nil || !strings.HasPrefix(u.Scheme, "http") || strings.EqualFold(u.Hostname(), "api.nuget.org") {
 		return nil
 	}
-	c := &feedCreds{host: strings.ToLower(u.Host), user: req.User, unavailable: req.AuthUnavailable}
+	c := &feedCreds{host: strings.ToLower(u.Host), user: req.User, unavailable: req.AuthUnavailable, why: req.AuthError}
 	if u.User != nil {
 		c.user = u.User.Username()
 		c.token, _ = u.User.Password()
@@ -236,7 +238,13 @@ func getJSONUnmasked(ctx context.Context, rawURL string, dst any, creds *feedCre
 		case creds != nil && creds.token != "" && (!creds.allows(asked) || !creds.allows(rawURL)):
 			return false, fmt.Errorf("%s: %s: this host asks for credentials, but they're only sent to the package source's own host, %s (over https, or plain http on loopback)", shown, resp.Status, creds.host)
 		case creds != nil && creds.token == "" && creds.unavailable:
-			return false, fmt.Errorf("%s: %s: the feed needs credentials, and the configured `dotnet.auth` couldn't be resolved (NUGET_API_KEY isn't used in its place)", shown, resp.Status)
+			// Said once, here: the reason rides in from the caller, which
+			// leaves it out of its own wrapping when this carries it.
+			why := ""
+			if creds.why != "" {
+				why = ": " + creds.why
+			}
+			return false, fmt.Errorf("%s: %s: the feed needs credentials, and NUGET_API_KEY isn't used in place of the configured `dotnet.auth`, which couldn't be resolved%s", shown, resp.Status, why)
 		case creds == nil || creds.token == "":
 			return false, fmt.Errorf("%s: %s: the feed needs credentials. Set `dotnet.auth` (op://…, env:NAME, cmd:…) or NUGET_API_KEY to a token it accepts for reading, and `dotnet.user` if it checks the account name", shown, resp.Status)
 		}
