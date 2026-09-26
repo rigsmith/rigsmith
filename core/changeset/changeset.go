@@ -382,6 +382,37 @@ func tabIndented(line string) bool {
 	return strings.ContainsRune(indent, '\t')
 }
 
+// indentOf is the number of spaces a line starts with.
+func indentOf(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " "))
+}
+
+// continuedValue reads a key's value from the lines after it, from start: the
+// ones indented deeper than column, up to the first that isn't (or the closing
+// ---), skipping blank and comment lines. Their text joins with single spaces,
+// as YAML folds a plain scalar, and a value quoted whole loses its quotes. It
+// returns "" when no such line holds a value, and the index of the line after
+// the ones it read.
+func continuedValue(lines []string, start, column int) (string, int) {
+	var parts []string
+	i := start
+	for ; i < len(lines) && lines[i] != "---"; i++ {
+		t := strings.TrimSpace(lines[i])
+		if t == "" || strings.HasPrefix(t, "#") {
+			continue
+		}
+		if indentOf(lines[i]) <= column {
+			break
+		}
+		parts = append(parts, strings.TrimSpace(stripComment(t)))
+	}
+	value := strings.Join(parts, " ")
+	if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
+		value = value[1 : len(value)-1]
+	}
+	return value, i
+}
+
 // stripComment drops a YAML comment: a # at the start, or after whitespace.
 func stripComment(s string) string {
 	for i := 0; i < len(s); i++ {
@@ -412,13 +443,24 @@ func Parse(content, id string) (*Changeset, error) {
 	}
 
 	seen := map[string]bool{}
-	bare := "" // the first package line with no bump, which needs a type
+	bare := ""   // the first package line with no bump, which needs a type
+	column := -1 // where the frontmatter's keys start: the first key line's indentation
 	for i < len(lines) && lines[i] != "---" {
 		line := lines[i]
 		// A tab in the indentation of anything but a blank or comment line is
 		// invalid YAML, which @changesets refuses.
 		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") && tabIndented(line) {
 			return nil, fmt.Errorf("changeset %q: frontmatter line %q is indented with a tab, which YAML does not allow", id, line)
+		}
+		// Every key of a YAML mapping starts at the same column, so a line
+		// indented differently from the first is invalid YAML, which
+		// @changesets refuses. Blank and comment lines can sit anywhere.
+		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
+			if indent := indentOf(line); column < 0 {
+				column = indent
+			} else if indent != column {
+				return nil, fmt.Errorf("changeset %q: frontmatter line %q is indented differently from the line above it; YAML needs every package at the same column", id, line)
+			}
 		}
 		// Optional `type:` line (conventional-commit type, `!` => breaking).
 		if t := strings.TrimSpace(line); strings.HasPrefix(t, "type:") {
@@ -441,6 +483,14 @@ func Parse(content, id string) (*Changeset, error) {
 			continue
 		}
 		name, bumpText, err := parseReleaseLine(line)
+		if errors.Is(err, errNoBump) {
+			// YAML lets a value continue on the lines below its key when they
+			// are indented deeper (`lib:` then `  patch`), comments and blank
+			// lines between included, as @changesets reads it.
+			if value, next := continuedValue(lines, i+1, column); value != "" {
+				bumpText, err, i = value, nil, next-1
+			}
+		}
 		if errors.Is(err, errNoBump) {
 			return nil, fmt.Errorf("changeset %q: %q has a colon but no bump; give major, minor, patch or none, or drop the colon to let the type decide", id, name)
 		}
