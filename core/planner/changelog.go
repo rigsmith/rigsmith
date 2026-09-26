@@ -169,6 +169,14 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 
 	for _, c := range changes {
 		switch {
+		// In a typed entry the released dependencies get a section of their
+		// own, one bullet each, rather than a 🩹 Fixes section that can hold
+		// nothing but them. An untyped entry keeps @changesets' layout: the
+		// "Updated dependencies" bullet under Patch Changes.
+		case c.Dependencies && typed:
+			for _, dep := range dependencyLines(c.Summary) {
+				add(dependenciesSection, plugin.ChangelogChange{Summary: dep})
+			}
 		case c.Breaking:
 			add(config.BreakingGroup.Section, c)
 		case c.Type != "":
@@ -253,8 +261,25 @@ func scopeRank(order []string) map[string]int {
 	return rank
 }
 
+// dependenciesSection is a typed entry's section for its released
+// dependencies, the heading the changelogen example plugin uses too.
+const dependenciesSection = "🌊 Dependencies"
+
+// dependencyLines returns the dependencies an "Updated dependencies" summary
+// lists, one "name@version" each.
+func dependencyLines(summary string) []string {
+	var deps []string
+	for _, line := range strings.Split(summary, "\n")[1:] {
+		if dep := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-")); dep != "" {
+			deps = append(deps, dep)
+		}
+	}
+	return deps
+}
+
 // sortSections orders sections: Breaking first, then configured group order,
-// then the bump sections (Major, Minor, Patch), then anything else alphabetically.
+// then the bump sections (Major, Minor, Patch), then the dependencies, then
+// anything else alphabetically.
 func sortSections(sections []string, groups []config.ChangelogGroup) {
 	rank := map[string]int{config.BreakingGroup.Section: 0}
 	for i, g := range groups {
@@ -266,6 +291,7 @@ func sortSections(sections []string, groups []config.ChangelogGroup) {
 	for i, s := range []string{"Major Changes", "Minor Changes", "Patch Changes"} {
 		rank[s] = base + i
 	}
+	rank[dependenciesSection] = base + 3
 	sort.SliceStable(sections, func(i, j int) bool {
 		ri, oki := rank[sections[i]]
 		rj, okj := rank[sections[j]]
