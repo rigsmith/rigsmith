@@ -247,37 +247,53 @@ func parseReleaseLine(line string) (name, bump string, ok bool) {
 		}
 		name, s = b.String(), s[i+1:]
 	default:
-		key, rest, _ := strings.Cut(s, ":")
+		// A plain name can't hold a comment, so one ends the line here.
+		s = stripComment(s)
+		// A plain package name holds no colon, so the first one ends it; the
+		// check below wants whitespace after it, as YAML does.
+		key, rest, colon := strings.Cut(s, ":")
 		key = strings.TrimSpace(key)
 		if !plainKeyRe.MatchString(key) {
 			return "", "", false
 		}
-		name, s = key, ":"+rest
-		if !strings.Contains(line, ":") {
-			s = ""
+		name, s = key, ""
+		if colon {
+			s = ":" + rest
+			if rest == "" {
+				s = ":"
+			}
 		}
 	}
-	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(stripComment(s))
 	if s == "" {
 		return name, "", true
 	}
-	if !strings.HasPrefix(s, ":") {
+	// YAML separates a mapping's value from its colon with whitespace:
+	// `lib:patch` is one scalar, not a key and a value.
+	if s != ":" && !strings.HasPrefix(s, ": ") && !strings.HasPrefix(s, ":\t") {
 		return "", "", false
 	}
 	s = strings.TrimSpace(s[1:])
-	// A trailing comment, after whitespace, as YAML has it.
-	if i := strings.Index(s, " #"); i >= 0 {
-		s = strings.TrimSpace(s[:i])
-	} else if strings.HasPrefix(s, "#") {
-		s = ""
-	}
 	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
 		s = s[1 : len(s)-1]
+		if s == "" {
+			return "", "", false // an explicit empty bump isn't an omitted one
+		}
 	}
 	if s != "" && !bumpWordRe.MatchString(s) {
 		return "", "", false
 	}
 	return name, s, true
+}
+
+// stripComment drops a YAML comment: a # at the start, or after whitespace.
+func stripComment(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '#' && (i == 0 || s[i-1] == ' ' || s[i-1] == '\t') {
+			return strings.TrimRight(s[:i], " \t")
+		}
+	}
+	return s
 }
 
 // Parse parses changeset file content. The id (typically the filename without

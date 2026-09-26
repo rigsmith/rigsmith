@@ -271,6 +271,13 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 		{`'lib'`, "lib", BumpNone},
 		{`lib`, "lib", BumpNone},
 		{`github.com/acme/mod: patch`, "github.com/acme/mod", BumpPatch},
+		{`lib # a note`, "lib", BumpNone},
+		{`'lib' # a note`, "lib", BumpNone},
+		{"lib: patch\t# a tab, then a note", "lib", BumpPatch},
+		{"'lib':\tpatch", "lib", BumpPatch},
+		{`"a#b": patch`, "a#b", BumpPatch},
+		{`lib:`, "lib", BumpNone},
+		{"lib:\tpatch", "lib", BumpPatch},
 	} {
 		cs, err := Parse("---\n# which packages\n\n"+tc.line+"\n---\n\nA change\n", "x")
 		if err != nil {
@@ -281,7 +288,7 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 			t.Errorf("%q: releases = %+v, want %s %v", tc.line, cs.Releases, tc.name, tc.bump)
 		}
 	}
-	for _, line := range []string{`'unclosed: patch`, `"lib": patch extra`, `@scope/lib: patch`, `"lib" patch`, `'': patch`, `"lib": 'patch"`} {
+	for _, line := range []string{`'unclosed: patch`, `"lib": patch extra`, `@scope/lib: patch`, `"lib" patch`, `'': patch`, `"lib": 'patch"`, `lib:patch`, `"lib":patch`, `lib: ""`, `'lib': ''`} {
 		if _, err := Parse("---\n"+line+"\n---\n\nA change\n", "x"); err == nil {
 			t.Errorf("%q parsed; want it refused", line)
 		}
