@@ -23,16 +23,18 @@ func RenderLine(summary string, setting Setting, info *CommitInfo) string {
 	return prefix + summary
 }
 
-// gitPrefix renders @changesets/changelog-git: "<commit>: <summary>".
+// gitPrefix renders @changesets/changelog-git: "<commit>: <summary>", the
+// commit in its display form (7 characters, more where 7 is ambiguous).
 func gitPrefix(info *CommitInfo) string {
 	if info == nil || info.Commit == "" {
 		return ""
 	}
-	return info.Commit + ": "
+	return info.Display() + ": "
 }
 
 // gitHubPrefix renders @changesets/changelog-github:
-// "[#pr](url) [`commit`](url) Thanks [@user](url)! - <summary>".
+// "[#pr](url) [`commit`](url) Thanks [@user](url)! - <summary>". As there,
+// the commit link's URL carries the full SHA and its text the short form.
 // Each link is omitted when its datum is missing; with no info, no repo, or
 // all three missing the summary is left unchanged.
 func gitHubPrefix(info *CommitInfo, repo string) string {
@@ -46,7 +48,7 @@ func gitHubPrefix(info *CommitInfo, repo string) string {
 		pullLink = "[#" + pr + "](https://github.com/" + repo + "/pull/" + pr + ")"
 	}
 	if info.Commit != "" {
-		commitLink = "[`" + info.Commit + "`](https://github.com/" + repo + "/commit/" + info.Commit + ")"
+		commitLink = "[`" + info.Display() + "`](https://github.com/" + repo + "/commit/" + info.Commit + ")"
 	}
 	if info.Author != "" {
 		userLink = "[@" + info.Author + "](https://github.com/" + info.Author + ")"

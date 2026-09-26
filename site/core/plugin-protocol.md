@@ -80,7 +80,7 @@ generator is called once per released package with a `ChangelogRequest` on
 stdin, and prints the entry on stdout. A tuple's options value arrives as the
 request's `options`, for the generator to interpret, as @changesets passes it
 to `getReleaseLine`; the string form sends none. Each change carries its
-`commit` (and, with a `repo` in the options, its `pr` and `author`), and the
+`commit` as a full SHA (and, with a `repo` in the options, its `pr` and `author`), and the
 released dependencies arrive as `dependencyUpdates`, so a generator can render
 everything the built-in does. The "Updated dependencies" change stays in
 `changes`, flagged `dependencies: true`, for generators written before that.

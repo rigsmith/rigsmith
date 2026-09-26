@@ -3,6 +3,10 @@ package changelog
 
 import "testing"
 
+// full is a whole commit SHA; its display form is its first 7 characters
+// unless the repository needs more to tell it apart.
+const full = "abc1234def5678901234567890abcdef12345678"
+
 func TestRenderLine(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -15,14 +19,14 @@ func TestRenderLine(t *testing.T) {
 			name:    "default generator returns the summary unchanged",
 			summary: "A change",
 			setting: Setting{Kind: KindDefault},
-			info:    &CommitInfo{Commit: "abc1234", PullRequest: 7, Author: "octocat"},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 7, Author: "octocat"},
 			want:    "A change",
 		},
 		{
 			name:    "git prefixes the short commit",
 			summary: "A change",
 			setting: Setting{Kind: KindGit},
-			info:    &CommitInfo{Commit: "abc1234"},
+			info:    &CommitInfo{Commit: full, Short: "abc1234"},
 			want:    "abc1234: A change",
 		},
 		{
@@ -36,22 +40,22 @@ func TestRenderLine(t *testing.T) {
 			name:    "git only prefixes the first line",
 			summary: "First line\n\nSecond paragraph",
 			setting: Setting{Kind: KindGit},
-			info:    &CommitInfo{Commit: "abc1234"},
+			info:    &CommitInfo{Commit: full, Short: "abc1234"},
 			want:    "abc1234: First line\n\nSecond paragraph",
 		},
 		{
 			name:    "github builds pr link commit link and thanks",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
-			info:    &CommitInfo{Commit: "abc1234", PullRequest: 42, Author: "octocat"},
-			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/abc1234) Thanks [@octocat](https://github.com/octocat)! - A change",
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "octocat"},
+			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") Thanks [@octocat](https://github.com/octocat)! - A change",
 		},
 		{
 			name:    "github without a pull request uses the commit link only",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
-			info:    &CommitInfo{Commit: "abc1234", Author: "octocat"},
-			want:    "[`abc1234`](https://github.com/acme/widgets/commit/abc1234) Thanks [@octocat](https://github.com/octocat)! - A change",
+			info:    &CommitInfo{Commit: full, Short: "abc1234", Author: "octocat"},
+			want:    "[`abc1234`](https://github.com/acme/widgets/commit/" + full + ") Thanks [@octocat](https://github.com/octocat)! - A change",
 		},
 		{
 			name:    "github without data returns the summary unchanged",
@@ -59,6 +63,30 @@ func TestRenderLine(t *testing.T) {
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
 			info:    &CommitInfo{},
 			want:    "A change",
+		},
+		{
+			// Two commits sharing 7 characters: the display form is git's
+			// unique abbreviation, so the two lines stay distinguishable.
+			name:    "git prefixes the unique abbreviation where 7 characters are ambiguous",
+			summary: "A change",
+			setting: Setting{Kind: KindGit},
+			info:    &CommitInfo{Commit: full, Short: "abc1234d"},
+			want:    "abc1234d: A change",
+		},
+		{
+			name:    "git without a resolved abbreviation shows 7 characters, as @changesets does",
+			summary: "A change",
+			setting: Setting{Kind: KindGit},
+			info:    &CommitInfo{Commit: full},
+			want:    "abc1234: A change",
+		},
+		{
+			// @changesets/changelog-github links the full SHA and shows 7.
+			name:    "github links the full SHA and shows the unique abbreviation",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
+			info:    &CommitInfo{Commit: full, Short: "abc1234d"},
+			want:    "[`abc1234d`](https://github.com/acme/widgets/commit/" + full + ") - A change",
 		},
 		// Unchanged cases from the C# implementation beyond its test suite.
 		{
@@ -72,7 +100,7 @@ func TestRenderLine(t *testing.T) {
 			name:    "github without a repo returns the summary unchanged",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub},
-			info:    &CommitInfo{Commit: "abc1234", PullRequest: 42, Author: "octocat"},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "octocat"},
 			want:    "A change",
 		},
 		{
@@ -80,15 +108,15 @@ func TestRenderLine(t *testing.T) {
 			name:    "github commit without an author has no thanks",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
-			info:    &CommitInfo{Commit: "abc1234"},
-			want:    "[`abc1234`](https://github.com/acme/widgets/commit/abc1234) - A change",
+			info:    &CommitInfo{Commit: full, Short: "abc1234"},
+			want:    "[`abc1234`](https://github.com/acme/widgets/commit/" + full + ") - A change",
 		},
 		{
 			name:    "github pull and commit without an author has no thanks",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
-			info:    &CommitInfo{Commit: "abc1234", PullRequest: 42},
-			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/abc1234) - A change",
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42},
+			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") - A change",
 		},
 	}
 

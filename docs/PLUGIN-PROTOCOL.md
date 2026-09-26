@@ -90,9 +90,10 @@ reference for what "correctly" looks like.
 What an external generator gets beyond the built-in's own inputs:
 
 - each change's `commit` (the one that added the changeset, or a commit-sourced
-  change's own), and, when the options carry a `repo` (as
-  `@changesets/changelog-github`'s do), its `pr` and `author` login, looked up
-  on GitHub. The `summary` is as authored; the built-in `changelog-git` and
+  change's own) as its full SHA, as @changesets hands `getReleaseLine`
+  `changeset.commit`, for the generator to abbreviate as it shows it; and,
+  when the options carry a `repo` (as `@changesets/changelog-github`'s do),
+  its `pr` and `author` login, looked up on GitHub. The `summary` is as authored; the built-in `changelog-git` and
   `changelog-github` decorate their summaries instead, as @changesets does.
 - `dependencyUpdates`: the released dependencies behind the entry,
   `{name, displayName, newVersion}`, sorted as the built-in lists them (ties

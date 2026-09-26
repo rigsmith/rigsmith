@@ -491,10 +491,13 @@ type ChangelogChange struct {
 	// Dependencies marks the engine's "Updated dependencies" entry. It stays
 	// in `changes` for a generator that predates DependencyUpdates; one that
 	// renders DependencyUpdates skips it.
-	Dependencies bool   `json:"dependencies,omitempty"`
-	Commit       string `json:"commit,omitempty"`
-	PR           int    `json:"pr,omitempty"`
-	Author       string `json:"author,omitempty"`
+	Dependencies bool `json:"dependencies,omitempty"`
+	// Commit is the full SHA of the commit behind the change, as @changesets
+	// hands getReleaseLine changeset.commit; a generator abbreviates it for
+	// display.
+	Commit string `json:"commit,omitempty"`
+	PR     int    `json:"pr,omitempty"`
+	Author string `json:"author,omitempty"`
 }
 
 // ChangelogContext mirrors the release-command context where meaningful.

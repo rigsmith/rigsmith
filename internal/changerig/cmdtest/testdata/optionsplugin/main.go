@@ -1,6 +1,6 @@
 // optionsplugin is a changelog generator plugin for the tests: it renders the
-// release heading and the options object it was sent, so a test can see
-// what reached it.
+// release heading and the options object it was sent, and each change's
+// commit exactly as it arrived, so a test can see what reached it.
 package main
 
 import (
@@ -39,15 +39,11 @@ func main() {
 	}
 	fmt.Printf("## %s\n\noptions: %s\n", req.Package.NewVersion, opts)
 	for _, c := range req.Changes {
-		commit := c.Commit
-		if len(commit) > 7 {
-			commit = commit[:7]
-		}
 		if c.Deps {
 			fmt.Printf("flagged as dependencies: %s\n", strings.SplitN(c.Summary, "\n", 2)[0])
 			continue
 		}
-		fmt.Printf("change: %s commit=%s pr=%d author=%s\n", strings.TrimSpace(c.Summary), commit, c.PR, c.Author)
+		fmt.Printf("change: %s commit=%s pr=%d author=%s\n", strings.TrimSpace(c.Summary), c.Commit, c.PR, c.Author)
 	}
 	for _, d := range req.DependencyUpdates {
 		fmt.Printf("dependency: %s (%s) @ %s\n", d.Name, d.DisplayName, d.NewVersion)
