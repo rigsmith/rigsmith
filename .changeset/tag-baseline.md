@@ -4,4 +4,4 @@ scope: changerig
 "github.com/rigsmith/rigsmith"
 ---
 
-Commit-sourced releases find a package's last release tag the way the tag step names it (`name@version`, a Go module's `dir/vX.Y.Z`, a single app's `vX.Y.Z`, or the `tagTemplate`), taking the highest version. Only module-style tags were found before, so a package tagged `lib@1.0.0` counted its whole history again on every release.
+With commit-based versioning, each package now counts commits from its last release tag in the format you tag with: `name@version`, `v1.2.0`, or your `tagTemplate`. Tags like `lib@1.0.0` weren't found before, so every release counted the package's whole history again.

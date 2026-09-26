@@ -4,4 +4,8 @@ scope: changerig
 "github.com/rigsmith/rigsmith"
 ---
 
-`"versioning": { "record": true }` keeps a release record in `.changeset/versions.json`, as release-please's manifest does: `version` writes the version every package it releases lands at under `released`, stamped or not (not for a snapshot or a range-only rewrite), and `doctor` flags a manifest that differs from the record (a hand edit) and a recorded release with no tag for a package that's been tagged before. The record is never a version source, and it's off by default: canon @changesets keeps no record.
+New option `"versioning": { "record": true }` keeps a record of every release in `.changeset/versions.json`, so:
+- `doctor` catches a version edited by hand, and a release that was never tagged (for a package that's been tagged before, so not a first release);
+- with commit-based versioning, each package counts new commits from its last recorded release, even if its tag is missing.
+
+It's off by default.

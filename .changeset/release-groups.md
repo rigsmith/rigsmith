@@ -4,4 +4,4 @@ scope: changerig
 "github.com/rigsmith/rigsmith"
 ---
 
-`status --output` gives each release a `group`: the packages that have to be versioned together (one changeset naming both, a dependency, a fixed or linked group, a shared version file). `version --only <package>` versions just the named groups and leaves the rest for a later run, and unlike `--ignore` it works alongside `ignore` in the config, so a release can go out a group at a time.
+`version --only <package>` releases just the packages you name and leaves the rest for later, so you can ship one part of a monorepo at a time. Packages that have to go out together form a group, which `status --output` shows: name every package in the group, or `--only` stops before changing anything.
