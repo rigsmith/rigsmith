@@ -1,0 +1,29 @@
+.changeset/changeset-files.md
+  s_505a2cfce9114c::t_4583b2414606e0 9
+.changeset/release-record.md
+  s_505a2cfce9114c::t_4583b2414606e0 8
+.changeset/bump-minor-pre-major.md
+  s_505a2cfce9114c::t_4583b2414606e0 7
+.changeset/typed-changelog-sections.md
+  s_505a2cfce9114c::t_4583b2414606e0 7
+.changeset/nuget-private-feeds.md
+  s_505a2cfce9114c::t_4583b2414606e0 7
+.changeset/release-groups.md
+  s_505a2cfce9114c::t_4583b2414606e0 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a3c3abb3f11aea345f33d4e83763d74ad4c2cdb5",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
