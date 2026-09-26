@@ -86,16 +86,32 @@ func NewVersionCmd() *cobra.Command {
 				if len(ignoreFlag) > 0 {
 					return errors.New("--only and --ignore can't be combined: --only already leaves out every package it doesn't name")
 				}
-				var unknown []string
+				var unknown, ignored, private []string
 				only := map[string]bool{}
 				for _, name := range onlyFlag {
-					if _, ok := pkgByName[name]; !ok {
+					switch _, ok := pkgByName[name]; {
+					case !ok:
 						unknown = append(unknown, name)
+					case ws.Config.MatchesIgnore(name):
+						ignored = append(ignored, name)
+					case ws.Config.IsIgnored(name):
+						// Left out as a private package, not by any
+						// `ignore` entry.
+						private = append(private, name)
 					}
 					only[name] = true
 				}
 				if len(unknown) > 0 {
 					return fmt.Errorf("--only names %s, which is not in the workspace; is it misspelled?", strings.Join(unknown, ", "))
+				}
+				// Asked for by name and left out by the config: an error, as
+				// an unknown name is, rather than "Nothing to version" and a
+				// zero exit that a release job would take for success.
+				if len(ignored) > 0 {
+					return fmt.Errorf("--only names %s, which `ignore` in the config leaves out, so --only can't version it; take it out of `ignore` first", strings.Join(ignored, ", "))
+				}
+				if len(private) > 0 {
+					return fmt.Errorf("--only names %s, which is private, and private packages aren't versioned, so --only can't version it; set `privatePackages.version` to true in the config first", strings.Join(private, ", "))
 				}
 				for _, p := range pkgs {
 					if !only[p.Name] {

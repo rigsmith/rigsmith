@@ -269,6 +269,11 @@ type PublishedRequest struct {
 	// one (an environment variable) in its place. Credentials written into
 	// PackageSource itself are the source's own and still apply.
 	AuthUnavailable bool `json:"authUnavailable,omitempty"`
+	// AuthError, with AuthUnavailable, is why the credential couldn't be
+	// resolved (the reference and what went wrong, never a secret), for an
+	// adapter to name in its own error. The caller doesn't repeat a reason
+	// the adapter's error already carries.
+	AuthError string `json:"authError,omitempty"`
 }
 
 // PublishedResponse is the registry's answer. NoRegistry marks an ecosystem
@@ -433,9 +438,13 @@ type BuildConfigSpec struct {
 // package being released. The generator returns the rendered release entry
 // (the block under the package's "# Title", excluding the title) on stdout.
 type ChangelogRequest struct {
-	APIVersion        int                `json:"apiVersion"`
-	Package           ChangelogPackage   `json:"package"`
-	Bump              string             `json:"bump"` // major | minor | patch
+	APIVersion int              `json:"apiVersion"`
+	Package    ChangelogPackage `json:"package"`
+	Bump       string           `json:"bump"` // major | minor | patch
+	// ExactVersion says NewVersion was chosen by hand (--release-as, the
+	// version prompt), and Bump is the move it makes rather than what the
+	// changes asked for. @changesets has no such override.
+	ExactVersion      bool               `json:"exactVersion,omitempty"`
 	Changes           []ChangelogChange  `json:"changes"`
 	DependencyUpdates []DependencyUpdate `json:"dependencyUpdates,omitempty"`
 	Context           ChangelogContext   `json:"context"`

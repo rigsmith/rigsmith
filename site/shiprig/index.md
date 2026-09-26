@@ -43,10 +43,15 @@ The whole workflow is wired:
   package released by its git tag alone (a Go module, a desktop app, a private
   package with `privatePackages.tag`) is listed `tag-only` when its tag is
   missing, and so is a package already published whose tag never made it. A
-  private NuGet feed that asks for credentials gets the publish credential
-  (`dotnet.auth`, else `NUGET_API_KEY`; `dotnet.user` names the account),
-  only after it asks and only on its own host. `--output <file>` writes @changesets v3's plan JSON, chunked in
-  dependency order, and `--tag` sets the npm dist-tag. A registry that can't be
+  private NuGet feed that asks for credentials gets them, first found wins:
+  credentials written into the source URL (`https://user:token@…`), else the
+  resolved `dotnet.auth`, else `NUGET_API_KEY` (never in place of a
+  `dotnet.auth` that can't be resolved); the account is the URL's user, else
+  `dotnet.user`, else a placeholder. They're sent only after it asks, and only
+  to the source's own host and port over https (plain http only to a loopback
+  host, `localhost`, `127.0.0.0/8` or `::1`, for a local test feed).
+  `--output <file>` writes @changesets v3's plan JSON, chunked in dependency
+  order, and `--tag` sets the npm dist-tag. A registry that can't be
   reached fails it rather than guessing
 - `pack --out-dir <dir>` — build the package file for each release the plan
   would publish (`npm pack`, `dotnet pack`) into `<dir>/packages/`, and write

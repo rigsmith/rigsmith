@@ -19,6 +19,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // The v1 byte-preservation fix (#293). Advance only as an explicit compatibility
@@ -200,7 +202,10 @@ func (s *sandbox) run(label, input string, code int, message string, args ...str
 	// Fang wraps error paragraphs to terminal width. A longer temporary path
 	// can put adjacent diagnostic words on different lines on another OS.
 	diagnostic := strings.Join(strings.Fields(stdout.String()+" "+stderr.String()), " ")
-	if got != code || !strings.Contains(diagnostic, message) {
+	// The baseline build's fang capitalised an error's first letter and the
+	// candidate's prints it as written: that one letter may differ, and
+	// nothing else.
+	if got != code || !(strings.Contains(diagnostic, message) || strings.Contains(diagnostic, swapFirstCase(message))) {
 		s.t.Fatalf("%s: exit %d (want %d), expected %q\n%s\n%s", label, got, code, message, &stdout, &stderr)
 	}
 }
@@ -414,4 +419,16 @@ func must(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// swapFirstCase is message with the case of its first letter swapped.
+func swapFirstCase(message string) string {
+	r, size := utf8.DecodeRuneInString(message)
+	switch {
+	case unicode.IsUpper(r):
+		return string(unicode.ToLower(r)) + message[size:]
+	case unicode.IsLower(r):
+		return string(unicode.ToUpper(r)) + message[size:]
+	}
+	return message
 }

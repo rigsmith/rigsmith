@@ -55,7 +55,7 @@ stdout. Methods (see `core/plugin/protocol.go` for the exact structs):
 | `discover` | `{repoRoot, sourcePath}` | `{packages: [Package]}` | enumerate releasable packages |
 | `set-version` | `{package, newVersion, dependencyUpdates}` | — | stamp a version (format-preserving) |
 | `publish` | `{package, packageSource, access, dryRun}` | `{published, skipped, message}` | publish via the native package manager (idempotent) |
-| `published` | `{package, packageSource, auth?, user?, authUnavailable?}` | `{published, noRegistry}` | is this version already on the registry? Publishes nothing. `noRegistry` for an ecosystem released by its tag alone; a registry that can't be reached is an error, never `published: false`. `auth` (`{token, method}`) is the ecosystem's resolved publish credential and `user` its account name, for a registry that won't answer an anonymous read: send them only when the registry asks (a 401), only to its own host, over https, and never across a redirect elsewhere. `authUnavailable` means one is configured but couldn't be resolved: don't substitute an ambient credential (an environment variable) for it. Credentials written into `packageSource` itself are the source's own and still apply. Mask whichever credential is used in any error |
+| `published` | `{package, packageSource, auth?, user?, authUnavailable?, authError?}` | `{published, noRegistry}` | is this version already on the registry? Publishes nothing. `noRegistry` for an ecosystem released by its tag alone; a registry that can't be reached is an error, never `published: false`. `auth` (`{token, method}`) is the ecosystem's resolved publish credential and `user` its account name, for a registry that won't answer an anonymous read: send them only when the registry asks (a 401), only to its own host, over https (plain http only to a loopback host), and never across a redirect elsewhere. `authUnavailable` means one is configured but couldn't be resolved: don't substitute an ambient credential (an environment variable) for it. `authError` says why it couldn't be, credential-safe: the reference (a `cmd:` one by kind alone) and whether it failed or came back empty, never what resolving it printed; an adapter that names it in its error isn't followed by the same reason again. Credentials written into `packageSource` itself are the source's own and still apply. Mask whichever credential is used in any error |
 
 `Package` carries `{name, displayName, version, dir, manifestPath, versionFile,
 private, dependencies[]}`. `versionFile` differs from `manifestPath` when the
@@ -101,6 +101,12 @@ What an external generator gets beyond the built-in's own inputs:
   built-in renders from this field. The "Updated dependencies" change is still
   in `changes`, flagged `dependencies: true`, so a generator written before
   the field keeps working; one that renders `dependencyUpdates` skips it.
+- `exactVersion`: `true` when the version was chosen by hand
+  (`--release-as`, the version prompt). `bump` is then the move it makes
+  (`major` for a patch forced to 2.0.0), not what the changes asked for, and
+  the built-in lists the changes that decided the release under that bump.
+  @changesets has no such override; a prerelease, a snapshot or a linked or
+  fixed group's coordinated version never sets it.
 - the output is normalized to end in exactly one newline, however many the
   generator prints, so the next entry starts on a line of its own.
 

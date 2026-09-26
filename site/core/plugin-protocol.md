@@ -60,7 +60,7 @@ stdout:
 | `discover` | `{repoRoot, sourcePath}` | `{packages: [Package]}` | enumerate releasable packages |
 | `set-version` | `{package, newVersion, dependencyUpdates}` | — | stamp a version (format-preserving) |
 | `publish` | `{package, packageSource, access, dryRun}` | `{published, skipped, message}` | publish via the native package manager (idempotent) |
-| `published` | `{package, packageSource, auth?, user?, authUnavailable?}` | `{published, noRegistry}` | is this version already on the registry? Publishes nothing. `noRegistry` for an ecosystem released by its tag alone; a registry that can't be reached is an error, never `published: false`. `auth` (`{token, method}`) is the ecosystem's resolved publish credential and `user` its account name, for a registry that won't answer an anonymous read: send them only when the registry asks (a 401), only to its own host, over https, and never across a redirect elsewhere. `authUnavailable` means one is configured but couldn't be resolved: don't substitute an ambient credential (an environment variable) for it. Credentials written into `packageSource` itself are the source's own and still apply. Mask whichever credential is used in any error |
+| `published` | `{package, packageSource, auth?, user?, authUnavailable?, authError?}` | `{published, noRegistry}` | is this version already on the registry? Publishes nothing. `noRegistry` for an ecosystem released by its tag alone; a registry that can't be reached is an error, never `published: false`. `auth` (`{token, method}`) is the ecosystem's resolved publish credential and `user` its account name, for a registry that won't answer an anonymous read: send them only when the registry asks (a 401), only to its own host, over https (plain http only to a loopback host), and never across a redirect elsewhere. `authUnavailable` means one is configured but couldn't be resolved: don't substitute an ambient credential (an environment variable) for it. `authError` says why it couldn't be, credential-safe: the reference (a `cmd:` one by kind alone) and whether it failed or came back empty, never what resolving it printed; an adapter that names it in its error isn't followed by the same reason again. Credentials written into `packageSource` itself are the source's own and still apply. Mask whichever credential is used in any error |
 
 ## Changelog generators
 
@@ -84,6 +84,14 @@ to `getReleaseLine`; the string form sends none. Each change carries its
 released dependencies arrive as `dependencyUpdates`, so a generator can render
 everything the built-in does. The "Updated dependencies" change stays in
 `changes`, flagged `dependencies: true`, for generators written before that.
+The request's `bump` is the release's bump. When the version was chosen by
+hand (`--release-as`, the version prompt), `exactVersion` is `true` and `bump`
+is the move that version makes (`major` for a patch forced to 2.0.0); each
+change keeps its own `bump`. The built-in untyped layout lists the deciding
+changes under the release's bump; a generator that groups by type, as the
+changelogen example does, can keep its sections. `exactVersion` is optional, so
+a generator that doesn't read it keeps working. A prerelease, a snapshot, or a
+linked or fixed group's coordinated version never sets it.
 `"@changesets/cli/changelog"`, @changesets' own default, is the built-in
 layout.
 

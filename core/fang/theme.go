@@ -183,10 +183,15 @@ func makeStyles(cs ColorScheme) Styles {
 		},
 		Span: lipgloss.NewStyle().
 			Background(cs.Codeblock),
+		// Local fork behavior (rigsmith): no Transform here. Upstream fang
+		// title-cases the first word of an error, which mangles the many
+		// messages that open with a flag, a package name or a path
+		// ("--Only", "App depends on…" for a package named app), and is
+		// something the non-terminal path never did anyway. The message is
+		// shown as written.
 		ErrorText: lipgloss.NewStyle().
 			MarginLeft(2).
-			Width(width() - 4).
-			Transform(titleFirstWord),
+			Width(width() - 4),
 		ErrorHeader: lipgloss.NewStyle().
 			Foreground(cs.ErrorHeader[0]).
 			Background(cs.ErrorHeader[1]).
