@@ -280,3 +280,28 @@ func TestSynthesizeKeepsFooterBreakingHousekeeping(t *testing.T) {
 		}
 	}
 }
+
+// Two commits whose 7-character prefixes collide get distinct IDs: git's
+// unique abbreviation, which the log reads, is what an ID is.
+func TestSynthesizeIDsStayDistinctOnAPrefixCollision(t *testing.T) {
+	file := []string{abs("packages/pkg-a/x.go")}
+	commits := []gitutil.Commit{
+		{Hash: "abcdef1111111111111111111111111111111111", Short: "abcdef11", Subject: "fix: one", Files: file},
+		{Hash: "abcdef1222222222222222222222222222222222", Short: "abcdef12", Subject: "fix: two", Files: file},
+	}
+	got := Synthesize(commits, pkgs(), root, config.Default())
+	if len(got) != 2 || got[0].ID == got[1].ID {
+		t.Fatalf("IDs = %v, want two distinct", ids(got))
+	}
+	if got[0].ID != "abcdef11" || got[1].ID != "abcdef12" {
+		t.Errorf("IDs = %v, want git's abbreviations", ids(got))
+	}
+}
+
+func ids(sets []*changeset.Changeset) []string {
+	var out []string
+	for _, cs := range sets {
+		out = append(out, cs.ID)
+	}
+	return out
+}

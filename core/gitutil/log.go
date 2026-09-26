@@ -16,6 +16,9 @@ import (
 type Commit struct {
 	// Hash is the full commit SHA.
 	Hash string
+	// Short is git's unique abbreviation of Hash in this repository: at
+	// least 7 characters, longer where 7 would be ambiguous.
+	Short string
 	// Subject is the first line of the message (the conventional-commit header).
 	Subject string
 	// Body is everything after the subject (blank-line separated), used to find
@@ -35,7 +38,7 @@ const (
 	logFieldSep  = "\x1f"
 )
 
-var logFormat = strings.Join([]string{"%H", "%s", "%b"}, logFieldSep)
+var logFormat = strings.Join([]string{"%H", "%h", "%s", "%b"}, logFieldSep)
 
 // LogSince returns the commits reachable from HEAD but not from ref, newest
 // first, each with the files it changed. An empty ref reads the entire history
@@ -49,7 +52,9 @@ func LogSince(ctx context.Context, dir, ref string) ([]Commit, error) {
 	}
 	repoRoot := strings.TrimSpace(root)
 
-	args := []string{"log", "--name-only", "--no-renames", "--pretty=format:" + logRecordSep + logFormat + logFieldSep}
+	// --abbrev=7: %h is at least 7 characters whatever core.abbrev says,
+	// and git lengthens it until it's unique.
+	args := []string{"log", "--name-only", "--no-renames", "--abbrev=7", "--pretty=format:" + logRecordSep + logFormat + logFieldSep}
 	if strings.TrimSpace(ref) != "" {
 		// A tag rendered from a template could start with a dash; after
 		// --end-of-options it's a revision, never an option.
@@ -65,17 +70,18 @@ func LogSince(ctx context.Context, dir, ref string) ([]Commit, error) {
 		if strings.TrimSpace(rec) == "" {
 			continue
 		}
-		// rec = hash <FS> subject <FS> body <FS> \n file1 \n file2 …
-		fields := strings.SplitN(rec, logFieldSep, 4)
-		if len(fields) < 4 {
+		// rec = hash <FS> short <FS> subject <FS> body <FS> \n file1 \n file2 …
+		fields := strings.SplitN(rec, logFieldSep, 5)
+		if len(fields) < 5 {
 			continue
 		}
 		c := Commit{
 			Hash:    strings.TrimSpace(fields[0]),
-			Subject: strings.TrimSpace(fields[1]),
-			Body:    strings.TrimSpace(fields[2]),
+			Short:   strings.TrimSpace(fields[1]),
+			Subject: strings.TrimSpace(fields[2]),
+			Body:    strings.TrimSpace(fields[3]),
 		}
-		for _, line := range strings.Split(fields[3], "\n") {
+		for _, line := range strings.Split(fields[4], "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" {
 				continue

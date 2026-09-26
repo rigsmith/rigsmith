@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,5 +75,24 @@ func TestLogSinceTreatsARefAsARevision(t *testing.T) {
 	}
 	if _, err := os.Stat(target); err == nil {
 		t.Error("an option-like ref was read as git's --output")
+	}
+}
+
+// LogSince reads git's unique abbreviation of each commit: a prefix of the
+// full hash, at least 7 characters, whatever core.abbrev is set to.
+func TestLogSinceReadsAUniqueAbbreviation(t *testing.T) {
+	dir := initRepo(t)
+	git(t, dir, "config", "core.abbrev", "4")
+	commits, err := LogSince(context.Background(), dir, "")
+	if err != nil || len(commits) == 0 {
+		t.Fatalf("LogSince = %v, %v", commits, err)
+	}
+	for _, c := range commits {
+		if len(c.Short) < 7 || !strings.HasPrefix(c.Hash, c.Short) {
+			t.Errorf("Short = %q for %s, want a 7+ character prefix", c.Short, c.Hash)
+		}
+		if c.Subject != "initial" {
+			t.Errorf("Subject = %q: the fields are misaligned", c.Subject)
+		}
 	}
 }
