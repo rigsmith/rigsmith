@@ -200,7 +200,16 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          assets=$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo 0)
+          # Only a release that isn't there counts as not released; any other
+          # failure (the API, auth) stops here rather than building the tag again.
+          if out=$(gh release view "$TAG" --json assets --jq '.assets | length' 2>&1); then
+            assets=$out
+          elif printf '%s' "$out" | grep -qi 'release not found'; then
+            assets=0
+          else
+            echo "::error::Couldn't read $TAG's release: $out"
+            exit 1
+          fi
           if [ "${assets:-0}" -gt 0 ]; then
             echo "$TAG is already released ($assets assets): nothing to do."
           else
@@ -287,14 +296,20 @@ jobs:
           fi
           sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
           echo "$RELEASE_TAG is $sha; waiting for CI to pass there."
+          # Any CI run of this exact commit counts, push or pull request: a tag
+          # can sit on a commit whose only CI ran for its pull request. One
+          # success is enough; a failure with nothing still running fails.
           for i in $(seq 1 90); do
-            state=$(gh run list --workflow ci.yml --commit "$sha" --event push --limit 1 \
-              --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
-            echo "$(date -u +%H:%M:%S) CI: ${state:-not started}"
-            case "$state" in
-              "completed success") exit 0 ;;
-              completed*) echo "::error::CI finished as '${state#completed }' on $RELEASE_TAG's commit ($sha); not publishing it."; exit 1 ;;
+            runs=$(gh run list --workflow ci.yml --commit "$sha" --limit 20 \
+              --json status,conclusion,event --jq '[.[] | "\(.event):\(.status):\(.conclusion)"] | join(" ")')
+            echo "$(date -u +%H:%M:%S) CI: ${runs:-not started}"
+            case " $runs " in
+              *":completed:success "*) exit 0 ;;
             esac
+            if [ -n "$runs" ] && ! printf '%s' "$runs" | grep -qE ':(queued|in_progress|waiting|pending|requested):'; then
+              echo "::error::CI didn't pass on $RELEASE_TAG's commit ($sha): $runs; not publishing it."
+              exit 1
+            fi
             sleep 30
           done
           echo "::error::CI hasn't finished on $RELEASE_TAG's commit ($sha) after 45 minutes; not publishing it."

@@ -312,10 +312,26 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 	} else if !strings.Contains(gr.Steps[build].With["args"], "--release-notes=") {
 		t.Errorf("GoReleaser's args don't pass --release-notes: %q", gr.Steps[build].With["args"])
 	}
-	// A build checks CI passed on its tag's commit, before anything is built.
+	// A build checks CI passed on its tag's commit, before anything is built,
+	// and takes a CI run of any event: a tag can sit on a commit whose only CI
+	// ran for its pull request.
 	ci := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, "gh run list --workflow ci.yml") })
 	checkout := stepIndex(gr, func(s step) bool { return strings.HasPrefix(s.Uses, "actions/checkout@") })
 	if ci < 0 || ci > checkout {
 		t.Errorf("the build's CI check (step %d) must come before checkout (step %d)", ci, checkout)
+	} else if strings.Contains(gr.Steps[ci].Run, "--event push") {
+		t.Errorf("the build's CI check only takes push runs; a tag's commit may only have had PR CI")
+	}
+
+	// A pushed tag is skipped only when its release is really out: an API or
+	// auth failure reading it must stop the run, not count as "no release" and
+	// build the tag again.
+	pushed := wf.Jobs["pushed-tag"]
+	check := stepIndex(pushed, func(s step) bool { return strings.Contains(s.Run, "gh release view") })
+	if check < 0 {
+		t.Fatal("the pushed-tag job doesn't check the tag's release")
+	}
+	if body := pushed.Steps[check].Run; strings.Contains(body, "|| echo 0") || !strings.Contains(body, "release not found") {
+		t.Errorf("the pushed-tag check should treat only a missing release as unreleased:\n%s", body)
 	}
 }

@@ -108,8 +108,8 @@ func newTrustFixture(t *testing.T) *trustFixture {
 		f.packages = append(f.packages, name)
 	}
 	sort.Strings(f.packages)
-	if len(f.packages) < 5 {
-		t.Fatalf("only %d tools in cmd/; the seeds below need five", len(f.packages))
+	if len(f.packages) < 6 {
+		t.Fatalf("only %d tools in cmd/; the seeds below need six", len(f.packages))
 	}
 	return f
 }
@@ -117,7 +117,9 @@ func newTrustFixture(t *testing.T) *trustFixture {
 func (f *trustFixture) seed(name string, configs ...trustConfig) {
 	for i := range configs {
 		configs[i].ID = fmt.Sprintf("%s-%d", strings.ReplaceAll(name, "/", "_"), i)
-		configs[i].Type = "github"
+		if configs[i].Type == "" {
+			configs[i].Type = "github"
+		}
 	}
 	raw, _ := json.Marshal(configs)
 	if err := os.WriteFile(filepath.Join(f.state, strings.Replace(name, "/", "__", 1)+".json"), raw, 0o644); err != nil {
@@ -165,8 +167,9 @@ const (
 )
 
 // seedEveryCase gives the packages, in turn: both workflows, only the old one,
-// only the new one, the old one beside ANOTHER repository's release.yml, and a
-// prerelease.yml (which ends with release.yml but isn't it).
+// only the new one, the old one beside ANOTHER repository's release.yml, a
+// prerelease.yml (which ends with release.yml but isn't it), and the old one
+// beside a CircleCI publisher (which names no workflow file).
 func (f *trustFixture) seedEveryCase() {
 	cases := [][]trustConfig{
 		{{File: "goreleaser.yml", Repository: thisRepo}, {File: "release.yml", Repository: thisRepo}},
@@ -174,6 +177,7 @@ func (f *trustFixture) seedEveryCase() {
 		{{File: "release.yml", Repository: thisRepo}},
 		{{File: "goreleaser.yml", Repository: thisRepo}, {File: "release.yml", Repository: otherRepo}},
 		{{File: "prerelease.yml", Repository: thisRepo}},
+		{{File: "goreleaser.yml", Repository: thisRepo}, {Type: "circleci"}},
 	}
 	for i, name := range f.packages {
 		f.seed(name, cases[i%len(cases)]...)
@@ -198,11 +202,16 @@ func TestTrustReplaceLeavesOnlyThisRepositorysReleaseWorkflow(t *testing.T) {
 			}
 		}
 		if len(ours) != 1 || ours[0] != "release.yml" {
-			t.Errorf("%s (seed %d): this repository's configurations = %v, want exactly [release.yml]", name, i%5, ours)
+			t.Errorf("%s (seed %d): this repository's configurations = %v, want exactly [release.yml]", name, i%6, ours)
 		}
-		// Another repository's configuration is never touched.
-		if i%5 == 3 && (len(others) != 1 || others[0] != otherRepo+" release.yml") {
+		// Another repository's configuration, or another provider's, is never
+		// touched.
+		if i%6 == 3 && (len(others) != 1 || others[0] != otherRepo+" release.yml") {
 			t.Errorf("%s: another repository's configurations = %v, want it kept", name, others)
+		}
+		// A CircleCI record has no repository or workflow file: " ".
+		if i%6 == 5 && (len(others) != 1 || others[0] != " ") {
+			t.Errorf("%s: other publishers = %q, want the CircleCI one kept", name, others)
 		}
 	}
 }
@@ -226,9 +235,11 @@ func TestTrustListReadsSeveralConfigurationsAndFailsUntilExclusive(t *testing.T)
 
 	// Everything on release.yml, but with one leftover alongside: each alone
 	// still fails the check, since done means release.yml is the only publisher.
+	// A CircleCI publisher names no workflow file, and still counts.
 	for _, extra := range []trustConfig{
 		{File: "goreleaser.yml", Repository: thisRepo},
 		{File: "release.yml", Repository: otherRepo},
+		{Type: "circleci"},
 	} {
 		for _, name := range f.packages {
 			f.seed(name, trustConfig{File: "release.yml", Repository: thisRepo}, extra)

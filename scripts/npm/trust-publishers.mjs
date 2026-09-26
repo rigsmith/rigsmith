@@ -248,7 +248,15 @@ async function promptOTP(message) {
 // how --replace revoked this repository's only publisher and registered
 // nothing), and neither is prerelease.yml, which ends with release.yml.
 function isOurs(c) {
-  return c.repository === REPOSITORY && (c.file === WORKFLOW || c.file.endsWith(`/${WORKFLOW}`))
+  return (c.type === '' || c.type === 'github') && c.repository === REPOSITORY &&
+    (c.file === WORKFLOW || c.file.endsWith(`/${WORKFLOW}`))
+}
+
+// isSameRepoWorkflow is another GitHub workflow of this repository: what
+// --replace revokes. Anything else that isn't ours (another repository, another
+// provider) is left alone and reported.
+function isSameRepoWorkflow(c) {
+  return !isOurs(c) && (c.type === '' || c.type === 'github') && c.repository === REPOSITORY
 }
 
 // failureKind decides what a failed registration means by reading the registry,
@@ -311,18 +319,21 @@ function registeredConfigs(name, otp) {
   }
   const parsed = values.flat()
   const rows = parsed
+  // Every publisher counts, workflow file or not: a CircleCI or GitLab one has
+  // no GitHub workflow, and dropping it would let --list call a package
+  // exclusively ours while something else can publish it.
   const configs = rows
-    .filter((row) => row && typeof row === 'object')
+    .filter((row) => row && typeof row === 'object' && Object.keys(row).length > 0)
     .map((row) => ({
       id: row.id ?? '',
+      type: row.type ?? '',
       file: row.file ?? row.workflow ?? row.workflowFilename ?? '',
-      repository: row.repository ?? row.repo ?? '',
+      repository: row.repository ?? row.repo ?? row.project ?? '',
     }))
-    .filter((c) => c.file)
-  // Parsed, but nothing that names a workflow: better to say it could not be
-  // read than to report a registered package as unregistered.
-  if (configs.length === 0 && rows.some((row) => row && Object.keys(row).length > 0)) {
-    return readFailure(`no workflow file in: ${body.slice(0, 160)}`)
+  // Something that isn't a publisher record at all: better to say it could not
+  // be read than to report a registered package as unregistered.
+  if (configs.some((c) => !c.id && !c.type && !c.file)) {
+    return readFailure(`unrecognized trust record in: ${body.slice(0, 160)}`)
   }
   return configs
 }
@@ -389,7 +400,7 @@ function replace(name, otp) {
     configs = registeredConfigs(name, otp)
     if (configs === null || !configs.some(isOurs)) return null
   }
-  const stale = configs.filter((c) => c.repository === REPOSITORY && !isOurs(c) && c.id)
+  const stale = configs.filter((c) => isSameRepoWorkflow(c) && c.id)
   for (const c of stale) {
     sleep(CALL_SPACING_MS)
     const r = spawnSync('npm', ['trust', 'revoke', name, '--id', c.id],
@@ -430,13 +441,17 @@ if (LIST) {
     }
     // Another repository able to publish the package is worth saying whatever
     // else holds it.
-    const elsewhere = configs.filter((c) => c.repository !== REPOSITORY)
-    if (elsewhere.length) foreign.push(`${name} (${elsewhere.map((c) => `${c.repository} ${c.file}`).join(', ')})`)
+    const elsewhere = configs.filter((c) => !isOurs(c) && !isSameRepoWorkflow(c))
+    if (elsewhere.length) {
+      foreign.push(`${name} (${elsewhere.map((c) => [c.type, c.repository, c.file].filter(Boolean).join(' ')).join(', ')})`)
+    }
     if (configs.some(isOurs)) {
       ours.push(name)
-      const extra = configs.filter((c) => c.repository === REPOSITORY && !isOurs(c))
+      const extra = configs.filter(isSameRepoWorkflow)
       if (extra.length) stale.push(`${name} (also ${extra.map((c) => c.file).join(', ')})`)
-    } else if (held.length > 0) other.push(`${name} (${held.join(', ')})`)
+    } else if (held.length > 0) {
+      other.push(`${name} (${configs.map((c) => [c.type, c.repository, c.file].filter(Boolean).join(' ')).join(', ')})`)
+    }
     else none.push(name)
   }
   process.stdout.write('\r'.padEnd(60) + '\r')
@@ -447,7 +462,7 @@ if (LIST) {
     ['registered for a DIFFERENT workflow', other],
     ['could not be read', unreadable],
     [`registered for ${WORKFLOW} but still also for another workflow here (--replace drops it)`, stale],
-    ['ALSO trusted by another repository, which can publish them too (revoke by hand if unexpected)', foreign],
+    ['ALSO trusted by another repository or CI provider, which can publish them too (revoke by hand if unexpected)', foreign],
   ]) {
     if (list.length) console.log(`\n${list.length} ${label}:\n  ${list.join('\n  ')}`)
   }
