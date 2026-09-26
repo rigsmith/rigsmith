@@ -165,7 +165,7 @@ func NewStatusCmd() *cobra.Command {
 			// is how a script tells "nothing to release" from an error.
 			if len(changesets) == 0 {
 				if output != "" {
-					return writeStatusPlan(ws.Root, output, nil, nil, nil, pre)
+					return writeStatusPlan(ws.Root, output, ws.Config, nil, nil, nil, pre)
 				}
 				if fromCommits || ws.Config.UsesCommits() {
 					fmt.Fprintln(cmd.OutOrStdout(), DimStyle.Render("No releasable commits since the last release."))
@@ -191,7 +191,7 @@ func NewStatusCmd() *cobra.Command {
 			if output != "" {
 				// Grouped by the changesets that drive the plan: one a
 				// prerelease already consumed doesn't tie its packages now.
-				return writeStatusPlan(ws.Root, output, plan, active, planner.ReleaseGroups(plan, active, ws.Config), pre)
+				return writeStatusPlan(ws.Root, output, ws.Config, plan, active, planner.ReleaseGroups(plan, active, ws.Config), pre)
 			}
 			if len(plan) == 0 {
 				out := cmd.OutOrStdout()
@@ -281,13 +281,15 @@ func printEmptyStatusPanel(cmd *cobra.Command, ws *Workspace, pkgs []plugin.Pack
 // writeStatusPlan serializes the plan as @changesets' ReleasePlan
 // ({ changesets, releases, preState }), from the changesets that drive it. A
 // relative path is resolved against the workspace root, matching @changesets.
-func writeStatusPlan(root, output string, plan []*planner.Module, changesets []*changeset.Changeset, groups map[string]string, pre *prestate.PreState) error {
+func writeStatusPlan(root, output string, cfg *config.Config, plan []*planner.Module, changesets []*changeset.Changeset, groups map[string]string, pre *prestate.PreState) error {
 	named := map[string][]string{}
 	sets := make([]statusChangeset, 0, len(changesets))
 	for _, cs := range changesets {
 		rels := make([]statusChangesetRelease, 0, len(cs.Releases))
 		for _, r := range cs.Releases {
-			rels = append(rels, statusChangesetRelease{Name: r.Name, Type: r.Bump.String()})
+			// The bump the plan counts: a bare name in a typed changeset (and
+			// every commit-derived one) takes its bump from the type.
+			rels = append(rels, statusChangesetRelease{Name: r.Name, Type: planner.ReleaseBump(cs, r, cfg).String()})
 			named[r.Name] = append(named[r.Name], cs.ID)
 		}
 		sets = append(sets, statusChangeset{ID: cs.ID, Summary: strings.TrimSpace(cs.Summary), Releases: rels})

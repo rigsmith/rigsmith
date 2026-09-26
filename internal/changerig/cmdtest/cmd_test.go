@@ -356,9 +356,9 @@ func TestStatusVerboseShowsChangeSummary(t *testing.T) {
 	assertContains(t, out, "a very specific change line")
 }
 
-// Ported from StatusChangesetCommand_Output_WritesTheReleasePlanAsJson. The Go
-// plan shape is @changesets' { releases: [{ name, type, newVersion }] } —
-// changeset ids are not part of it (unlike the C# plan).
+// Ported from StatusChangesetCommand_Output_WritesTheReleasePlanAsJson: the
+// releases' names, types and new versions. The rest of @changesets' plan
+// shape is TestStatusOutputListsChangesetsAsCanonDoes.
 func TestStatusOutputWritesJSONPlan(t *testing.T) {
 	dir := newWorkspace(t)
 	writeChangeset(t, dir, "cs1", "pkg-a", "minor", "a change")
@@ -399,8 +399,12 @@ func TestStatusOutputListsChangesetsAsCanonDoes(t *testing.T) {
 		"---\n\"pkg-a\": minor\n\"pkg-c\": none\n---\n\nA change\n")
 	writeChangeset(t, dir, "cs2", "pkg-a", "patch", "Another")
 
-	code, out := runChangerig(t, dir, "status", "--output", "plan.json")
-	assertExitZero(t, code, out)
+	code, stdout, stderr := runChangerigSplit(t, dir, "status", "--output", "plan.json")
+	assertExitZero(t, code, stdout+stderr)
+	// The plan goes to the file; stdout stays empty for scripts.
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing with --output", stdout)
+	}
 
 	type rel struct {
 		Name string `json:"name"`
@@ -450,6 +454,26 @@ func TestStatusOutputListsChangesetsAsCanonDoes(t *testing.T) {
 	}
 	if plan.PreState != nil {
 		t.Errorf("preState = %+v, want it absent outside prerelease mode", plan.PreState)
+	}
+}
+
+// A warning about the plan goes to stderr, so --output leaves stdout empty even
+// when there is something to warn about.
+func TestStatusOutputWarnsOnStderrOnly(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"pkg-a": "1.0.0"})
+	writeFile(t, filepath.Join(dir, "packages", "pkg-b", "package.json"),
+		`{ "name": "pkg-b", "version": "1.0.0", "dependencies": { "pkg-a": "^1.0.0" } }`)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"), `{ "ignore": ["pkg-a"] }`)
+	writeChangeset(t, dir, "cs1", "pkg-b", "patch", "A change")
+
+	code, stdout, stderr := runChangerigSplit(t, dir, "status", "--output", "plan.json")
+	assertExitZero(t, code, stdout+stderr)
+	if !strings.Contains(stderr, "skipped package pkg-a") {
+		t.Fatalf("precondition: expected the skipped-dependent warning on stderr, got %q", stderr)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want nothing with --output", stdout)
 	}
 }
 

@@ -109,6 +109,24 @@ func run(t *testing.T, bin, dir string, args ...string) (int, string) {
 	return 0, string(out)
 }
 
+// runChangerigSplit is runChangerig with stdout and stderr kept apart, for
+// output that is meant for one stream only.
+func runChangerigSplit(t *testing.T, dir string, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	cmd := exec.Command(changerigBin, args...)
+	cmd.Dir = dir
+	var outBuf, errBuf strings.Builder
+	cmd.Stdout, cmd.Stderr = &outBuf, &errBuf
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			t.Fatalf("run changerig %s: %v\n%s", strings.Join(args, " "), err, errBuf.String())
+		}
+		code = exitErr.ExitCode()
+	}
+	return code, outBuf.String(), errBuf.String()
+}
+
 func runChangerig(t *testing.T, dir string, args ...string) (int, string) {
 	t.Helper()
 	return run(t, changerigBin, dir, args...)
