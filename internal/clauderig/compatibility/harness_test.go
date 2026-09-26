@@ -200,7 +200,9 @@ func (s *sandbox) run(label, input string, code int, message string, args ...str
 	// Fang wraps error paragraphs to terminal width. A longer temporary path
 	// can put adjacent diagnostic words on different lines on another OS.
 	diagnostic := strings.Join(strings.Fields(stdout.String()+" "+stderr.String()), " ")
-	if got != code || !strings.Contains(diagnostic, message) {
+	// Case-insensitive: the baseline build's fang capitalised an error's first
+	// word and the candidate's prints it as written, so casing is cosmetic here.
+	if got != code || !strings.Contains(strings.ToLower(diagnostic), strings.ToLower(message)) {
 		s.t.Fatalf("%s: exit %d (want %d), expected %q\n%s\n%s", label, got, code, message, &stdout, &stderr)
 	}
 }

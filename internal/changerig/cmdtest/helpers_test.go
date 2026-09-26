@@ -9,7 +9,7 @@
 //
 // Assertions target the Go tool's actual messages and exit behavior, not the
 // C# text or exit codes: failures only need to be non-zero, and message checks
-// are case-insensitive substrings (fang re-capitalizes error text).
+// are case-insensitive substrings (casing is cosmetic).
 package cmdtest
 
 import (
@@ -121,8 +121,8 @@ func runShiprig(t *testing.T, dir string, args ...string) (int, string) {
 
 // --- assertions ---
 
-// assertContains checks output for a substring, case-insensitively: fang
-// re-capitalizes the first letter of error messages, so casing is cosmetic.
+// assertContains checks output for a substring, case-insensitively: a
+// message's casing is cosmetic, and fang capitalised error text until 1.22.0.
 func assertContains(t *testing.T, output, want string) {
 	t.Helper()
 	if !strings.Contains(strings.ToLower(output), strings.ToLower(want)) {
