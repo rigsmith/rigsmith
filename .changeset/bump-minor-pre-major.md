@@ -4,4 +4,4 @@ scope: changerig
 "github.com/rigsmith/rigsmith"
 ---
 
-`"versioning": { "bumpMinorPreMajor": true }` releases a major bump on a package below 1.0.0 as a minor (0.3.0 → 0.4.0), as release-please's `bump-minor-pre-major` does, and `status` reports it as a minor. Packages at 1.0.0 or above are unaffected, and 1.0.0 is reached with an explicit `--release-as`. It's off by default, as canon @changesets takes a major on 0.x to 1.0.0.
+New option `"versioning": { "bumpMinorPreMajor": true }`: a breaking change to a package below 1.0.0 releases as a minor (0.3.0 → 0.4.0) instead of jumping to 1.0.0, and its changelog lists it under Minor Changes. It's off by default. When you're ready for 1.0.0, use `--release-as`.

@@ -4,4 +4,4 @@ scope: changerig
 "github.com/rigsmith/rigsmith"
 ---
 
-`version --only` naming a package the config's `ignore` leaves out is an error that says so, as an unknown name is, and naming a private package that isn't versioned says it's private and points at `privatePackages.version`. Before, it printed "Nothing to version." and exited 0, which a release job would take for success.
+`version --only` now fails if you name a package that's ignored or private, and says why. It used to print "Nothing to version." and succeed, which could let a release job pass without releasing anything.

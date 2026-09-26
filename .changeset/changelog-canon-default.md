@@ -4,4 +4,4 @@ scope: changerig
 "github.com/rigsmith/rigsmith"
 ---
 
-`"changelog": "@changesets/cli/changelog"`, the value `changeset init` writes, now renders the built-in changelog. Before, it was run as a command path and every changelog render failed, which broke repos migrating from @changesets that kept their config.
+Repos moving over from Changesets that kept `"changelog": "@changesets/cli/changelog"` in their config now get the normal changelog. Before, every changelog failed to render.
