@@ -262,9 +262,11 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 		t.Errorf("publish-script = %q, want \"shiprig tag\"", release.Steps[action].With["publish-script"])
 	}
 	// Tag only what CI passed: the wait comes before the step that tags.
-	wait := stepIndex(release, func(s step) bool { return strings.Contains(s.Run, "gh run list --workflow ci.yml") })
+	wait := stepIndex(release, func(s step) bool { return strings.Contains(s.Run, "scripts/ci-passed.sh") })
 	if wait < 0 || wait > action {
 		t.Errorf("the CI wait (step %d) must come before shiprig-action (step %d)", wait, action)
+	} else if !strings.Contains(release.Steps[wait].Run, "--push-only") {
+		t.Errorf("the release job's CI wait should take push runs only: the commit it tags is a merge on main")
 	}
 	// shiprig-action v0.5.0 sets published-packages (hyphenated; its src/index.ts).
 	cli := stepIndex(release, func(s step) bool { return s.ID == "cli-tag" })
@@ -312,14 +314,15 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 	} else if !strings.Contains(gr.Steps[build].With["args"], "--release-notes=") {
 		t.Errorf("GoReleaser's args don't pass --release-notes: %q", gr.Steps[build].With["args"])
 	}
-	// A build checks CI passed on its tag's commit, before anything is built,
+	// A build checks CI passed on its tag's commit before anything is built,
 	// and takes a CI run of any event: a tag can sit on a commit whose only CI
-	// ran for its pull request.
-	ci := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, "gh run list --workflow ci.yml") })
+	// ran for its pull request (ci-passed.sh still requires every platform's
+	// tests to have run).
+	ci := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, "scripts/ci-passed.sh") })
 	checkout := stepIndex(gr, func(s step) bool { return strings.HasPrefix(s.Uses, "actions/checkout@") })
-	if ci < 0 || ci > checkout {
-		t.Errorf("the build's CI check (step %d) must come before checkout (step %d)", ci, checkout)
-	} else if strings.Contains(gr.Steps[ci].Run, "--event push") {
+	if ci < 0 || ci < checkout || ci > build {
+		t.Errorf("the build's CI check (step %d) must come after checkout (step %d) and before GoReleaser (step %d)", ci, checkout, build)
+	} else if strings.Contains(gr.Steps[ci].Run, "--push-only") {
 		t.Errorf("the build's CI check only takes push runs; a tag's commit may only have had PR CI")
 	}
 

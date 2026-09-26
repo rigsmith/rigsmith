@@ -134,18 +134,7 @@ jobs:
             exit 0
           fi
           echo "Release PR merge at $SHA; waiting for CI to pass on it before tagging."
-          for i in $(seq 1 90); do
-            state=$(gh run list --workflow ci.yml --commit "$SHA" --event push --limit 1 \
-              --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')
-            echo "$(date -u +%H:%M:%S) CI: ${state:-not started}"
-            case "$state" in
-              "completed success") exit 0 ;;
-              completed*) echo "::error::CI finished as '${state#completed }' on $SHA; not tagging. Fix main and merge a new release PR."; exit 1 ;;
-            esac
-            sleep 30
-          done
-          echo "::error::CI hasn't finished on $SHA after 45 minutes; not tagging. Re-run this job once it has."
-          exit 1
+          sh scripts/ci-passed.sh "$SHA" --push-only
 
       # The released shiprig, pinned, not the one in this tree: a broken main
       # must not be able to write the release PR or cut a release.
@@ -277,13 +266,21 @@ jobs:
           fi
           echo "All Trusted Signing secrets present and non-empty."
 
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The release commit itself, by its tag. A dry run builds the ref it
+          # was started on.
+          ref: ${{ env.RELEASE_TAG != '' && format('refs/tags/{0}', env.RELEASE_TAG) || '' }}
+          fetch-depth: 0 # every tag, so a dry run can name itself after the last release
+
       # A release builds a tag that already exists, from a commit CI passed.
       # The release job waited for that before tagging; this holds a tag pushed
       # by hand (which arrives with its commit, CI still running), a manual
       # release-tag run, and any re-run to the same rule, so nothing is
-      # published that CI didn't pass. It waits for CI rather than failing while
-      # it runs, and fails closed. It replaces running the whole test suite
-      # again here: CI on the exact commit is the stronger gate (three OSes).
+      # published that CI didn't pass. Any CI run of the exact commit counts,
+      # push or pull request, as long as every platform's tests ran in it
+      # (scripts/ci-passed.sh). It replaces running the whole test suite again
+      # here: CI on the exact commit is the stronger gate (three OSes).
       - name: Require a tag CI passed
         if: ${{ env.RELEASE_TAG != '' }}
         env:
@@ -294,33 +291,7 @@ jobs:
             echo "::error::'$RELEASE_TAG' isn't a CLI release tag (vX.Y.Z)."
             exit 1
           fi
-          sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
-          echo "$RELEASE_TAG is $sha; waiting for CI to pass there."
-          # Any CI run of this exact commit counts, push or pull request: a tag
-          # can sit on a commit whose only CI ran for its pull request. One
-          # success is enough; a failure with nothing still running fails.
-          for i in $(seq 1 90); do
-            runs=$(gh run list --workflow ci.yml --commit "$sha" --limit 20 \
-              --json status,conclusion,event --jq '[.[] | "\(.event):\(.status):\(.conclusion)"] | join(" ")')
-            echo "$(date -u +%H:%M:%S) CI: ${runs:-not started}"
-            case " $runs " in
-              *":completed:success "*) exit 0 ;;
-            esac
-            if [ -n "$runs" ] && ! printf '%s' "$runs" | grep -qE ':(queued|in_progress|waiting|pending|requested):'; then
-              echo "::error::CI didn't pass on $RELEASE_TAG's commit ($sha): $runs; not publishing it."
-              exit 1
-            fi
-            sleep 30
-          done
-          echo "::error::CI hasn't finished on $RELEASE_TAG's commit ($sha) after 45 minutes; not publishing it."
-          exit 1
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The release commit itself, by its tag. A dry run builds the ref it
-          # was started on.
-          ref: ${{ env.RELEASE_TAG != '' && format('refs/tags/{0}', env.RELEASE_TAG) || '' }}
-          fetch-depth: 0 # every tag, so a dry run can name itself after the last release
+          sh scripts/ci-passed.sh "$(git rev-parse HEAD)"
           # GoReleaser publishes through the API with its own tokens; nothing
           # here pushes with git, so no credential is left on disk.
           persist-credentials: false
