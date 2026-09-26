@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,9 +60,11 @@ plain layout and says how to switch.`,
 			}
 			fmt.Fprintf(out, "Initialized changesets in %s (source: %s)\n", ws.ChangesetDir, source)
 			if repo == "" && slug != "" && changelogFlag == "" {
+				// The config exists now, so init won't rewrite it: the edit
+				// is the way to switch.
 				fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf(
-					"tip: this repository is on GitHub (%s). To link each changelog entry's commit and pull request, set "+
-						`"changelog": ["@changesets/changelog-github", { "repo": %q }] in config.json (or run init with --changelog github).`, slug, slug)))
+					"tip: this repository is on GitHub (%s). To link each changelog entry's commit and pull request, set %s in %s.",
+					slug, changelogGitHubEntry(slug), filepath.Join(relDir(ws.Root, ws.ChangesetDir), "config.json"))))
 			}
 			return nil
 		},
@@ -104,10 +107,20 @@ func resolveInitChangelog(flag, slug string) (string, error) {
 		Value(&link).
 		WithTheme(brand.Theme(brand.AccentChange)).
 		Run()
-	if err != nil || !link {
-		return "", nil // aborted or declined: the plain layout
+	if err != nil {
+		return "", fmt.Errorf("setup cancelled") // as the source picker: abort writes nothing
+	}
+	if !link {
+		return "", nil // declined: the plain layout
 	}
 	return slug, nil
+}
+
+// changelogGitHubEntry is the `changelog` config entry that links repo's
+// commits and pull requests, JSON-encoded whatever the repo string holds.
+func changelogGitHubEntry(repo string) string {
+	name, _ := json.Marshal(repo)
+	return fmt.Sprintf(`"changelog": ["@changesets/changelog-github", { "repo": %s }]`, name)
 }
 
 // resolveInitSource picks the versioning source for a fresh workspace. An
@@ -168,7 +181,7 @@ func renderConfig(source config.VersioningSource, githubRepo string) string {
 		versioning = fmt.Sprintf("  \"versioning\": { \"source\": %q },\n", source)
 	}
 	if githubRepo != "" {
-		versioning += fmt.Sprintf("  \"changelog\": [\"@changesets/changelog-github\", { \"repo\": %q }],\n", githubRepo)
+		versioning += "  " + changelogGitHubEntry(githubRepo) + ",\n"
 	}
 	return fmt.Sprintf(`{
   "$schema": "https://rigsmith.dev/schemas/changeset-config.json",

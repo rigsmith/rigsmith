@@ -55,6 +55,9 @@ func TestInitSuggestsChangelogGitHub(t *testing.T) {
 	}
 	assertContains(t, out, "tip: this repository is on GitHub (acme/widgets)")
 	assertContains(t, out, `"changelog": ["@changesets/changelog-github", { "repo": "acme/widgets" }]`)
+	// Re-running init doesn't touch an existing config, so the tip doesn't
+	// suggest it.
+	assertNotContains(t, out, "--changelog github")
 }
 
 func TestInitChangelogDefaultAndNoRemote(t *testing.T) {
