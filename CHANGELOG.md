@@ -1,5 +1,43 @@
 # github.com/rigsmith/rigsmith
 
+## 1.22.0
+
+### 🚀 Enhancements
+
+- **changerig:** New option `"versioning": { "bumpMinorPreMajor": true }`: a breaking change to a package below 1.0.0 releases as a minor (0.3.0 → 0.4.0) instead of jumping to 1.0.0. In the changelog it's listed under Minor Changes, or under 💥 Breaking Changes if it's a typed breaking change such as `feat!`. It's off by default. When you're ready for 1.0.0, use `--release-as`.
+- **changerig:** Custom changelog plugins get more to work with:
+  - the options you give them in the config, as in `["./scripts/changelog.js", { "style": "terse" }]`;
+  - each change's full commit hash, plus its pull request and author when you set a `repo` option;
+  - the released dependencies as a list;
+  - whether the version was picked with `--release-as`.
+  
+  A plugin's output now always ends with exactly one newline.
+- **changerig:** `init` can set up changelogs with commit and pull request links on a GitHub repository. Pass `--changelog github`, or answer the prompt. Scripted runs keep the plain changelog and print how to switch. PR and author links need `gh` signed in.
+- **changerig:** `version --only <package>` releases just the packages you name and leaves the rest for later, so you can ship one part of a monorepo at a time. Packages that have to go out together form a group, which `status --output` shows: name every package in the group, or `--only` stops before changing anything.
+- **changerig:** New option `"versioning": { "record": true }` keeps a record of every release in `.changeset/versions.json`, so:
+  - `doctor` catches a version edited by hand, and a release that was never tagged (for a package that's been tagged before, so not a first release);
+  - with commit-based versioning, each package counts new commits from its last recorded release, even if its tag is missing.
+  
+  It's off by default.
+- **changerig:** `status --output` now writes the full release plan, the same shape as `changeset status --output`: each changeset with the packages it names (including `none`), and each release's old and new version. Useful for scripts and CI.
+- **shiprig:** `publish-plan` now works with private NuGet feeds such as GitHub Packages, Azure Artifacts and feedz. When a feed asks for credentials, it's sent your publish credential (`dotnet.auth`, or else `NUGET_API_KEY`), and only that feed receives it: over https, or plain http to localhost for a local test feed. If `dotnet.auth` can't be resolved, the error says so plainly, and never shows what a credential helper printed.
+
+### 🩹 Fixes
+
+- **changerig:** Repos moving over from Changesets that kept `"changelog": "@changesets/cli/changelog"` in their config now get the normal changelog. Before, every changelog failed to render.
+- **changerig:** Changeset files are now read the way Changesets reads them:
+  - you can single-quote package names, add comments and blank lines, and put the bump on the line below the package;
+  - mistakes that used to slip through are now errors naming the file: a package listed twice, a package with no bump and no `type:` to take one from, and a tab-indented or misaligned line.
+- **changerig:** Two commits whose hashes start with the same 7 characters are now told apart. Changelog lines show a longer hash where 7 characters would be ambiguous. With commit-based versioning, each commit keeps its own pull request, author and contributor credit. GitHub commit links now use the full hash.
+- **changerig:** `doctor` now reports every problem it finds instead of stopping at the first. That includes changeset files that can't be read, which block `status` and `version`: each one is listed with its error.
+- **changerig:** Ignoring a package now fully holds it back: its changesets no longer change the version ranges other packages use to depend on it. The same goes for packages that `version --only` leaves out.
+- **changerig:** `version --only` now fails if you name a package that's ignored or private, and says why. It used to print "Nothing to version." and succeed, which could let a release job pass without releasing anything.
+- **changerig:** A version you pick with `--release-as`, or at the version prompt, is now labelled by the jump it actually makes. Forcing a patch change to 2.0.0 shows as `major` and gets a Major Changes heading, instead of `patch`. `status` doesn't take `--release-as`, so it still shows the planned bump.
+- **changerig:** With commit-based versioning, housekeeping commits no longer trigger a release. That means `chore(deps)`, `chore(release)`, and release commits like `chore: release 1.2.0`. A breaking one still does.
+- **changerig:** With commit-based versioning, each package now counts commits from its last release tag in the format you tag with: `name@version`, `v1.2.0`, or your `tagTemplate`. Tags like `lib@1.0.0` weren't found before, so every release counted the package's whole history again.
+- **changerig:** Changelogs that use conventional types (🚀 Enhancements, 🩹 Fixes, and so on) no longer mix in Minor Changes or Patch Changes headings: an untyped change joins the typed section for its bump (🚀 Enhancements for a minor, 🩹 Fixes for a patch) when your config has one, and dependency updates get their own 🌊 Dependencies section. Changelogs without types look the same as before.
+- Error messages are printed exactly as written. A flag or package name at the start of an error is no longer capitalised (`--Only`, `App`), and there's no stray period after `?` or `:`. This applies in CI logs too.
+
 ## 1.21.0
 
 ### 🚀 Enhancements
