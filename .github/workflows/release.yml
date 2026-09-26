@@ -266,21 +266,27 @@ jobs:
           fi
           echo "All Trusted Signing secrets present and non-empty."
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          # The release commit itself, by its tag. A dry run builds the ref it
-          # was started on.
-          ref: ${{ env.RELEASE_TAG != '' && format('refs/tags/{0}', env.RELEASE_TAG) || '' }}
-          fetch-depth: 0 # every tag, so a dry run can name itself after the last release
-
       # A release builds a tag that already exists, from a commit CI passed.
       # The release job waited for that before tagging; this holds a tag pushed
       # by hand (which arrives with its commit, CI still running), a manual
       # release-tag run, and any re-run to the same rule, so nothing is
       # published that CI didn't pass. Any CI run of the exact commit counts,
-      # push or pull request, as long as every platform's tests ran in it
-      # (scripts/ci-passed.sh). It replaces running the whole test suite again
-      # here: CI on the exact commit is the stronger gate (three OSes).
+      # push or pull request, as long as every platform's tests ran in it. It
+      # replaces running the whole test suite again here: CI on the exact
+      # commit is the stronger gate (three OSes).
+      #
+      # The check runs from this workflow's own revision, not from the tag:
+      # an older tag predates scripts/ci-passed.sh, and the code being released
+      # shouldn't be what decides whether it may be.
+      - name: Check out the release gate
+        if: ${{ env.RELEASE_TAG != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .release-gate
+          sparse-checkout: scripts/ci-passed.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Require a tag CI passed
         if: ${{ env.RELEASE_TAG != '' }}
         env:
@@ -291,7 +297,15 @@ jobs:
             echo "::error::'$RELEASE_TAG' isn't a CLI release tag (vX.Y.Z)."
             exit 1
           fi
-          sh scripts/ci-passed.sh "$(git rev-parse HEAD)"
+          sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+          sh .release-gate/scripts/ci-passed.sh "$sha"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The release commit itself, by its tag. A dry run builds the ref it
+          # was started on.
+          ref: ${{ env.RELEASE_TAG != '' && format('refs/tags/{0}', env.RELEASE_TAG) || '' }}
+          fetch-depth: 0 # every tag, so a dry run can name itself after the last release
           # GoReleaser publishes through the API with its own tokens; nothing
           # here pushes with git, so no credential is left on disk.
           persist-credentials: false
