@@ -353,6 +353,8 @@ func TestParseRefusesWhatCanonRefuses(t *testing.T) {
 		{"an escape YAML doesn't have", `"l\qb": patch`, "malformed frontmatter line"},
 		{"a \\u escape cut short", `"l\u006": patch`, "malformed frontmatter line"},
 		{"a surrogate escape", `"l\uD800b": patch`, "malformed frontmatter line"},
+		{"an escaped space for a name", `"\u0020": patch`, "malformed frontmatter line"},
+		{"a quoted blank name", "'  ': patch", "malformed frontmatter line"},
 		{"an escape past U+10FFFF", `"l\U00110000b": patch`, "malformed frontmatter line"},
 		{"colon, no bump", "lib:", `"lib" has a colon but no bump`},
 		{"quoted, colon, no bump", `"@acme/lib":`, `"@acme/lib" has a colon but no bump`},

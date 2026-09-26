@@ -337,6 +337,11 @@ func parseReleaseLine(line string) (name, bump string, err error) {
 			}
 		}
 	}
+	// @changesets refuses a package name that is empty once trimmed, which a
+	// quoted name ("  ", "\u0020") can be.
+	if strings.TrimSpace(name) == "" {
+		return "", "", errMalformedLine
+	}
 	s = strings.TrimSpace(stripComment(s))
 	if s == "" {
 		return name, "", nil
