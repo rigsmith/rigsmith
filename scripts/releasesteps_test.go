@@ -1,6 +1,7 @@
 package scripts
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ import (
 // workflows.
 
 const (
-	cliWorkflow = "../.github/workflows/goreleaser.yml"
+	cliWorkflow = "../.github/workflows/release.yml"
 	uiWorkflow  = "../.github/workflows/release-ui.yml"
 )
 
@@ -121,11 +122,35 @@ func TestWingetSubmissionIsIndependentOfOtherChannels(t *testing.T) {
 }
 
 // Tag-only remains part of the CLI contract: a manual dry run publishes no
-// release for komac to point at.
+// release for komac to point at. The release now runs on the push to main that
+// tagged it, not on the tag, so "tag-only" is the step requiring RELEASE_TAG,
+// and RELEASE_TAG being empty for a dry run.
 func TestCLIWingetSubmissionIsTagOnly(t *testing.T) {
 	winget := stepNamed(t, workflowSteps(t, cliWorkflow), "Submit to winget")
-	if !strings.Contains(winget.If, "refs/tags/v") {
-		t.Errorf("the winget step must stay tag-only. Got: %q", winget.If)
+	if !strings.Contains(winget.If, "env.RELEASE_TAG != ''") {
+		t.Errorf("the winget step must run only for a release tag (env.RELEASE_TAG != ''). Got: %q", winget.If)
+	}
+	raw, err := os.ReadFile(cliWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Env map[string]string `yaml:"env"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatal(err)
+	}
+	tag := wf.Jobs["goreleaser"].Env["RELEASE_TAG"]
+	if tag == "" {
+		t.Fatal("the goreleaser job sets no RELEASE_TAG; the winget step's condition would name nothing")
+	}
+	// A manual run carries a tag only in release-tag mode; a dry run must
+	// leave it empty, or it would submit to winget.
+	if !strings.Contains(tag, "inputs.mode == 'release-tag'") {
+		t.Errorf("RELEASE_TAG = %q; a manual run should only carry a tag in release-tag mode, "+
+			"so a dry run never reaches winget", tag)
 	}
 }
 
@@ -168,5 +193,212 @@ func TestEveryPublishingChannelNamesItsOwnDependency(t *testing.T) {
 					path, name, s.If)
 			}
 		}
+	}
+}
+
+// The release is one workflow whose jobs hand a tag along: shiprig-action's
+// published-packages output → the release job's cli-tag step → its `tag`
+// output → RELEASE_TAG in the build and npm jobs. Every link is a string in
+// YAML, so a renamed step id or output breaks it without failing anything: the
+// tag comes out empty and the build jobs quietly don't run. This holds the
+// links, and the gates around them, in place.
+func TestReleaseWorkflowWiring(t *testing.T) {
+	raw, err := os.ReadFile(cliWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type step struct {
+		ID   string            `yaml:"id"`
+		Name string            `yaml:"name"`
+		Uses string            `yaml:"uses"`
+		Run  string            `yaml:"run"`
+		Env  map[string]string `yaml:"env"`
+		With map[string]any    `yaml:"with"`
+	}
+	type job struct {
+		If      string            `yaml:"if"`
+		Needs   any               `yaml:"needs"`
+		Outputs map[string]string `yaml:"outputs"`
+		Env     map[string]string `yaml:"env"`
+		Steps   []step            `yaml:"steps"`
+	}
+	var wf struct {
+		On struct {
+			Push struct {
+				Branches []string `yaml:"branches"`
+				Tags     []string `yaml:"tags"`
+			} `yaml:"push"`
+		} `yaml:"on"`
+		Jobs map[string]job `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &wf); err != nil {
+		t.Fatal(err)
+	}
+	needs := func(j job) string { return fmt.Sprint(j.Needs) }
+	// withString is a `with:` input that has to be a string; anything else (a
+	// list, a map) fails rather than being stringified into a match.
+	withString := func(s step, key string) string {
+		v, ok := s.With[key]
+		if !ok {
+			return ""
+		}
+		str, ok := v.(string)
+		if !ok {
+			t.Errorf("step %q: with.%s is %T, want a string", s.Name+s.Uses, key, v)
+		}
+		return str
+	}
+	stepIndex := func(j job, pred func(step) bool) int {
+		for i, s := range j.Steps {
+			if pred(s) {
+				return i
+			}
+		}
+		return -1
+	}
+
+	// Triggers: pushes to main (the release PR and its tags), and vX.Y.Z tags
+	// pushed by hand.
+	if strings.Join(wf.On.Push.Branches, ",") != "main" || strings.Join(wf.On.Push.Tags, ",") != "v*" {
+		t.Errorf("push triggers = branches %v, tags %v; want [main] and [v*]", wf.On.Push.Branches, wf.On.Push.Tags)
+	}
+
+	release, ok := wf.Jobs["release"]
+	if !ok {
+		t.Fatal("no release job")
+	}
+	action := stepIndex(release, func(s step) bool { return strings.HasPrefix(s.Uses, "rigsmith/shiprig-action@") })
+	if action < 0 || release.Steps[action].ID != "shiprig" {
+		t.Fatalf("the release job's shiprig-action step is missing or not id: shiprig")
+	}
+	if withString(release.Steps[action], "publish-script") != "shiprig tag" {
+		t.Errorf("publish-script = %q, want \"shiprig tag\"", release.Steps[action].With["publish-script"])
+	}
+	// Tag only what CI passed: the wait comes before the step that tags.
+	wait := stepIndex(release, func(s step) bool { return strings.Contains(s.Run, "scripts/ci-passed.sh") })
+	if wait < 0 || wait > action {
+		t.Errorf("the CI wait (step %d) must come before shiprig-action (step %d)", wait, action)
+	} else if !strings.Contains(release.Steps[wait].Run, "--push-only") {
+		t.Errorf("the release job's CI wait should take push runs only: the commit it tags is a merge on main")
+	}
+	// shiprig-action v0.5.0 sets published-packages (hyphenated; its src/index.ts).
+	cli := stepIndex(release, func(s step) bool { return s.ID == "cli-tag" })
+	if cli < 0 {
+		t.Fatal("no cli-tag step in the release job")
+	}
+	c := release.Steps[cli]
+	if c.Env["PUBLISHED"] != "${{ steps.shiprig.outputs.published-packages }}" {
+		t.Errorf("cli-tag reads %q, want shiprig-action's published-packages output", c.Env["PUBLISHED"])
+	}
+	if !strings.Contains(c.Run, `.name == "github.com/rigsmith/rigsmith"`) || !strings.Contains(c.Run, `tag=v$version`) {
+		t.Errorf("cli-tag should pick the root module and write tag=v<version>:\n%s", c.Run)
+	}
+	if release.Outputs["tag"] != "${{ steps.cli-tag.outputs.tag }}" {
+		t.Errorf("release job output tag = %q, want the cli-tag step's", release.Outputs["tag"])
+	}
+
+	for _, name := range []string{"goreleaser", "npm"} {
+		j, ok := wf.Jobs[name]
+		if !ok {
+			t.Fatalf("no %s job", name)
+		}
+		for _, dep := range []string{"release", "pushed-tag"} {
+			if !strings.Contains(needs(j), dep) {
+				t.Errorf("%s needs %s, got %s", name, dep, needs(j))
+			}
+		}
+		tag := j.Env["RELEASE_TAG"]
+		for _, src := range []string{"needs.release.outputs.tag", "needs.pushed-tag.outputs.tag"} {
+			if !strings.Contains(tag, src) {
+				t.Errorf("%s's RELEASE_TAG = %q; it should take %s", name, tag, src)
+			}
+		}
+	}
+	if !strings.Contains(needs(wf.Jobs["npm"]), "goreleaser") {
+		t.Errorf("npm needs goreleaser, got %s", needs(wf.Jobs["npm"]))
+	}
+
+	// The GitHub release's notes are the changelog entry.
+	gr := wf.Jobs["goreleaser"]
+	notes := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, "scripts/release-notes.sh") })
+	build := stepIndex(gr, func(s step) bool { return strings.HasPrefix(s.Uses, "goreleaser/goreleaser-action@") })
+	if notes < 0 || build < 0 || notes > build {
+		t.Errorf("release-notes.sh (step %d) must run before GoReleaser (step %d)", notes, build)
+	} else if !strings.Contains(withString(gr.Steps[build], "args"), "--release-notes=") {
+		t.Errorf("GoReleaser's args don't pass --release-notes: %q", gr.Steps[build].With["args"])
+	}
+	// A build checks CI passed on its tag's commit before anything is built,
+	// and takes a CI run of any event: a tag can sit on a commit whose only CI
+	// ran for its pull request (ci-passed.sh still requires every platform's
+	// tests to have run). The check runs from this workflow's own revision,
+	// checked out apart, before the tag is: an older tag predates the script,
+	// and the code being released shouldn't decide whether it may be.
+	gate := stepIndex(gr, func(s step) bool { return withString(s, "path") == ".release-gate" })
+	ci := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, "ci-passed.sh") })
+	// The build checks out the commit the gate approved, not the tag again,
+	// and then confirms the tag still names it.
+	// Exact, not substrings: a near miss (another variable, a check that
+	// resolves the tag without comparing it) would otherwise pass.
+	tagCheckout := stepIndex(gr, func(s step) bool {
+		return strings.HasPrefix(s.Uses, "actions/checkout@") && withString(s, "ref") == "${{ env.RELEASE_SHA || '' }}"
+	})
+	stillThere := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, `refs/tags/$RELEASE_TAG^{commit}`) })
+	if stillThere < 0 || stillThere < tagCheckout || stillThere > build {
+		t.Errorf("after the checkout (step %d) and before GoReleaser (step %d), the build must confirm the tag still "+
+			"names the approved commit (step %d)", tagCheckout, build, stillThere)
+	} else {
+		body := gr.Steps[stillThere].Run
+		for _, guard := range []string{
+			`at=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")`,
+			`[ "$at" != "$RELEASE_SHA" ]`,
+			`[ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]`,
+			`exit 1`,
+		} {
+			if !strings.Contains(body, guard) {
+				t.Errorf("the tag check lacks %s; it must compare both the tag and HEAD to RELEASE_SHA and fail:\n%s", guard, body)
+			}
+		}
+	}
+	if ci >= 0 && !strings.Contains(gr.Steps[ci].Run, `echo "RELEASE_SHA=$sha" >> "$GITHUB_ENV"`) {
+		t.Errorf("the CI check should hand the approved commit on as RELEASE_SHA:\n%s", gr.Steps[ci].Run)
+	}
+	switch {
+	case gate < 0 || ci < 0 || tagCheckout < 0:
+		t.Errorf("the build needs the gate checkout (%d), the CI check (%d) and the tag checkout (%d)", gate, ci, tagCheckout)
+	case !(gate < ci && ci < tagCheckout && tagCheckout < build):
+		t.Errorf("want gate checkout (%d) < CI check (%d) < tag checkout (%d) < GoReleaser (%d)", gate, ci, tagCheckout, build)
+	case !strings.Contains(gr.Steps[ci].Run, ".release-gate/scripts/ci-passed.sh"):
+		t.Errorf("the CI check should run the gate's copy of ci-passed.sh, not the tag's:\n%s", gr.Steps[ci].Run)
+	case strings.Contains(gr.Steps[ci].Run, "--push-only"):
+		t.Errorf("the build's CI check only takes push runs; a tag's commit may only have had PR CI")
+	}
+
+	// No checkout leaves a credential on disk, and no setting has slipped into
+	// a step's script, where it would run as a command and fail the release.
+	for name, j := range wf.Jobs {
+		for i, s := range j.Steps {
+			if strings.HasPrefix(s.Uses, "actions/checkout@") {
+				// A boolean false, not the string "false" or a missing key.
+				if v, ok := s.With["persist-credentials"].(bool); !ok || v {
+					t.Errorf("%s step %d: a checkout without persist-credentials: false (got %#v)",
+						name, i, s.With["persist-credentials"])
+				}
+			}
+			if strings.Contains(s.Run, "persist-credentials") {
+				t.Errorf("%s step %d (%s): persist-credentials is inside the script, not the checkout", name, i, s.Name)
+			}
+		}
+	}
+
+	// A pushed tag is skipped only when its release is really out: an API or
+	// auth failure reading it must stop the run, not count as "no release" and
+	// build the tag again.
+	pushed := wf.Jobs["pushed-tag"]
+	check := stepIndex(pushed, func(s step) bool { return strings.Contains(s.Run, "gh release view") })
+	if check < 0 {
+		t.Fatal("the pushed-tag job doesn't check the tag's release")
+	}
+	if body := pushed.Steps[check].Run; strings.Contains(body, "|| echo 0") || !strings.Contains(body, "release not found") {
+		t.Errorf("the pushed-tag check should treat only a missing release as unreleased:\n%s", body)
 	}
 }

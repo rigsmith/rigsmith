@@ -11,18 +11,19 @@ import (
 )
 
 // npm's trusted publishing binds a publisher to a repository and a WORKFLOW
-// FILENAME, and the registry allows one configuration per package. So every
-// workflow that publishes these packages has to be the same file — the moment
-// publishing appears in a second one, that second workflow cannot mint a
-// credential and needs a stored NPM_TOKEN, which is the thing being removed.
+// FILENAME, so every workflow that publishes these packages needs its own
+// trusted publisher on every one of them (41 and counting). Keeping publishing
+// in one file keeps that to one set: a second publishing workflow would need a
+// second registration on each package, or fall back to a stored NPM_TOKEN,
+// which is the thing being removed.
 //
-// This is why the npm recovery path is a job in goreleaser.yml rather than the
+// This is why the npm recovery path is a job in release.yml rather than the
 // separate npm-republish.yml it used to be. Nothing about that arrangement is
 // self-evident from reading either file, and the failure it prevents shows up as
 // a publish that quietly falls back to a token — or, once the token is gone, a
 // release that cannot publish npm at all.
 
-const publishingWorkflow = "goreleaser.yml"
+const publishingWorkflow = "release.yml"
 
 // workflowsThatPublishNpm returns every workflow file that runs an npm publish.
 //
@@ -96,9 +97,9 @@ func TestOnlyOneWorkflowPublishesNpm(t *testing.T) {
 	for _, name := range found {
 		if name != publishingWorkflow {
 			t.Errorf("%s publishes npm, but trusted publishing binds a publisher to one workflow "+
-				"filename and npm allows one configuration per package. A second publishing workflow "+
-				"cannot mint a credential and would need NPM_TOKEN kept alive for it — move the job "+
-				"into %s instead", name, publishingWorkflow)
+				"filename. A second publishing workflow needs its own trusted publisher on every "+
+				"package, or NPM_TOKEN kept alive for it — move the job into %s instead",
+				name, publishingWorkflow)
 		}
 	}
 }

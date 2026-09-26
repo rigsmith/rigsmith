@@ -43,17 +43,18 @@ the registry:
   Trusted publishing. The CLI is what makes this bearable when a release
   publishes many packages: registering rigsmith's own 41 wrappers is a loop,
   not 41 web forms. `npm trust list <package>` reads back what is registered.
-  **One configuration per package.** npm's overview page describes several
-  connections per package; the CLI docs for the command that creates them say
-  the opposite and are the ones that hold — "Currently, the registry only
-  supports one configuration per package. If you attempt to create a new trust
-  relationship when one already exists, it will result in an error." An existing
-  connection cannot be edited either: revoke it (`npm trust revoke --id <id>
-  <package>`) and make a new one.
+  **Several configurations per package, now.** The CLI docs for `npm trust` said
+  "Currently, the registry only supports one configuration per package", and
+  that held until at least September 2026; by 2026-09-26 the registry kept a
+  second (release.yml beside goreleaser.yml on the same package), and
+  `npm trust list --json` prints one JSON object per configuration, one after
+  another. An existing connection still cannot be edited: revoke it
+  (`npm trust revoke --id <id> <package>`) and make a new one.
+  `scripts/npm/trust-publishers.mjs --replace` does both for this repository.
 
   A configuration names a workflow FILE, so the practical consequence is that
   everything publishing a given package has to live in one file. rigsmith's
-  release and its npm recovery path are two jobs in `goreleaser.yml` for exactly
+  release and its npm recovery path are two jobs in `release.yml` for exactly
   this reason: as separate workflows, the second could never publish without a
   stored token, which is the thing trusted publishing exists to remove.
 - **crates.io** — crates.io → crate → Settings → Trusted Publishing

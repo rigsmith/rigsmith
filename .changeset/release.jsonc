@@ -3,7 +3,7 @@
   // rigsmith release.
   //
   // rigsmith ships through GoReleaser in CI: pushing a vX.Y.Z tag fires
-  // .github/workflows/goreleaser.yml, which builds every target, signs them
+  // .github/workflows/release.yml, which builds every target, signs them
   // (Windows → Azure Trusted Signing, macOS → Apple notarization), and
   // publishes everything — the GitHub Release, the Homebrew tap, and the npm
   // wrapper packages. Those secrets only exist in CI, so build/sign/publish/
