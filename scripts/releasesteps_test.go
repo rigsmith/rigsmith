@@ -235,6 +235,19 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	needs := func(j job) string { return fmt.Sprint(j.Needs) }
+	// withString is a `with:` input that has to be a string; anything else (a
+	// list, a map) fails rather than being stringified into a match.
+	withString := func(s step, key string) string {
+		v, ok := s.With[key]
+		if !ok {
+			return ""
+		}
+		str, ok := v.(string)
+		if !ok {
+			t.Errorf("step %q: with.%s is %T, want a string", s.Name+s.Uses, key, v)
+		}
+		return str
+	}
 	stepIndex := func(j job, pred func(step) bool) int {
 		for i, s := range j.Steps {
 			if pred(s) {
@@ -258,7 +271,7 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 	if action < 0 || release.Steps[action].ID != "shiprig" {
 		t.Fatalf("the release job's shiprig-action step is missing or not id: shiprig")
 	}
-	if fmt.Sprint(release.Steps[action].With["publish-script"]) != "shiprig tag" {
+	if withString(release.Steps[action], "publish-script") != "shiprig tag" {
 		t.Errorf("publish-script = %q, want \"shiprig tag\"", release.Steps[action].With["publish-script"])
 	}
 	// Tag only what CI passed: the wait comes before the step that tags.
@@ -311,7 +324,7 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 	build := stepIndex(gr, func(s step) bool { return strings.HasPrefix(s.Uses, "goreleaser/goreleaser-action@") })
 	if notes < 0 || build < 0 || notes > build {
 		t.Errorf("release-notes.sh (step %d) must run before GoReleaser (step %d)", notes, build)
-	} else if !strings.Contains(fmt.Sprint(gr.Steps[build].With["args"]), "--release-notes=") {
+	} else if !strings.Contains(withString(gr.Steps[build], "args"), "--release-notes=") {
 		t.Errorf("GoReleaser's args don't pass --release-notes: %q", gr.Steps[build].With["args"])
 	}
 	// A build checks CI passed on its tag's commit before anything is built,
@@ -320,11 +333,21 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 	// tests to have run). The check runs from this workflow's own revision,
 	// checked out apart, before the tag is: an older tag predates the script,
 	// and the code being released shouldn't decide whether it may be.
-	gate := stepIndex(gr, func(s step) bool { return fmt.Sprint(s.With["path"]) == ".release-gate" })
+	gate := stepIndex(gr, func(s step) bool { return withString(s, "path") == ".release-gate" })
 	ci := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, "ci-passed.sh") })
+	// The build checks out the commit the gate approved, not the tag again,
+	// and then confirms the tag still names it.
 	tagCheckout := stepIndex(gr, func(s step) bool {
-		return strings.HasPrefix(s.Uses, "actions/checkout@") && strings.Contains(fmt.Sprint(s.With["ref"]), "RELEASE_TAG")
+		return strings.HasPrefix(s.Uses, "actions/checkout@") && strings.Contains(withString(s, "ref"), "RELEASE_SHA")
 	})
+	stillThere := stepIndex(gr, func(s step) bool { return strings.Contains(s.Run, `refs/tags/$RELEASE_TAG^{commit}`) })
+	if stillThere < 0 || stillThere < tagCheckout || stillThere > build {
+		t.Errorf("after the checkout (step %d) and before GoReleaser (step %d), the build must confirm the tag still "+
+			"names the approved commit (step %d)", tagCheckout, build, stillThere)
+	}
+	if ci >= 0 && !strings.Contains(gr.Steps[ci].Run, `RELEASE_SHA=$sha`) {
+		t.Errorf("the CI check should hand the approved commit on as RELEASE_SHA:\n%s", gr.Steps[ci].Run)
+	}
 	switch {
 	case gate < 0 || ci < 0 || tagCheckout < 0:
 		t.Errorf("the build needs the gate checkout (%d), the CI check (%d) and the tag checkout (%d)", gate, ci, tagCheckout)
@@ -340,8 +363,12 @@ func TestReleaseWorkflowWiring(t *testing.T) {
 	// a step's script, where it would run as a command and fail the release.
 	for name, j := range wf.Jobs {
 		for i, s := range j.Steps {
-			if strings.HasPrefix(s.Uses, "actions/checkout@") && fmt.Sprint(s.With["persist-credentials"]) != "false" {
-				t.Errorf("%s step %d: a checkout without persist-credentials: false", name, i)
+			if strings.HasPrefix(s.Uses, "actions/checkout@") {
+				// A boolean false, not the string "false" or a missing key.
+				if v, ok := s.With["persist-credentials"].(bool); !ok || v {
+					t.Errorf("%s step %d: a checkout without persist-credentials: false (got %#v)",
+						name, i, s.With["persist-credentials"])
+				}
 			}
 			if strings.Contains(s.Run, "persist-credentials") {
 				t.Errorf("%s step %d (%s): persist-credentials is inside the script, not the checkout", name, i, s.Name)

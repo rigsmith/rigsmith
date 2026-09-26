@@ -299,16 +299,30 @@ jobs:
           fi
           sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
           sh .release-gate/scripts/ci-passed.sh "$sha"
+          # The commit CI approved, not the tag: what's built below is this.
+          echo "RELEASE_SHA=$sha" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The release commit itself, by its tag. A dry run builds the ref it
-          # was started on.
-          ref: ${{ env.RELEASE_TAG != '' && format('refs/tags/{0}', env.RELEASE_TAG) || '' }}
+          # The release commit itself: the exact commit the gate approved, not
+          # the tag looked up again (it could have moved). A dry run builds the
+          # ref it was started on.
+          ref: ${{ env.RELEASE_SHA || '' }}
           fetch-depth: 0 # every tag, so a dry run can name itself after the last release
           # GoReleaser publishes through the API with its own tokens; nothing
           # here pushes with git, so no credential is left on disk.
           persist-credentials: false
+
+      # The tag has to still name that commit: GoReleaser releases the tag, so a
+      # tag moved after the gate would publish a commit CI never approved.
+      - name: The tag still names the approved commit
+        if: ${{ env.RELEASE_TAG != '' }}
+        run: |
+          at=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
+          if [ "$at" != "$RELEASE_SHA" ] || [ "$(git rev-parse HEAD)" != "$RELEASE_SHA" ]; then
+            echo "::error::$RELEASE_TAG now names $at, not $RELEASE_SHA, which CI approved; not releasing it."
+            exit 1
+          fi
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
