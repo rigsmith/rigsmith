@@ -193,11 +193,9 @@ func TestStatusOutputListsCommitChangesets(t *testing.T) {
 	if len(parsed.Changesets) != 2 {
 		t.Fatalf("changesets = %d, want the branch's file and its commit:\n%s", len(parsed.Changesets), data)
 	}
-	// In the order they were loaded, which this test doesn't pin.
-	file, commit := parsed.Changesets[0], parsed.Changesets[1]
-	if file.ID != "pr-one" {
-		file, commit = commit, file
-	}
+	// Sorted by id, so the plan is the same on every run: the commit's hex
+	// hash sorts before "pr-one".
+	commit, file := parsed.Changesets[0], parsed.Changesets[1]
 	if file.ID != "pr-one" || len(file.Releases) != 1 || file.Releases[0] != (rel{"pkg-b", "minor"}) {
 		t.Errorf("file changeset = %+v, want pr-one: pkg-b minor", file)
 	}

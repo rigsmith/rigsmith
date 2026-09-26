@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -282,6 +283,11 @@ func printEmptyStatusPanel(cmd *cobra.Command, ws *Workspace, pkgs []plugin.Pack
 // ({ changesets, releases, preState }), from the changesets that drive it. A
 // relative path is resolved against the workspace root, matching @changesets.
 func writeStatusPlan(root, output string, cfg *config.Config, plan []*planner.Module, changesets []*changeset.Changeset, groups map[string]string, pre *prestate.PreState) error {
+	// By id, as @changesets reads its files by name: the order they were
+	// loaded in isn't stable (commit-derived ones come off a map), and the
+	// plan must be byte-for-byte the same for the same tree.
+	changesets = slices.Clone(changesets)
+	slices.SortStableFunc(changesets, func(a, b *changeset.Changeset) int { return strings.Compare(a.ID, b.ID) })
 	named := map[string][]string{}
 	sets := make([]statusChangeset, 0, len(changesets))
 	for _, cs := range changesets {
