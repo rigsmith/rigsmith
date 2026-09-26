@@ -1,0 +1,23 @@
+.changeset/strict-frontmatter-indent.md
+  ai_agent 1-7
+core/changeset/changeset.go
+  s_505a2cfce9114c::t_4ad36a6f287a1c 385-415,446-447,455-464,486-493
+core/changeset/changeset_test.go
+  s_505a2cfce9114c::t_531d05bd104574 273-275,378-384,422-434
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9d9b91fb6523073a1144fdac9172249c87601205",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
