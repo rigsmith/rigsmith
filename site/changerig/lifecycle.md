@@ -197,7 +197,7 @@ It doubles as the CI gate, as `changeset status` does: it fails when a package
 that would version (not ignored, and not private unless `privatePackages.version`
 is set) changed since `--since`, or the base branch by default, and there is no
 changeset at all. Nothing pending with nothing changed is not a failure: it
-exits 0, and `--output` writes an empty plan (`{"releases": []}`), which is how a
+exits 0, and `--output` writes an empty plan (`{"changesets": [], "releases": []}`), which is how a
 script tells "nothing to release" from an error.
 
 ## `version`
