@@ -106,7 +106,9 @@ for an app and a patch for the library under it.
 The frontmatter is YAML, as @changesets reads it: a package name can be
 double-quoted (`"@acme/lib": minor`), single-quoted (`'@acme/lib': minor`) or,
 without a leading `@`, plain (`lib: minor`); a bump can be quoted; and blank
-lines and `#` comments are fine.
+lines and `#` comments are fine. What that YAML refuses is refused here too:
+a package listed twice, a colon with no bump after it (`lib:`; leave the colon
+off to let the type decide), and a tab in a line's indentation.
 
 `--scope` is inferred from what the branch changed, so it is one less thing to
 remember: a diff confined to `cmd/rig` or `internal/rig` infers `rig`, and a

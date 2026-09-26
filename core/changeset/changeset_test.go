@@ -3,6 +3,7 @@ package changeset
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -278,7 +279,6 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 		{"lib: patch\t# a tab, then a note", "lib", BumpPatch},
 		{"'lib':\tpatch", "lib", BumpPatch},
 		{`"a#b": patch`, "a#b", BumpPatch},
-		{`lib:`, "lib", BumpNone},
 		{"lib:\tpatch", "lib", BumpPatch},
 	} {
 		cs, err := Parse("---\n# which packages\n\n"+tc.line+"\n---\n\nA change\n", "x")
@@ -290,7 +290,7 @@ func TestParseYAMLShapedReleaseLines(t *testing.T) {
 			t.Errorf("%q: releases = %+v, want %s %v", tc.line, cs.Releases, tc.name, tc.bump)
 		}
 	}
-	for _, line := range []string{`'unclosed: patch`, `"lib": patch extra`, `@scope/lib: patch`, `"lib" patch`, `'': patch`, `"lib": 'patch"`, `lib:patch`, `"lib":patch`, `lib: ""`, `'lib': ''`} {
+	for _, line := range []string{`'unclosed: patch`, `"lib": patch extra`, `@scope/lib: patch`, `"lib" patch`, `'': patch`, `"lib": 'patch"`, `lib:patch`, `"lib":patch`, `lib: ""`, `'lib': ''`, `lib:`} {
 		if _, err := Parse("---\n"+line+"\n---\n\nA change\n", "x"); err == nil {
 			t.Errorf("%q parsed; want it refused", line)
 		}
@@ -333,5 +333,74 @@ func TestDirLenient_KeepsGoingPastBadFiles(t *testing.T) {
 	}
 	if _, _, err := DirLenient(filepath.Join(dir, "missing"), ""); !os.IsNotExist(err) {
 		t.Fatalf("missing dir: err = %v, want not-exist", err)
+	}
+}
+
+// Where @changesets' YAML parser refuses a frontmatter, so does Parse: a
+// repeated package, a colon with no bump (YAML's null), and a tab in the
+// indentation. Each error names the changeset and says what is wrong.
+func TestParseRefusesWhatCanonRefuses(t *testing.T) {
+	for _, tc := range []struct {
+		name, frontmatter, want string
+	}{
+		{"repeated package", "lib: patch\nlib: minor", `"lib" is listed more than once`},
+		{"repeated with the same bump", "lib: patch\nlib: patch", `"lib" is listed more than once`},
+		{"repeated, quoted one way then another", "'lib': patch\n\"lib\": minor", `"lib" is listed more than once`},
+		{"repeated, plain then quoted", "lib: patch\n\"lib\"", `"lib" is listed more than once`},
+		{"repeated among others", "a: patch\nlib: minor\nb: patch\nlib: major", `"lib" is listed more than once`},
+		{"colon, no bump", "lib:", `"lib" has a colon but no bump`},
+		{"quoted, colon, no bump", `"@acme/lib":`, `"@acme/lib" has a colon but no bump`},
+		{"single-quoted, colon, no bump", `'lib':`, `"lib" has a colon but no bump`},
+		{"colon, spaces, no bump", "lib:   ", `"lib" has a colon but no bump`},
+		{"colon, tab, no bump", "\"lib\":\t", `"lib" has a colon but no bump`},
+		{"colon, then only a comment", "lib: # later", `"lib" has a colon but no bump`},
+		{"colon, no bump, under a type", "type: feat\nlib:", `"lib" has a colon but no bump`},
+		{"tab-indented package", "\tlib: patch", "indented with a tab"},
+		{"space then tab", " \tlib: patch", "indented with a tab"},
+		{"tab-indented second package", "a: patch\n\tlib: patch", "indented with a tab"},
+		{"tab-indented bare package", "type: fix\n\t\"lib\"", "indented with a tab"},
+		{"tab-indented type", "\ttype: fix\n\"lib\"", "indented with a tab"},
+	} {
+		_, err := Parse("---\n"+tc.frontmatter+"\n---\n\nA change\n", "neg")
+		if err == nil {
+			t.Errorf("%s: %q parsed; want it refused", tc.name, tc.frontmatter)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), `changeset "neg"`) {
+			t.Errorf("%s: error = %q, want it to name the changeset and say %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// What canon accepts still parses, including the forms #494 opened up and the
+// whitespace YAML allows: a tab after the colon or before a comment, a
+// tab-only blank line, a tab-indented comment line, and a mapping indented
+// with spaces throughout.
+func TestParseStillAcceptsCanonForms(t *testing.T) {
+	for _, tc := range []struct {
+		name, frontmatter string
+		want              []Release
+	}{
+		{"none is a bump", "lib: none", []Release{{"lib", BumpNone}}},
+		{"quoted none", `'lib': "none"`, []Release{{"lib", BumpNone}}},
+		{"#494 forms together", "# a comment line\n'@x/y': patch\n\nlib: 'minor'   # trailing comment\n'it''s': \"patch\"",
+			[]Release{{"@x/y", BumpPatch}, {"lib", BumpMinor}, {"it's", BumpPatch}}},
+		{"bare name, no colon, derives from the type", "type: feat\n\"lib\"", []Release{{"lib", BumpNone}}},
+		{"bare name with a comment", "type: feat\nlib # a note", []Release{{"lib", BumpNone}}},
+		{"tab after the colon", "lib:\tpatch", []Release{{"lib", BumpPatch}}},
+		{"tab before a trailing comment", "lib: patch\t# note", []Release{{"lib", BumpPatch}}},
+		{"tab-only blank line", "a: patch\n\t\nlib: minor", []Release{{"a", BumpPatch}, {"lib", BumpMinor}}},
+		{"tab-indented comment line", "a: patch\n\t# note\nlib: minor", []Release{{"a", BumpPatch}, {"lib", BumpMinor}}},
+		{"space-indented throughout", "  a: patch\n  lib: minor", []Release{{"a", BumpPatch}, {"lib", BumpMinor}}},
+		{"distinct packages", "a: patch\nlib: minor\n'@acme/lib': major", []Release{{"a", BumpPatch}, {"lib", BumpMinor}, {"@acme/lib", BumpMajor}}},
+	} {
+		cs, err := Parse("---\n"+tc.frontmatter+"\n---\n\nA change\n", "x")
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if !reflect.DeepEqual(cs.Releases, tc.want) {
+			t.Errorf("%s: releases = %+v, want %+v", tc.name, cs.Releases, tc.want)
+		}
 	}
 }

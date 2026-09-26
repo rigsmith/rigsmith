@@ -7,6 +7,7 @@
 package changeset
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -211,20 +212,29 @@ var plainKeyRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
 // bumpWordRe is a bump value once any quotes are off.
 var bumpWordRe = regexp.MustCompile(`^[A-Za-z]+$`)
 
+// errMalformedLine is a frontmatter line that isn't a package line at all.
+var errMalformedLine = errors.New("malformed")
+
+// errNoBump is a package line with a colon and nothing after it (`lib:`).
+// YAML reads that as `lib: null`, which @changesets refuses as a bump; left
+// alone it would release nothing and strand the changeset.
+var errNoBump = errors.New("no bump")
+
 // parseReleaseLine reads a frontmatter package line the way @changesets' YAML
 // parser does: the name double-quoted (`"lib"`), single-quoted (`'lib'`, with
 // `”` for a quote) or plain (`lib`), then optionally `: bump`, the bump plain
 // or quoted, then an optional `# comment`. The bump is OPTIONAL: `"Name":
-// minor` is an explicit bump (override), while a bare `"Name"` (or `"Name":`
-// with nothing after) means "derive the bump from the changeset's
-// conventional type". ok is false for a line that isn't one.
-func parseReleaseLine(line string) (name, bump string, ok bool) {
+// minor` is an explicit bump (override), while a bare `"Name"` (no colon)
+// means "derive the bump from the changeset's conventional type". A colon
+// with nothing after it (`"Name":`) is errNoBump, as @changesets refuses it;
+// any other line that isn't a package line is errMalformedLine.
+func parseReleaseLine(line string) (name, bump string, err error) {
 	s := strings.TrimSpace(line)
 	switch {
 	case strings.HasPrefix(s, `"`):
 		end := strings.IndexByte(s[1:], '"')
 		if end < 1 {
-			return "", "", false
+			return "", "", errMalformedLine
 		}
 		name, s = s[1:1+end], s[2+end:]
 	case strings.HasPrefix(s, "'"):
@@ -243,7 +253,7 @@ func parseReleaseLine(line string) (name, bump string, ok bool) {
 			break
 		}
 		if i >= len(s) || b.Len() == 0 {
-			return "", "", false
+			return "", "", errMalformedLine
 		}
 		name, s = b.String(), s[i+1:]
 	default:
@@ -254,7 +264,7 @@ func parseReleaseLine(line string) (name, bump string, ok bool) {
 		key, rest, colon := strings.Cut(s, ":")
 		key = strings.TrimSpace(key)
 		if !plainKeyRe.MatchString(key) {
-			return "", "", false
+			return "", "", errMalformedLine
 		}
 		name, s = key, ""
 		if colon {
@@ -266,24 +276,34 @@ func parseReleaseLine(line string) (name, bump string, ok bool) {
 	}
 	s = strings.TrimSpace(stripComment(s))
 	if s == "" {
-		return name, "", true
+		return name, "", nil
+	}
+	if s == ":" {
+		return name, "", errNoBump
 	}
 	// YAML separates a mapping's value from its colon with whitespace:
 	// `lib:patch` is one scalar, not a key and a value.
-	if s != ":" && !strings.HasPrefix(s, ": ") && !strings.HasPrefix(s, ":\t") {
-		return "", "", false
+	if !strings.HasPrefix(s, ": ") && !strings.HasPrefix(s, ":\t") {
+		return "", "", errMalformedLine
 	}
 	s = strings.TrimSpace(s[1:])
 	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
 		s = s[1 : len(s)-1]
 		if s == "" {
-			return "", "", false // an explicit empty bump isn't an omitted one
+			return "", "", errMalformedLine // an explicit empty bump isn't an omitted one
 		}
 	}
-	if s != "" && !bumpWordRe.MatchString(s) {
-		return "", "", false
+	if !bumpWordRe.MatchString(s) {
+		return "", "", errMalformedLine
 	}
-	return name, s, true
+	return name, s, nil
+}
+
+// tabIndented reports whether a line's indentation holds a tab. YAML forbids
+// tabs there, and @changesets' YAML parser refuses the frontmatter.
+func tabIndented(line string) bool {
+	indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+	return strings.ContainsRune(indent, '\t')
 }
 
 // stripComment drops a YAML comment: a # at the start, or after whitespace.
@@ -315,8 +335,14 @@ func Parse(content, id string) (*Changeset, error) {
 		return cs, nil
 	}
 
+	seen := map[string]bool{}
 	for i < len(lines) && lines[i] != "---" {
 		line := lines[i]
+		// A tab in the indentation of anything but a blank or comment line is
+		// invalid YAML, which @changesets refuses.
+		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") && tabIndented(line) {
+			return nil, fmt.Errorf("changeset %q: frontmatter line %q is indented with a tab, which YAML does not allow", id, line)
+		}
 		// Optional `type:` line (conventional-commit type, `!` => breaking).
 		if t := strings.TrimSpace(line); strings.HasPrefix(t, "type:") {
 			val := strings.TrimSpace(strings.TrimPrefix(t, "type:"))
@@ -337,10 +363,19 @@ func Parse(content, id string) (*Changeset, error) {
 			i++
 			continue
 		}
-		name, bumpText, ok := parseReleaseLine(line)
-		if !ok {
+		name, bumpText, err := parseReleaseLine(line)
+		if errors.Is(err, errNoBump) {
+			return nil, fmt.Errorf("changeset %q: %q has a colon but no bump; give major, minor, patch or none, or drop the colon to let the type decide", id, name)
+		}
+		if err != nil {
 			return nil, fmt.Errorf("changeset %q: malformed frontmatter line %q", id, line)
 		}
+		// YAML refuses a repeated mapping key, and so does @changesets, rather
+		// than letting the last one win.
+		if seen[name] {
+			return nil, fmt.Errorf("changeset %q: %q is listed more than once in the frontmatter", id, name)
+		}
+		seen[name] = true
 		// Missing bump (`"Name"` with no `: bump`) means BumpNone → derive from type.
 		bump := BumpNone
 		if bumpText != "" {
