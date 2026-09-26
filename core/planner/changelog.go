@@ -175,7 +175,7 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 		// "Updated dependencies" bullet under Patch Changes.
 		case c.Dependencies && typed:
 			for _, dep := range dependencyLines(c.Summary) {
-				add(dependenciesSection, plugin.ChangelogChange{Summary: dep})
+				add(dependenciesKey, plugin.ChangelogChange{Summary: dep})
 			}
 		case c.Breaking:
 			add(config.BreakingGroup.Section, c)
@@ -210,7 +210,11 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 		// @changesets v3 (format:false) puts a blank line before every section,
 		// the first one included.
 		b.WriteByte('\n')
-		fmt.Fprintf(&b, "### %s\n\n", section)
+		heading := section
+		if section == dependenciesKey {
+			heading = dependenciesSection
+		}
+		fmt.Fprintf(&b, "### %s\n\n", heading)
 		// Scoped bullets first, grouped by scope, so a reader scanning for one
 		// tool finds its lines together; unscoped ones keep their order at the
 		// end rather than being interleaved by a name they do not have.
@@ -265,6 +269,11 @@ func scopeRank(order []string) map[string]int {
 // dependencies, the heading the changelogen example plugin uses too.
 const dependenciesSection = "🌊 Dependencies"
 
+// dependenciesKey is that section's bucket: no configured heading can be it,
+// so a changelog group that happens to be headed "🌊 Dependencies" keeps its
+// changes out of the dependency list, and its own rank.
+const dependenciesKey = "\x00dependencies"
+
 // dependencyLines returns the dependencies an "Updated dependencies" summary
 // lists, one "name@version" each.
 func dependencyLines(summary string) []string {
@@ -291,7 +300,7 @@ func sortSections(sections []string, groups []config.ChangelogGroup) {
 	for i, s := range []string{"Major Changes", "Minor Changes", "Patch Changes"} {
 		rank[s] = base + i
 	}
-	rank[dependenciesSection] = base + 3
+	rank[dependenciesKey] = base + 3
 	sort.SliceStable(sections, func(i, j int) bool {
 		ri, oki := rank[sections[i]]
 		rj, okj := rank[sections[j]]

@@ -268,3 +268,26 @@ func TestBuiltinRendersTypedDependenciesInTheirOwnSection(t *testing.T) {
 		t.Errorf("entry:\n%s", got)
 	}
 }
+
+// A changelog group headed like the dependencies section keeps its own
+// bucket and rank: its changes never join the dependency list.
+func TestRenderSectionsKeepsAGroupNamedLikeTheDependencies(t *testing.T) {
+	groups := []config.ChangelogGroup{
+		{Type: "deps", Section: dependenciesSection, Bump: "patch"},
+		{Type: "feat", Section: "Features", Bump: "minor"},
+	}
+	got := renderSections("1.1.0", []plugin.ChangelogChange{
+		{Bump: "minor", Type: "feat", Summary: "A feature"},
+		{Bump: "patch", Type: "deps", Summary: "Pin the toolchain"},
+		{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0", Dependencies: true},
+	}, groups, nil)
+	group := "### " + dependenciesSection + "\n\n- Pin the toolchain\n"
+	list := "### " + dependenciesSection + "\n\n- core@2.0.0\n"
+	if !strings.Contains(got, group) || !strings.Contains(got, list) {
+		t.Errorf("want the group and the dependency list apart:\n%s", got)
+	}
+	// The group keeps its configured rank, ahead of Features.
+	if strings.Index(got, group) > strings.Index(got, "### Features") {
+		t.Errorf("the group lost its rank:\n%s", got)
+	}
+}
