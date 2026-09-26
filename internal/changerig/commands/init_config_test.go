@@ -2,6 +2,7 @@ package commands
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/config"
@@ -19,8 +20,10 @@ func TestRenderConfigIsJSONForAnyRepo(t *testing.T) {
 			continue
 		}
 		var opts struct{ Repo string }
-		if len(cfg.Changelog) != 2 || json.Unmarshal(cfg.Changelog[1], &opts) != nil {
-			t.Errorf("repo %q: changelog = %s", repo, cfg.Changelog)
+		// JSON can't hold invalid UTF-8: encoding replaces it with U+FFFD.
+		want := strings.ToValidUTF8(repo, "\uFFFD")
+		if len(cfg.Changelog) != 2 || json.Unmarshal(cfg.Changelog[1], &opts) != nil || opts.Repo != want {
+			t.Errorf("repo %q: changelog = %s, want repo %q", repo, cfg.Changelog, want)
 		}
 	}
 }
