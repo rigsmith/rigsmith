@@ -1,0 +1,49 @@
+internal/shiprig/cli/publishplan.go
+  s_505a2cfce9114c::t_a8d1778fa4a871 189-192,202,234
+.changeset/error-sentence-as-written.md
+  s_505a2cfce9114c::t_bc33c57a120f58 6
+core/planner/planner.go
+  s_505a2cfce9114c::t_cd64a03192087c 90-92,108-112,129-158,576,580,599,601,604,615,618,629,636,643,677,684,691
+site/core/plugin-protocol.md
+  s_505a2cfce9114c::t_bc33c57a120f58 63
+core/config/config.go
+  s_505a2cfce9114c::t_70e9e88b1f0cb9 656-662
+.changeset/nuget-auth-error-once.md
+  s_505a2cfce9114c::t_bc33c57a120f58 7
+docs/PLUGIN-PROTOCOL.md
+  s_505a2cfce9114c::t_bc33c57a120f58 58
+core/auth/auth.go
+  s_505a2cfce9114c::t_a8d1778fa4a871 86,102-125
+  s_505a2cfce9114c::t_6c64cb5dddb620 25
+internal/changerig/commands/version.go
+  s_505a2cfce9114c::t_70e9e88b1f0cb9 89,92-93,95,97-100,113-114
+internal/changerig/cmdtest/release_groups_test.go
+  s_505a2cfce9114c::t_3c71dd1a6e6229 160-177
+core/auth/auth_test.go
+  s_505a2cfce9114c::t_6ccd2d2e3b25da 5,90-115
+.changeset/only-ignored-package.md
+  s_505a2cfce9114c::t_bc33c57a120f58 7
+internal/changerig/cmdtest/bump_minor_pre_major_test.go
+  s_505a2cfce9114c::t_1a8f20417cad46 130-143,145-148,150-156
+  s_505a2cfce9114c::t_1101586df3764d 129,144,149,157
+.changeset/bump-minor-pre-major-labels.md
+  s_505a2cfce9114c::t_bc33c57a120f58 7
+internal/shiprig/cli/publishplan_test.go
+  s_505a2cfce9114c::t_cb7fa702920eb2 30-31,35-37,378-400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f45a2c677125b765884f8f724eb049ab051b694c",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
