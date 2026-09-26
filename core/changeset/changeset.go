@@ -203,11 +203,98 @@ func (c *Changeset) ChangedNames() []string {
 	return names
 }
 
-// Frontmatter package line. The bump is OPTIONAL: `"Name": minor` is an explicit
-// bump (override), while a bare `"Name"` (or `"Name":` with nothing after) means
-// "derive the bump from the changeset's conventional type". This matches the
-// shared @changesets `"Name": bump` shape while allowing type-driven changesets.
-var moduleRe = regexp.MustCompile(`^\s*"([^"]+)"\s*(?::\s*([A-Za-z]+))?\s*$`)
+// plainKeyRe is an unquoted package name as YAML reads a plain key: no
+// leading indicator character (so `@scope/name` has to be quoted, as it does
+// for @changesets' YAML parser).
+var plainKeyRe = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
+
+// bumpWordRe is a bump value once any quotes are off.
+var bumpWordRe = regexp.MustCompile(`^[A-Za-z]+$`)
+
+// parseReleaseLine reads a frontmatter package line the way @changesets' YAML
+// parser does: the name double-quoted (`"lib"`), single-quoted (`'lib'`, with
+// `”` for a quote) or plain (`lib`), then optionally `: bump`, the bump plain
+// or quoted, then an optional `# comment`. The bump is OPTIONAL: `"Name":
+// minor` is an explicit bump (override), while a bare `"Name"` (or `"Name":`
+// with nothing after) means "derive the bump from the changeset's
+// conventional type". ok is false for a line that isn't one.
+func parseReleaseLine(line string) (name, bump string, ok bool) {
+	s := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(s, `"`):
+		end := strings.IndexByte(s[1:], '"')
+		if end < 1 {
+			return "", "", false
+		}
+		name, s = s[1:1+end], s[2+end:]
+	case strings.HasPrefix(s, "'"):
+		var b strings.Builder
+		i := 1
+		for ; i < len(s); i++ {
+			if s[i] != '\'' {
+				b.WriteByte(s[i])
+				continue
+			}
+			if i+1 < len(s) && s[i+1] == '\'' { // '' is a quote
+				b.WriteByte('\'')
+				i++
+				continue
+			}
+			break
+		}
+		if i >= len(s) || b.Len() == 0 {
+			return "", "", false
+		}
+		name, s = b.String(), s[i+1:]
+	default:
+		// A plain name can't hold a comment, so one ends the line here.
+		s = stripComment(s)
+		// A plain package name holds no colon, so the first one ends it; the
+		// check below wants whitespace after it, as YAML does.
+		key, rest, colon := strings.Cut(s, ":")
+		key = strings.TrimSpace(key)
+		if !plainKeyRe.MatchString(key) {
+			return "", "", false
+		}
+		name, s = key, ""
+		if colon {
+			s = ":" + rest
+			if rest == "" {
+				s = ":"
+			}
+		}
+	}
+	s = strings.TrimSpace(stripComment(s))
+	if s == "" {
+		return name, "", true
+	}
+	// YAML separates a mapping's value from its colon with whitespace:
+	// `lib:patch` is one scalar, not a key and a value.
+	if s != ":" && !strings.HasPrefix(s, ": ") && !strings.HasPrefix(s, ":\t") {
+		return "", "", false
+	}
+	s = strings.TrimSpace(s[1:])
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		s = s[1 : len(s)-1]
+		if s == "" {
+			return "", "", false // an explicit empty bump isn't an omitted one
+		}
+	}
+	if s != "" && !bumpWordRe.MatchString(s) {
+		return "", "", false
+	}
+	return name, s, true
+}
+
+// stripComment drops a YAML comment: a # at the start, or after whitespace.
+func stripComment(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '#' && (i == 0 || s[i-1] == ' ' || s[i-1] == '\t') {
+			return strings.TrimRight(s[:i], " \t")
+		}
+	}
+	return s
+}
 
 // Parse parses changeset file content. The id (typically the filename without
 // extension) is attached to the result.
@@ -244,20 +331,26 @@ func Parse(content, id string) (*Changeset, error) {
 			i++
 			continue
 		}
-		m := moduleRe.FindStringSubmatch(line)
-		if m == nil {
+		// Blank lines and comments are YAML, and @changesets reads the
+		// frontmatter as YAML.
+		if t := strings.TrimSpace(line); t == "" || strings.HasPrefix(t, "#") {
+			i++
+			continue
+		}
+		name, bumpText, ok := parseReleaseLine(line)
+		if !ok {
 			return nil, fmt.Errorf("changeset %q: malformed frontmatter line %q", id, line)
 		}
 		// Missing bump (`"Name"` with no `: bump`) means BumpNone → derive from type.
 		bump := BumpNone
-		if m[2] != "" {
-			b, ok := ParseBump(m[2])
+		if bumpText != "" {
+			b, ok := ParseBump(bumpText)
 			if !ok {
-				return nil, fmt.Errorf("changeset %q: invalid bump type %q", id, m[2])
+				return nil, fmt.Errorf("changeset %q: invalid bump type %q", id, bumpText)
 			}
 			bump = b
 		}
-		cs.Releases = append(cs.Releases, Release{Name: m[1], Bump: bump})
+		cs.Releases = append(cs.Releases, Release{Name: name, Bump: bump})
 		i++
 	}
 	if i >= len(lines) {

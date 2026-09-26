@@ -251,3 +251,46 @@ func TestParseKeepsExplicitTypeAndScope(t *testing.T) {
 		t.Fatalf("type/scope = %q/%q, want fix/clauderig", cs.Type, cs.Scope)
 	}
 }
+
+// Frontmatter is YAML to @changesets, so a package name may be single-quoted
+// (with ” for a quote), double-quoted or plain, a bump may be quoted, and
+// blank lines and comments are allowed.
+func TestParseYAMLShapedReleaseLines(t *testing.T) {
+	for _, tc := range []struct {
+		line, name string
+		bump       Bump
+	}{
+		{`'@jcamp/rig': patch`, "@jcamp/rig", BumpPatch},
+		{`"@jcamp/rig": patch`, "@jcamp/rig", BumpPatch},
+		{`lib: minor`, "lib", BumpMinor},
+		{`"lib": "major"`, "lib", BumpMajor},
+		{`'lib': 'patch'`, "lib", BumpPatch},
+		{`'it''s': patch`, "it's", BumpPatch},
+		{`"lib": patch # a comment`, "lib", BumpPatch},
+		{`  'lib'  :  minor  `, "lib", BumpMinor},
+		{`'lib'`, "lib", BumpNone},
+		{`lib`, "lib", BumpNone},
+		{`github.com/acme/mod: patch`, "github.com/acme/mod", BumpPatch},
+		{`lib # a note`, "lib", BumpNone},
+		{`'lib' # a note`, "lib", BumpNone},
+		{"lib: patch\t# a tab, then a note", "lib", BumpPatch},
+		{"'lib':\tpatch", "lib", BumpPatch},
+		{`"a#b": patch`, "a#b", BumpPatch},
+		{`lib:`, "lib", BumpNone},
+		{"lib:\tpatch", "lib", BumpPatch},
+	} {
+		cs, err := Parse("---\n# which packages\n\n"+tc.line+"\n---\n\nA change\n", "x")
+		if err != nil {
+			t.Errorf("%q: %v", tc.line, err)
+			continue
+		}
+		if len(cs.Releases) != 1 || cs.Releases[0].Name != tc.name || cs.Releases[0].Bump != tc.bump {
+			t.Errorf("%q: releases = %+v, want %s %v", tc.line, cs.Releases, tc.name, tc.bump)
+		}
+	}
+	for _, line := range []string{`'unclosed: patch`, `"lib": patch extra`, `@scope/lib: patch`, `"lib" patch`, `'': patch`, `"lib": 'patch"`, `lib:patch`, `"lib":patch`, `lib: ""`, `'lib': ''`} {
+		if _, err := Parse("---\n"+line+"\n---\n\nA change\n", "x"); err == nil {
+			t.Errorf("%q parsed; want it refused", line)
+		}
+	}
+}
