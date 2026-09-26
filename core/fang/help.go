@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -123,9 +124,9 @@ func DefaultErrorHandler(w io.Writer, styles Styles, err error) {
 	// reflow a command the reader is meant to copy.
 	headline, detail, multiline := strings.Cut(err.Error(), "\n")
 	_, _ = fmt.Fprintln(w, styles.ErrorHeader.String())
-	_, _ = fmt.Fprintln(w, styles.ErrorText.Render(headline+"."))
+	_, _ = fmt.Fprintln(w, styles.ErrorText.Render(sentence(headline)))
 	if multiline {
-		_, _ = fmt.Fprintln(w, styles.ErrorText.UnsetWidth().UnsetTransform().Render(detail))
+		_, _ = fmt.Fprintln(w, styles.ErrorText.UnsetWidth().Render(detail))
 	}
 	_, _ = fmt.Fprintln(w)
 	if isUsageError(err) {
@@ -133,10 +134,26 @@ func DefaultErrorHandler(w io.Writer, styles Styles, err error) {
 			lipgloss.Left,
 			styles.ErrorText.UnsetWidth().Render("Try"),
 			styles.Program.Flag.Render(" --help "),
-			styles.ErrorText.UnsetWidth().UnsetMargins().UnsetTransform().Render("for usage."),
+			styles.ErrorText.UnsetWidth().UnsetMargins().Render("for usage."),
 		))
 		_, _ = fmt.Fprintln(w)
 	}
+}
+
+// sentence ends an error headline with a period, unless it already ends in
+// punctuation of its own: a question ("is it misspelled?"), a colon that
+// introduces the lines below it, or a closing code span or quote, after which
+// a period reads as a typo ("?.", ":.", "`.").
+func sentence(headline string) string {
+	trimmed := strings.TrimRight(headline, " \t")
+	if trimmed == "" {
+		return headline
+	}
+	last, _ := utf8.DecodeLastRuneInString(trimmed)
+	if strings.ContainsRune(".?!:;`\"'”’»", last) {
+		return trimmed
+	}
+	return trimmed + "."
 }
 
 // XXX: this is a hack to detect usage errors.

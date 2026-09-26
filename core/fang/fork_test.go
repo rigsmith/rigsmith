@@ -129,8 +129,8 @@ func TestRegisteredGroupRendered(t *testing.T) {
 
 // Local fork behavior (rigsmith): an error whose message runs past one line
 // carries a layout — a headline, then an explanation and the command that fixes
-// it. Only the headline is treated as the error sentence (title-cased, wrapped
-// to the terminal); the rest keeps the lines and indentation it was written
+// it. Only the headline is treated as the error sentence (wrapped to the
+// terminal, ended with a period); the rest keeps the lines and indentation it was written
 // with, so a command line stays copy-pasteable on a narrow terminal.
 func TestMultiLineErrorKeepsItsLayout(t *testing.T) {
 	// NOT t.Setenv("__FANG_TEST_WIDTH", …): width is a package-level
@@ -158,7 +158,7 @@ func TestMultiLineErrorKeepsItsLayout(t *testing.T) {
 	out := buf.String()
 
 	// The headline is rendered as the error sentence.
-	if !strings.Contains(out, "Unknown flag: --target.") {
+	if !strings.Contains(out, "unknown flag: --target.") {
 		t.Errorf("headline missing or unstyled; got:\n%s", out)
 	}
 	// The fix survives on one line, indented, despite the 40-column width.
@@ -184,7 +184,73 @@ func TestSingleLineErrorIsUnchanged(t *testing.T) {
 	if err := fang.Execute(context.Background(), root); err == nil {
 		t.Fatal("want the command's error back")
 	}
-	if out := buf.String(); !strings.Contains(out, "No test project found.") {
+	if out := buf.String(); !strings.Contains(out, "no test project found.") {
 		t.Errorf("single-line error changed; got:\n%s", out)
+	}
+}
+
+// Local fork behavior (rigsmith): the error sentence is shown as written. The
+// first word is never title-cased (a message that opens with a flag or a
+// package name would read "--Only" or "App"), and the closing period is left
+// off when the headline already ends in punctuation of its own.
+func TestErrorSentenceIsShownAsWritten(t *testing.T) {
+	cases := []struct {
+		msg       string
+		want      string
+		forbidden []string
+	}{
+		{
+			msg:       "--only names nosuchpkg, which is not in the workspace; is it misspelled?",
+			want:      "--only names nosuchpkg, which is not in the workspace; is it misspelled?",
+			forbidden: []string{"--Only", "misspelled?."},
+		},
+		{
+			msg:       "--changelog github needs a GitHub remote to link to; this repository has none",
+			want:      "--changelog github needs a GitHub remote to link to; this repository has none.",
+			forbidden: []string{"--Changelog"},
+		},
+		{
+			msg:       "app depends on the skipped package core, but app is not being skipped: add it to `ignore` in the config too",
+			want:      "app depends on the skipped package core",
+			forbidden: []string{"App depends"},
+		},
+		{
+			msg:       "couldn't tell what is already published:\nthe registry said no",
+			want:      "couldn't tell what is already published:",
+			forbidden: []string{"published:.", "Couldn't"},
+		},
+		{
+			msg:       "set `dotnet.auth`",
+			want:      "set `dotnet.auth`",
+			forbidden: []string{"`dotnet.auth`."},
+		},
+		{
+			msg:       `no package named "core"`,
+			want:      `no package named "core"`,
+			forbidden: []string{`"core".`},
+		},
+	}
+	for _, tc := range cases {
+		root := &cobra.Command{
+			Use:          "demo",
+			SilenceUsage: true,
+			RunE:         func(*cobra.Command, []string) error { return errors.New(tc.msg) },
+		}
+		var buf bytes.Buffer
+		root.SetOut(&buf)
+		root.SetErr(&buf)
+		root.SetArgs(nil)
+		if err := fang.Execute(context.Background(), root); err == nil {
+			t.Fatal("want the command's error back")
+		}
+		out := buf.String()
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%q: want %q in the output; got:\n%s", tc.msg, tc.want, out)
+		}
+		for _, bad := range tc.forbidden {
+			if strings.Contains(out, bad) {
+				t.Errorf("%q: output has %q; got:\n%s", tc.msg, bad, out)
+			}
+		}
 	}
 }

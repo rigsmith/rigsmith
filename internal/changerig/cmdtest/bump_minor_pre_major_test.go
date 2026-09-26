@@ -84,3 +84,45 @@ func TestBumpMinorPreMajorInAFixedGroup(t *testing.T) {
 	assertContains(t, versionOf(t, dir, "a"), `"0.4.0"`)
 	assertContains(t, versionOf(t, dir, "b"), `"0.4.0"`)
 }
+
+// The 0.x release's changelog lists the major change under the bump it
+// releases at, as status reports it: Minor Changes, not Major Changes. A
+// package at 1.0.0 or above keeps its Major Changes.
+func TestBumpMinorPreMajorChangelogHeading(t *testing.T) {
+	dir := preMajorRepo(t, `, "versioning": { "bumpMinorPreMajor": true }`)
+	code, out := runChangerig(t, dir, "version", "--dry-run", "--changelog")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "## 0.4.0\n\n### Minor Changes\n\n- A breaking lib change")
+	assertContains(t, out, "## 2.0.0\n\n### Major Changes\n\n- A breaking stable change")
+}
+
+// --release-as 1.0.0 is how the option reaches 1.0.0, and that release is a
+// major: its plan line and its changelog heading say so, as they do without
+// the option.
+func TestBumpMinorPreMajorReleaseAsOneIsAMajor(t *testing.T) {
+	for name, config := range map[string]string{
+		"option":    `, "versioning": { "bumpMinorPreMajor": true }`,
+		"no option": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := preMajorRepo(t, config)
+			code, out := runChangerig(t, dir, "version", "--dry-run", "--changelog", "--release-as", "lib=1.0.0")
+			assertExitZero(t, code, out)
+			assertContains(t, out, "major  lib  0.3.0 → 1.0.0")
+			assertContains(t, out, "## 1.0.0\n\n### Major Changes\n\n- A breaking lib change")
+		})
+	}
+}
+
+// A typed breaking change released as a minor stays under 💥 Breaking
+// Changes: typed headings name what a change is, and it is still breaking.
+func TestBumpMinorPreMajorTypedKeepsBreaking(t *testing.T) {
+	dir := tempDir(t)
+	writeNpmWorkspace(t, dir, map[string]string{"lib": "0.3.0"})
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"), `{ "versioning": { "bumpMinorPreMajor": true } }`)
+	writeFile(t, filepath.Join(dir, ".changeset", "typed.md"), "---\ntype: feat!\n\"lib\"\n---\n\nDrop the old API\n")
+	gitInit(t, dir)
+	code, out := runChangerig(t, dir, "version", "--dry-run", "--changelog")
+	assertExitZero(t, code, out)
+	assertContains(t, out, "## 0.4.0\n\n### 💥 Breaking Changes\n\n- Drop the old API")
+}

@@ -224,6 +224,12 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			ecoID := ecoOf[p.Name]
+			// Why the configured credential couldn't be resolved, for the
+			// adapter to name and for the error below when it doesn't.
+			authErr := ""
+			if credErr := credErrs[ecoID]; credErr != nil {
+				authErr = redactor.Redact(credErr.Error())
+			}
 			resp, err := eco.Published(ctx, plugin.PublishedRequest{
 				RepoRoot:        ws.Root,
 				Package:         p,
@@ -231,6 +237,7 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 				Auth:            readCreds[ecoID],
 				User:            ws.Config.EcoConfig(ecoID).User,
 				AuthUnavailable: credErrs[ecoID] != nil,
+				AuthError:       authErr,
 			})
 			switch {
 			case err != nil:
@@ -238,8 +245,10 @@ func buildPublishPlan(ctx context.Context, ws *commands.Workspace, distTag strin
 				// in it (npm echoes --registry); keep them out of the output,
 				// and any resolved token too.
 				msg := redactor.Redact(redactURLCredentials(err.Error()))
-				if credErr := credErrs[ecoID]; credErr != nil {
-					msg += fmt.Sprintf(" (the configured `%s.auth` couldn't be resolved: %s)", ecoID, redactor.Redact(credErr.Error()))
+				// Named once: an adapter that says why itself (dotnet's
+				// 401) isn't followed by the same reason again.
+				if authErr != "" && !strings.Contains(msg, authErr) {
+					msg += fmt.Sprintf(" (the configured `%s.auth` couldn't be resolved: %s)", ecoID, authErr)
 				}
 				errs[i] = fmt.Errorf("%s: %s", p.Name, msg)
 			case resp.NoRegistry, resp.Published:

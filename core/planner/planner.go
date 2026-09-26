@@ -110,10 +110,22 @@ func (m *Module) HighestBump() changeset.Bump {
 	}
 	// Before 1.0.0, with bumpMinorPreMajor, a breaking change moves the
 	// minor. The bump itself becomes minor, so the plan says what it does.
-	if highest == changeset.BumpMajor && m.minorPreMajor && m.Current.Major == 0 {
+	// Unless the release is forced past 0.x (--release-as 1.0.0, the way
+	// the option reaches 1.0.0): that one is a major, and says so.
+	if highest == changeset.BumpMajor && m.minorPreMajor && m.Current.Major == 0 && !m.overriddenPastMajor() {
 		return changeset.BumpMinor
 	}
 	return highest
+}
+
+// overriddenPastMajor says VersionOverride (--release-as, the prompt's
+// custom version) moves the major version.
+func (m *Module) overriddenPastMajor() bool {
+	if m.VersionOverride == "" {
+		return false
+	}
+	v, ok := semver.Parse(m.VersionOverride)
+	return ok && v.Major > m.Current.Major
 }
 
 // NewVersion is the stable version this module bumps to.

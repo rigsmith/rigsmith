@@ -45,7 +45,9 @@ The whole workflow is wired:
   missing, and so is a package already published whose tag never made it. A
   private NuGet feed that asks for credentials gets the publish credential
   (`dotnet.auth`, else `NUGET_API_KEY`; `dotnet.user` names the account),
-  only after it asks and only on its own host. `--output <file>` writes @changesets v3's plan JSON, chunked in
+  only after it asks, and only to the source's own host and port over https
+  (plain http only to a loopback host, `localhost`, `127.0.0.0/8` or `::1`,
+  for a local test feed). `--output <file>` writes @changesets v3's plan JSON, chunked in
   dependency order, and `--tag` sets the npm dist-tag. A registry that can't be
   reached fails it rather than guessing
 - `pack --out-dir <dir>` — build the package file for each release the plan

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,6 +134,29 @@ func TestVersionOnlyRefusesWithIgnore(t *testing.T) {
 	assertContains(t, out, "can't be combined")
 }
 
+// A package the config ignores can't be versioned by naming it: that's an
+// error, as an unknown name is, not "Nothing to version" and a zero exit.
+// Named beside a package it can version, too, as an unknown name is refused
+// beside a known one.
+func TestVersionOnlyRefusesAnIgnoredPackage(t *testing.T) {
+	for _, only := range [][]string{{"extra"}, {"solo", "extra"}} {
+		dir := groupsRepo(t, "")
+		args := []string{"version", "--yes"}
+		for _, n := range only {
+			args = append(args, "--only", n)
+		}
+		code, out := runChangerig(t, dir, args...)
+		assertExitNonZero(t, code, out)
+		assertContains(t, out, "--only names extra, which `ignore` in the config leaves out")
+		if strings.Contains(out, "Nothing to version") {
+			t.Errorf("an ignored --only name reported nothing to version:\n%s", out)
+		}
+		if len(changesetFiles(t, dir)) != 3 {
+			t.Fatal("a refused run consumed changesets")
+		}
+	}
+}
+
 // A fixed group splits with no mixed changeset and no dependency, so --only
 // checks the group itself.
 func TestVersionOnlyRefusesPartOfAFixedGroup(t *testing.T) {
@@ -177,11 +201,11 @@ func TestStatusOutputGroupsOnlyActiveChangesets(t *testing.T) {
 	}
 }
 
-// A changeset the config's ignore holds back is reported as ignored, whether
-// or not --only names its package; only the ones --only alone held back wait
-// for a later run.
+// A changeset the config's ignore holds back is reported as ignored; only the
+// ones --only alone held back wait for a later run. (Naming the ignored
+// package in --only too is refused: TestVersionOnlyRefusesAnIgnoredPackage.)
 func TestVersionOnlySeparatesIgnoredFromWaiting(t *testing.T) {
-	for _, only := range [][]string{{"solo"}, {"solo", "extra"}} {
+	for _, only := range [][]string{{"solo"}} {
 		dir := groupsRepo(t, "")
 		writeChangeset(t, dir, "extra-change", "extra", "patch", "An extra fix")
 		args := []string{"version", "--yes"}

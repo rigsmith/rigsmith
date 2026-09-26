@@ -105,7 +105,14 @@ func renderContributors(authors []plugin.Author, section string) string {
 // their bump stands for — a major the Breaking section, a minor the `feat`
 // group's, a patch the `fix` group's — falling back to the bump heading only
 // when the groups name no such section.
-func renderSections(newVersion string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
+//
+// releaseBump is the bump the release is made at (the request's Bump). In an
+// untyped entry the headings name bumps, so none names a bigger one than the
+// release makes: under bumpMinorPreMajor a major change on 0.x releases as a
+// minor, and is listed under Minor Changes, as status reports it. A typed
+// entry keeps it under 💥 Breaking: that heading names what the change is,
+// and a breaking change is breaking whatever the version does.
+func renderSections(newVersion, releaseBump string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
 	// Ordered list of (sectionHeading) and the bucket of bullets in it.
 	type bullet struct {
 		scope   string
@@ -191,6 +198,9 @@ func renderSections(newVersion string, changes []plugin.ChangelogChange, groups 
 			// has no section for it.
 			if bump == changeset.BumpNone {
 				continue
+			}
+			if released, ok := changeset.ParseBump(releaseBump); ok && !typed && released != changeset.BumpNone && bump > released {
+				bump = released
 			}
 			add(bumpSection(bump), c)
 		}

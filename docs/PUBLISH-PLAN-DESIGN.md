@@ -34,8 +34,10 @@ new plugin method, `published`:
   else `NUGET_API_KEY`, as the password (GitHub Packages, Azure Artifacts and
   feedz take a token there), and `dotnet.user` (or a placeholder) as the
   name. They're sent only after the feed answers 401, and only to the
-  source's own host over https (a redirect elsewhere is refused), never to
-  nuget.org, whose reads are public and whose key only pushes. A reference
+  source's own host and port, over https or, for a local test feed, plain
+  http to a loopback host (`localhost`, `127.0.0.0/8`, `::1`); a redirect
+  elsewhere is refused. Never to nuget.org, whose reads are public and whose
+  key only pushes. A reference
   the plan job can't resolve sends none, `NUGET_API_KEY` doesn't stand in
   for it, and it's named if the feed then asks.
 - **crates.io**: `GET /api/v1/crates/<name>/<version>`. Only crates.io: an

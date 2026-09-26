@@ -86,16 +86,24 @@ func NewVersionCmd() *cobra.Command {
 				if len(ignoreFlag) > 0 {
 					return errors.New("--only and --ignore can't be combined: --only already leaves out every package it doesn't name")
 				}
-				var unknown []string
+				var unknown, ignored []string
 				only := map[string]bool{}
 				for _, name := range onlyFlag {
 					if _, ok := pkgByName[name]; !ok {
 						unknown = append(unknown, name)
+					} else if ws.Config.IsIgnored(name) {
+						ignored = append(ignored, name)
 					}
 					only[name] = true
 				}
 				if len(unknown) > 0 {
 					return fmt.Errorf("--only names %s, which is not in the workspace; is it misspelled?", strings.Join(unknown, ", "))
+				}
+				// Asked for by name and left out by the config: an error, as
+				// an unknown name is, rather than "Nothing to version" and a
+				// zero exit that a release job would take for success.
+				if len(ignored) > 0 {
+					return fmt.Errorf("--only names %s, which `ignore` in the config leaves out, so --only can't version it; take it out of `ignore` first", strings.Join(ignored, ", "))
 				}
 				for _, p := range pkgs {
 					if !only[p.Name] {

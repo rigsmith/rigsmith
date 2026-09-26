@@ -20,7 +20,7 @@ func TestRenderGroupsByTypeAndLeadsWithScope(t *testing.T) {
 		{Bump: "minor", Type: "feat", Summary: "feat: an unscoped feature"},
 		{Bump: "patch", Type: "refactor", Summary: "refactor: an unscoped tidy"},
 	}
-	got := renderSections("1.1.0", changes, config.DefaultChangelogGroups, nil)
+	got := renderSections("1.1.0", "", changes, config.DefaultChangelogGroups, nil)
 
 	// Sections in group order: enhancements, then fixes, then refactors.
 	wantOrder := []string{"🚀 Enhancements", "🩹 Fixes", "💅 Refactors"}
@@ -68,7 +68,7 @@ func TestScopeOrderIsConfigurable(t *testing.T) {
 		{Bump: "minor", Type: "feat", Scope: "shiprig", Summary: "feat(shiprig): s"},
 		{Bump: "minor", Type: "feat", Scope: "rig", Summary: "feat(rig): r"},
 	}
-	got := renderSections("1.1.0", changes, config.DefaultChangelogGroups, []string{"rig", "clauderig"})
+	got := renderSections("1.1.0", "", changes, config.DefaultChangelogGroups, []string{"rig", "clauderig"})
 
 	want := []string{"**rig:** r", "**clauderig:** c", "**shiprig:** s", "- unscoped"}
 	at := -1
@@ -87,7 +87,7 @@ func TestScopeOrderIsConfigurable(t *testing.T) {
 // A summary that ends with newlines must not render indented blank lines under
 // its bullet — every entry read out of a file ends that way.
 func TestTrailingNewlinesDoNotBecomeBlankContinuations(t *testing.T) {
-	got := renderSections("1.0.1", []plugin.ChangelogChange{
+	got := renderSections("1.0.1", "", []plugin.ChangelogChange{
 		{Bump: "patch", Type: "fix", Summary: "fix: a thing\n\n"},
 	}, config.DefaultChangelogGroups, nil)
 	if strings.Contains(got, "\n  \n") || strings.HasSuffix(got, "  \n") {
@@ -98,7 +98,7 @@ func TestTrailingNewlinesDoNotBecomeBlankContinuations(t *testing.T) {
 // A summary that is only a conventional prefix, or only whitespace, has nothing
 // to say — it must not render as a bare "- ".
 func TestEmptySummariesRenderNoBullet(t *testing.T) {
-	got := renderSections("1.0.1", []plugin.ChangelogChange{
+	got := renderSections("1.0.1", "", []plugin.ChangelogChange{
 		{Bump: "patch", Type: "fix", Scope: "rig", Summary: "fix(rig): "},
 		{Bump: "patch", Type: "fix", Summary: "   \n\n"},
 		{Bump: "patch", Type: "fix", Summary: "fix: a real one"},
@@ -115,7 +115,7 @@ func TestEmptySummariesRenderNoBullet(t *testing.T) {
 // An entry with typed changes doesn't mix in bump headings: its untyped ones
 // join the typed section their bump stands for.
 func TestRenderSectionsFoldsUntypedChangesIntoTypedSections(t *testing.T) {
-	got := renderSections("2.0.0", []plugin.ChangelogChange{
+	got := renderSections("2.0.0", "", []plugin.ChangelogChange{
 		{Bump: "patch", Summary: "Document exit codes", Type: "docs"},
 		{Bump: "minor", Summary: "Add a --json flag"},
 		{Bump: "major", Summary: "Drop Node 18"},
@@ -141,14 +141,14 @@ func TestRenderSectionsFoldsUntypedChangesIntoTypedSections(t *testing.T) {
 // Without a typed change, the canon bump headings stay; and groups that name
 // no feat/fix section fall back to them.
 func TestRenderSectionsKeepsBumpHeadingsWhenUntypedOrUngrouped(t *testing.T) {
-	untyped := renderSections("1.1.0", []plugin.ChangelogChange{
+	untyped := renderSections("1.1.0", "", []plugin.ChangelogChange{
 		{Bump: "minor", Summary: "Add a flag"},
 		{Bump: "patch", Summary: "Fix a bug"},
 	}, config.DefaultChangelogGroups, nil)
 	if !strings.Contains(untyped, "### Minor Changes") || !strings.Contains(untyped, "### Patch Changes") {
 		t.Errorf("untyped entry:\n%s", untyped)
 	}
-	ungrouped := renderSections("1.1.0", []plugin.ChangelogChange{
+	ungrouped := renderSections("1.1.0", "", []plugin.ChangelogChange{
 		{Bump: "patch", Summary: "Document it", Type: "docs"},
 		{Bump: "minor", Summary: "Add a flag"},
 	}, []config.ChangelogGroup{{Type: "docs", Section: "Docs", Bump: "patch"}}, nil)
@@ -193,7 +193,7 @@ func TestDepReleasesFollowTheEntrysOrder(t *testing.T) {
 // doesn't switch the entry to typed sections; and a "none" change has no
 // section, in either style.
 func TestRenderSectionsIgnoresEmptyTypedAndNoneChanges(t *testing.T) {
-	got := renderSections("1.0.1", []plugin.ChangelogChange{
+	got := renderSections("1.0.1", "", []plugin.ChangelogChange{
 		{Bump: "patch", Type: "fix", Summary: "fix:"},
 		{Bump: "patch", Summary: "A fix"},
 		{Bump: "none", Summary: "Nothing to release"},
@@ -201,7 +201,7 @@ func TestRenderSectionsIgnoresEmptyTypedAndNoneChanges(t *testing.T) {
 	if !strings.Contains(got, "### Patch Changes\n\n- A fix") {
 		t.Errorf("an empty typed change restyled the entry:\n%s", got)
 	}
-	typed := renderSections("1.1.0", []plugin.ChangelogChange{
+	typed := renderSections("1.1.0", "", []plugin.ChangelogChange{
 		{Bump: "minor", Type: "feat", Summary: "A feature"},
 		{Bump: "none", Summary: "Nothing to release"},
 	}, config.DefaultChangelogGroups, nil)
@@ -231,7 +231,7 @@ func TestDepReleasesBreakTiesByName(t *testing.T) {
 // @changesets' "Updated dependencies" under Patch Changes.
 func TestRenderSectionsGivesTypedDependenciesTheirOwnSection(t *testing.T) {
 	deps := plugin.ChangelogChange{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0", Dependencies: true}
-	typed := renderSections("1.1.0", []plugin.ChangelogChange{
+	typed := renderSections("1.1.0", "", []plugin.ChangelogChange{
 		{Bump: "minor", Type: "feat", Summary: "A feature"},
 		deps,
 		{Bump: "patch", Type: "zzz", Summary: "An unusual type"},
@@ -244,7 +244,7 @@ func TestRenderSectionsGivesTypedDependenciesTheirOwnSection(t *testing.T) {
 	if feat < 0 || depsAt < 0 || other < 0 || !(feat < depsAt && depsAt < other) {
 		t.Errorf("section order (feat %d, dependencies %d, Zzz %d):\n%s", feat, depsAt, other, typed)
 	}
-	untyped := renderSections("1.0.1", []plugin.ChangelogChange{{Bump: "patch", Summary: "A fix"}, deps}, config.DefaultChangelogGroups, nil)
+	untyped := renderSections("1.0.1", "", []plugin.ChangelogChange{{Bump: "patch", Summary: "A fix"}, deps}, config.DefaultChangelogGroups, nil)
 	if !strings.Contains(untyped, "### Patch Changes\n\n- A fix\n- Updated dependencies\n  - core@2.0.0") {
 		t.Errorf("untyped entry:\n%s", untyped)
 	}
@@ -276,7 +276,7 @@ func TestRenderSectionsKeepsAGroupNamedLikeTheDependencies(t *testing.T) {
 		{Type: "deps", Section: dependenciesSection, Bump: "patch"},
 		{Type: "feat", Section: "Features", Bump: "minor"},
 	}
-	got := renderSections("1.1.0", []plugin.ChangelogChange{
+	got := renderSections("1.1.0", "", []plugin.ChangelogChange{
 		{Bump: "minor", Type: "feat", Summary: "A feature"},
 		{Bump: "patch", Type: "deps", Summary: "Pin the toolchain"},
 		{Bump: "patch", Summary: "Updated dependencies\n  - core@2.0.0", Dependencies: true},
@@ -289,5 +289,25 @@ func TestRenderSectionsKeepsAGroupNamedLikeTheDependencies(t *testing.T) {
 	// The group keeps its configured rank, ahead of Features.
 	if strings.Index(got, group) > strings.Index(got, "### Features") {
 		t.Errorf("the group lost its rank:\n%s", got)
+	}
+}
+
+// An untyped entry's headings never name a bigger bump than the release
+// makes (bumpMinorPreMajor's major on 0.x releases as a minor); a typed entry
+// keeps a major change under Breaking, since the heading names the change.
+func TestRenderSectionsCapsBumpHeadingsAtTheReleaseBump(t *testing.T) {
+	untyped := renderSections("0.4.0", "minor", []plugin.ChangelogChange{
+		{Bump: "major", Summary: "Break it"},
+		{Bump: "patch", Summary: "Fix it"},
+	}, config.DefaultChangelogGroups, nil)
+	if want := "## 0.4.0\n\n### Minor Changes\n\n- Break it\n\n### Patch Changes\n\n- Fix it\n"; untyped != want {
+		t.Errorf("untyped:\n%s\nwant:\n%s", untyped, want)
+	}
+	typed := renderSections("0.4.0", "minor", []plugin.ChangelogChange{
+		{Bump: "major", Summary: "Break it"},
+		{Bump: "minor", Type: "feat", Summary: "Add it"},
+	}, config.DefaultChangelogGroups, nil)
+	if !strings.Contains(typed, config.BreakingGroup.Section+"\n\n- Break it") {
+		t.Errorf("typed: the major change left the Breaking section:\n%s", typed)
 	}
 }

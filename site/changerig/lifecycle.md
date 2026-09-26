@@ -125,9 +125,12 @@ As @changesets does, a major bump on a `0.x` package releases `1.0.0`. With
 `0.3.0` → `0.4.0`, and `status` reports it as the minor it is. That applies
 whether the major comes from a changeset's bump or a breaking type (`feat!`),
 and packages at `1.0.0` or above are unaffected. `^0.3.0` doesn't cover
-`0.4.0`, so dependents still follow it. Going to `1.0.0` is then a deliberate
-step: `version --release-as <pkg>=1.0.0` (or `releaseAs` in shiprig-action's
-config).
+`0.4.0`, so dependents still follow it. The changelog lists the change under
+**Minor Changes**, the bump it releases at; with typed changes it stays under
+💥 Breaking Changes, since that heading says what the change is, and it is
+still breaking. Going to `1.0.0` is then a deliberate step:
+`version --release-as <pkg>=1.0.0` (or `releaseAs` in shiprig-action's
+config), and that release is a major, in the plan and the changelog alike.
 
 ### Choosing the sections and their order
 
@@ -228,11 +231,13 @@ error. This is @changesets v3's default.
 
 `--only <package>` (repeatable) is the other way round, and shiprig's own:
 version only the named packages, leaving every other one's changesets for a
-later run. Unlike `--ignore`, it combines with `ignore` in the config. The
-named packages must be whole groups (`status --output` lists each package's
-group); naming part of one is refused, since a changeset would be split, a
-dependent left behind its dependency, or a fixed or linked group or shared
-version file released in pieces. The refusal names what's missing.
+later run. Unlike `--ignore`, it combines with `ignore` in the config, but it
+can't override it: naming a package that `ignore` leaves out is an error, as
+naming one that isn't in the workspace is. The named packages must be whole
+groups (`status --output` lists each package's group); naming part of one is
+refused, since a changeset would be split, a dependent left behind its
+dependency, or a fixed or linked group or shared version file released in
+pieces. The refusal names what's missing.
 
 `--ignore <package>` (repeatable) leaves packages out of one run, as
 `changeset version --ignore` does: their changesets stay for a later run, and

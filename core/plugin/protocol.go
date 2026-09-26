@@ -269,6 +269,11 @@ type PublishedRequest struct {
 	// one (an environment variable) in its place. Credentials written into
 	// PackageSource itself are the source's own and still apply.
 	AuthUnavailable bool `json:"authUnavailable,omitempty"`
+	// AuthError, with AuthUnavailable, is why the credential couldn't be
+	// resolved (the reference and what went wrong, never a secret), for an
+	// adapter to name in its own error. The caller doesn't repeat a reason
+	// the adapter's error already carries.
+	AuthError string `json:"authError,omitempty"`
 }
 
 // PublishedResponse is the registry's answer. NoRegistry marks an ecosystem

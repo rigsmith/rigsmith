@@ -24,6 +24,9 @@ type fakeRegistry struct {
 	fail      map[string]bool
 	// asked, when set, records each request's credential and user.
 	asked *sync.Map
+	// namesAuthError: a failure says why the credential couldn't be
+	// resolved itself, as the dotnet adapter's 401 does.
+	namesAuthError bool
 }
 
 func (f fakeRegistry) Published(_ context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
@@ -43,6 +46,9 @@ func (f fakeRegistry) Published(_ context.Context, req plugin.PublishedRequest) 
 		token := ""
 		if req.Auth != nil {
 			token = " with " + req.Auth.Token
+		}
+		if f.namesAuthError && req.AuthError != "" {
+			return plugin.PublishedResponse{}, errors.New("401: the configured credential couldn't be resolved: " + req.AuthError)
 		}
 		return plugin.PublishedResponse{}, errors.New("registry unreachable at https://bot:s3cret@npm.example.com/" + token)
 	}
@@ -341,5 +347,26 @@ func TestPublishPlanGoesOnWithoutAnUnresolvableCredential(t *testing.T) {
 	_, err := planFor(t, fakeRegistry{fail: map[string]bool{"lib": true}}, "")
 	if err == nil || !strings.Contains(err.Error(), "`node.auth` couldn't be resolved") {
 		t.Errorf("err = %v, want the unresolved reference named", err)
+	}
+}
+
+// An adapter that names why the credential couldn't be resolved (dotnet's
+// 401) gets the reason with the request, and the plan's error says it once,
+// not again in a clause of its own.
+func TestPublishPlanNamesAnUnresolvedCredentialOnce(t *testing.T) {
+	planRepo(t, `{ "node": { "auth": "env:PLAN_MISSING_TOKEN" } }`)
+	_, err := planFor(t, fakeRegistry{fail: map[string]bool{"lib": true}, namesAuthError: true}, "")
+	if err == nil {
+		t.Fatal("want the registry's failure")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "PLAN_MISSING_TOKEN") {
+		t.Errorf("err = %v, want the unresolved reference named", err)
+	}
+	if n := strings.Count(msg, "PLAN_MISSING_TOKEN"); n != 1 {
+		t.Errorf("the reason is given %d times, want once:\n%s", n, msg)
+	}
+	if strings.Contains(msg, "`node.auth` couldn't be resolved") {
+		t.Errorf("the plan repeated the adapter's reason in a clause of its own:\n%s", msg)
 	}
 }
