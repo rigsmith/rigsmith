@@ -47,7 +47,9 @@ if (a[0] === 'trust' && a[1] === 'github') {
   if (cs.some((c) => c.file === opt('--file') && c.repository === opt('--repo'))) {
     console.error('npm error this trust relationship already exists'); process.exit(1)
   }
-  cs.push({ id: crypto.randomUUID(), type: 'github', file: opt('--file'), repository: opt('--repo') })
+  cs.push({ id: crypto.randomUUID(), type: 'github', file: opt('--file'), repository: opt('--repo'),
+    permissions: a.includes('--allow-publish') ? ['createPackage', 'createStagedPackage'] : ['createStagedPackage'],
+    ...(a.includes('--env') ? { environment: opt('--env') } : {}) })
   save(a[2], cs); process.exit(0)
 }
 if (a[0] === 'trust' && a[1] === 'revoke') {
@@ -57,10 +59,12 @@ console.error('fake npm: unexpected ' + a.join(' ')); process.exit(2)
 `
 
 type trustConfig struct {
-	ID         string `json:"id"`
-	Type       string `json:"type"`
-	File       string `json:"file"`
-	Repository string `json:"repository"`
+	ID          string   `json:"id"`
+	Type        string   `json:"type"`
+	File        string   `json:"file"`
+	Repository  string   `json:"repository"`
+	Environment string   `json:"environment,omitempty"`
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 type trustFixture struct {
@@ -96,20 +100,23 @@ func newTrustFixture(t *testing.T) *trustFixture {
 		if !tool.IsDir() {
 			continue
 		}
-		name := "@rigsmith/" + tool.Name()
-		dir := filepath.Join(f.dist, tool.Name())
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
+		// The tool's package and one platform package, as the real build has.
+		for _, pkg := range []string{tool.Name(), tool.Name() + "-linux-x64"} {
+			name := "@rigsmith/" + pkg
+			dir := filepath.Join(f.dist, pkg)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			manifest, _ := json.Marshal(map[string]string{"name": name, "version": "1.0.0"})
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), manifest, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			f.packages = append(f.packages, name)
 		}
-		manifest, _ := json.Marshal(map[string]string{"name": name, "version": "1.0.0"})
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), manifest, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		f.packages = append(f.packages, name)
 	}
 	sort.Strings(f.packages)
-	if len(f.packages) < 6 {
-		t.Fatalf("only %d tools in cmd/; the seeds below need six", len(f.packages))
+	if len(f.packages) < 8 {
+		t.Fatalf("only %d packages; seedEveryCase needs eight so every case is used", len(f.packages))
 	}
 	return f
 }
@@ -119,6 +126,11 @@ func (f *trustFixture) seed(name string, configs ...trustConfig) {
 		configs[i].ID = fmt.Sprintf("%s-%d", strings.ReplaceAll(name, "/", "_"), i)
 		if configs[i].Type == "" {
 			configs[i].Type = "github"
+		}
+		// As npm lists a registration made with --allow-publish, unless the
+		// case says otherwise.
+		if configs[i].Type == "github" && configs[i].Permissions == nil {
+			configs[i].Permissions = []string{"createPackage", "createStagedPackage"}
 		}
 	}
 	raw, _ := json.Marshal(configs)
@@ -168,8 +180,9 @@ const (
 
 // seedEveryCase gives the packages, in turn: both workflows, only the old one,
 // only the new one, the old one beside ANOTHER repository's release.yml, a
-// prerelease.yml (which ends with release.yml but isn't it), and the old one
-// beside a CircleCI publisher (which names no workflow file).
+// prerelease.yml (which ends with release.yml but isn't it), the old one beside
+// a CircleCI publisher (which names no workflow file), and release.yml that
+// can't publish: in a GitHub environment, or without publish permission.
 func (f *trustFixture) seedEveryCase() {
 	cases := [][]trustConfig{
 		{{File: "goreleaser.yml", Repository: thisRepo}, {File: "release.yml", Repository: thisRepo}},
@@ -178,6 +191,10 @@ func (f *trustFixture) seedEveryCase() {
 		{{File: "goreleaser.yml", Repository: thisRepo}, {File: "release.yml", Repository: otherRepo}},
 		{{File: "prerelease.yml", Repository: thisRepo}},
 		{{File: "goreleaser.yml", Repository: thisRepo}, {Type: "circleci"}},
+		// release.yml already, but in a GitHub environment the release jobs
+		// don't use, or without publish permission: neither can publish.
+		{{File: "release.yml", Repository: thisRepo, Environment: "production"}},
+		{{File: "release.yml", Repository: thisRepo, Permissions: []string{"createStagedPackage"}}},
 	}
 	for i, name := range f.packages {
 		f.seed(name, cases[i%len(cases)]...)
@@ -197,20 +214,28 @@ func TestTrustReplaceLeavesOnlyThisRepositorysReleaseWorkflow(t *testing.T) {
 		for _, c := range f.held(name) {
 			if c.Repository == thisRepo {
 				ours = append(ours, c.File)
+				publishes := false
+				for _, p := range c.Permissions {
+					publishes = publishes || p == "createPackage"
+				}
+				if c.Environment != "" || !publishes {
+					t.Errorf("%s: kept a release.yml registration that can't publish (environment %q, permissions %v)",
+						name, c.Environment, c.Permissions)
+				}
 			} else {
 				others = append(others, c.Repository+" "+c.File)
 			}
 		}
 		if len(ours) != 1 || ours[0] != "release.yml" {
-			t.Errorf("%s (seed %d): this repository's configurations = %v, want exactly [release.yml]", name, i%6, ours)
+			t.Errorf("%s (seed %d): this repository's configurations = %v, want exactly [release.yml]", name, i%8, ours)
 		}
 		// Another repository's configuration, or another provider's, is never
 		// touched.
-		if i%6 == 3 && (len(others) != 1 || others[0] != otherRepo+" release.yml") {
+		if i%8 == 3 && (len(others) != 1 || others[0] != otherRepo+" release.yml") {
 			t.Errorf("%s: another repository's configurations = %v, want it kept", name, others)
 		}
 		// A CircleCI record has no repository or workflow file: " ".
-		if i%6 == 5 && (len(others) != 1 || others[0] != " ") {
+		if i%8 == 5 && (len(others) != 1 || others[0] != " ") {
 			t.Errorf("%s: other publishers = %q, want the CircleCI one kept", name, others)
 		}
 	}
@@ -247,6 +272,19 @@ func TestTrustListReadsSeveralConfigurationsAndFailsUntilExclusive(t *testing.T)
 		if out, code := f.run(nil, "--list", "--otp", "000000"); code == 0 {
 			t.Errorf("--list exited 0 with %s %s beside release.yml on every package:\n%s",
 				extra.Repository, extra.File, out)
+		}
+	}
+
+	// release.yml alone, but one that can't publish, is not done either.
+	for _, bad := range []trustConfig{
+		{File: "release.yml", Repository: thisRepo, Environment: "production"},
+		{File: "release.yml", Repository: thisRepo, Permissions: []string{"createStagedPackage"}},
+	} {
+		for _, name := range f.packages {
+			f.seed(name, bad)
+		}
+		if out, code := f.run(nil, "--list", "--otp", "000000"); code == 0 {
+			t.Errorf("--list exited 0 with every package on a release.yml that can't publish (%+v):\n%s", bad, out)
 		}
 	}
 

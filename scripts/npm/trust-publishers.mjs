@@ -247,9 +247,23 @@ async function promptOTP(message) {
 // matter: another repository's release.yml is not ours (counting it as ours is
 // how --replace revoked this repository's only publisher and registered
 // nothing), and neither is prerelease.yml, which ends with release.yml.
+//
+// And it has to be one the release job can publish through: no GitHub
+// environment (the release jobs don't run in one, so a registration that names
+// one never matches), and publish permission. `--allow-publish` grants
+// createPackage; a registration without it can stage but not publish.
 function isOurs(c) {
   return (c.type === '' || c.type === 'github') && c.repository === REPOSITORY &&
-    (c.file === WORKFLOW || c.file.endsWith(`/${WORKFLOW}`))
+    (c.file === WORKFLOW || c.file.endsWith(`/${WORKFLOW}`)) &&
+    !c.environment && (c.permissions === null || c.permissions.includes('createPackage'))
+}
+
+// describe is one configuration as --list reports it.
+function describe(c) {
+  return [c.type, c.repository, c.file,
+    c.environment && `environment ${c.environment}`,
+    c.permissions && !c.permissions.includes('createPackage') && 'no publish permission',
+  ].filter(Boolean).join(' ')
 }
 
 // isSameRepoWorkflow is another GitHub workflow of this repository: what
@@ -329,6 +343,8 @@ function registeredConfigs(name, otp) {
       type: row.type ?? '',
       file: row.file ?? row.workflow ?? row.workflowFilename ?? '',
       repository: row.repository ?? row.repo ?? row.project ?? '',
+      environment: row.environment ?? row.env ?? '',
+      permissions: Array.isArray(row.permissions) ? row.permissions : null,
     }))
   // Something that isn't a publisher record at all: better to say it could not
   // be read than to report a registered package as unregistered.
@@ -391,6 +407,19 @@ function replace(name, otp) {
     return null
   }
   if (!configs.some(isOurs)) {
+    // A registration of this workflow that can't publish (an environment, no
+    // publish permission) goes first: npm won't take a second for the same
+    // workflow beside it.
+    for (const c of configs.filter((c) => isSameRepoWorkflow(c) && c.id &&
+      (c.file === WORKFLOW || c.file.endsWith(`/${WORKFLOW}`)))) {
+      sleep(CALL_SPACING_MS)
+      const r = spawnSync('npm', ['trust', 'revoke', name, '--id', c.id],
+        { encoding: 'utf8', env: otpEnv(otp), timeout: NPM_CALL_TIMEOUT_MS })
+      if (r.status !== 0) {
+        replaceOtpExpired = otpFailed(`${r.stdout}${r.stderr}`)
+        return null
+      }
+    }
     sleep(CALL_SPACING_MS)
     const r = register(name, otp)
     if (!r.ok) {
@@ -400,6 +429,8 @@ function replace(name, otp) {
     configs = registeredConfigs(name, otp)
     if (configs === null || !configs.some(isOurs)) return null
   }
+  // What's still here besides ours: this repository's other workflows (the
+  // unusable one above is gone already).
   const stale = configs.filter((c) => isSameRepoWorkflow(c) && c.id)
   for (const c of stale) {
     sleep(CALL_SPACING_MS)
@@ -410,7 +441,7 @@ function replace(name, otp) {
       return null
     }
   }
-  return stale.map((c) => c.file).join(', ')
+  return stale.map(describe).join(', ')
 }
 
 const npmVersion = requireNpm()
@@ -442,15 +473,13 @@ if (LIST) {
     // Another repository able to publish the package is worth saying whatever
     // else holds it.
     const elsewhere = configs.filter((c) => !isOurs(c) && !isSameRepoWorkflow(c))
-    if (elsewhere.length) {
-      foreign.push(`${name} (${elsewhere.map((c) => [c.type, c.repository, c.file].filter(Boolean).join(' ')).join(', ')})`)
-    }
+    if (elsewhere.length) foreign.push(`${name} (${elsewhere.map(describe).join(', ')})`)
     if (configs.some(isOurs)) {
       ours.push(name)
       const extra = configs.filter(isSameRepoWorkflow)
-      if (extra.length) stale.push(`${name} (also ${extra.map((c) => c.file).join(', ')})`)
+      if (extra.length) stale.push(`${name} (also ${extra.map(describe).join(', ')})`)
     } else if (held.length > 0) {
-      other.push(`${name} (${configs.map((c) => [c.type, c.repository, c.file].filter(Boolean).join(' ')).join(', ')})`)
+      other.push(`${name} (${configs.map(describe).join(', ')})`)
     }
     else none.push(name)
   }
