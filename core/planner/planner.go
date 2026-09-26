@@ -87,9 +87,6 @@ type Module struct {
 	// below 1.0.0 releases as a minor.
 	minorPreMajor   bool
 	hasBumpOverride bool
-	// overrideDemoted: bumpOverride is a group's minor that stands for a
-	// major bumpMinorPreMajor held back (a member's own major on 0.x).
-	overrideDemoted bool
 }
 
 // EffectiveVersionFile is where the bump is written: VersionFile when set, else
@@ -101,15 +98,22 @@ func (m *Module) EffectiveVersionFile() string {
 	return m.ManifestPath
 }
 
-// HighestBump is the override if present, otherwise the max of the direct
-// changes and the cascade-determined bump.
+// HighestBump is the bump this release makes. Planned, it is the override if
+// present, otherwise the max of the direct changes and the cascade-determined
+// bump. Once a VersionOverride moves the version (--release-as, the override
+// prompt, a prerelease), it is that move instead: the plan's label and the
+// changelog's heading say what the release does, not what its changesets
+// asked for.
 func (m *Module) HighestBump() changeset.Bump {
+	if moved, ok := m.overrideMove(); ok {
+		return moved
+	}
+	return m.plannedBump()
+}
+
+// plannedBump is the bump the changesets and the cascade call for.
+func (m *Module) plannedBump() changeset.Bump {
 	if m.hasBumpOverride {
-		// A group forced past 0.x (--release-as 1.0.0) is a major, as a
-		// single package is below.
-		if m.overrideDemoted && m.overriddenPastMajor() {
-			return changeset.BumpMajor
-		}
 		return m.bumpOverride
 	}
 	highest := m.cascadeBump
@@ -118,57 +122,41 @@ func (m *Module) HighestBump() changeset.Bump {
 	}
 	// Before 1.0.0, with bumpMinorPreMajor, a breaking change moves the
 	// minor. The bump itself becomes minor, so the plan says what it does.
-	// Unless the release is forced past 0.x (--release-as 1.0.0, the way
-	// the option reaches 1.0.0): that one is a major, and says so.
-	if highest == changeset.BumpMajor && m.minorPreMajor && m.Current.Major == 0 && !m.overriddenPastMajor() {
+	if highest == changeset.BumpMajor && m.minorPreMajor && m.Current.Major == 0 {
 		return changeset.BumpMinor
 	}
 	return highest
 }
 
-// demotedMajor says the bump HighestBump reports is a major that
-// bumpMinorPreMajor released as a minor.
-func (m *Module) demotedMajor() bool {
-	if m.hasBumpOverride {
-		return m.overrideDemoted
-	}
-	if !m.minorPreMajor || m.Current.Major != 0 {
-		return false
-	}
-	highest := m.cascadeBump
-	for _, c := range m.Changes {
-		highest = highest.Max(c.Bump)
-	}
-	return highest == changeset.BumpMajor
-}
-
-// demotedIn says a group's coordinated bump is a minor standing for a major
-// one of its releasing members had held back.
-func demotedIn(releasing []*Module, bump changeset.Bump) bool {
-	if bump != changeset.BumpMinor {
-		return false
-	}
-	for _, m := range releasing {
-		if m.demotedMajor() {
-			return true
-		}
-	}
-	return false
-}
-
-// overriddenPastMajor says VersionOverride (--release-as, the prompt's
-// custom version) moves the major version.
-func (m *Module) overriddenPastMajor() bool {
+// overrideMove is the level VersionOverride moves the version by, judged on
+// the stable part of each (major.minor.patch, prerelease label dropped): major
+// if the major changes, minor if the minor does, else patch. Only a move up
+// counts. A prerelease run that stays on its stable base (1.3.0-next.0 →
+// 1.3.0-next.1) or a snapshot below the current version (0.0.0-canary-…)
+// says nothing about the bump, so the planned one stands.
+func (m *Module) overrideMove() (changeset.Bump, bool) {
 	if m.VersionOverride == "" {
-		return false
+		return changeset.BumpNone, false
 	}
 	v, ok := semver.Parse(m.VersionOverride)
-	return ok && v.Major > m.Current.Major
+	if !ok {
+		return changeset.BumpNone, false
+	}
+	cur := m.Current
+	switch {
+	case v.Major != cur.Major:
+		return changeset.BumpMajor, v.Major > cur.Major
+	case v.Minor != cur.Minor:
+		return changeset.BumpMinor, v.Minor > cur.Minor
+	case v.Patch != cur.Patch:
+		return changeset.BumpPatch, v.Patch > cur.Patch
+	}
+	return changeset.BumpNone, false
 }
 
 // NewVersion is the stable version this module bumps to.
 func (m *Module) NewVersion() semver.Version {
-	switch m.HighestBump() {
+	switch m.plannedBump() {
 	case changeset.BumpMajor:
 		return m.Current.RaiseMajor()
 	case changeset.BumpMinor:
@@ -573,11 +561,10 @@ func mergeDependencyUpdates(changes []Change) []Change {
 }
 
 // coordinate forces a module to a shared version+bump (group coordination).
-func coordinate(m *Module, version semver.Version, bump changeset.Bump, demoted bool) {
+func coordinate(m *Module, version semver.Version, bump changeset.Bump) {
 	m.Current = version
 	m.bumpOverride = bump
 	m.hasBumpOverride = true
-	m.overrideDemoted = demoted
 }
 
 // coordinateGroups applies linked/fixed/lockstep coordination to the working
@@ -596,12 +583,11 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 		}
 		return out
 	}
-	apply := func(m *Module, version semver.Version, bump changeset.Bump, demoted bool) {
+	apply := func(m *Module, version semver.Version, bump changeset.Bump) {
 		if m.hasBumpOverride && m.bumpOverride == bump && semver.Compare(m.Current, version) == 0 {
-			m.overrideDemoted = m.overrideDemoted || demoted
 			return // already coordinated — keeps the fixpoint terminating
 		}
-		coordinate(m, version, bump, demoted)
+		coordinate(m, version, bump)
 		changed = true
 	}
 
@@ -612,10 +598,9 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 			continue
 		}
 		bump := highestBump(releasing)
-		demoted := demotedIn(releasing, bump)
 		version := highestCurrentVersion(grp, byName)
 		for _, m := range releasing {
-			apply(m, version, bump, demoted)
+			apply(m, version, bump)
 		}
 	}
 
@@ -626,21 +611,20 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 			continue
 		}
 		bump := highestBump(releasing)
-		demoted := demotedIn(releasing, bump)
 		version := highestCurrentVersion(grp, byName)
 		for _, member := range grp {
 			if cfg.IsIgnored(member) {
 				continue
 			}
 			if m, ok := rel[member]; ok {
-				apply(m, version, bump, demoted)
+				apply(m, version, bump)
 				continue
 			}
 			if pkg, ok := byName[member]; ok {
 				m := newModule(pkg)
 				rel[member] = m
 				*order = append(*order, member)
-				apply(m, version, bump, demoted)
+				apply(m, version, bump)
 			}
 		}
 	}
@@ -674,21 +658,20 @@ func coordinateGroups(rel map[string]*Module, order *[]string, byName map[string
 			continue
 		}
 		bump := highestBump(releasing)
-		demoted := demotedIn(releasing, bump)
 		version := highestCurrentVersion(names, byName)
 		for _, member := range names {
 			if cfg.IsIgnored(member) {
 				continue
 			}
 			if m, ok := rel[member]; ok {
-				apply(m, version, bump, demoted)
+				apply(m, version, bump)
 				continue
 			}
 			if pkg, ok := byName[member]; ok {
 				m := newModule(pkg)
 				rel[member] = m
 				*order = append(*order, member)
-				apply(m, version, bump, demoted)
+				apply(m, version, bump)
 			}
 		}
 	}

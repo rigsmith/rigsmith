@@ -277,8 +277,15 @@ together, as they do at the prompt, and the dependency cascade isn't
 recomputed: dependents already in the release get the new version in their
 ranges and changelogs, and an override that would push past the range of a
 dependent that isn't releasing is refused, since nothing would update it. Give
-that package a changeset with the bump you want instead, so the cascade runs. It's for normal releases only; a prerelease or snapshot sets its
-own suffix. @changesets has no equivalent (there you write a changeset with
+that package a changeset with the bump you want instead, so the cascade runs.
+
+The release is labelled by the move it makes, not by its changesets: a patch
+changeset released at `2.0.0` is `major` in the plan and `status`, and in an
+untyped changelog the changes that decided the release are listed under
+**Major Changes** (smaller ones keep their own headings). Typed sections stay
+as they are, since they name what each change is.
+
+It's for normal releases only; a prerelease or snapshot sets its own suffix. @changesets has no equivalent (there you write a changeset with
 the bump you want), so without the flag nothing changes.
 
 ### Versions that do not live in the tree {#no-stamp}

@@ -126,7 +126,7 @@ func DefaultErrorHandler(w io.Writer, styles Styles, err error) {
 	_, _ = fmt.Fprintln(w, styles.ErrorHeader.String())
 	_, _ = fmt.Fprintln(w, styles.ErrorText.Render(sentence(headline)))
 	if multiline {
-		_, _ = fmt.Fprintln(w, styles.ErrorText.UnsetWidth().Render(detail))
+		_, _ = fmt.Fprintln(w, styles.ErrorText.UnsetWidth().UnsetTransform().Render(detail))
 	}
 	_, _ = fmt.Fprintln(w)
 	if isUsageError(err) {
@@ -134,7 +134,7 @@ func DefaultErrorHandler(w io.Writer, styles Styles, err error) {
 			lipgloss.Left,
 			styles.ErrorText.UnsetWidth().Render("Try"),
 			styles.Program.Flag.Render(" --help "),
-			styles.ErrorText.UnsetWidth().UnsetMargins().Render("for usage."),
+			styles.ErrorText.UnsetWidth().UnsetMargins().UnsetTransform().Render("for usage."),
 		))
 		_, _ = fmt.Fprintln(w)
 	}

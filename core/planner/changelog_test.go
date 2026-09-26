@@ -311,3 +311,15 @@ func TestRenderSectionsCapsBumpHeadingsAtTheReleaseBump(t *testing.T) {
 		t.Errorf("typed: the major change left the Breaking section:\n%s", typed)
 	}
 }
+
+// A release forced above its changesets (--release-as) lists the changes
+// that decided it under the bump it makes; smaller ones keep their headings.
+func TestRenderSectionsRaisesTheDecidingChangesToTheReleaseBump(t *testing.T) {
+	got := renderSections("2.0.0", "major", []plugin.ChangelogChange{
+		{Bump: "minor", Summary: "Add it"},
+		{Bump: "patch", Summary: "Fix it"},
+	}, config.DefaultChangelogGroups, nil)
+	if want := "## 2.0.0\n\n### Major Changes\n\n- Add it\n\n### Patch Changes\n\n- Fix it\n"; got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

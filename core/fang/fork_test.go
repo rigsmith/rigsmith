@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/spf13/cobra"
@@ -252,5 +253,27 @@ func TestErrorSentenceIsShownAsWritten(t *testing.T) {
 				t.Errorf("%q: output has %q; got:\n%s", tc.msg, bad, out)
 			}
 		}
+	}
+}
+
+// A caller's ErrorText transform styles the headline only: the detail lines
+// and the "for usage." tail are shown as written, so a command meant to be
+// copied (--target=Release) comes out the way it has to be typed.
+func TestErrorTextTransformLeavesTheDetailAlone(t *testing.T) {
+	styles := fang.Styles{
+		ErrorText:   lipgloss.NewStyle().Transform(strings.ToUpper),
+		ErrorHeader: lipgloss.NewStyle().SetString("ERROR"),
+	}
+	var buf bytes.Buffer
+	fang.DefaultErrorHandler(&buf, styles, errors.New("unknown flag: --target\n\n    rig build -- --target=Release"))
+	out := buf.String()
+	if !strings.Contains(out, "UNKNOWN FLAG: --TARGET.") {
+		t.Errorf("the headline didn't take the caller's transform; got:\n%s", out)
+	}
+	if !strings.Contains(out, "    rig build -- --target=Release") || strings.Contains(out, "--TARGET=RELEASE") {
+		t.Errorf("the transform reached the detail line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "for usage.") {
+		t.Errorf("the transform reached the usage tail; got:\n%s", out)
 	}
 }

@@ -107,11 +107,13 @@ func renderContributors(authors []plugin.Author, section string) string {
 // when the groups name no such section.
 //
 // releaseBump is the bump the release is made at (the request's Bump). In an
-// untyped entry the headings name bumps, so none names a bigger one than the
-// release makes: under bumpMinorPreMajor a major change on 0.x releases as a
-// minor, and is listed under Minor Changes, as status reports it. A typed
-// entry keeps it under 💥 Breaking: that heading names what the change is,
-// and a breaking change is breaking whatever the version does.
+// untyped entry the headings name bumps, so the changes that decided the
+// release are listed under the bump it actually makes: under bumpMinorPreMajor
+// a major change on 0.x releases as a minor (Minor Changes, as status reports
+// it), and a patch forced to 2.0.0 by --release-as is a Major Change. Smaller
+// changes keep their own headings. A typed entry keeps its sections: they
+// name what each change is (a breaking change is breaking whatever the
+// version does), not the version's move.
 func renderSections(newVersion, releaseBump string, changes []plugin.ChangelogChange, groups []config.ChangelogGroup, scopeOrder []string) string {
 	// Ordered list of (sectionHeading) and the bucket of bullets in it.
 	type bullet struct {
@@ -174,6 +176,16 @@ func renderSections(newVersion, releaseBump string, changes []plugin.ChangelogCh
 		return title(bump) + " Changes"
 	}
 
+	// The bump the changes call for, which the release made at releaseBump.
+	top := changeset.BumpNone
+	for _, c := range changes {
+		if b, ok := changeset.ParseBump(c.Bump); ok && !c.Dependencies {
+			top = top.Max(b)
+		}
+	}
+	released, knownRelease := changeset.ParseBump(releaseBump)
+	moveTop := !typed && knownRelease && released != changeset.BumpNone && top != changeset.BumpNone && released != top
+
 	for _, c := range changes {
 		switch {
 		// In a typed entry the released dependencies get a section of their
@@ -199,7 +211,7 @@ func renderSections(newVersion, releaseBump string, changes []plugin.ChangelogCh
 			if bump == changeset.BumpNone {
 				continue
 			}
-			if released, ok := changeset.ParseBump(releaseBump); ok && !typed && released != changeset.BumpNone && bump > released {
+			if moveTop && bump == top && !c.Dependencies {
 				bump = released
 			}
 			add(bumpSection(bump), c)
