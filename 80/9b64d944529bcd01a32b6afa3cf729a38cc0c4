@@ -1,0 +1,23 @@
+internal/changerig/cmdtest/prerelease_v3_test.go
+  s_505a2cfce9114c::t_8dc543f9ec2479 42-44,49-52,60-66
+internal/changerig/commands/status.go
+  s_505a2cfce9114c::t_28e9c9c2a28e38 27-30,34-38,45-62,64-66,168,194,281-294,297-300,304-305,312
+.changeset/status-output-changesets.md
+  ai_agent 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "809b64d944529bcd01a32b6afa3cf729a38cc0c4",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
