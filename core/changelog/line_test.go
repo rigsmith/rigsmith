@@ -139,6 +139,13 @@ func TestRenderLine(t *testing.T) {
 			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") - A change",
 		},
 		{
+			name:    "github with disableThanks thanks no one",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", DisableThanks: true},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "octocat"},
+			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") - A change",
+		},
+		{
 			name:    "github thanks a bot when excludeBots is off",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Contributors: config.Contributors{ExcludeBots: new(bool)}},

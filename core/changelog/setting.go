@@ -34,6 +34,9 @@ const (
 type Setting struct {
 	Kind Kind
 	Repo string
+	// DisableThanks is changelog-github's `disableThanks`: no "Thanks …!"
+	// on any line.
+	DisableThanks bool
 	// Contributors is the config's `contributors` block: whoever it excludes
 	// from the Contributors section (bots by default, and each `exclude`
 	// pattern) isn't thanked on a changelog-github line either.
@@ -43,12 +46,14 @@ type Setting struct {
 // ParseSetting interprets the polymorphic `changelog` config value:
 // false/null/absent (or any unrecognized shape) → default; a generator name
 // string → its kind; a [name, options] tuple → the name's kind plus the
-// options' "repo" (for changelog-github's { "repo": "owner/repo" }).
+// options' "repo" (for changelog-github's { "repo": "owner/repo" }) and
+// "disableThanks".
 //
 // As in the C# converter, an unrecognized name (including the stock
 // "@changesets/cli/changelog") maps to the default kind, and a tuple's repo is
 // extracted whenever the options object carries a string "repo", with a
-// missing or non-string repo left empty.
+// missing or non-string repo left empty. Each option is read on its own, so a
+// wrong-typed one doesn't cost the others.
 func ParseSetting(cfg *config.Config) Setting {
 	setting := parseChangelog(trimSpace(cfg.Changelog))
 	setting.Contributors = cfg.Contributors
@@ -77,11 +82,16 @@ func parseChangelog(raw []byte) Setting {
 			}
 		}
 		if len(tuple) > 1 {
-			var options struct {
-				Repo *string `json:"repo"`
-			}
-			if json.Unmarshal(tuple[1], &options) == nil && options.Repo != nil {
-				setting.Repo = *options.Repo
+			var options map[string]json.RawMessage
+			if json.Unmarshal(tuple[1], &options) == nil {
+				var repo string
+				if json.Unmarshal(options["repo"], &repo) == nil {
+					setting.Repo = repo
+				}
+				var disable bool
+				if json.Unmarshal(options["disableThanks"], &disable) == nil {
+					setting.DisableThanks = disable
+				}
 			}
 		}
 		return setting

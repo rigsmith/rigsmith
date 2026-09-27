@@ -82,6 +82,17 @@ func TestParseSetting(t *testing.T) {
 			want: Setting{Kind: KindGit, Repo: "acme/widgets"},
 		},
 		{
+			name: "github tuple reads disableThanks",
+			json: `{"changelog": ["@changesets/changelog-github", {"repo": "acme/widgets", "disableThanks": true}]}`,
+			want: Setting{Kind: KindGitHub, Repo: "acme/widgets", DisableThanks: true},
+		},
+		{
+			// A wrong-typed option is ignored on its own; the repo still reads.
+			name: "a non-boolean disableThanks is ignored",
+			json: `{"changelog": ["@changesets/changelog-github", {"repo": "acme/widgets", "disableThanks": "yes"}]}`,
+			want: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
+		},
+		{
 			name: "tuple with an unrecognized name maps to default",
 			json: `{"changelog": [42, {"repo": "acme/widgets"}]}`,
 			want: Setting{Kind: KindDefault, Repo: "acme/widgets"},
@@ -94,7 +105,7 @@ func TestParseSetting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := ParseSetting(cfg); got.Kind != tt.want.Kind || got.Repo != tt.want.Repo {
+			if got := ParseSetting(cfg); got.Kind != tt.want.Kind || got.Repo != tt.want.Repo || got.DisableThanks != tt.want.DisableThanks {
 				t.Errorf("ParseSetting() = %+v, want %+v", got, tt.want)
 			}
 		})
