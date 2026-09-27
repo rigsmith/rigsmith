@@ -169,14 +169,14 @@
         },
         "excludeBots": {
           "type": "boolean",
-          "description": "Drops authors whose login/name looks like a bot (default true)."
+          "description": "Drops authors whose login/name looks like a bot (default true), from the Contributors section and from changelog-github's \"Thanks\"."
         },
         "exclude": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Author logins, names, or emails to omit (glob '*' supported)."
+          "description": "Author logins, names, or emails to omit (glob '*' supported), from the Contributors section and from changelog-github's \"Thanks\"."
         },
         "section": {
           "type": "string",

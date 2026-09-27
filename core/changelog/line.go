@@ -13,7 +13,7 @@ func RenderLine(summary string, setting Setting, info *CommitInfo) string {
 	case KindGit:
 		prefix = gitPrefix(info)
 	case KindGitHub:
-		prefix = gitHubPrefix(info, setting.Repo)
+		prefix = gitHubPrefix(info, setting)
 	}
 
 	if prefix == "" {
@@ -36,8 +36,12 @@ func gitPrefix(info *CommitInfo) string {
 // "[#pr](url) [`commit`](url) Thanks [@user](url)! - <summary>". As there,
 // the commit link's URL carries the full SHA and its text the short form.
 // Each link is omitted when its datum is missing; with no info, no repo, or
-// all three missing the summary is left unchanged.
-func gitHubPrefix(info *CommitInfo, repo string) string {
+// all three missing the summary is left unchanged. No line says "Thanks"
+// with `disableThanks`, and an author the `contributors` config excludes (a
+// bot, or a maintainer who'd otherwise thank themselves on every line) gets
+// none either; the links stay.
+func gitHubPrefix(info *CommitInfo, setting Setting) string {
+	repo := setting.Repo
 	if info == nil || repo == "" {
 		return ""
 	}
@@ -50,7 +54,7 @@ func gitHubPrefix(info *CommitInfo, repo string) string {
 	if info.Commit != "" {
 		commitLink = "[`" + info.Display() + "`](https://github.com/" + repo + "/commit/" + info.Commit + ")"
 	}
-	if info.Author != "" {
+	if info.Author != "" && !setting.DisableThanks && !setting.Contributors.IsContributorExcluded(info.Author, "", "") {
 		userLink = "[@" + info.Author + "](https://github.com/" + info.Author + ")"
 	}
 

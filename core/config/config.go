@@ -205,7 +205,8 @@ func (c Contributors) ExcludesBots() bool {
 }
 
 // IsContributorExcluded reports whether an author should be omitted from the
-// Contributors section — by the bot filter (when on) or any `exclude` pattern,
+// Contributors section, and from changelog-github's "Thanks" — by the bot
+// filter (when on) or any `exclude` pattern,
 // matched against the login, name, and email (email is matched but never shown).
 func (c Contributors) IsContributorExcluded(login, name, email string) bool {
 	if c.ExcludesBots() && (looksLikeBot(login) || looksLikeBot(name)) {
