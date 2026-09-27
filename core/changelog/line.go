@@ -1,7 +1,11 @@
 // Ported from net-changesets Commands/Version/Helpers/ChangelogReleaseLine.cs.
 package changelog
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/rigsmith/rigsmith/core/config"
+)
 
 // RenderLine applies the configured changelog generator to a changeset
 // summary, mirroring @changesets' getReleaseLine. It only transforms the first
@@ -13,7 +17,7 @@ func RenderLine(summary string, setting Setting, info *CommitInfo) string {
 	case KindGit:
 		prefix = gitPrefix(info)
 	case KindGitHub:
-		prefix = gitHubPrefix(info, setting.Repo)
+		prefix = gitHubPrefix(info, setting.Repo, setting.Contributors)
 	}
 
 	if prefix == "" {
@@ -36,8 +40,10 @@ func gitPrefix(info *CommitInfo) string {
 // "[#pr](url) [`commit`](url) Thanks [@user](url)! - <summary>". As there,
 // the commit link's URL carries the full SHA and its text the short form.
 // Each link is omitted when its datum is missing; with no info, no repo, or
-// all three missing the summary is left unchanged.
-func gitHubPrefix(info *CommitInfo, repo string) string {
+// all three missing the summary is left unchanged. An author the
+// `contributors` config excludes (a bot, or a maintainer who'd otherwise
+// thank themselves on every line) gets no "Thanks"; the links stay.
+func gitHubPrefix(info *CommitInfo, repo string, contributors config.Contributors) string {
 	if info == nil || repo == "" {
 		return ""
 	}
@@ -50,7 +56,7 @@ func gitHubPrefix(info *CommitInfo, repo string) string {
 	if info.Commit != "" {
 		commitLink = "[`" + info.Display() + "`](https://github.com/" + repo + "/commit/" + info.Commit + ")"
 	}
-	if info.Author != "" {
+	if info.Author != "" && !contributors.IsContributorExcluded(info.Author, "", "") {
 		userLink = "[@" + info.Author + "](https://github.com/" + info.Author + ")"
 	}
 

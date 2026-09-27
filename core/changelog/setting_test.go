@@ -94,9 +94,22 @@ func TestParseSetting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := ParseSetting(cfg); got != tt.want {
+			if got := ParseSetting(cfg); got.Kind != tt.want.Kind || got.Repo != tt.want.Repo {
 				t.Errorf("ParseSetting() = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The contributors block rides along, so a changelog-github line leaves
+// out the thanks for whoever the Contributors section leaves out.
+func TestParseSettingCarriesContributors(t *testing.T) {
+	cfg, err := config.Parse([]byte(`{"changelog": ["@changesets/changelog-github", {"repo": "acme/widgets"}], "contributors": {"exclude": ["JohnCampionJr"]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ParseSetting(cfg)
+	if !got.Contributors.IsContributorExcluded("JohnCampionJr", "", "") {
+		t.Errorf("ParseSetting() dropped contributors.exclude: %+v", got.Contributors)
 	}
 }

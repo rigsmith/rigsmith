@@ -34,6 +34,10 @@ const (
 type Setting struct {
 	Kind Kind
 	Repo string
+	// Contributors is the config's `contributors` block: whoever it excludes
+	// from the Contributors section (bots by default, and each `exclude`
+	// pattern) isn't thanked on a changelog-github line either.
+	Contributors config.Contributors
 }
 
 // ParseSetting interprets the polymorphic `changelog` config value:
@@ -46,7 +50,12 @@ type Setting struct {
 // extracted whenever the options object carries a string "repo", with a
 // missing or non-string repo left empty.
 func ParseSetting(cfg *config.Config) Setting {
-	raw := trimSpace(cfg.Changelog)
+	setting := parseChangelog(trimSpace(cfg.Changelog))
+	setting.Contributors = cfg.Contributors
+	return setting
+}
+
+func parseChangelog(raw []byte) Setting {
 	if len(raw) == 0 {
 		return Setting{}
 	}

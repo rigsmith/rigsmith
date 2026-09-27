@@ -1,7 +1,11 @@
 // Ported from net-changesets Version/ChangelogReleaseLineTests.cs.
 package changelog
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/rigsmith/rigsmith/core/config"
+)
 
 // full is a whole commit SHA; its display form is its first 7 characters
 // unless the repository needs more to tell it apart.
@@ -117,6 +121,29 @@ func TestRenderLine(t *testing.T) {
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
 			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42},
 			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") - A change",
+		},
+		{
+			// A maintainer excluded from the Contributors section isn't
+			// thanked on every line of their own changelog either.
+			name:    "github doesn't thank an excluded contributor",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Contributors: config.Contributors{Exclude: []string{"Octo*"}}},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "OctoCat"},
+			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") - A change",
+		},
+		{
+			name:    "github doesn't thank a bot",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "dependabot[bot]"},
+			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") - A change",
+		},
+		{
+			name:    "github thanks a bot when excludeBots is off",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Contributors: config.Contributors{ExcludeBots: new(bool)}},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "dependabot[bot]"},
+			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") Thanks [@dependabot[bot]](https://github.com/dependabot[bot])! - A change",
 		},
 	}
 
