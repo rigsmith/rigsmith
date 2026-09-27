@@ -35,6 +35,9 @@ type CommitInfo struct {
 	Short       string
 	PullRequest int
 	Author      string
+	// Users are the people a changeset's summary names with `author:`
+	// lines, thanked instead of Author (changelog-github only).
+	Users []string
 }
 
 // Display is the commit as a changelog shows it: Short, or when that wasn't

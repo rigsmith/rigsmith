@@ -10,6 +10,9 @@ package changelog
 
 import (
 	"encoding/json"
+	"fmt"
+	"regexp"
+	"slices"
 
 	"github.com/rigsmith/rigsmith/core/config"
 )
@@ -37,6 +40,10 @@ type Setting struct {
 	// DisableThanks is changelog-github's `disableThanks`: no "Thanks …!"
 	// on any line.
 	DisableThanks bool
+	// Template is changelog-github's `template`: the first line of each
+	// entry, from the tokens {summary}, {ref}, {pull}, {commit} and
+	// {authors}. Empty renders the default line.
+	Template string
 	// Contributors is the config's `contributors` block: whoever it excludes
 	// from the Contributors section (bots by default, and each `exclude`
 	// pattern) isn't thanked on a changelog-github line either.
@@ -47,7 +54,7 @@ type Setting struct {
 // false/null/absent (or any unrecognized shape) → default; a generator name
 // string → its kind; a [name, options] tuple → the name's kind plus the
 // options' "repo" (for changelog-github's { "repo": "owner/repo" }) and
-// "disableThanks".
+// "disableThanks" and "template".
 //
 // As in the C# converter, an unrecognized name (including the stock
 // "@changesets/cli/changelog") maps to the default kind, and a tuple's repo is
@@ -92,6 +99,10 @@ func parseChangelog(raw []byte) Setting {
 				if json.Unmarshal(options["disableThanks"], &disable) == nil {
 					setting.DisableThanks = disable
 				}
+				var template string
+				if json.Unmarshal(options["template"], &template) == nil {
+					setting.Template = template
+				}
 			}
 		}
 		return setting
@@ -121,4 +132,24 @@ func trimSpace(b []byte) []byte {
 		j--
 	}
 	return b[i:j]
+}
+
+// templateTokenRe matches a {token} in a changelog-github template.
+var templateTokenRe = regexp.MustCompile(`\{(\w+)\}`)
+
+// templateTokens are the tokens a changelog-github template may use.
+var templateTokens = []string{"summary", "ref", "pull", "commit", "authors"}
+
+// Validate reports a changelog-github template naming a token it doesn't
+// have, as changelog-github fails on one, so a typo can't reach a changelog.
+func (s Setting) Validate() error {
+	if s.Kind != KindGitHub {
+		return nil
+	}
+	for _, m := range templateTokenRe.FindAllStringSubmatch(s.Template, -1) {
+		if !slices.Contains(templateTokens, m[1]) {
+			return fmt.Errorf("unknown changelog template token \"{%s}\". Valid tokens are: {summary}, {ref}, {pull}, {commit}, {authors}", m[1])
+		}
+	}
+	return nil
 }

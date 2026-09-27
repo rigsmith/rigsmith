@@ -60,7 +60,7 @@ func TestResolveGitResolvesTheCommitThatAddedTheChangeset(t *testing.T) {
 	result := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, "/repo", runner.run)
 
 	want := CommitInfo{Commit: "abc1234567890000000000000000000000000000", Short: "abc1234"}
-	if got := result["cs1"]; got != want {
+	if got := result["cs1"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("result[cs1] = %+v, want %+v", got, want)
 	}
 }
@@ -99,7 +99,7 @@ func TestResolveGitHubWhenGhFailsKeepsTheCommitButLeavesPrAndAuthorZero(t *testi
 	result := Resolve([]string{"cs1"}, Setting{Kind: KindGitHub, Repo: "acme/widgets"}, "/repo", runner.run)
 
 	want := CommitInfo{Commit: "abc1234567890000000000000000000000000000", Short: "abc1234"}
-	if got := result["cs1"]; got != want {
+	if got := result["cs1"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("result[cs1] = %+v, want %+v", got, want)
 	}
 }
@@ -114,7 +114,7 @@ func TestResolveFallsBackToTheNetMkdExtension(t *testing.T) {
 	result := Resolve([]string{"cs1"}, Setting{Kind: KindGit}, "/repo", runner.run)
 
 	want := CommitInfo{Commit: "abc1234567890000000000000000000000000000", Short: "abc1234"}
-	if got := result["cs1"]; got != want {
+	if got := result["cs1"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("result[cs1] = %+v, want %+v", got, want)
 	}
 }
@@ -129,7 +129,7 @@ func TestResolveGitHubTreatsTheNullLiteralAsMissing(t *testing.T) {
 	result := Resolve([]string{"cs1"}, Setting{Kind: KindGitHub, Repo: "acme/widgets"}, "/repo", runner.run)
 
 	want := CommitInfo{Commit: "abc1234567890000000000000000000000000000", Short: "abc1234"}
-	if got := result["cs1"]; got != want {
+	if got := result["cs1"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("result[cs1] = %+v, want %+v", got, want)
 	}
 }
@@ -152,7 +152,7 @@ func TestResolveFromCommitsGitUsesTheKnownShaWithoutArchaeology(t *testing.T) {
 	result := ResolveFromCommits(map[string]string{"abc1234": "abc1234567890000000000000000000000000000"}, Setting{Kind: KindGit}, "/repo", runner.run)
 
 	want := CommitInfo{Commit: "abc1234567890000000000000000000000000000", Short: "abc1234"}
-	if got := result["abc1234"]; got != want {
+	if got := result["abc1234"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("result = %+v, want %+v", got, want)
 	}
 	// One git log for the display form, and no --diff-filter=A archaeology:
@@ -208,7 +208,7 @@ func TestResolveFromCommitsGitHubLooksUpPrAndAuthorFromTheSha(t *testing.T) {
 	result := ResolveFromCommits(map[string]string{"abc1234": "abc1234567890000000000000000000000000000"}, Setting{Kind: KindGitHub, Repo: "acme/widgets"}, "/repo", runner.run)
 
 	want := CommitInfo{Commit: "abc1234567890000000000000000000000000000", Short: "abc1234", PullRequest: 42, Author: "octocat"}
-	if got := result["abc1234"]; got != want {
+	if got := result["abc1234"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("result = %+v, want %+v", got, want)
 	}
 }

@@ -246,6 +246,9 @@ func NewVersionCmd() *cobra.Command {
 			unmentioned := FindUnmentioned(active, ws.Config)
 
 			setting := changelog.ParseSetting(ws.Config)
+			if err := setting.Validate(); err != nil {
+				return err
+			}
 			// An external generator gets each change's commit (and, with a
 			// `repo` in its options, its PR and author) as request fields,
 			// to render as it likes; the built-in git/github kinds decorate
@@ -273,12 +276,25 @@ func NewVersionCmd() *cobra.Command {
 					infos[id] = info
 				}
 				for _, cs := range active {
-					if info, ok := infos[cs.ID]; ok {
+					info, ok := infos[cs.ID]
+					// changelog-github reads pr:, commit: and author: lines out
+					// of the summary, in place of what it would look up.
+					if setting.Kind == changelog.KindGitHub {
+						var overrides changelog.Overrides
+						cs.Summary, overrides = changelog.ExtractOverrides(cs.Summary)
+						info, ok = changelog.ApplyOverrides(overrides, info, ok, setting.Repo, ws.Root, execRunner(cmd))
+					}
+					if ok {
 						cs.Ref = changeset.Ref{Commit: info.Commit, PR: info.PullRequest, Author: info.Author}
-						// Decorates for the built-in git/github kinds only: an
-						// external generator's setting is the default kind, so
-						// its summaries stay as authored.
+					}
+					// Decorates for the built-in git/github kinds only: an
+					// external generator's setting is the default kind, so
+					// its summaries stay as authored. A github line with
+					// nothing resolved still links its #123 issue references.
+					if ok {
 						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)
+					} else if setting.Kind == changelog.KindGitHub {
+						cs.Summary = changelog.RenderLine(cs.Summary, setting, nil)
 					}
 				}
 			}
