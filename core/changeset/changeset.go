@@ -184,10 +184,10 @@ func normalizeConventional(cs *Changeset) {
 // punctuation in the sentence. Returns the summary unchanged when there is none.
 func StripConventional(summary string) string {
 	first := firstLine(summary)
-	m := conventionalRe.FindStringIndex(strings.TrimSpace(first))
-	if m == nil {
+	if _, _, _, ok := ParseConventionalScope(first); !ok {
 		return summary
 	}
+	m := conventionalRe.FindStringIndex(strings.TrimSpace(first))
 	trimmed := strings.TrimSpace(first)
 	rest := trimmed[m[1]:]
 	if i := strings.IndexByte(summary, '\n'); i >= 0 {

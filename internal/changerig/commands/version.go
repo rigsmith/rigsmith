@@ -64,6 +64,11 @@ func NewVersionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A bad changelog template fails before anything is written,
+			// prerelease migration included.
+			if err := changelog.ParseSetting(ws.Config).Validate(); err != nil {
+				return err
+			}
 			out := cmd.OutOrStdout()
 
 			// Discover first: commit-based versioning needs the package set to
@@ -246,9 +251,6 @@ func NewVersionCmd() *cobra.Command {
 			unmentioned := FindUnmentioned(active, ws.Config)
 
 			setting := changelog.ParseSetting(ws.Config)
-			if err := setting.Validate(); err != nil {
-				return err
-			}
 			// An external generator gets each change's commit (and, with a
 			// `repo` in its options, its PR and author) as request fields,
 			// to render as it likes; the built-in git/github kinds decorate
@@ -279,7 +281,9 @@ func NewVersionCmd() *cobra.Command {
 					info, ok := infos[cs.ID]
 					// changelog-github reads pr:, commit: and author: lines out
 					// of the summary, in place of what it would look up.
-					if setting.Kind == changelog.KindGitHub {
+					// With no repo there's nothing to link, and the summary
+					// stays as authored, override lines included.
+					if setting.Kind == changelog.KindGitHub && setting.Repo != "" {
 						var overrides changelog.Overrides
 						cs.Summary, overrides = changelog.ExtractOverrides(cs.Summary)
 						info, ok = changelog.ApplyOverrides(overrides, info, ok, setting.Repo, ws.Root, execRunner(cmd))

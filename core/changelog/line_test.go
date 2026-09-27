@@ -160,6 +160,21 @@ func TestRenderLine(t *testing.T) {
 			want:    "Fixes [#12](https://github.com/acme/widgets/issues/12)\nSee [#3](https://example.com) and [#4](https://github.com/acme/widgets/issues/4)",
 		},
 		{
+			name:    "github leaves reference-style links and their definitions alone",
+			summary: "See [issue #12][ref]\n\n  [ref]: https://example.com/#12",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
+			info:    nil,
+			want:    "See [issue #12][ref]\n\n  [ref]: https://example.com/#12",
+		},
+		{
+			// An author: line is free text; only a login is linked.
+			name:    "github thanks only authors that are GitHub logins",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Contributors: config.Contributors{ExcludeBots: new(bool)}},
+			info:    &CommitInfo{Users: []string{"x)[a](javascript:alert(1)", "renovate[bot]", "ok-user"}},
+			want:    "Thanks [@renovate[bot]](https://github.com/renovate[bot]), [@ok-user](https://github.com/ok-user)! - A change",
+		},
+		{
 			name:    "github thanks the summary's authors, less excluded ones",
 			summary: "A change",
 			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Contributors: config.Contributors{Exclude: []string{"me"}}},

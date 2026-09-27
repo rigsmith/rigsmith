@@ -116,21 +116,28 @@ func thanked(info *CommitInfo, setting Setting) string {
 	}
 	var links []string
 	for _, u := range users {
-		if !setting.Contributors.IsContributorExcluded(u, "", "") {
+		// Only a GitHub login is linked: an author: line is free text, and
+		// anything else could break out of the Markdown link.
+		if githubLoginRe.MatchString(u) && !setting.Contributors.IsContributorExcluded(u, "", "") {
 			links = append(links, "[@"+u+"](https://github.com/"+u+")")
 		}
 	}
 	return strings.Join(links, ", ")
 }
 
+// githubLoginRe is a GitHub login (a bot's included, `dependabot[bot]`).
+var githubLoginRe = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$`)
+
 // issueRefRe matches an existing Markdown link (left alone) or a bare #123,
-// as changelog-github's ISSUE_REF_REGEX does.
-var issueRefRe = regexp.MustCompile(`\[.*?\]\(.*?\)|\B#([1-9]\d*)\b`)
+// as changelog-github's ISSUE_REF_REGEX does, and also leaves alone a
+// reference-style link (`[issue #12][ref]`) and a link definition line,
+// which it would corrupt.
+var issueRefRe = regexp.MustCompile(`^\s*\[[^\]]*\]:.*$|\[.*?\]\(.*?\)|\[.*?\]\[.*?\]|\B#([1-9]\d*)\b`)
 
 // linkIssueRefs links each bare #123 on a line to the repository's issue.
 func linkIssueRefs(line, repo string) string {
 	return issueRefRe.ReplaceAllStringFunc(line, func(m string) string {
-		if strings.HasPrefix(m, "[") {
+		if strings.HasPrefix(strings.TrimSpace(m), "[") {
 			return m
 		}
 		return "[" + m + "](https://github.com/" + repo + "/issues/" + m[1:] + ")"

@@ -42,3 +42,39 @@ func TestVersionChangelogGitHubRejectsAnUnknownTemplateToken(t *testing.T) {
 		t.Error("CHANGELOG.md was written despite the bad template")
 	}
 }
+
+// The template is checked before version writes anything at all: a v2
+// prerelease's changesets aren't migrated into .changeset/pre/ first.
+func TestVersionChangelogGitHubBadTemplateStopsBeforePrereleaseMigration(t *testing.T) {
+	dir := newWorkspace(t)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "changelog": ["@changesets/changelog-github", { "repo": "acme/widgets", "template": "{nope}" }] }`)
+	writeChangeset(t, dir, "old", "pkg-a", "minor", "consumed under v2")
+	writeFile(t, filepath.Join(dir, ".changeset", "pre.json"),
+		`{ "mode": "pre", "tag": "next", "initialVersions": { "pkg-a": "1.0.0" }, "changesets": ["old"] }`)
+
+	code, out := runChangerig(t, dir, "version")
+	assertExitNonZero(t, code, out)
+	assertContains(t, out, `unknown changelog template token "{nope}"`)
+	if !fileExists(filepath.Join(dir, ".changeset", "old.md")) || fileExists(filepath.Join(dir, ".changeset", "pre", "old.md")) {
+		t.Error("old.md was migrated into .changeset/pre/ before the template was checked")
+	}
+}
+
+// With no repo, changelog-github has nothing to link, and the summary stays as
+// authored: an author: line isn't taken out and lost.
+func TestVersionChangelogGitHubWithoutRepoKeepsTheSummary(t *testing.T) {
+	dir := newWorkspace(t)
+	writeFile(t, filepath.Join(dir, ".changeset", "config.json"),
+		`{ "changelog": "@changesets/changelog-github" }`)
+	writeChangeset(t, dir, "fix", "pkg-a", "patch", "author: @octocat\nFixes #5")
+
+	code, out := runChangerig(t, dir, "version")
+	assertExitZero(t, code, out)
+
+	b, err := os.ReadFile(filepath.Join(dir, "packages", "pkg-a", "CHANGELOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertContains(t, string(b), "- author: @octocat\n  Fixes #5\n")
+}

@@ -201,6 +201,7 @@ func TestStripConventional(t *testing.T) {
 		{"feat(rig): a thing", "a thing"},
 		{"fix!: a thing", "a thing"},
 		{"no prefix at all", "no prefix at all"},
+		{"author: @octocat\nFixes #5", "author: @octocat\nFixes #5"},
 		{"feat(rig): first\n\nsecond para", "first\n\nsecond para"},
 	}
 	for _, c := range cases {

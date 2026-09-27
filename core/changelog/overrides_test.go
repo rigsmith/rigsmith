@@ -114,6 +114,16 @@ func TestApplyOverrides(t *testing.T) {
 		}
 	})
 
+	t.Run("an abbreviated commit is resolved to its full SHA", func(t *testing.T) {
+		var calls []string
+		run := ghStub(&calls, map[string]string{"--verify": full})
+		got, _ := ApplyOverrides(Overrides{Commit: "abc1234"}, CommitInfo{}, false, "", "", run)
+		want := CommitInfo{Commit: full, Short: "abc1234"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("got %+v; want %+v", got, want)
+		}
+	})
+
 	t.Run("authors alone keep the resolved links", func(t *testing.T) {
 		var calls []string
 		got, ok := ApplyOverrides(Overrides{Users: []string{"a", "b"}}, base, true, "acme/widgets", "", ghStub(&calls, nil))

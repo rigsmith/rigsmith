@@ -82,14 +82,15 @@ func ApplyOverrides(o Overrides, info CommitInfo, ok bool, repo, dir string, run
 			}
 		}
 		if o.Commit != "" {
-			info.Commit, info.Short = o.Commit, shortSHA(o.Commit)
+			info.Commit, info.Short = fullCommit(run, dir, o.Commit), shortSHA(o.Commit)
 		}
 		ok = true
 	case o.Commit != "":
-		info = CommitInfo{Commit: o.Commit, Short: shortSHA(o.Commit)}
+		sha := fullCommit(run, dir, o.Commit)
+		info = CommitInfo{Commit: sha, Short: shortSHA(o.Commit)}
 		if repo != "" {
-			info.PullRequest = pullRequestForCommit(run, dir, repo, o.Commit)
-			info.Author = authorForCommit(run, dir, repo, o.Commit)
+			info.PullRequest = pullRequestForCommit(run, dir, repo, sha)
+			info.Author = authorForCommit(run, dir, repo, sha)
 		}
 		ok = true
 	}
@@ -98,4 +99,14 @@ func ApplyOverrides(o Overrides, info CommitInfo, ok bool, repo, dir string, run
 		ok = true
 	}
 	return info, ok
+}
+
+// fullCommit is the full SHA of a commit: override names, which are often
+// abbreviated, so a generator is handed the same full SHA as elsewhere. The
+// name as written when the repository doesn't have it.
+func fullCommit(run Runner, dir, commit string) string {
+	if sha := runFirstLine(run, dir, "git", "rev-parse", "--verify", "--quiet", commit+"^{commit}"); sha != "" {
+		return sha
+	}
+	return commit
 }
