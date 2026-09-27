@@ -1,0 +1,50 @@
+core/changelog/resolver_test.go
+  s_505a2cfce9114c::t_49264f80573ca6 63,102,117,132,155,211
+core/changelog/overrides_test.go
+  s_505a2cfce9114c::t_b32b66a9c7500d 1-134
+internal/changerig/cmdtest/changelog_github_test.go
+  s_505a2cfce9114c::t_21dca8a270645f 1-44
+.changeset/changelog-github-template.md
+  ai_agent 1-11
+core/changelog/line.go
+  s_505a2cfce9114c::t_ca7e287ded6695 9-10,70
+  s_505a2cfce9114c::t_ec69df20307031 45
+core/changelog/line_test.go
+  s_505a2cfce9114c::t_550897af273694 4-8,125-141
+  s_505a2cfce9114c::t_ec69df20307031 142-147
+  s_505a2cfce9114c::t_b32b66a9c7500d 155-161,163-182
+core/changelog/overrides.go
+  s_505a2cfce9114c::t_cb95fdd97f8cfd 1-84,86-88,90,93-100
+core/changelog/resolver.go
+  s_505a2cfce9114c::t_cb95fdd97f8cfd 38-40
+core/changelog/setting_test.go
+  s_505a2cfce9114c::t_b32b66a9c7500d 6,96-100,114,133-141
+  s_505a2cfce9114c::t_ec69df20307031 86-95
+  s_505a2cfce9114c::t_ca7e287ded6695 103
+  s_505a2cfce9114c::t_550897af273694 109-113,115-121
+core/changelog/setting.go
+  s_505a2cfce9114c::t_ec69df20307031 40-42,56,62-63,92-101
+  s_505a2cfce9114c::t_ca7e287ded6695 47,60-61,64-65
+core/changeset/changeset_test.go
+  s_505a2cfce9114c::t_9c9889dbd1ead3 185-188
+core/changeset/changeset.go
+  s_505a2cfce9114c::t_38c2334399eaf9 152,158-161
+internal/changerig/commands/version.go
+  s_505a2cfce9114c::t_ab4a0c36df4c34 279-281,283-287,289-294,296-297
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a394a10935112d09d4f69d9a3020368ff4693a77",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
