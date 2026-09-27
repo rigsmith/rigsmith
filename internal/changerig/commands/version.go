@@ -64,6 +64,11 @@ func NewVersionCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// A bad changelog template fails before anything is written,
+			// prerelease migration included.
+			if err := changelog.ParseSetting(ws.Config).Validate(); err != nil {
+				return err
+			}
 			out := cmd.OutOrStdout()
 
 			// Discover first: commit-based versioning needs the package set to
@@ -273,12 +278,27 @@ func NewVersionCmd() *cobra.Command {
 					infos[id] = info
 				}
 				for _, cs := range active {
-					if info, ok := infos[cs.ID]; ok {
+					info, ok := infos[cs.ID]
+					// changelog-github reads pr:, commit: and author: lines out
+					// of the summary, in place of what it would look up.
+					// With no repo there's nothing to link, and the summary
+					// stays as authored, override lines included.
+					if setting.Kind == changelog.KindGitHub && setting.Repo != "" {
+						var overrides changelog.Overrides
+						cs.Summary, overrides = changelog.ExtractOverrides(cs.Summary)
+						info, ok = changelog.ApplyOverrides(overrides, info, ok, setting.Repo, ws.Root, execRunner(cmd))
+					}
+					if ok {
 						cs.Ref = changeset.Ref{Commit: info.Commit, PR: info.PullRequest, Author: info.Author}
-						// Decorates for the built-in git/github kinds only: an
-						// external generator's setting is the default kind, so
-						// its summaries stay as authored.
+					}
+					// Decorates for the built-in git/github kinds only: an
+					// external generator's setting is the default kind, so
+					// its summaries stay as authored. A github line with
+					// nothing resolved still links its #123 issue references.
+					if ok {
 						cs.Summary = changelog.RenderLine(cs.Summary, setting, &info)
+					} else if setting.Kind == changelog.KindGitHub {
+						cs.Summary = changelog.RenderLine(cs.Summary, setting, nil)
 					}
 				}
 			}

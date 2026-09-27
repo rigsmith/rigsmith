@@ -182,6 +182,10 @@ func TestParseConventionalScope(t *testing.T) {
 		{"feat!: unscoped break", "feat", "", true, true},
 		{"no prefix at all", "", "", false, false},
 		{"feat(rig): first\nsecond line", "feat", "rig", false, true},
+		// changelog-github's override lines name a PR, commit or author.
+		{"pr: #12\nA change", "", "", false, false},
+		{"Author: @octocat\nA change", "", "", false, false},
+		{"commit: abc1234", "", "", false, false},
 	}
 	for _, c := range cases {
 		typ, scope, breaking, ok := ParseConventionalScope(c.in)
@@ -197,6 +201,7 @@ func TestStripConventional(t *testing.T) {
 		{"feat(rig): a thing", "a thing"},
 		{"fix!: a thing", "a thing"},
 		{"no prefix at all", "no prefix at all"},
+		{"author: @octocat\nFixes #5", "author: @octocat\nFixes #5"},
 		{"feat(rig): first\n\nsecond para", "first\n\nsecond para"},
 	}
 	for _, c := range cases {

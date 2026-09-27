@@ -3,6 +3,7 @@
 package changelog
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/config"
@@ -93,6 +94,11 @@ func TestParseSetting(t *testing.T) {
 			want: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
 		},
 		{
+			name: "github tuple reads template",
+			json: `{"changelog": ["@changesets/changelog-github", {"repo": "acme/widgets", "template": "{summary} {ref}"}]}`,
+			want: Setting{Kind: KindGitHub, Repo: "acme/widgets", Template: "{summary} {ref}"},
+		},
+		{
 			name: "tuple with an unrecognized name maps to default",
 			json: `{"changelog": [42, {"repo": "acme/widgets"}]}`,
 			want: Setting{Kind: KindDefault, Repo: "acme/widgets"},
@@ -105,7 +111,7 @@ func TestParseSetting(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := ParseSetting(cfg); got.Kind != tt.want.Kind || got.Repo != tt.want.Repo || got.DisableThanks != tt.want.DisableThanks {
+			if got := ParseSetting(cfg); got.Kind != tt.want.Kind || got.Repo != tt.want.Repo || got.DisableThanks != tt.want.DisableThanks || got.Template != tt.want.Template {
 				t.Errorf("ParseSetting() = %+v, want %+v", got, tt.want)
 			}
 		})
@@ -122,5 +128,16 @@ func TestParseSettingCarriesContributors(t *testing.T) {
 	got := ParseSetting(cfg)
 	if !got.Contributors.IsContributorExcluded("JohnCampionJr", "", "") {
 		t.Errorf("ParseSetting() dropped contributors.exclude: %+v", got.Contributors)
+	}
+}
+
+func TestValidateTemplate(t *testing.T) {
+	ok := Setting{Kind: KindGitHub, Template: "{summary} {ref} {pull} {commit} {authors}"}
+	if err := ok.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+	bad := Setting{Kind: KindGitHub, Template: "{summary} {author}"}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), `"{author}"`) {
+		t.Errorf("Validate() = %v, want an unknown {author} token", err)
 	}
 }

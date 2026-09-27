@@ -149,11 +149,16 @@ func ParseConventional(summary string) (typ string, breaking bool, ok bool) {
 // several callers use, does not change.
 func ParseConventionalScope(summary string) (typ, scope string, breaking bool, ok bool) {
 	m := conventionalRe.FindStringSubmatch(strings.TrimSpace(firstLine(summary)))
-	if m == nil {
+	if m == nil || overrideKeys[strings.ToLower(m[1])] {
 		return "", "", false, false
 	}
 	return strings.ToLower(m[1]), strings.TrimSpace(m[2]), m[3] == "!", true
 }
+
+// overrideKeys are the line keys @changesets/changelog-github reads out of a
+// summary (`pr: #12`, `commit: abc1234`, `author: @user`), never a type: a
+// summary that starts with one is naming its pull request or author.
+var overrideKeys = map[string]bool{"pr": true, "pull": true, "commit": true, "author": true, "user": true}
 
 // normalizeConventional lifts a conventional prefix out of the summary and into
 // the Type/Scope fields, once, at parse time. Doing it here rather than at
@@ -179,10 +184,10 @@ func normalizeConventional(cs *Changeset) {
 // punctuation in the sentence. Returns the summary unchanged when there is none.
 func StripConventional(summary string) string {
 	first := firstLine(summary)
-	m := conventionalRe.FindStringIndex(strings.TrimSpace(first))
-	if m == nil {
+	if _, _, _, ok := ParseConventionalScope(first); !ok {
 		return summary
 	}
+	m := conventionalRe.FindStringIndex(strings.TrimSpace(first))
 	trimmed := strings.TrimSpace(first)
 	rest := trimmed[m[1]:]
 	if i := strings.IndexByte(summary, '\n'); i >= 0 {

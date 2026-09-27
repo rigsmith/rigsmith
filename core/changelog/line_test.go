@@ -152,6 +152,49 @@ func TestRenderLine(t *testing.T) {
 			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "dependabot[bot]"},
 			want:    "[#42](https://github.com/acme/widgets/pull/42) [`abc1234`](https://github.com/acme/widgets/commit/" + full + ") Thanks [@dependabot[bot]](https://github.com/dependabot[bot])! - A change",
 		},
+		{
+			name:    "github links bare issue references on every line, not existing links",
+			summary: "Fixes #12\nSee [#3](https://example.com) and #4",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
+			info:    nil,
+			want:    "Fixes [#12](https://github.com/acme/widgets/issues/12)\nSee [#3](https://example.com) and [#4](https://github.com/acme/widgets/issues/4)",
+		},
+		{
+			name:    "github leaves reference-style links and their definitions alone",
+			summary: "See [issue #12][ref]\n\n  [ref]: https://example.com/#12",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets"},
+			info:    nil,
+			want:    "See [issue #12][ref]\n\n  [ref]: https://example.com/#12",
+		},
+		{
+			// An author: line is free text; only a login is linked.
+			name:    "github thanks only authors that are GitHub logins",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Contributors: config.Contributors{ExcludeBots: new(bool)}},
+			info:    &CommitInfo{Users: []string{"x)[a](javascript:alert(1)", "renovate[bot]", "ok-user"}},
+			want:    "Thanks [@renovate[bot]](https://github.com/renovate[bot]), [@ok-user](https://github.com/ok-user)! - A change",
+		},
+		{
+			name:    "github thanks the summary's authors, less excluded ones",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Contributors: config.Contributors{Exclude: []string{"me"}}},
+			info:    &CommitInfo{Author: "committer", Users: []string{"a", "me", "b"}},
+			want:    "Thanks [@a](https://github.com/a), [@b](https://github.com/b)! - A change",
+		},
+		{
+			name:    "template renders the line without doubling the bullet",
+			summary: "A change\nMore",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Template: "\n\n- {summary} {ref} (thanks {authors}!)"},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", PullRequest: 42, Author: "octocat"},
+			want:    "A change ([#42](https://github.com/acme/widgets/pull/42)) (thanks [@octocat](https://github.com/octocat)!)\nMore",
+		},
+		{
+			name:    "template ref falls back to the commit; missing tokens are empty",
+			summary: "A change",
+			setting: Setting{Kind: KindGitHub, Repo: "acme/widgets", Template: "{summary} {ref}{pull}", DisableThanks: true},
+			info:    &CommitInfo{Commit: full, Short: "abc1234", Author: "octocat"},
+			want:    "A change ([`abc1234`](https://github.com/acme/widgets/commit/" + full + "))",
+		},
 	}
 
 	for _, tt := range tests {
