@@ -1,0 +1,27 @@
+.changeset/disable-thanks.md
+  ai_agent 1-7
+core/changelog/line_test.go
+  s_505a2cfce9114c::t_ec69df20307031 142-147
+core/changelog/line.go
+  s_505a2cfce9114c::t_ec69df20307031 4,16,39-44,57
+core/changelog/setting_test.go
+  s_505a2cfce9114c::t_ec69df20307031 85-94,108
+core/changelog/setting.go
+  s_505a2cfce9114c::t_ec69df20307031 37-39,49-50,55-56,85-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2bb5665e46d8fb4712e6aeb5d5fe7725cf8dbfb3",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
