@@ -1,0 +1,33 @@
+core/changelog/line_test.go
+  s_505a2cfce9114c::t_550897af273694 4-8,125-146
+.changeset/thanks-exclude.md
+  s_505a2cfce9114c::t_859b543ce2372f 2,4
+  s_505a2cfce9114c::t_1d1309646368c9 1,3,5-7
+site/public/schemas/changeset-config.json
+  s_505a2cfce9114c::t_859b543ce2372f 172,179
+core/changelog/setting_test.go
+  s_505a2cfce9114c::t_ca7e287ded6695 97
+  s_505a2cfce9114c::t_550897af273694 103-115
+core/config/config.go
+  ai_agent 208-209
+core/changelog/line.go
+  s_505a2cfce9114c::t_ca7e287ded6695 4-8,20,43-46,59
+core/changelog/setting.go
+  s_505a2cfce9114c::t_ca7e287ded6695 37-40,53-58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a047d956b22a552784fe6d7a750872d110b831b3",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
