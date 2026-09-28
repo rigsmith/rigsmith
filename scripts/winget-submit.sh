@@ -173,6 +173,6 @@ if [ "$submit" != "--submit" ]; then
   exit 0
 fi
 
+# One PR per package, each retried, none duplicated; see winget-submit-each.sh.
 echo
-echo "→ submitting $out"
-komac submit "$out" --all --yes
+sh "$(dirname "$0")/winget-submit-each.sh" "$out"

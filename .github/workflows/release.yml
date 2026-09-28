@@ -507,8 +507,10 @@ jobs:
       # be while GoReleaser opened the PRs itself.
       #
       # Tag pushes only: a manual dry run publishes no release for komac to point
-      # winget at. Never fatal — the release itself is already out by now, and a
-      # winget submission can be re-run by hand.
+      # winget at. Never fatal — the release itself is already out by now. Each
+      # package is submitted and retried on its own (winget-submit-each.sh); one
+      # that still fails gets an ::error:: annotation and a resubmit command in
+      # the run summary, since continue-on-error leaves the run green.
       #
       # The condition names what this step actually depends on: the release. It
       # used to say only `startsWith(github.ref, …)`, and `continue-on-error`
