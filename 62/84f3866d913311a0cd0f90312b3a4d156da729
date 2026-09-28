@@ -1,0 +1,29 @@
+scripts/wingetsubmit_test.go
+  s_505a2cfce9114c::t_84f810c1794819 25-26,34,41,92,166-176
+  s_505a2cfce9114c::t_2fc5c7a816e22b 1-24,27-33,35-40,42-91,93-165,177-178
+docs/WINGET-SUBMISSIONS.md
+  s_505a2cfce9114c::t_3be8302bf3145d 86-109
+.github/workflows/release.yml
+  s_505a2cfce9114c::t_3be8302bf3145d 510-513
+scripts/winget-submit.sh
+  ai_agent 176,178
+scripts/winget-submit-each.sh
+  ai_agent 21-26,62-66,97,103
+  s_505a2cfce9114c::t_ccc3caf98279e0 1-20,27-61,67-96,98-102,104-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6284f3866d913311a0cd0f90312b3a4d156da729",
+  "prompts": {},
+  "sessions": {
+    "s_505a2cfce9114c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "26f83a80-3cb9-404d-829c-6b4925947f16",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
