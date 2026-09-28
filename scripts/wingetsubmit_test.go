@@ -32,7 +32,9 @@ exit 0
 
 // fakeCurl answers the three GitHub calls pr_open makes. A package listed in
 // $OPEN, or written to $OPENED by fakeKomac, has a komac branch with an open
-// PR; the PR answers only for that branch. $GITHUB_DOWN fails every call.
+// PR; the PR answers only for that branch. $GITHUB_DOWN fails every call,
+// $COMPACT answers on one line as GitHub may, $GARBLED answers the refs
+// lookup with something that isn't JSON, and $REFS_DOWN fails that lookup alone.
 const fakeCurl = `#!/bin/sh
 for arg in "$@"; do url=$arg; done
 [ -n "${GITHUB_DOWN:-}" ] && { echo "curl: (28) Operation timed out" >&2; exit 28; }
@@ -41,9 +43,17 @@ case "$url" in
   */user) printf '{\n  "login": "someone",\n  "id": 1\n}\n' ;;
   */git/matching-refs/heads/*)
     prefix=${url##*/heads/}
+    [ -n "${REFS_DOWN:-}" ] && { echo "curl: (22) The requested URL returned error: 502" >&2; exit 22; }
+    [ -n "${GARBLED:-}" ] && { echo '<html>Bad gateway</html>'; exit 0; }
     for id in $open_ids; do
       case "$prefix" in
-        "$id"-*) printf '[\n  {\n    "ref": "refs/heads/%sabc",\n    "object": {}\n  }\n]\n' "$prefix"; exit 0 ;;
+        "$id"-*)
+          if [ -n "${COMPACT:-}" ]; then
+            printf '[{"ref":"refs/heads/%sabc","object":{}}]' "$prefix"
+          else
+            printf '[\n  {\n    "ref": "refs/heads/%sabc",\n    "object": {}\n  }\n]\n' "$prefix"
+          fi
+          exit 0 ;;
       esac
     done
     echo '[]' ;;
@@ -51,7 +61,7 @@ case "$url" in
     ref=${url##*head=someone:}
     for id in $open_ids; do
       case "$ref" in
-        "$id"-*) printf '[\n  {\n    "number": 7\n  }\n]\n'; exit 0 ;;
+        "$id"-*) [ -n "${COMPACT:-}" ] && printf '[{"number":7}]' || printf '[\n  {\n    "number": 7\n  }\n]\n'; exit 0 ;;
       esac
     done
     echo '[]' ;;
@@ -249,5 +259,55 @@ func TestWingetResubmitCommandTargetsEachFailuresRelease(t *testing.T) {
 	}
 	if !strings.Contains(r.summary, "winget-submit.sh 1.0.0 --submit") || !strings.Contains(r.summary, "winget-submit.sh 2.0.0 --submit") {
 		t.Errorf("the summary lacks a command per version:\n%s", r.summary)
+	}
+}
+
+// GitHub's JSON on one line: the open PR is still found, so nothing is
+// submitted twice.
+func TestWingetReadsACompactResponse(t *testing.T) {
+	r := runSubmitEach(t, wingetOut(t, "Rig", "ShipRig"), "OPEN=RigSmith.Rig", "COMPACT=1")
+	if r.code != 0 {
+		t.Fatalf("exit %d:\n%s", r.code, r.out)
+	}
+	if got := strings.Join(r.calls, " "); got != "ShipRig" {
+		t.Errorf("submitted %q, want only ShipRig: Rig's PR is open", got)
+	}
+}
+
+// An answer that isn't JSON is a failed lookup, not an empty one.
+func TestWingetFailsClosedOnAnUnreadableResponse(t *testing.T) {
+	r := runSubmitEach(t, wingetOut(t, "Rig"), "GARBLED=1")
+	if r.code == 0 || len(r.calls) != 0 {
+		t.Errorf("exit %d, submitted %v on an unreadable refs response:\n%s", r.code, r.calls, r.out)
+	}
+}
+
+// A directory find can't read would drop its package from an otherwise
+// good-looking list; nothing is submitted then.
+func TestWingetStopsWhenDiscoveryIsIncomplete(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads an unreadable directory anyway")
+	}
+	out := wingetOut(t, "Rig")
+	locked := filepath.Join(out, "manifests", "r", "RigSmith", "Locked")
+	if err := os.MkdirAll(filepath.Join(locked, "1.2.3"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	r := runSubmitEach(t, out)
+	if r.code == 0 || len(r.calls) != 0 || !strings.Contains(r.out, "::error::Couldn't list every winget manifest") {
+		t.Errorf("exit %d, submitted %v with a directory unreadable:\n%s", r.code, r.calls, r.out)
+	}
+}
+
+// The refs lookup alone fails, after /user answered: a failed call piped into
+// jq would read as "no refs", so the package would go out blind.
+func TestWingetFailsClosedWhenTheRefsLookupFails(t *testing.T) {
+	r := runSubmitEach(t, wingetOut(t, "Rig"), "REFS_DOWN=1")
+	if r.code == 0 || len(r.calls) != 0 {
+		t.Errorf("exit %d, submitted %v with the refs lookup failing:\n%s", r.code, r.calls, r.out)
 	}
 }

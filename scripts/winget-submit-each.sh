@@ -47,23 +47,40 @@ user=""
 
 # pr_open <id> <version>: 0 when an open PR in microsoft/winget-pkgs comes from
 # one of komac's branches for this package and version, 1 when none does, and
-# 2 when GitHub couldn't be asked.
+# 2 when GitHub couldn't be asked. The answers are read as JSON (jq), never by
+# their line layout: a response jq can't read as the expected shape is 2, not
+# an empty list, since reading "no refs" into it would submit a duplicate.
 pr_open() {
   if [ -z "$user" ]; then
-    user=$(gh_get user 2>/dev/null | sed -n 's/^ *"login": *"\([^"]*\)".*/\1/p' | head -n 1) || true
+    raw=$(gh_get user 2>/dev/null) || return 2
+    user=$(printf '%s' "$raw" | jq -r '.login // empty' 2>/dev/null) || return 2
     [ -n "$user" ] || return 2
   fi
-  refs=$(gh_get "repos/$user/winget-pkgs/git/matching-refs/heads/$1-$2-" 2>/dev/null) || return 2
-  for ref in $(printf '%s\n' "$refs" | sed -n 's#^ *"ref": *"refs/heads/\([^"]*\)".*#\1#p'); do
-    pulls=$(gh_get "repos/microsoft/winget-pkgs/pulls?state=open&head=$user:$ref" 2>/dev/null) || return 2
-    if printf '%s\n' "$pulls" | grep -q '"number"'; then
+  # Fetched, then parsed: in `gh_get | jq` a failed call reaches jq as empty
+  # input, which jq reads as nothing and exits 0.
+  raw=$(gh_get "repos/$user/winget-pkgs/git/matching-refs/heads/$1-$2-" 2>/dev/null) || return 2
+  refs=$(printf '%s' "$raw" |
+    jq -r 'if type == "array" then .[] | .ref | sub("^refs/heads/"; "") else error("not a list of refs") end' 2>/dev/null) || return 2
+  for ref in $refs; do
+    raw=$(gh_get "repos/microsoft/winget-pkgs/pulls?state=open&head=$user:$ref" 2>/dev/null) || return 2
+    count=$(printf '%s' "$raw" |
+      jq -r 'if type == "array" then length else error("not a list of pulls") end' 2>/dev/null) || return 2
+    if [ "$count" -gt 0 ]; then
       return 0
     fi
   done
   return 1
 }
 
-installers=$(find "$out" -name '*.installer.yaml' 2>/dev/null | sort) || true
+# Discovery has to be complete: a directory find can't read would leave its
+# package out of a list that otherwise looks fine, and nothing would say so.
+listing=$(mktemp)
+trap 'rm -f "$listing"' EXIT
+if ! find "$out" -name '*.installer.yaml' >"$listing"; then
+  echo "::error::Couldn't list every winget manifest under $out — nothing was submitted."
+  exit 1
+fi
+installers=$(sort "$listing")
 if [ -z "$installers" ]; then
   echo "::error::No winget manifests under $out — nothing was submitted."
   exit 1
