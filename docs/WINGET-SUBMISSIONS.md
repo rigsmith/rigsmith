@@ -83,7 +83,30 @@ the point:
    *directory* as a separate step, now runs **before** anything reaches
    winget-pkgs. Every earlier version of this check could only run after the PRs
    were already open.
-4. **Submit** with `komac submit --all`.
+4. **Submit** each package on its own, with `winget-submit-each.sh`.
+
+### A failed submission is retried, and never silent
+
+`komac submit --all` stops at the first failure. In 1.23.0, GitHub refused to
+create komac's branch for the first package ("Ref cannot be created"), so none
+of the five went out. The step is `continue-on-error`, so the run was green
+anyway. The same submission, run by hand minutes later with the same token and
+fork, went through.
+
+So `winget-submit-each.sh` submits each package as its own `komac submit`:
+
+- A failure is retried: three attempts, 30s then 60s apart (`WINGET_SUBMIT_TRIES`,
+  `WINGET_SUBMIT_WAIT`), and the next package goes out either way.
+- No package gets a second PR. Before submitting, and before each retry, it asks
+  GitHub whether an open PR already comes from one of komac's
+  `<id>-<version>-…` branches on the token user's fork. A package that went out
+  before a failure is skipped, so the whole submission can simply be run again.
+- A package still not submitted after its attempts gets an `::error::`
+  annotation, and the run summary names it with the command that resubmits it:
+
+  ```sh
+  GITHUB_TOKEN=<the WINGET_TOKEN PAT> sh scripts/winget-submit.sh <version> --submit
+  ```
 
 ### A package winget has never seen is skipped, not fatal
 
