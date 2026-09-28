@@ -10,6 +10,8 @@
 #   WINGET_SUBMIT_TRIES      attempts per package (default 3)
 #   WINGET_SUBMIT_WAIT       seconds before the first retry, doubling (default 30)
 #   GITHUB_STEP_SUMMARY      when set (in Actions), failures are written there too
+#   WINGET_TAG, WINGET_PACKAGES  passed through by winget-submit.sh; repeated in
+#                            the resubmit command so it targets the same release
 #
 # Why not `komac submit <dir> --all`, as winget-submit.sh used to: it stops at
 # the first failure. In 1.23.0 GitHub refused to create komac's branch for the
@@ -23,7 +25,10 @@
 # each retry, this asks GitHub whether an open PR already comes from such a
 # branch: a package that went out before a partial failure is skipped when the
 # whole thing is re-run, and one komac opened a PR for before failing isn't
-# retried. GitHub's issue search lags, so it isn't used for this.
+# retried. GitHub's issue search lags, so it isn't used for this. When GitHub
+# can't answer (an outage, a rate limit, a bad token) the question is open, not
+# "no": the package isn't submitted blind, it's reported, and a re-run by hand
+# settles it. A duplicate PR is a moderator's time; a missing one is visible.
 set -eu
 
 out="${1:?usage: winget-submit-each.sh <manifest dir>}"
@@ -31,37 +36,60 @@ tries="${WINGET_SUBMIT_TRIES:-3}"
 first_wait="${WINGET_SUBMIT_WAIT:-30}"
 api="https://api.github.com"
 
+# Bounded, so a stalled response can't hold up the other packages or the report.
 gh_get() {
-  curl -fsS \
+  curl -fsS --connect-timeout 10 --max-time 30 --retry 2 \
     ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} \
     -H "Accept: application/vnd.github+json" "$api/$1"
 }
 
-# pr_open <id> <version>: an open PR in microsoft/winget-pkgs comes from one of
-# komac's branches for this package and version. An unanswered question is
-# "no", so the caller retries — the worse outcome being a duplicate PR a
-# moderator closes, rather than a submission silently never made.
+user=""
+
+# pr_open <id> <version>: 0 when an open PR in microsoft/winget-pkgs comes from
+# one of komac's branches for this package and version, 1 when none does, and
+# 2 when GitHub couldn't be asked.
 pr_open() {
-  user=$(gh_get user 2>/dev/null | sed -n 's/^ *"login": *"\([^"]*\)".*/\1/p' | head -n 1)
-  [ -n "$user" ] || return 1
-  for ref in $(gh_get "repos/$user/winget-pkgs/git/matching-refs/heads/$1-$2-" 2>/dev/null |
-    sed -n 's#^ *"ref": *"refs/heads/\([^"]*\)".*#\1#p'); do
-    if gh_get "repos/microsoft/winget-pkgs/pulls?state=open&head=$user:$ref" 2>/dev/null |
-      grep -q '"number"'; then
+  if [ -z "$user" ]; then
+    user=$(gh_get user 2>/dev/null | sed -n 's/^ *"login": *"\([^"]*\)".*/\1/p' | head -n 1) || true
+    [ -n "$user" ] || return 2
+  fi
+  refs=$(gh_get "repos/$user/winget-pkgs/git/matching-refs/heads/$1-$2-" 2>/dev/null) || return 2
+  for ref in $(printf '%s\n' "$refs" | sed -n 's#^ *"ref": *"refs/heads/\([^"]*\)".*#\1#p'); do
+    pulls=$(gh_get "repos/microsoft/winget-pkgs/pulls?state=open&head=$user:$ref" 2>/dev/null) || return 2
+    if printf '%s\n' "$pulls" | grep -q '"number"'; then
       return 0
     fi
   done
   return 1
 }
 
+installers=$(find "$out" -name '*.installer.yaml' 2>/dev/null | sort) || true
+if [ -z "$installers" ]; then
+  echo "::error::No winget manifests under $out — nothing was submitted."
+  exit 1
+fi
+
+# Each failure as <label>@<version>|<reason>, one per line.
 failed=""
-for installer in $(find "$out" -name '*.installer.yaml' | sort); do
+fail() {
+  failed="${failed}$1@$2|$3
+"
+}
+
+for installer in $installers; do
   dir=$(dirname "$installer")
   version=$(basename "$dir")
   id=$(sed -n 's/^PackageIdentifier:[[:space:]]*\([^[:space:]]*\).*/\1/p' "$installer" | tr -d '\r' | head -n 1)
+  if [ -z "$id" ]; then
+    fail "$(basename "$installer")" "$version" "no PackageIdentifier in the manifest"
+    continue
+  fi
   # Already open (a resubmission after a partial failure, or a re-run): leave it.
   if pr_open "$id" "$version"; then
     echo "$id $version: a PR is already open — skipping it."
+    continue
+  elif [ $? -eq 2 ]; then
+    fail "$id" "$version" "GitHub couldn't be asked whether its PR is already open, so it wasn't submitted"
     continue
   fi
   attempt=1
@@ -74,9 +102,12 @@ for installer in $(find "$out" -name '*.installer.yaml' | sort); do
     if pr_open "$id" "$version"; then
       echo "$id $version: komac failed, but its PR is open — nothing to retry."
       break
+    elif [ $? -eq 2 ]; then
+      fail "$id" "$version" "komac failed, and GitHub couldn't be asked whether it opened the PR anyway, so it wasn't retried"
+      break
     fi
     if [ "$attempt" -ge "$tries" ]; then
-      failed="$failed $id"
+      fail "$id" "$version" "not submitted after $tries attempts"
       break
     fi
     echo "::warning::$id $version: submission failed (attempt $attempt of $tries); retrying in ${wait}s."
@@ -92,18 +123,40 @@ fi
 
 # The step is continue-on-error, so a failure here can't fail the release that
 # is already out. It has to be seen anyway: an annotation per package, and the
-# command that resubmits them in the run summary.
-for id in $failed; do
-  echo "::error::$id was not submitted to winget after $tries attempts. Resubmit by hand (packages already open are skipped): GITHUB_TOKEN=<WINGET_TOKEN> sh scripts/winget-submit.sh $version --submit"
-done
+# command that resubmits them in the run summary. The command carries the
+# release's WINGET_TAG and WINGET_PACKAGES when they were set, so it targets the
+# same release; packages whose PR is open by then are skipped.
+env_prefix=""
+[ -n "${WINGET_TAG:-}" ] && env_prefix="WINGET_TAG='$WINGET_TAG' "
+[ -n "${WINGET_PACKAGES:-}" ] && env_prefix="${env_prefix}WINGET_PACKAGES='$(printf '%s' "$WINGET_PACKAGES" | tr '\n' ' ')' "
+resubmit() {
+  echo "GITHUB_TOKEN=<the WINGET_TOKEN PAT> ${env_prefix}sh scripts/winget-submit.sh $1 --submit"
+}
+
+versions=""
+while IFS='|' read -r entry reason; do
+  [ -n "$entry" ] || continue
+  version=${entry##*@}
+  echo "::error::${entry%@*} $version: $reason. Resubmit by hand: $(resubmit "$version")"
+  case " $versions " in *" $version "*) ;; *) versions="$versions $version" ;; esac
+done <<FAILED
+$failed
+FAILED
+
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
     echo "### ⚠️ winget: not submitted"
     echo
-    echo "After $tries attempts each:$failed. From an up-to-date checkout, resubmit with the command below; packages whose PR is already open are skipped."
+    printf '%s' "$failed" | while IFS='|' read -r entry reason; do
+      [ -n "$entry" ] && echo "- \`${entry%@*}\` ${entry##*@}: $reason"
+    done
+    echo
+    echo "From an up-to-date checkout, resubmit; packages whose PR is already open are skipped:"
     echo
     echo '```sh'
-    echo "GITHUB_TOKEN=<the WINGET_TOKEN PAT> sh scripts/winget-submit.sh ${version} --submit"
+    for version in $versions; do
+      resubmit "$version"
+    done
     echo '```'
   } >>"$GITHUB_STEP_SUMMARY"
 fi

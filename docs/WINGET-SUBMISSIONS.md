@@ -101,8 +101,11 @@ So `winget-submit-each.sh` submits each package as its own `komac submit`:
   GitHub whether an open PR already comes from one of komac's
   `<id>-<version>-…` branches on the token user's fork. A package that went out
   before a failure is skipped, so the whole submission can simply be run again.
-- A package still not submitted after its attempts gets an `::error::`
-  annotation, and the run summary names it with the command that resubmits it:
+- When GitHub can't say whether a PR is open (an outage, a rate limit), the
+  package isn't submitted blind: it's reported instead.
+- A package still not submitted gets an `::error::` annotation, and the run
+  summary names it, with why, and the command that resubmits it (carrying
+  `WINGET_TAG` and `WINGET_PACKAGES` when they were set):
 
   ```sh
   GITHUB_TOKEN=<the WINGET_TOKEN PAT> sh scripts/winget-submit.sh <version> --submit
@@ -115,12 +118,14 @@ Step 1 fails for a package that has no published manifest — `komac update` exi
 nothing to update. That is expected exactly once per tool, and the manual `komac
 new` below is the answer to it.
 
-What it must not do is take the others with it. The script runs `set -eu`,
-generates every package in one loop, and submits the whole directory in a single
-call at the end, so an unpublished package used to abort the run before anything
-was submitted: one new tool, and **none** of the published five got their update.
-`RigSmith.CodexRig` is in that state now. So that one error — and only that one —
-is caught, named in the log, and skipped; every other failure still stops the run.
+What it must not do is take the others with it. The script runs `set -eu` and
+generates every package in one loop before submitting any, so an unpublished
+package used to abort the run before anything was submitted: one new tool, and
+**none** of the published five got their update. `RigSmith.CodexRig` is in that
+state now. So that one *generation* error — and only that one — is caught, named
+in the log, and skipped; any other generation failure still stops the run before
+anything is submitted. Submission failures are different: each package is
+submitted and retried on its own, as described above.
 
 If *every* package is new there is nothing to submit and the script says so and
 exits 0. The release published its archives either way; what is outstanding is
