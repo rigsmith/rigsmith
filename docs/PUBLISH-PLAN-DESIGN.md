@@ -25,6 +25,13 @@ new plugin method, `published`:
 
 - **npm**: `npm view <name>@<version> version`, as canon's `npm info`: the
   version printed means published, E404 means not, anything else is an error.
+  It is asked with `--registry`, resolved as `publish` resolves it: the
+  configured `packageSource`, else the package's `publishConfig.registry`, else
+  the nearest `.npmrc` up to the repository root (`@scope:registry` for the
+  package's scope, else `registry`). npm itself reads a project `.npmrc` only in
+  the directory it runs in, so in a pnpm or Yarn workspace that routes its scope
+  in the root `.npmrc` it would otherwise ask npmjs.com and report a version
+  already on the private registry as unpublished.
 - **NuGet**: the feed's flat container (`PackageBaseAddress/3.0.0` from the
   v3 service index; nuget.org by default), compared in NuGet's normalized form
   (`1.0.0.0` is `1.0.0`). A source given by its NuGet.config name can't be

@@ -39,7 +39,11 @@ The whole workflow is wired:
   where its changelog goes)
 - `tag` — create the git tags for the released versions
 - `publish-plan` — what a publish would release, as `changeset publish-plan`:
-  each package's registry is asked whether its version is already there, and a
+  each package's registry is asked whether its version is already there (for
+  npm: `node.packageSource`, else the package's `publishConfig.registry`, else
+  the scope routing in the nearest `.npmrc` up to the repository root, so a
+  workspace that routes its scope to a private registry at the root is asked
+  there, and published there, not npmjs.com), and a
   package released by its git tag alone (a Go module, a desktop app, a private
   package with `privatePackages.tag`) is listed `tag-only` when its tag is
   missing, and so is a package already published whose tag never made it. A

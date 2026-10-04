@@ -168,7 +168,8 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // Idempotency: `npm view <name>@<version> version` is queried first; when it
 // succeeds and echoes back the same version the package is already published, so
 // we skip. Access defaults to "restricted" unless req.Access is an explicit
-// "public"/"restricted". A URL-shaped req.PackageSource is passed as --registry.
+// "public"/"restricted". The registry is npmRegistry's: a URL-shaped req.PackageSource, else the package's
+// publishConfig.registry, else the nearest .npmrc's routing up to the repository root.
 //
 // npmPublish runs `npm publish`: a variable so a test can see its arguments.
 var npmPublish = func(ctx context.Context, dir string, env []string, args ...string) (stdout, stderr string, err error) {
@@ -192,8 +193,8 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	spec := req.Package.Name + "@" + req.Package.Version
 	args := []string{spec, "version"}
-	if strings.HasPrefix(req.PackageSource, "http") {
-		args = append(args, "--registry", req.PackageSource)
+	if registry := npmRegistry(req.RepoRoot, req.Package, req.PackageSource); registry != "" {
+		args = append(args, "--registry", registry)
 	}
 	out, stderr, err := npmView(ctx, dir, args...)
 	if err != nil {
@@ -221,11 +222,18 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 
 	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	spec := req.Package.Name + "@" + req.Package.Version
+	// The registry the workspace routes this package to (npmRegistry), for the pre-check, the publish and its auth
+	// alike — npm run in the package directory would otherwise miss a workspace-root .npmrc and use npmjs.com.
+	registry := npmRegistry(req.RepoRoot, req.Package, req.PackageSource)
+	viewArgs := []string{spec, "version"}
+	if registry != "" {
+		viewArgs = append(viewArgs, "--registry", registry)
+	}
 
 	// Pre-check: a clean exit echoing the requested version means it already exists.
 	// A non-zero exit (unpublished version / network) is treated as "not present"
 	// and we proceed to publish, where npm will surface any real failure.
-	if out, _, err := runCmd(ctx, dir, "npm", "view", spec, "version"); err == nil {
+	if out, _, err := npmView(ctx, dir, viewArgs...); err == nil {
 		if strings.TrimSpace(out) == req.Package.Version {
 			return plugin.PublishResponse{Skipped: true, Message: "already published"}, nil
 		}
@@ -252,8 +260,8 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if req.Tag != "" {
 		args = append(args, "--tag", req.Tag)
 	}
-	if strings.HasPrefix(req.PackageSource, "http") {
-		args = append(args, "--registry", req.PackageSource)
+	if registry != "" {
+		args = append(args, "--registry", registry)
 	}
 
 	// Resolve the publish credential. With nothing supplied, npm uses the
@@ -266,7 +274,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	authNote := ""
 	switch {
 	case req.Auth != nil && req.Auth.Token != "":
-		authEnv, cleanup, err := npmAuthConfig(req.Auth.Token, req.PackageSource)
+		authEnv, cleanup, err := npmAuthConfig(req.Auth.Token, registry)
 		if err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 		}
@@ -277,11 +285,11 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		}
 
 	case req.OIDC:
-		token, err := oidcPublishToken(ctx, req.Package.Name, req.PackageSource)
+		token, err := oidcPublishToken(ctx, req.Package.Name, registry)
 		if err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 		}
-		authEnv, cleanup, err := npmAuthConfig(token, req.PackageSource)
+		authEnv, cleanup, err := npmAuthConfig(token, registry)
 		if err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 		}

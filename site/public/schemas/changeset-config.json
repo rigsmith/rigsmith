@@ -294,7 +294,7 @@
         },
         "packageSource": {
           "type": "string",
-          "description": "Overrides the publish feed/registry for this ecosystem."
+          "description": "Overrides the publish feed/registry for this ecosystem. For node, without it the registry is the package's publishConfig.registry, else the scope routing in the nearest .npmrc up to the repository root."
         },
         "auth": {
           "type": "string",
