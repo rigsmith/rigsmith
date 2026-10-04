@@ -200,12 +200,12 @@ func NewAddCmd() *cobra.Command {
 				}
 			}
 
-			id := generateID()
-			path := filepath.Join(ws.ChangesetDir, id+".md")
 			content := changeset.RenderScoped(releases, summary, typ, scope, breaking)
-			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			id, err := writeNewChangeset(ws.ChangesetDir, content)
+			if err != nil {
 				return err
 			}
+			path := filepath.Join(ws.ChangesetDir, id+".md")
 			fmt.Fprintf(cmd.OutOrStdout(), "Created %s\n", filepath.Join(".changeset", id+".md"))
 
 			if open {
@@ -472,6 +472,47 @@ var (
 	animals    = []string{"otters", "pandas", "falcons", "lions", "geckos", "dolphins", "badgers", "herons", "foxes", "ravens", "wombats", "lemurs", "moose", "yaks", "ibex", "shrimp"}
 	verbs      = []string{"dance", "dream", "glow", "jump", "march", "ponder", "race", "sing", "wander", "whisper", "build", "sparkle"}
 )
+
+// newChangesetID names a new changeset. A variable so a test can make the
+// generator choose a name that is already taken.
+var newChangesetID = generateID
+
+// maxIDAttempts bounds the search for a free name. There are only 3,072
+// adjective-animal-verb combinations, so a busy .changeset directory collides
+// often enough to matter, but a full one should fail rather than spin.
+const maxIDAttempts = 256
+
+// writeNewChangeset writes content under a fresh name in dir and returns the
+// name's stem. It never overwrites: the file is opened O_EXCL, so a name that
+// is already taken — a pending changeset someone else committed — is skipped
+// for another, rather than silently replaced with this one's content.
+func writeNewChangeset(dir, content string) (string, error) {
+	for range maxIDAttempts {
+		id := newChangesetID()
+		path := filepath.Join(dir, id+".md")
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, err = f.WriteString(content)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			// O_EXCL means this attempt created the file, so removing it can
+			// only take back our own partial write — never someone else's.
+			if rerr := os.Remove(path); rerr != nil {
+				return "", fmt.Errorf("%w (and could not remove the partial %s: %v)", err, path, rerr)
+			}
+			return "", err
+		}
+		return id, nil
+	}
+	return "", fmt.Errorf("could not find an unused changeset name in %s after %d tries", dir, maxIDAttempts)
+}
 
 // generateID returns a human-friendly changeset filename stem.
 func generateID() string {
