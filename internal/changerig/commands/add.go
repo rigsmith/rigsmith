@@ -504,7 +504,9 @@ func writeNewChangeset(dir, content string) (string, error) {
 		if err != nil {
 			// O_EXCL means this attempt created the file, so removing it can
 			// only take back our own partial write — never someone else's.
-			os.Remove(path)
+			if rerr := os.Remove(path); rerr != nil {
+				return "", fmt.Errorf("%w (and could not remove the partial %s: %v)", err, path, rerr)
+			}
 			return "", err
 		}
 		return id, nil
