@@ -15,7 +15,7 @@ func stubNpmView(t *testing.T, out, stderr string, err error) *[]string {
 	t.Helper()
 	var got []string
 	was := npmView
-	npmView = func(_ context.Context, _ string, args ...string) (string, string, error) {
+	npmView = func(_ context.Context, _ string, _ []string, args ...string) (string, string, error) {
 		got = args
 		return out, stderr, err
 	}
@@ -65,7 +65,7 @@ func TestPublishedPassesARegistryURL(t *testing.T) {
 	if _, err := (&Adapter{}).Published(context.Background(), publishedReq("https://npm.example.com/")); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(*got, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.example.com/"}) {
+	if !slices.Equal(*got, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.example.com/", "--@acme:registry=https://npm.example.com/"}) {
 		t.Errorf("npm view args = %v", *got)
 	}
 }

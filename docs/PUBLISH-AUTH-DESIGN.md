@@ -79,7 +79,10 @@ flowchart TD
   custom registries or debugging).
 - OIDC is only ever attempted against the **official registry**
   (`registry.npmjs.org`) — never a custom `packageSource` (mirrors
-  semantic-release's `OFFICIAL_REGISTRY === registry` gate).
+  semantic-release's `OFFICIAL_REGISTRY === registry` gate). A package that
+  `publishConfig.registry` or a workspace `.npmrc` routes to another registry
+  skips OIDC, as `oidc: off` would, and publishes with npm's own auth there: the
+  CI id-token is never sent to a registry discovered from the repository.
 
 ## OIDC exchange — the Go-native flow (Strategy B)
 

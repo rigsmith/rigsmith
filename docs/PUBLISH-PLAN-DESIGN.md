@@ -25,6 +25,25 @@ new plugin method, `published`:
 
 - **npm**: `npm view <name>@<version> version`, as canon's `npm info`: the
   version printed means published, E404 means not, anything else is an error.
+  It is asked with `--registry`, resolved as `publish` resolves it: the
+  configured `packageSource`, else the package's `publishConfig.registry`, else
+  the nearest `.npmrc` up to the repository root (`@scope:registry` for the
+  package's scope, else `registry`). npm itself reads a project `.npmrc` only in
+  the directory it runs in, so in a pnpm or Yarn workspace that routes its scope
+  in the root `.npmrc` it would otherwise ask npmjs.com and report a version
+  already on the private registry as unpublished. A scoped package also gets
+  `--@scope:registry=<url>`: npm takes `@scope:registry` from any config layer
+  before `registry`, so a user `~/.npmrc` routing the scope elsewhere would
+  otherwise beat `--registry`. A chosen registry — from `publishConfig.registry` or
+  an `.npmrc` — that names a `${VAR}` which is unset, or set but empty, is a
+  configuration error naming the file, never a fall back to npmjs.com (nor
+  reported as an unreachable registry): set the variable to the registry URL, or
+  write the URL literally there or in `node.packageSource`; so is a `package.json` or
+  `.npmrc` that exists but cannot be read or parsed, and a package directory
+  outside the repository, whose neighbours' `.npmrc` files are not ours to read.
+  The lookup goes out with the caller's own npm auth; when the registry refuses
+  it (E401/E403) and `node.auth` resolved, it is asked once more with that
+  token, written for the registry's host alone.
 - **NuGet**: the feed's flat container (`PackageBaseAddress/3.0.0` from the
   v3 service index; nuget.org by default), compared in NuGet's normalized form
   (`1.0.0.0` is `1.0.0`). A source given by its NuGet.config name can't be

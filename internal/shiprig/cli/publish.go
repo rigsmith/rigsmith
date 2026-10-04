@@ -272,7 +272,9 @@ func newPublishCmd() *cobra.Command {
 					Tag:           pr.tag,
 				})
 				if pubErr != nil {
-					results[i].err = fmt.Errorf("publish %s: %s", p.Name, redactor.Redact(pubErr.Error()))
+					// As in publish-plan: an adapter's error can carry a registry URL with credentials in it (npm
+					// echoes --registry), and a resolved token.
+					results[i].err = fmt.Errorf("publish %s: %s", p.Name, redactor.Redact(redactURLCredentials(pubErr.Error())))
 					return
 				}
 				results[i].resp = resp

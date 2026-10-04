@@ -168,16 +168,17 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 // Idempotency: `npm view <name>@<version> version` is queried first; when it
 // succeeds and echoes back the same version the package is already published, so
 // we skip. Access defaults to "restricted" unless req.Access is an explicit
-// "public"/"restricted". A URL-shaped req.PackageSource is passed as --registry.
+// "public"/"restricted". The registry is npmRegistry's: a URL-shaped req.PackageSource, else the package's
+// publishConfig.registry, else the nearest .npmrc's routing up to the repository root.
 //
 // npmPublish runs `npm publish`: a variable so a test can see its arguments.
 var npmPublish = func(ctx context.Context, dir string, env []string, args ...string) (stdout, stderr string, err error) {
 	return runCmdEnv(ctx, dir, env, "npm", args...)
 }
 
-// npmView runs `npm view` in dir: a variable so a test can stand in for npm.
-var npmView = func(ctx context.Context, dir string, args ...string) (stdout, stderr string, err error) {
-	return runCmd(ctx, dir, "npm", append([]string{"view"}, args...)...)
+// npmView runs `npm view` in dir, with env (nil = inherit): a variable so a test can stand in for npm.
+var npmView = func(ctx context.Context, dir string, env []string, args ...string) (stdout, stderr string, err error) {
+	return runCmdEnv(ctx, dir, env, "npm", append([]string{"view"}, args...)...)
 }
 
 // Published asks npm whether the version is on the registry, as @changesets'
@@ -185,17 +186,30 @@ var npmView = func(ctx context.Context, dir string, args ...string) (stdout, std
 // when it's there and nothing when the package exists without it, and fails
 // with E404 when the package doesn't exist at all. Any other failure is an
 // error rather than "not published". A private package has no registry.
+//
+// The lookup goes out with the caller's own npm auth. Only when the registry refuses it (E401/E403, a private feed)
+// and a publish credential was supplied is it asked once more with that credential, written for the registry's host
+// alone — npm sends a host-keyed token nowhere else.
 func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (plugin.PublishedResponse, error) {
 	if req.Package.Private {
 		return plugin.PublishedResponse{NoRegistry: true}, nil
 	}
 	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	spec := req.Package.Name + "@" + req.Package.Version
-	args := []string{spec, "version"}
-	if strings.HasPrefix(req.PackageSource, "http") {
-		args = append(args, "--registry", req.PackageSource)
+	registry, err := npmRegistry(req.RepoRoot, req.Package, req.PackageSource)
+	if err != nil {
+		return plugin.PublishedResponse{}, fmt.Errorf("npm registry for %s: %w", req.Package.Name, err)
 	}
-	out, stderr, err := npmView(ctx, dir, args...)
+	args := append([]string{spec, "version"}, npmRegistryArgs(req.Package.Name, registry)...)
+	out, stderr, err := npmView(ctx, dir, nil, args...)
+	if err != nil && req.Auth != nil && req.Auth.Token != "" && (strings.Contains(stderr, "E401") || strings.Contains(stderr, "E403")) {
+		env, cleanup, aerr := npmAuthConfig(req.Auth.Token, registry)
+		if aerr != nil {
+			return plugin.PublishedResponse{}, fmt.Errorf("npm view %s: %w", spec, aerr)
+		}
+		defer cleanup()
+		out, stderr, err = npmView(ctx, dir, env, args...)
+	}
 	if err != nil {
 		if strings.Contains(stderr, "E404") {
 			return plugin.PublishedResponse{}, nil
@@ -221,11 +235,19 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 
 	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	spec := req.Package.Name + "@" + req.Package.Version
+	// The registry the workspace routes this package to (npmRegistry), for the pre-check, the publish and its auth
+	// alike — npm run in the package directory would otherwise miss a workspace-root .npmrc and use npmjs.com.
+	registry, err := npmRegistry(req.RepoRoot, req.Package, req.PackageSource)
+	if err != nil {
+		// never fall back to npm's default: that would send a private package to npmjs.com
+		return plugin.PublishResponse{}, fmt.Errorf("npm registry for %s: %w", req.Package.Name, err)
+	}
+	viewArgs := append([]string{spec, "version"}, npmRegistryArgs(req.Package.Name, registry)...)
 
 	// Pre-check: a clean exit echoing the requested version means it already exists.
 	// A non-zero exit (unpublished version / network) is treated as "not present"
 	// and we proceed to publish, where npm will surface any real failure.
-	if out, _, err := runCmd(ctx, dir, "npm", "view", spec, "version"); err == nil {
+	if out, _, err := npmView(ctx, dir, nil, viewArgs...); err == nil {
 		if strings.TrimSpace(out) == req.Package.Version {
 			return plugin.PublishResponse{Skipped: true, Message: "already published"}, nil
 		}
@@ -252,9 +274,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if req.Tag != "" {
 		args = append(args, "--tag", req.Tag)
 	}
-	if strings.HasPrefix(req.PackageSource, "http") {
-		args = append(args, "--registry", req.PackageSource)
-	}
+	args = append(args, npmRegistryArgs(req.Package.Name, registry)...)
 
 	// Resolve the publish credential. With nothing supplied, npm uses the
 	// caller's ambient auth (~/.npmrc / NPM_TOKEN) and we touch nothing. With a
@@ -264,9 +284,17 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	// above project/user .npmrc without putting the token on the command line.
 	env := os.Environ()
 	authNote := ""
+	// The CI id-token is minted for npmjs.com's trusted publishing and is exchanged where it always was: a configured
+	// package source, else npmjs.com. A registry found in publishConfig or an .npmrc is never sent it — OIDC is skipped
+	// there, as `oidc: off` would, and npm publishes with its own auth for that registry.
+	oidc := req.OIDC
+	if oidc && registry != "" && !strings.EqualFold(npmRegistryBase(registry), npmRegistryBase(req.PackageSource)) {
+		oidc = false
+		authNote = " (OIDC skipped: trusted publishing exchanges at " + npmRegistryBase(req.PackageSource) + ", not this registry; npm's own auth used)"
+	}
 	switch {
 	case req.Auth != nil && req.Auth.Token != "":
-		authEnv, cleanup, err := npmAuthConfig(req.Auth.Token, req.PackageSource)
+		authEnv, cleanup, err := npmAuthConfig(req.Auth.Token, registry)
 		if err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 		}
@@ -276,12 +304,12 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 			authNote = " (auth via secret reference)"
 		}
 
-	case req.OIDC:
+	case oidc:
 		token, err := oidcPublishToken(ctx, req.Package.Name, req.PackageSource)
 		if err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 		}
-		authEnv, cleanup, err := npmAuthConfig(token, req.PackageSource)
+		authEnv, cleanup, err := npmAuthConfig(token, registry)
 		if err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 		}
