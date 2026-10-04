@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
@@ -69,8 +72,9 @@ func TestNpmRegistry(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, pkg := workspace(t, tc.files)
-			if got := npmRegistry(repo, pkg, tc.source); got != tc.want {
-				t.Errorf("npmRegistry = %q, want %q", got, tc.want)
+			got, err := npmRegistry(repo, pkg, tc.source)
+			if err != nil || got != tc.want {
+				t.Errorf("npmRegistry = %q, %v, want %q", got, err, tc.want)
 			}
 		})
 	}
@@ -79,8 +83,58 @@ func TestNpmRegistry(t *testing.T) {
 func TestNpmRegistryExpandsEnvReferences(t *testing.T) {
 	t.Setenv("ACME_REGISTRY", "https://npm.acme.example/")
 	repo, pkg := workspace(t, map[string]string{".npmrc": "@acme:registry=${ACME_REGISTRY}"})
-	if got := npmRegistry(repo, pkg, ""); got != "https://npm.acme.example/" {
-		t.Errorf("npmRegistry = %q", got)
+	if got, err := npmRegistry(repo, pkg, ""); err != nil || got != "https://npm.acme.example/" {
+		t.Errorf("npmRegistry = %q, %v", got, err)
+	}
+}
+
+// An unset reference in the chosen registry is an error, as in npm — never a silent fall back to the default, which
+// would send a private package to npmjs.com.
+func TestNpmRegistryRefusesAnUnsetReference(t *testing.T) {
+	for name, line := range map[string]string{
+		"unset":            "@acme:registry=${ACME_UNSET_REGISTRY}",
+		"empty when set":   "@acme:registry=${ACME_EMPTY_REGISTRY}",
+		"a plain registry": "registry=${ACME_UNSET_REGISTRY}",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ACME_EMPTY_REGISTRY", "")
+			os.Unsetenv("ACME_UNSET_REGISTRY")
+			repo, pkg := workspace(t, map[string]string{".npmrc": line})
+			got, err := npmRegistry(repo, pkg, "")
+			if err == nil {
+				t.Fatalf("npmRegistry = %q, want an error", got)
+			}
+			if !strings.Contains(err.Error(), ".npmrc") {
+				t.Errorf("error should name the file: %v", err)
+			}
+		})
+	}
+}
+
+// ...but only the value actually used: an unset token reference beside the routing is the usual layout, and fine.
+func TestNpmRegistryIgnoresUnsetReferencesItDoesNotUse(t *testing.T) {
+	os.Unsetenv("ACME_UNSET_TOKEN")
+	repo, pkg := workspace(t, map[string]string{".npmrc": "//npm.acme.example/:_authToken=${ACME_UNSET_TOKEN}\n@acme:registry=https://npm.acme.example/"})
+	if got, err := npmRegistry(repo, pkg, ""); err != nil || got != "https://npm.acme.example/" {
+		t.Errorf("npmRegistry = %q, %v", got, err)
+	}
+}
+
+func TestPublishRefusesAnUnresolvedRegistry(t *testing.T) {
+	os.Unsetenv("ACME_UNSET_REGISTRY")
+	repo, pkg := workspace(t, map[string]string{".npmrc": "@acme:registry=${ACME_UNSET_REGISTRY}"})
+	stubNpmView(t, "", "", errors.New("npm must not be asked"))
+	was := npmPublish
+	npmPublish = func(context.Context, string, []string, ...string) (string, string, error) {
+		t.Error("npm publish must not run")
+		return "", "", nil
+	}
+	t.Cleanup(func() { npmPublish = was })
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg}); err == nil {
+		t.Error("Publish succeeded, want an error")
+	}
+	if _, err := (&Adapter{}).Published(context.Background(), plugin.PublishedRequest{RepoRoot: repo, Package: pkg}); err == nil {
+		t.Error("Published succeeded, want an error")
 	}
 }
 
@@ -90,8 +144,8 @@ func TestNpmRegistryStopsAtTheRepositoryRoot(t *testing.T) {
 	repo, pkg := workspace(t, nil)
 	writeFiles(t, filepath.Dir(repo), map[string]string{".npmrc": "@acme:registry=https://outside.example/"})
 	for _, root := range []string{repo, repo + string(filepath.Separator)} {
-		if got := npmRegistry(root, pkg, ""); got != "" {
-			t.Errorf("npmRegistry(%q) = %q, want npm's default (\"\")", root, got)
+		if got, err := npmRegistry(root, pkg, ""); err != nil || got != "" {
+			t.Errorf("npmRegistry(%q) = %q, %v, want npm's default (\"\")", root, got, err)
 		}
 	}
 }
@@ -104,7 +158,7 @@ func TestPublishedAsksTheWorkspaceRegistry(t *testing.T) {
 	if err != nil || !resp.Published {
 		t.Fatalf("resp = %+v, err = %v, want Published", resp, err)
 	}
-	if !slices.Equal(*got, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.acme.example/"}) {
+	if !slices.Equal(*got, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.acme.example/", "--@acme:registry=https://npm.acme.example/"}) {
 		t.Errorf("npm view args = %v", *got)
 	}
 }
@@ -125,10 +179,45 @@ func TestPublishUsesTheWorkspaceRegistry(t *testing.T) {
 	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Access: "restricted"}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(*view, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.acme.example/"}) {
+	if !slices.Equal(*view, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.acme.example/", "--@acme:registry=https://npm.acme.example/"}) {
 		t.Errorf("pre-check npm view args = %v", *view)
 	}
-	if !slices.Equal(got, []string{"publish", "--access", "restricted", "--registry", "https://npm.acme.example/"}) {
+	if !slices.Equal(got, []string{"publish", "--access", "restricted", "--registry", "https://npm.acme.example/", "--@acme:registry=https://npm.acme.example/"}) {
 		t.Errorf("npm publish args = %v", got)
+	}
+}
+
+// The flags must decide where npm actually goes, not just what it is told: npm picks a scoped package's registry from
+// `@scope:registry` in any config layer before `registry`, so a user ~/.npmrc routing the scope elsewhere beat a bare
+// --registry. Asked of real npm (skipped without it): with the user config routing @acme to a.invalid, npm view must
+// contact b.invalid — and with --registry alone it would have contacted a.invalid, which is why the scoped flag is there.
+func TestNpmRegistryArgsDecideWhereNpmGoes(t *testing.T) {
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not installed")
+	}
+	dir := t.TempDir()
+	userrc := filepath.Join(dir, "userrc")
+	writeFiles(t, dir, map[string]string{"userrc": "@acme:registry=https://a.invalid/\n"})
+
+	contacted := func(args ...string) string {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "npm", append([]string{"view", "@acme/lib", "version", "--fetch-retries=0", "--loglevel=http"}, args...)...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "NPM_CONFIG_USERCONFIG="+userrc)
+		out, _ := cmd.CombinedOutput() // the hosts don't exist: npm fails, and says where it tried
+		switch {
+		case strings.Contains(string(out), "b.invalid"):
+			return "b"
+		case strings.Contains(string(out), "a.invalid"):
+			return "a"
+		}
+		return "neither: " + string(out)
+	}
+	if got := contacted(npmRegistryArgs("@acme/lib", "https://b.invalid/")...); got != "b" {
+		t.Errorf("with npmRegistryArgs, npm contacted %s, want b", got)
+	}
+	if got := contacted("--registry", "https://b.invalid/"); got != "a" {
+		t.Logf("note: --registry alone reached %s; npm's scoped precedence may have changed", got)
 	}
 }

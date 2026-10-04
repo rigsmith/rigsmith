@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,39 +24,69 @@ import (
 //  3. the nearest .npmrc from the package directory up to the repository root: its `@scope:registry` for the
 //     package's scope, else its plain `registry`. A scoped entry in any of them wins over a plain one, as in npm.
 //
+// A chosen registry that refers to an environment variable that is not set (`@acme:registry=${ACME_REGISTRY}`) is an
+// error, as it is in npm: falling back to the default would send a private package to npmjs.com. Unset references
+// elsewhere in an .npmrc — an `_authToken=${NPM_TOKEN}` beside the routing, say — are not this function's business.
+//
 // Credentials stay npm's: the caller's ~/.npmrc carries the token for whichever host this returns.
-func npmRegistry(repoRoot string, pkg plugin.Package, source string) string {
+func npmRegistry(repoRoot string, pkg plugin.Package, source string) (string, error) {
 	if strings.HasPrefix(source, "http") {
-		return source
+		return source, nil
 	}
 	repoRoot = filepath.Clean(repoRoot) // a trailing separator must not let the walk below pass the root
 	dir := filepath.Join(repoRoot, pkg.Dir)
 	if reg := publishConfigRegistry(dir); reg != "" {
-		return reg
+		return reg, nil
 	}
 
-	var files []map[string]string // nearest first
+	type npmrc struct {
+		path string
+		kv   map[string]string
+	}
+	var files []npmrc // nearest first
 	for d := dir; ; d = filepath.Dir(d) {
-		if kv := readNpmrc(filepath.Join(d, ".npmrc")); kv != nil {
-			files = append(files, kv)
+		path := filepath.Join(d, ".npmrc")
+		if kv := readNpmrc(path); kv != nil {
+			files = append(files, npmrc{path, kv})
 		}
 		if !strings.HasPrefix(d, repoRoot) || d == repoRoot || d == filepath.Dir(d) {
 			break
 		}
 	}
+	var keys []string
 	if scope := packageScope(pkg.Name); scope != "" {
-		for _, kv := range files {
-			if reg := kv[scope+":registry"]; reg != "" {
-				return reg
+		keys = append(keys, scope+":registry")
+	}
+	keys = append(keys, "registry")
+	for _, key := range keys {
+		for _, f := range files {
+			if raw, ok := f.kv[key]; ok && raw != "" {
+				reg, err := expandNpmrcValue(raw)
+				if err != nil {
+					return "", fmt.Errorf("%s in %s: %w", key, f.path, err)
+				}
+				return reg, nil
 			}
 		}
 	}
-	for _, kv := range files {
-		if reg := kv["registry"]; reg != "" {
-			return reg
-		}
+	return "", nil
+}
+
+// npmRegistryArgs are the flags that send npm to registry for the named package, or none for npm's default.
+//
+// `--registry` alone is not enough for a scoped package: npm picks a scoped package's registry from `@scope:registry`
+// in ANY config layer before the plain `registry` key, so a user ~/.npmrc routing the scope elsewhere would win over
+// `--registry` and npm would talk to that other registry while the auth was set up for this one. The command line
+// outranks every config file, so the scoped key goes there too.
+func npmRegistryArgs(name, registry string) []string {
+	if registry == "" {
+		return nil
 	}
-	return ""
+	args := []string{"--registry", registry}
+	if scope := packageScope(name); scope != "" {
+		args = append(args, "--"+scope+":registry="+registry)
+	}
+	return args
 }
 
 // publishConfigRegistry reads publishConfig.registry from the package.json in dir, or "".
@@ -87,10 +118,9 @@ func packageScope(name string) string {
 	return scope
 }
 
-var npmrcEnvRef = regexp.MustCompile(`\$\{([^}]+)\}`)
-
-// readNpmrc parses an .npmrc into key → value, or nil when there is no such file. Comments (`#`, `;`) and blank
-// lines are skipped, a quoted value is unquoted, and `${VAR}` expands from the environment, as npm does.
+// readNpmrc parses an .npmrc into key → raw value, or nil when there is no such file. Comments (`#`, `;`) and blank
+// lines are skipped and a quoted value is unquoted. `${VAR}` references are left as they are: only the value a caller
+// actually uses is expanded (expandNpmrcValue), so an unset reference in an unrelated key is never an error.
 func readNpmrc(path string) map[string]string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -110,10 +140,30 @@ func readNpmrc(path string) map[string]string {
 		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') && value[len(value)-1] == value[0] {
 			value = value[1 : len(value)-1]
 		}
-		value = npmrcEnvRef.ReplaceAllStringFunc(value, func(ref string) string {
-			return os.Getenv(ref[2 : len(ref)-1])
-		})
 		kv[strings.TrimSpace(key)] = value
 	}
 	return kv
+}
+
+var npmrcEnvRef = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+// expandNpmrcValue expands `${VAR}` from the environment, as npm does, and fails — as npm does — when a referenced
+// variable is not set, or the result is empty.
+func expandNpmrcValue(raw string) (string, error) {
+	var missing []string
+	value := npmrcEnvRef.ReplaceAllStringFunc(raw, func(ref string) string {
+		name := ref[2 : len(ref)-1]
+		v, ok := os.LookupEnv(name)
+		if !ok {
+			missing = append(missing, name)
+		}
+		return v
+	})
+	if len(missing) > 0 {
+		return "", fmt.Errorf("refers to %s, which is not set", strings.Join(missing, ", "))
+	}
+	if strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("%q expands to nothing", raw)
+	}
+	return value, nil
 }

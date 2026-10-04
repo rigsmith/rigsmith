@@ -4,4 +4,4 @@ scope: shiprig
 "github.com/rigsmith/rigsmith"
 ---
 
-`publish-plan` and `publish` now use the registry your workspace routes an npm package to. Before, they ran npm in the package's own folder, where npm doesn't read the workspace root's `.npmrc`. In a pnpm or Yarn workspace that sends its scope to a private registry from the root, `publish-plan` reported versions already there as unpublished, and `publish` would have sent the package to npmjs.com. The registry is now `node.packageSource`, else the package's `publishConfig.registry`, else the nearest `.npmrc` up to the repository root.
+`publish-plan` and `publish` now use the registry your workspace routes an npm package to: `node.packageSource`, else the package's `publishConfig.registry`, else the nearest `.npmrc` up to the repository root. Before, npm ran in the package's folder and missed a root `.npmrc`, so in a pnpm or Yarn workspace with a private registry `publish-plan` listed published versions as unpublished, and `publish` would have sent the package to npmjs.com. A registry given as an unset `${VAR}` is now an error rather than a quiet fall back to npmjs.com.

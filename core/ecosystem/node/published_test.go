@@ -65,7 +65,7 @@ func TestPublishedPassesARegistryURL(t *testing.T) {
 	if _, err := (&Adapter{}).Published(context.Background(), publishedReq("https://npm.example.com/")); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(*got, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.example.com/"}) {
+	if !slices.Equal(*got, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.example.com/", "--@acme:registry=https://npm.example.com/"}) {
 		t.Errorf("npm view args = %v", *got)
 	}
 }

@@ -31,7 +31,11 @@ new plugin method, `published`:
   package's scope, else `registry`). npm itself reads a project `.npmrc` only in
   the directory it runs in, so in a pnpm or Yarn workspace that routes its scope
   in the root `.npmrc` it would otherwise ask npmjs.com and report a version
-  already on the private registry as unpublished.
+  already on the private registry as unpublished. A scoped package also gets
+  `--@scope:registry=<url>`: npm takes `@scope:registry` from any config layer
+  before `registry`, so a user `~/.npmrc` routing the scope elsewhere would
+  otherwise beat `--registry`. A chosen registry naming an unset `${VAR}` is an
+  error, as in npm, never a fall back to npmjs.com.
 - **NuGet**: the feed's flat container (`PackageBaseAddress/3.0.0` from the
   v3 service index; nuget.org by default), compared in NuGet's normalized form
   (`1.0.0.0` is `1.0.0`). A source given by its NuGet.config name can't be

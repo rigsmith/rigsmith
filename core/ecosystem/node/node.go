@@ -192,10 +192,11 @@ func (a *Adapter) Published(ctx context.Context, req plugin.PublishedRequest) (p
 	}
 	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	spec := req.Package.Name + "@" + req.Package.Version
-	args := []string{spec, "version"}
-	if registry := npmRegistry(req.RepoRoot, req.Package, req.PackageSource); registry != "" {
-		args = append(args, "--registry", registry)
+	registry, err := npmRegistry(req.RepoRoot, req.Package, req.PackageSource)
+	if err != nil {
+		return plugin.PublishedResponse{}, fmt.Errorf("npm registry for %s: %w", req.Package.Name, err)
 	}
+	args := append([]string{spec, "version"}, npmRegistryArgs(req.Package.Name, registry)...)
 	out, stderr, err := npmView(ctx, dir, args...)
 	if err != nil {
 		if strings.Contains(stderr, "E404") {
@@ -224,11 +225,12 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	spec := req.Package.Name + "@" + req.Package.Version
 	// The registry the workspace routes this package to (npmRegistry), for the pre-check, the publish and its auth
 	// alike — npm run in the package directory would otherwise miss a workspace-root .npmrc and use npmjs.com.
-	registry := npmRegistry(req.RepoRoot, req.Package, req.PackageSource)
-	viewArgs := []string{spec, "version"}
-	if registry != "" {
-		viewArgs = append(viewArgs, "--registry", registry)
+	registry, err := npmRegistry(req.RepoRoot, req.Package, req.PackageSource)
+	if err != nil {
+		// never fall back to npm's default: that would send a private package to npmjs.com
+		return plugin.PublishResponse{}, fmt.Errorf("npm registry for %s: %w", req.Package.Name, err)
 	}
+	viewArgs := append([]string{spec, "version"}, npmRegistryArgs(req.Package.Name, registry)...)
 
 	// Pre-check: a clean exit echoing the requested version means it already exists.
 	// A non-zero exit (unpublished version / network) is treated as "not present"
@@ -260,9 +262,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if req.Tag != "" {
 		args = append(args, "--tag", req.Tag)
 	}
-	if registry != "" {
-		args = append(args, "--registry", registry)
-	}
+	args = append(args, npmRegistryArgs(req.Package.Name, registry)...)
 
 	// Resolve the publish credential. With nothing supplied, npm uses the
 	// caller's ambient auth (~/.npmrc / NPM_TOKEN) and we touch nothing. With a
