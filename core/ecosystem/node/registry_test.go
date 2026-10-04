@@ -342,3 +342,22 @@ func TestPublishKeepsOIDCAtItsOwnRegistry(t *testing.T) {
 		}
 	}
 }
+
+// publishConfig.registry is expanded as an .npmrc value is: a set variable is its value, an unset or empty one is an
+// error naming the manifest — never the literal placeholder passed to npm.
+func TestNpmRegistryExpandsPublishConfig(t *testing.T) {
+	manifest := `{"name":"@acme/lib","version":"1.2.0","publishConfig":{"registry":"${ACME_PUBLISH_REGISTRY}"}}`
+	t.Setenv("ACME_PUBLISH_REGISTRY", "https://npm.acme.example/")
+	repo, pkg := workspace(t, map[string]string{"packages/lib/package.json": manifest})
+	if got, err := npmRegistry(repo, pkg, ""); err != nil || got != "https://npm.acme.example/" {
+		t.Errorf("set: npmRegistry = %q, %v", got, err)
+	}
+	t.Setenv("ACME_PUBLISH_REGISTRY", "")
+	if got, err := npmRegistry(repo, pkg, ""); err == nil || !strings.Contains(err.Error(), "package.json") {
+		t.Errorf("empty: npmRegistry = %q, %v, want an error naming package.json", got, err)
+	}
+	os.Unsetenv("ACME_PUBLISH_REGISTRY")
+	if got, err := npmRegistry(repo, pkg, ""); err == nil || !strings.Contains(err.Error(), "not set") {
+		t.Errorf("unset: npmRegistry = %q, %v, want a not-set error", got, err)
+	}
+}

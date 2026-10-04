@@ -26,8 +26,9 @@ import (
 //  3. the nearest .npmrc from the package directory up to the repository root: its `@scope:registry` for the
 //     package's scope, else its plain `registry`. A scoped entry in any of them wins over a plain one, as in npm.
 //
-// A chosen registry that refers to an environment variable that is not set (`@acme:registry=${ACME_REGISTRY}`) is an
-// error, as it is in npm: falling back to the default would send a private package to npmjs.com. Unset references
+// A chosen registry — from publishConfig or an .npmrc — that refers to an environment variable that is not set, or is
+// empty (`@acme:registry=${ACME_REGISTRY}`), is an error, as it is in npm: falling back to the default would send a
+// private package to npmjs.com. Unset references
 // elsewhere in an .npmrc — an `_authToken=${NPM_TOKEN}` beside the routing, say — are not this function's business.
 //
 // Credentials stay npm's: the caller's ~/.npmrc carries the token for whichever host this returns.
@@ -43,11 +44,15 @@ func npmRegistry(repoRoot string, pkg plugin.Package, source string) (string, er
 	if rel, err := filepath.Rel(repoRoot, dir); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("package directory %s is outside the repository %s", pkg.Dir, repoRoot)
 	}
-	reg, err := publishConfigRegistry(dir)
+	raw, err := publishConfigRegistry(dir)
 	if err != nil {
 		return "", err
 	}
-	if reg != "" {
+	if raw != "" {
+		reg, err := expandNpmrcValue(raw)
+		if err != nil {
+			return "", fmt.Errorf("publishConfig.registry in %s: %w", filepath.Join(dir, "package.json"), err)
+		}
 		return reg, nil
 	}
 

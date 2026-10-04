@@ -43,7 +43,8 @@ The whole workflow is wired:
   npm: `node.packageSource`, else the package's `publishConfig.registry`, else
   the scope routing in the nearest `.npmrc` up to the repository root, so a
   workspace that routes its scope to a private registry at the root is asked
-  there, and published there, not npmjs.com), and a
+  there, and published there, not npmjs.com; a registry given as a `${VAR}` that
+  is unset or empty is an error — set it, or write the URL literally), and a
   package released by its git tag alone (a Go module, a desktop app, a private
   package with `privatePackages.tag`) is listed `tag-only` when its tag is
   missing, and so is a package already published whose tag never made it. A

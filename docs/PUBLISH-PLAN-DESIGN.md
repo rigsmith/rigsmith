@@ -34,8 +34,11 @@ new plugin method, `published`:
   already on the private registry as unpublished. A scoped package also gets
   `--@scope:registry=<url>`: npm takes `@scope:registry` from any config layer
   before `registry`, so a user `~/.npmrc` routing the scope elsewhere would
-  otherwise beat `--registry`. A chosen registry naming an unset `${VAR}` is an
-  error, as in npm, never a fall back to npmjs.com; so is a `package.json` or
+  otherwise beat `--registry`. A chosen registry — from `publishConfig.registry` or
+  an `.npmrc` — that names a `${VAR}` which is unset, or set but empty, is a
+  configuration error naming the file, never a fall back to npmjs.com (nor
+  reported as an unreachable registry): set the variable to the registry URL, or
+  write the URL literally there or in `node.packageSource`; so is a `package.json` or
   `.npmrc` that exists but cannot be read or parsed, and a package directory
   outside the repository, whose neighbours' `.npmrc` files are not ours to read.
   The lookup goes out with the caller's own npm auth; when the registry refuses
