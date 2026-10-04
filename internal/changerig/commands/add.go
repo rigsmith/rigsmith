@@ -489,18 +489,25 @@ const maxIDAttempts = 256
 func writeNewChangeset(dir, content string) (string, error) {
 	for range maxIDAttempts {
 		id := newChangesetID()
-		f, err := os.OpenFile(filepath.Join(dir, id+".md"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		path := filepath.Join(dir, id+".md")
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if os.IsExist(err) {
 			continue
 		}
 		if err != nil {
 			return "", err
 		}
-		if _, err := f.WriteString(content); err != nil {
-			f.Close()
+		_, err = f.WriteString(content)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			// O_EXCL means this attempt created the file, so removing it can
+			// only take back our own partial write — never someone else's.
+			os.Remove(path)
 			return "", err
 		}
-		return id, f.Close()
+		return id, nil
 	}
 	return "", fmt.Errorf("could not find an unused changeset name in %s after %d tries", dir, maxIDAttempts)
 }
