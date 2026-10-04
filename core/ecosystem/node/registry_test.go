@@ -3,6 +3,8 @@ package node
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -219,5 +221,124 @@ func TestNpmRegistryArgsDecideWhereNpmGoes(t *testing.T) {
 	}
 	if got := contacted("--registry", "https://b.invalid/"); got != "a" {
 		t.Logf("note: --registry alone reached %s; npm's scoped precedence may have changed", got)
+	}
+}
+
+// A package directory that climbs out of the repository is refused before anything outside is read — compared by path
+// component, so a sibling whose name merely starts with the repository's (/tmp/repository beside /tmp/repo) is outside.
+func TestNpmRegistryRefusesAPackageOutsideTheRepository(t *testing.T) {
+	repo, _ := workspace(t, nil)
+	writeFiles(t, filepath.Dir(repo), map[string]string{
+		"repository/lib/package.json": `{"name":"@acme/lib","version":"1.2.0"}`,
+		"repository/.npmrc":           "@acme:registry=https://sibling.example/",
+	})
+	pkg := plugin.Package{Name: "@acme/lib", Version: "1.2.0", Dir: "../repository/lib"}
+	got, err := npmRegistry(repo, pkg, "")
+	if err == nil || !strings.Contains(err.Error(), "outside the repository") {
+		t.Errorf("npmRegistry = %q, %v, want an outside-the-repository error", got, err)
+	}
+}
+
+// What can't be read or understood is an error, not an absence: guessing past it could route the package somewhere
+// it never named.
+func TestNpmRegistrySurfacesUnreadableConfig(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"a malformed package.json":  {"packages/lib/package.json": `{"name":`},
+		"a non-string registry":     {"packages/lib/package.json": `{"name":"@acme/lib","publishConfig":{"registry":42}}`},
+		"an .npmrc that won't read": {".npmrc/oops": "a directory where the file should be"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, pkg := workspace(t, files)
+			if got, err := npmRegistry(repo, pkg, ""); err == nil {
+				t.Errorf("npmRegistry = %q, want an error", got)
+			}
+		})
+	}
+	// ...while a readable manifest that simply names no registry is fine.
+	repo, pkg := workspace(t, map[string]string{"packages/lib/package.json": `{"name":"@acme/lib","publishConfig":{"access":"public"}}`})
+	if got, err := npmRegistry(repo, pkg, ""); err != nil || got != "" {
+		t.Errorf("npmRegistry = %q, %v, want npm's default", got, err)
+	}
+}
+
+// A private feed that refuses the anonymous lookup is asked once more with the publish credential, keyed to its own
+// host; one that answers is never sent it.
+func TestPublishedSendsTheCredentialOnlyWhenAsked(t *testing.T) {
+	repo, pkg := workspace(t, map[string]string{".npmrc": "@acme:registry=https://npm.acme.example/"})
+	type call struct{ npmrc string }
+	stub := func(anonymous error) *[]call {
+		var calls []call
+		was := npmView
+		npmView = func(_ context.Context, _ string, env []string, _ ...string) (string, string, error) {
+			c := call{}
+			for _, kv := range env {
+				if p, ok := strings.CutPrefix(kv, "NPM_CONFIG_USERCONFIG="); ok {
+					data, _ := os.ReadFile(p)
+					c.npmrc = string(data)
+				}
+			}
+			calls = append(calls, c)
+			if env == nil && anonymous != nil {
+				return "", "npm error code E401", anonymous
+			}
+			return "1.2.0", "", nil
+		}
+		t.Cleanup(func() { npmView = was })
+		return &calls
+	}
+	req := plugin.PublishedRequest{RepoRoot: repo, Package: pkg, Auth: &plugin.AuthCredential{Token: "feed-token"}}
+
+	calls := stub(errors.New("exit status 1"))
+	resp, err := (&Adapter{}).Published(context.Background(), req)
+	if err != nil || !resp.Published {
+		t.Fatalf("resp = %+v, err = %v, want Published", resp, err)
+	}
+	if len(*calls) != 2 || !strings.Contains((*calls)[1].npmrc, "//npm.acme.example/:_authToken=feed-token") {
+		t.Errorf("calls = %+v, want an anonymous lookup then one with the token keyed to npm.acme.example", *calls)
+	}
+
+	calls = stub(nil)
+	if _, err := (&Adapter{}).Published(context.Background(), req); err != nil || len(*calls) != 1 || (*calls)[0].npmrc != "" {
+		t.Errorf("calls = %+v, err = %v, want one anonymous lookup", *calls, err)
+	}
+
+	calls = stub(errors.New("exit status 1"))
+	req.Auth = nil
+	if _, err := (&Adapter{}).Published(context.Background(), req); err == nil || len(*calls) != 1 {
+		t.Errorf("calls = %+v, err = %v, want the E401 as an error with no credential to retry with", *calls, err)
+	}
+}
+
+// OIDC's CI id-token is exchanged where it always was — the configured source, else npmjs.com — and never at a
+// registry found in an .npmrc or publishConfig. shiprig turns OIDC on by itself in CI, so a package routed elsewhere
+// is not refused: OIDC is skipped and npm publishes with its own auth, no token minted.
+func TestPublishKeepsOIDCAtItsOwnRegistry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("OIDC request to %s, want none", r.URL.Path)
+	}))
+	defer srv.Close()
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", srv.URL+"/idtoken")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "reqtok")
+	t.Setenv("NPM_ID_TOKEN", "")
+	t.Setenv("NPM_CONFIG_USERCONFIG", "")
+
+	repo, pkg := workspace(t, map[string]string{".npmrc": "@acme:registry=https://npm.acme.example/"})
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	var env []string
+	was := npmPublish
+	npmPublish = func(_ context.Context, _ string, e []string, _ ...string) (string, string, error) {
+		env = e
+		return "", "", nil
+	}
+	t.Cleanup(func() { npmPublish = was })
+
+	resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, OIDC: true})
+	if err != nil || !resp.Published || !strings.Contains(resp.Message, "OIDC skipped") {
+		t.Fatalf("resp = %+v, err = %v, want published with OIDC skipped", resp, err)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "NPM_CONFIG_USERCONFIG=") && kv != "NPM_CONFIG_USERCONFIG=" {
+			t.Errorf("npm publish got %s, want npm's own auth", kv)
+		}
 	}
 }

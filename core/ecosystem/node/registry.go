@@ -2,7 +2,9 @@ package node
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,9 +35,19 @@ func npmRegistry(repoRoot string, pkg plugin.Package, source string) (string, er
 	if strings.HasPrefix(source, "http") {
 		return source, nil
 	}
-	repoRoot = filepath.Clean(repoRoot) // a trailing separator must not let the walk below pass the root
+	repoRoot = filepath.Clean(repoRoot)
 	dir := filepath.Join(repoRoot, pkg.Dir)
-	if reg := publishConfigRegistry(dir); reg != "" {
+	// Nothing outside the repository is read: a package directory that climbs out of it (`../elsewhere`) would
+	// otherwise route the package by a neighbour's .npmrc. Compared by path component, so /tmp/repository is not
+	// inside /tmp/repo.
+	if rel, err := filepath.Rel(repoRoot, dir); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("package directory %s is outside the repository %s", pkg.Dir, repoRoot)
+	}
+	reg, err := publishConfigRegistry(dir)
+	if err != nil {
+		return "", err
+	}
+	if reg != "" {
 		return reg, nil
 	}
 
@@ -46,10 +58,14 @@ func npmRegistry(repoRoot string, pkg plugin.Package, source string) (string, er
 	var files []npmrc // nearest first
 	for d := dir; ; d = filepath.Dir(d) {
 		path := filepath.Join(d, ".npmrc")
-		if kv := readNpmrc(path); kv != nil {
+		kv, err := readNpmrc(path)
+		if err != nil {
+			return "", err
+		}
+		if kv != nil {
 			files = append(files, npmrc{path, kv})
 		}
-		if !strings.HasPrefix(d, repoRoot) || d == repoRoot || d == filepath.Dir(d) {
+		if d == repoRoot || d == filepath.Dir(d) {
 			break
 		}
 	}
@@ -89,21 +105,35 @@ func npmRegistryArgs(name, registry string) []string {
 	return args
 }
 
-// publishConfigRegistry reads publishConfig.registry from the package.json in dir, or "".
-func publishConfigRegistry(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+// publishConfigRegistry reads publishConfig.registry from the package.json in dir, or "" when it names none. A
+// manifest that cannot be read or parsed, or a registry that is not a string, is an error: guessing past it could
+// route the package to a registry it never named.
+func publishConfigRegistry(dir string) (string, error) {
+	path := filepath.Join(dir, "package.json")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	var manifest struct {
 		PublishConfig struct {
-			Registry string `json:"registry"`
+			Registry json.RawMessage `json:"registry"`
 		} `json:"publishConfig"`
 	}
-	if json.Unmarshal(data, &manifest) != nil {
-		return ""
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("parse %s: %w", path, err)
 	}
-	return strings.TrimSpace(manifest.PublishConfig.Registry)
+	raw := manifest.PublishConfig.Registry
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var reg string
+	if err := json.Unmarshal(raw, &reg); err != nil {
+		return "", fmt.Errorf("%s: publishConfig.registry is %s, not a string", path, raw)
+	}
+	return strings.TrimSpace(reg), nil
 }
 
 // packageScope is "@acme" for "@acme/lib", and "" for an unscoped name.
@@ -118,13 +148,17 @@ func packageScope(name string) string {
 	return scope
 }
 
-// readNpmrc parses an .npmrc into key → raw value, or nil when there is no such file. Comments (`#`, `;`) and blank
+// readNpmrc parses an .npmrc into key → raw value, or nil when there is no such file; one that exists but cannot be
+// read is an error, not an absence, since it may hold the routing. Comments (`#`, `;`) and blank
 // lines are skipped and a quoted value is unquoted. `${VAR}` references are left as they are: only the value a caller
 // actually uses is expanded (expandNpmrcValue), so an unset reference in an unrelated key is never an error.
-func readNpmrc(path string) map[string]string {
+func readNpmrc(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	kv := map[string]string{}
 	for _, line := range strings.Split(string(data), "\n") {
@@ -142,7 +176,7 @@ func readNpmrc(path string) map[string]string {
 		}
 		kv[strings.TrimSpace(key)] = value
 	}
-	return kv
+	return kv, nil
 }
 
 var npmrcEnvRef = regexp.MustCompile(`\$\{([^}]+)\}`)

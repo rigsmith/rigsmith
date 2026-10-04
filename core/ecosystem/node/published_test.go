@@ -15,7 +15,7 @@ func stubNpmView(t *testing.T, out, stderr string, err error) *[]string {
 	t.Helper()
 	var got []string
 	was := npmView
-	npmView = func(_ context.Context, _ string, args ...string) (string, string, error) {
+	npmView = func(_ context.Context, _ string, _ []string, args ...string) (string, string, error) {
 		got = args
 		return out, stderr, err
 	}

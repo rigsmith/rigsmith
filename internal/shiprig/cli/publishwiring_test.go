@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -169,5 +170,43 @@ func TestPublishGoOnlyPrereleaseIgnoresNpmTagRules(t *testing.T) {
 	// Fails the test if publish refuses the tag.
 	if reqs := runPublishRecording(t); len(reqs) != 0 {
 		t.Errorf("npm was asked to publish %d package(s) in a Go-only repo", len(reqs))
+	}
+}
+
+// failingNode is the node adapter with a Publish that fails the way npm does, echoing a registry URL that carries
+// credentials.
+type failingNode struct{ plugin.Ecosystem }
+
+func (failingNode) Publish(context.Context, plugin.PublishRequest) (plugin.PublishResponse, error) {
+	return plugin.PublishResponse{}, errors.New("npm publish --registry https://bot:s3cret@npm.example.com/: exit status 1")
+}
+
+// A failed publish names the package with any credentials in the registry URL masked, as publish-plan does.
+func TestPublishMasksCredentialsInARegistryURL(t *testing.T) {
+	planRepo(t, `{}`)
+	was := openPublishWorkspace
+	openPublishWorkspace = func() (*commands.Workspace, error) {
+		ws, err := commands.Open()
+		if err != nil {
+			return nil, err
+		}
+		node, _ := ws.EcosystemFor("node")
+		ws.Registry.Register(failingNode{node})
+		return ws, nil
+	}
+	t.Cleanup(func() { openPublishWorkspace = was })
+
+	cmd := newPublishCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes", "--no-git-tag"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("publish succeeded, want the adapter's failure")
+	}
+	all := err.Error() + "\n" + out.String()
+	if strings.Contains(all, "s3cret") || !strings.Contains(all, "https://***@npm.example.com/") {
+		t.Errorf("want the registry URL with its credentials masked, got:\n%s", all)
 	}
 }

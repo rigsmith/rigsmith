@@ -35,7 +35,12 @@ new plugin method, `published`:
   `--@scope:registry=<url>`: npm takes `@scope:registry` from any config layer
   before `registry`, so a user `~/.npmrc` routing the scope elsewhere would
   otherwise beat `--registry`. A chosen registry naming an unset `${VAR}` is an
-  error, as in npm, never a fall back to npmjs.com.
+  error, as in npm, never a fall back to npmjs.com; so is a `package.json` or
+  `.npmrc` that exists but cannot be read or parsed, and a package directory
+  outside the repository, whose neighbours' `.npmrc` files are not ours to read.
+  The lookup goes out with the caller's own npm auth; when the registry refuses
+  it (E401/E403) and `node.auth` resolved, it is asked once more with that
+  token, written for the registry's host alone.
 - **NuGet**: the feed's flat container (`PackageBaseAddress/3.0.0` from the
   v3 service index; nuget.org by default), compared in NuGet's normalized form
   (`1.0.0.0` is `1.0.0`). A source given by its NuGet.config name can't be
