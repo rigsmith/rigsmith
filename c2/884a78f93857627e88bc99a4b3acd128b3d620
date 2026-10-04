@@ -1,0 +1,21 @@
+core/ecosystem/node/registry.go
+  s_dc3154183216e1::t_62ba3f26004fd3 1-119
+core/ecosystem/node/registry_test.go
+  s_dc3154183216e1::t_0cb476fca07317 1-134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c2884a78f93857627e88bc99a4b3acd128b3d620",
+  "prompts": {},
+  "sessions": {
+    "s_dc3154183216e1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dbc71d4-578a-4fd9-8a8d-315997be0f21",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
