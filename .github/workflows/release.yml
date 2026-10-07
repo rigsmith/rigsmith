@@ -146,7 +146,7 @@ jobs:
 
       - name: Release PR or tags
         id: shiprig
-        uses: rigsmith/shiprig-action@e09e426ff41e452c331d15baecc1b414188613de # v0.5.0
+        uses: rigsmith/shiprig-action@d772293dd9b998599464b84f58ca0b1395321396 # v0.6.0
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           publish-script: shiprig tag
