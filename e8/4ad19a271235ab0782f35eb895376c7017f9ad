@@ -1,0 +1,21 @@
+core/ecosystem/velopack/pack.go
+  s_94dc3e771b7add::t_af3a2ebd0a8d1c 618-621
+  s_94dc3e771b7add::t_0e07b8ab6a02c8 629-657
+  s_94dc3e771b7add::t_8c2c874b951a93 554-558
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e84ad19a271235ab0782f35eb895376c7017f9ad",
+  "prompts": {},
+  "sessions": {
+    "s_94dc3e771b7add": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "48db899c-50c6-4710-b5e5-7ad60f4ffb87",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
