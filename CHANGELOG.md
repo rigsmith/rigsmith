@@ -1,5 +1,13 @@
 # github.com/rigsmith/rigsmith
 
+## 1.23.1
+
+### 🩹 Fixes
+
+- **changerig:** `changerig add` no longer overwrites an existing changeset. The random name it picks for a new changeset could already belong to a pending one, which was silently replaced while the command reported "Created"; it now picks another name instead.
+- **shiprig:** `publish-plan` and `publish` now use the registry your workspace routes an npm package to: `node.packageSource`, else the package's `publishConfig.registry`, else the nearest `.npmrc` up to the repository root. Before, a workspace routing its scope to a private registry in the root `.npmrc` had published versions listed as unpublished, and `publish` would have sent the package to npmjs.com. A registry given as an unset or empty `${VAR}` is now an error. OIDC trusted publishing is used only for npmjs.com (or `node.packageSource`); a package routed elsewhere publishes with npm's own auth for that registry and is never sent the CI token.
+- **shiprig:** A Velopack macOS `.dmg` is now notarized and stapled, not only signed, when `macos.notaryProfile` is set (with `macos.signIdentity`, which a notary profile now requires: on its own it skipped notarization silently, and it is now a config error, in a `--dry-build` too). Before, only the `.app` inside was notarized, so Gatekeeper rejected the downloaded disk image as "Unnotarized Developer ID". Notarizing adds a few minutes per channel to a release build, and a failure to sign, notarize or staple the DMG now fails the build and removes the DMG instead of shipping it un-notarized. Nothing changes without a notary profile, or for `--dry-build`.
+
 ## 1.23.0
 
 ### 🚀 Enhancements
