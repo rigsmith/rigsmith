@@ -558,6 +558,12 @@ func TestDmgFinishStepsSnapshotAndUnsigned(t *testing.T) {
 	if steps := dmgFinishSteps(m, "x.dmg", false); len(steps) != 0 {
 		t.Errorf("no identity must not touch the DMG, got %v", steps)
 	}
+	// Blank means absent, as in Config.validate: a whitespace profile signs only.
+	m = fullCfg().Macos
+	m.NotaryProfile = "  "
+	if steps := dmgFinishSteps(m, "x.dmg", false); len(steps) != 1 || steps[0].required {
+		t.Errorf("a blank notaryProfile must sign best-effort only, got %v", steps)
+	}
 }
 
 // TestBuildPackArgsMacPlistDropsBundleId: a custom Info.plist is passed via

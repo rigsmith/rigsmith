@@ -642,10 +642,10 @@ type dmgStep struct {
 // un-notarized DMG is the failure this exists to prevent. Signing alone stays
 // best-effort, as it always was. A snapshot does none of it.
 func dmgFinishSteps(m Macos, dmg string, snapshot bool) []dmgStep {
-	if snapshot || m.SignIdentity == "" {
+	if snapshot || strings.TrimSpace(m.SignIdentity) == "" {
 		return nil
 	}
-	notarize := m.NotaryProfile != ""
+	notarize := strings.TrimSpace(m.NotaryProfile) != ""
 	steps := []dmgStep{{args: []string{"codesign", "--force", "--timestamp", "--sign", m.SignIdentity, dmg}, required: notarize}}
 	if notarize {
 		steps = append(steps,
