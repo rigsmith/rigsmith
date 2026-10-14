@@ -551,10 +551,11 @@ func resolvePackVersion(ver string, snapshot bool) (string, error) {
 
 // wrapDmg turns Velopack's portable .app (shipped in <PackId>-<ch>-Portable.zip)
 // into a distributable .dmg: extract preserving the code signature, staple the
-// notarization ticket, hdiutil into a compressed DMG, then (when signing) sign the
-// DMG. Stapling and DMG-signing are best-effort (mirroring the original pack.sh),
-// so an unsigned/un-notarized rehearsal still yields a DMG. Finally it removes the
-// portable zip and the .pkg Velopack also emits, leaving the .dmg + update feed.
+// notarization ticket, hdiutil into a compressed DMG, then finish the DMG itself
+// (see dmgFinishSteps). Stapling the .app is best-effort (mirroring the original
+// pack.sh), so an unsigned/un-notarized rehearsal still yields a DMG. Finally it
+// removes the portable zip and the .pkg Velopack also emits, leaving the .dmg +
+// update feed.
 func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cfg Config, ch, output string, snapshot bool) error {
 	outAbs := filepath.Join(repoRoot, output)
 	portable := filepath.Join(outAbs, fmt.Sprintf("%s-%s-Portable.zip", cfg.PackId, ch))
@@ -614,13 +615,44 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, bgName, icon, stage, dmg, lay); err != nil {
 		return err
 	}
-	if !snapshot && cfg.Macos.SignIdentity != "" {
-		_, _, _ = runCmdEnv(ctx, repoRoot, env, "codesign", "--force", "--timestamp", "--sign", cfg.Macos.SignIdentity, dmg) // best-effort
+	for _, step := range dmgFinishSteps(cfg.Macos, dmg, snapshot) {
+		if _, _, err := runCmdEnv(ctx, repoRoot, env, step.args[0], step.args[1:]...); err != nil && step.required {
+			return err
+		}
 	}
 
 	_ = os.Remove(portable)
 	_ = os.Remove(filepath.Join(outAbs, fmt.Sprintf("%s-%s-Setup.pkg", cfg.PackId, ch)))
 	return nil
+}
+
+// dmgStep is one command that finishes a built DMG. A required step fails the
+// build; the rest are best-effort.
+type dmgStep struct {
+	args     []string
+	required bool
+}
+
+// dmgFinishSteps signs the DMG and, when a notary profile is configured,
+// notarizes it and staples the ticket to it. The notarized .app inside is not
+// enough on its own: Gatekeeper assesses the downloaded image too, and rejects a
+// signed but un-notarized one as "Unnotarized Developer ID". Once notarization is
+// asked for, every step is required — a release that silently ships an
+// un-notarized DMG is the failure this exists to prevent. Signing alone stays
+// best-effort, as it always was. A snapshot does none of it.
+func dmgFinishSteps(m Macos, dmg string, snapshot bool) []dmgStep {
+	if snapshot || m.SignIdentity == "" {
+		return nil
+	}
+	notarize := m.NotaryProfile != ""
+	steps := []dmgStep{{args: []string{"codesign", "--force", "--timestamp", "--sign", m.SignIdentity, dmg}, required: notarize}}
+	if notarize {
+		steps = append(steps,
+			dmgStep{args: []string{"xcrun", "notarytool", "submit", dmg, "--keychain-profile", m.NotaryProfile, "--wait"}, required: true},
+			dmgStep{args: []string{"xcrun", "stapler", "staple", dmg}, required: true},
+		)
+	}
+	return steps
 }
 
 // dmgLayout describes the install-window: its content size (logical points) and

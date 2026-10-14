@@ -465,6 +465,53 @@ func TestBuildPackArgsMacSnapshotIsUnsigned(t *testing.T) {
 	assertHas(t, got, "--bundleId", "com.acme.halyards")
 }
 
+// TestDmgFinishStepsNotarizesTheDmg: with a notary profile, the DMG is signed,
+// submitted, and stapled, in that order, and every step is required. Gatekeeper
+// rejects a signed but un-notarized DMG even when the .app inside is notarized.
+func TestDmgFinishStepsNotarizesTheDmg(t *testing.T) {
+	steps := dmgFinishSteps(fullCfg().Macos, "out/Halyards-osx-arm64.dmg", false)
+	want := [][]string{
+		{"codesign", "--force", "--timestamp", "--sign", "Developer ID Application: Acme", "out/Halyards-osx-arm64.dmg"},
+		{"xcrun", "notarytool", "submit", "out/Halyards-osx-arm64.dmg", "--keychain-profile", "halyards-notary", "--wait"},
+		{"xcrun", "stapler", "staple", "out/Halyards-osx-arm64.dmg"},
+	}
+	if len(steps) != len(want) {
+		t.Fatalf("got %d steps, want %d: %v", len(steps), len(want), steps)
+	}
+	for i, w := range want {
+		if strings.Join(steps[i].args, " ") != strings.Join(w, " ") {
+			t.Errorf("step %d = %v, want %v", i, steps[i].args, w)
+		}
+		if !steps[i].required {
+			t.Errorf("step %d (%s) must be required when notarizing", i, w[0])
+		}
+	}
+}
+
+// TestDmgFinishStepsSignOnly: no notary profile signs the DMG best-effort and
+// stops there — the behaviour before DMG notarization existed.
+func TestDmgFinishStepsSignOnly(t *testing.T) {
+	m := fullCfg().Macos
+	m.NotaryProfile = ""
+	steps := dmgFinishSteps(m, "x.dmg", false)
+	if len(steps) != 1 || steps[0].args[0] != "codesign" || steps[0].required {
+		t.Errorf("sign-only must be one best-effort codesign, got %v", steps)
+	}
+}
+
+// TestDmgFinishStepsSnapshotAndUnsigned: a snapshot, or no signing identity,
+// leaves the DMG alone.
+func TestDmgFinishStepsSnapshotAndUnsigned(t *testing.T) {
+	if steps := dmgFinishSteps(fullCfg().Macos, "x.dmg", true); len(steps) != 0 {
+		t.Errorf("snapshot must not touch the DMG, got %v", steps)
+	}
+	m := fullCfg().Macos
+	m.SignIdentity = ""
+	if steps := dmgFinishSteps(m, "x.dmg", false); len(steps) != 0 {
+		t.Errorf("no identity must not touch the DMG, got %v", steps)
+	}
+}
+
 // TestBuildPackArgsMacPlistDropsBundleId: a custom Info.plist is passed via
 // --plist and, since vpk forbids it alongside --bundleId, --bundleId is dropped
 // while --icon stays (it still copies the .icns into Resources).
