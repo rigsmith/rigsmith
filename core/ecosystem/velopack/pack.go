@@ -615,10 +615,11 @@ func (a *Adapter) wrapDmg(ctx context.Context, repoRoot string, env []string, cf
 	if err := buildDmg(ctx, repoRoot, env, cfg.PackTitle, cfg.MainExe, bgName, icon, stage, dmg, lay); err != nil {
 		return err
 	}
-	for _, step := range dmgFinishSteps(cfg.Macos, dmg, snapshot) {
-		if _, _, err := runCmdEnv(ctx, repoRoot, env, step.args[0], step.args[1:]...); err != nil && step.required {
-			return err
-		}
+	if err := finishDmg(dmgFinishSteps(cfg.Macos, dmg, snapshot), dmg, func(args []string) error {
+		_, _, err := runCmdEnv(ctx, repoRoot, env, args[0], args[1:]...)
+		return err
+	}); err != nil {
+		return err
 	}
 
 	_ = os.Remove(portable)
@@ -653,6 +654,19 @@ func dmgFinishSteps(m Macos, dmg string, snapshot bool) []dmgStep {
 		)
 	}
 	return steps
+}
+
+// finishDmg runs the finishing steps through run. A failed required step deletes
+// the DMG before returning the error, so a half-finished image (signed but not
+// notarized) is never left in the output folder for a resumed release to collect.
+func finishDmg(steps []dmgStep, dmg string, run func(args []string) error) error {
+	for _, step := range steps {
+		if err := run(step.args); err != nil && step.required {
+			_ = os.Remove(dmg)
+			return err
+		}
+	}
+	return nil
 }
 
 // dmgLayout describes the install-window: its content size (logical points) and
