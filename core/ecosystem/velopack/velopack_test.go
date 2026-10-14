@@ -2,6 +2,7 @@ package velopack
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -352,6 +353,12 @@ func TestConfigDefaultsAndValidate(t *testing.T) {
 	if err := (Config{PackId: "X", Channels: []string{"win-x64"}, Base: "python"}).validate(); err == nil {
 		t.Error("unknown base should be invalid")
 	}
+	if err := (Config{PackId: "X", Channels: []string{"osx-arm64"}, Macos: Macos{NotaryProfile: "p"}}).validate(); err == nil {
+		t.Error("a notaryProfile without a signIdentity should be invalid (it would skip notarization silently)")
+	}
+	if err := (Config{PackId: "X", Channels: []string{"osx-arm64"}, Macos: Macos{NotaryProfile: "p", SignIdentity: "id"}}).validate(); err != nil {
+		t.Errorf("a notaryProfile with a signIdentity should be valid: %v", err)
+	}
 }
 
 func TestMacosWrapDmgDefault(t *testing.T) {
@@ -463,6 +470,100 @@ func TestBuildPackArgsMacSnapshotIsUnsigned(t *testing.T) {
 	}
 	// Identity-independent flags still present.
 	assertHas(t, got, "--bundleId", "com.acme.halyards")
+}
+
+// TestDmgFinishStepsNotarizesTheDmg: with a notary profile, the DMG is signed,
+// submitted, and stapled, in that order, and every step is required. Gatekeeper
+// rejects a signed but un-notarized DMG even when the .app inside is notarized.
+func TestDmgFinishStepsNotarizesTheDmg(t *testing.T) {
+	steps := dmgFinishSteps(fullCfg().Macos, "out/Halyards-osx-arm64.dmg", false)
+	want := [][]string{
+		{"codesign", "--force", "--timestamp", "--sign", "Developer ID Application: Acme", "out/Halyards-osx-arm64.dmg"},
+		{"xcrun", "notarytool", "submit", "out/Halyards-osx-arm64.dmg", "--keychain-profile", "halyards-notary", "--wait"},
+		{"xcrun", "stapler", "staple", "out/Halyards-osx-arm64.dmg"},
+	}
+	if len(steps) != len(want) {
+		t.Fatalf("got %d steps, want %d: %v", len(steps), len(want), steps)
+	}
+	for i, w := range want {
+		if strings.Join(steps[i].args, " ") != strings.Join(w, " ") {
+			t.Errorf("step %d = %v, want %v", i, steps[i].args, w)
+		}
+		if !steps[i].required {
+			t.Errorf("step %d (%s) must be required when notarizing", i, w[0])
+		}
+	}
+}
+
+// TestFinishDmgFailsAndDeletesOnARequiredStep runs the steps through a fake
+// command runner: a failing notarytool stops the build with its error and
+// removes the DMG, so a signed-but-not-notarized image can't be released.
+func TestFinishDmgFailsAndDeletesOnARequiredStep(t *testing.T) {
+	dmg := filepath.Join(t.TempDir(), "x.dmg")
+	writeFile(t, dmg, "x")
+	var ran []string
+	err := finishDmg(dmgFinishSteps(fullCfg().Macos, dmg, false), dmg, func(args []string) error {
+		ran = append(ran, args[1])
+		if args[1] == "notarytool" {
+			return errors.New("notarytool: rejected")
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("a failed notarization must fail the build, got %v", err)
+	}
+	if strings.Join(ran, ",") != "--force,notarytool" {
+		t.Errorf("must stop at the failed step, ran %v", ran)
+	}
+	if _, statErr := os.Stat(dmg); !os.IsNotExist(statErr) {
+		t.Error("the half-finished DMG must be deleted")
+	}
+}
+
+// TestFinishDmgToleratesABestEffortFailure: signing without notarization is
+// best-effort, so its failure leaves the DMG and the build alone.
+func TestFinishDmgToleratesABestEffortFailure(t *testing.T) {
+	m := fullCfg().Macos
+	m.NotaryProfile = ""
+	dmg := filepath.Join(t.TempDir(), "x.dmg")
+	writeFile(t, dmg, "x")
+	err := finishDmg(dmgFinishSteps(m, dmg, false), dmg, func([]string) error { return errors.New("codesign failed") })
+	if err != nil {
+		t.Errorf("a best-effort failure must not fail the build, got %v", err)
+	}
+	if _, statErr := os.Stat(dmg); statErr != nil {
+		t.Error("a best-effort failure must keep the DMG")
+	}
+}
+
+// TestDmgFinishStepsSignOnly: no notary profile signs the DMG best-effort and
+// stops there — the behaviour before DMG notarization existed.
+func TestDmgFinishStepsSignOnly(t *testing.T) {
+	m := fullCfg().Macos
+	m.NotaryProfile = ""
+	steps := dmgFinishSteps(m, "x.dmg", false)
+	if len(steps) != 1 || steps[0].args[0] != "codesign" || steps[0].required {
+		t.Errorf("sign-only must be one best-effort codesign, got %v", steps)
+	}
+}
+
+// TestDmgFinishStepsSnapshotAndUnsigned: a snapshot, or no signing identity,
+// leaves the DMG alone.
+func TestDmgFinishStepsSnapshotAndUnsigned(t *testing.T) {
+	if steps := dmgFinishSteps(fullCfg().Macos, "x.dmg", true); len(steps) != 0 {
+		t.Errorf("snapshot must not touch the DMG, got %v", steps)
+	}
+	m := fullCfg().Macos
+	m.SignIdentity = ""
+	if steps := dmgFinishSteps(m, "x.dmg", false); len(steps) != 0 {
+		t.Errorf("no identity must not touch the DMG, got %v", steps)
+	}
+	// Blank means absent, as in Config.validate: a whitespace profile signs only.
+	m = fullCfg().Macos
+	m.NotaryProfile = "  "
+	if steps := dmgFinishSteps(m, "x.dmg", false); len(steps) != 1 || steps[0].required {
+		t.Errorf("a blank notaryProfile must sign best-effort only, got %v", steps)
+	}
 }
 
 // TestBuildPackArgsMacPlistDropsBundleId: a custom Info.plist is passed via

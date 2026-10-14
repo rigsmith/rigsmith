@@ -367,7 +367,9 @@ error (shiprig never guesses).
 A desktop app packaged with [Velopack](https://velopack.io) is a first-class
 release unit. Drop a `velopack.json` (or `velopack.jsonc`) next to the project's
 manifest and the `build` step produces each channel's binaries + `vpk pack`s them,
-wraps the notarized macOS `.app` in a `.dmg`, and the `release` step attaches the
+wraps the notarized macOS `.app` in a `.dmg` (with a `signIdentity`, signed best-effort;
+add a `notaryProfile` and it is signed, notarized and stapled, each step required),
+and the `release` step attaches the
 installers **and the self-update feed** to the forge release — no `pack.sh`, no
 `vpk upload`.
 

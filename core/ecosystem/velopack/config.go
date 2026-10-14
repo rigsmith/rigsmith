@@ -244,6 +244,11 @@ func (c Config) validate() error {
 			return fmt.Errorf("velopack: channel %q is not a recognized RID (expected osx-*/win-*/linux-*)", ch)
 		}
 	}
+	// Apple notarizes only signed code, and the DMG steps are skipped without an
+	// identity, so a profile on its own would ship an un-notarized DMG silently.
+	if strings.TrimSpace(c.Macos.NotaryProfile) != "" && strings.TrimSpace(c.Macos.SignIdentity) == "" {
+		return fmt.Errorf("velopack: macos.notaryProfile needs macos.signIdentity — Apple notarizes only signed code")
+	}
 	return nil
 }
 
