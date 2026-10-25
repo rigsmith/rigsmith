@@ -282,8 +282,13 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 //
 // Idempotency rides on `dotnet nuget push --skip-duplicate`: a version already
 // present on the feed is a no-op on the server's side and a zero exit here, so no
-// separate registry query is needed. Because the exit code does not distinguish
-// "pushed" from "skipped duplicate", a successful push is reported as Published.
+// separate registry query is needed. The exit code does not distinguish "pushed"
+// from "skipped duplicate", so the output does: an HTTP feed answers a duplicate
+// with 409 and NuGet prints "Package '…' already exists at feed '…'." where a
+// real push prints "Your package was pushed." (--force-english-output keeps that
+// wording independent of the machine's language). A duplicate is reported as
+// Skipped, "already on" the feed: reporting it as pushed is how a run that
+// re-pushed the last release read as a new one.
 //
 // Credentials: the API key comes from the NUGET_API_KEY env var when set; when it
 // is unset we still run, letting `dotnet` fall back to stored feed credentials.
@@ -334,20 +339,37 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		return plugin.PublishResponse{}, fmt.Errorf("dotnet nuget push: %w", err)
 	}
 
-	args := []string{"nuget", "push", nupkg, "--source", source, "--skip-duplicate"}
+	args := []string{"nuget", "push", nupkg, "--source", source, "--skip-duplicate", "--force-english-output"}
 	if key != "" {
 		args = append(args, "--api-key", key)
 	}
-	if _, _, err := pushRunner(ctx, "", "dotnet", args...); err != nil {
+	stdout, stderr, err := pushRunner(ctx, "", "dotnet", args...)
+	if err != nil {
 		// dotnet nuget push takes the key on argv, so redact it from the error
 		// (which echoes the command) before surfacing.
 		return plugin.PublishResponse{}, fmt.Errorf("dotnet nuget push: %s", redact(err.Error(), key))
+	}
+	if pushedDuplicate(stdout + stderr) {
+		return plugin.PublishResponse{
+			Skipped: true,
+			Message: fmt.Sprintf("already on %s: nothing pushed", source) + authNote,
+		}, nil
 	}
 
 	return plugin.PublishResponse{
 		Published: true,
 		Message:   fmt.Sprintf("pushed %s@%s to %s", req.Package.Name, req.Package.Version, source) + authNote,
 	}, nil
+}
+
+// pushedDuplicate reports whether `dotnet nuget push --skip-duplicate` found the
+// version already on the feed rather than pushing it. Measured against a feed
+// answering 409: NuGet logs "Conflict …" then "Package '…' already exists at
+// feed '…'." and exits 0, without its "Your package was pushed." line. A local
+// folder feed can log both lines for a package it did not add, so "already
+// exists at feed" alone decides it.
+func pushedDuplicate(output string) bool {
+	return strings.Contains(output, "already exists at feed")
 }
 
 // nugetAPIKey resolves the API key for a push and a short note describing how it

@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/auth"
 	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/gitutil"
+	"github.com/rigsmith/rigsmith/core/planner"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/prestate"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
@@ -48,6 +49,19 @@ func report(out io.Writer, r publishResult) {
 	}
 }
 
+// pendingReleaseMessage says which packages have unreleased changesets and
+// what to do about it.
+func pendingReleaseMessage(pending []*planner.Module) string {
+	names := make([]string, 0, len(pending))
+	for _, m := range pending {
+		names = append(names, m.Name)
+	}
+	return fmt.Sprintf("%d package(s) have unreleased changesets (%s), so the versions on disk are the last release's. "+
+		"Run `shiprig version` and commit the bump first, or `shiprig release` to do it all; "+
+		"pass --allow-pending to publish the versions on disk anyway",
+		len(pending), strings.Join(names, ", "))
+}
+
 // dryRunProbeLimit bounds how many packages a dry run probes at once. Each
 // probe is one registry round trip; the point is to stop waiting for them one
 // at a time, not to open a connection per package at a registry that has its
@@ -70,6 +84,7 @@ func newPublishCmd() *cobra.Command {
 		npmAuth    string
 		packDir    string
 		distTag    string
+		allowPend  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "publish",
@@ -105,6 +120,24 @@ func newPublishCmd() *cobra.Command {
 			pkgs, ecoOf, err := ws.Discover(cmd.Context())
 			if err != nil {
 				return err
+			}
+			// Publish ships the versions already on disk; it never versions.
+			// With changesets still waiting to bump them, those versions are
+			// the LAST release's, so publishing now re-pushes it: a registry
+			// skips the duplicate, the tag already exists, and the run reads
+			// as a release that went out. Refuse before anything is touched.
+			if !allowPend {
+				pending, err := commands.PendingRelease(cmd.Context(), ws, pkgs)
+				if err != nil {
+					return err
+				}
+				if len(pending) > 0 {
+					msg := pendingReleaseMessage(pending)
+					if !dryRun {
+						return errors.New(msg)
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), commands.DimStyle.Render("warning: "+msg))
+				}
 			}
 			// Packages a build generated rather than a person checked in — npm
 			// binary wrappers built from release artifacts, say. Discovery walks
@@ -440,6 +473,7 @@ func newPublishCmd() *cobra.Command {
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
 	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:…); overrides node config")
 	f.StringVar(&distTag, "tag", "", "the npm dist-tag to publish under (default: the prerelease tag in pre mode; not allowed in pre mode or with --from-pack-dir)")
+	f.BoolVar(&allowPend, "allow-pending", false, "publish the versions on disk even though changesets are waiting to bump them (by default publish refuses until shiprig version has run)")
 	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
 	return cmd
 }

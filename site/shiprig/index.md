@@ -65,7 +65,13 @@ The whole workflow is wired:
   earlier. This is the build half of a split release, where the job holding
   registry credentials never builds. Cargo can't publish a prebuilt crate, so a
   cargo release is refused
-- `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI. In pre mode
+- `publish` — idempotent, confirm-gated on a TTY, `--yes` for CI. It ships the
+  versions already on disk and never versions, so it refuses while changeset
+  files are waiting to bump them (a dry run warns instead): run `shiprig version`
+  and commit first, or `shiprig release` to do it all, or pass `--allow-pending`
+  to publish the versions on disk anyway. Commit-derived changes don't count, since a
+  pipeline publishes before it tags. A NuGet version the feed already holds is
+  reported as skipped, "already on" the feed, not as pushed. In pre mode
   npm packages go out under the prerelease tag (`next`, say) rather than
   `latest`, as `changeset publish` does; `--tag <name>` picks another dist-tag
   outside pre mode.
