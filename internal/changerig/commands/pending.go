@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 
 	"github.com/rigsmith/rigsmith/core/changeset"
 	"github.com/rigsmith/rigsmith/core/planner"
@@ -33,11 +34,20 @@ func PendingRelease(ctx context.Context, ws *Workspace, pkgs []plugin.Package) (
 		return nil, nil
 	}
 	onDisk, err := changeset.Dir(ws.ChangesetDir, "")
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	if err != nil {
+		// Only a missing directory means "no changesets". A not-exist error for a
+		// file inside it (a dangling symlink, say) is a changeset that couldn't be
+		// read, and treating it as none would wave the publish through.
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("reading changesets: %w", err)
+		}
+		if _, statErr := os.Stat(ws.ChangesetDir); !errors.Is(statErr, fs.ErrNotExist) {
+			if statErr != nil {
+				return nil, fmt.Errorf("reading changesets: %w", statErr)
+			}
+			return nil, fmt.Errorf("reading changesets: %w", err)
+		}
 		onDisk = nil
-	case err != nil:
-		return nil, fmt.Errorf("reading changesets: %w", err)
 	}
 	files := make([]*changeset.Changeset, 0, len(onDisk))
 	for _, cs := range onDisk {

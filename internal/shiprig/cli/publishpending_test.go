@@ -246,3 +246,21 @@ func TestPublishDoesNotCountACollapsedInitialRelease(t *testing.T) {
 		t.Error("publish published nothing")
 	}
 }
+
+// A not-exist error from a file INSIDE .changeset/ (a dangling symlink) is a
+// changeset that couldn't be read, not "no changesets": publish must stop, not
+// treat the directory as empty and go ahead.
+func TestPublishStopsOnAnUnreadableChangesetFile(t *testing.T) {
+	root := planRepo(t, `{}`)
+	if err := os.Symlink(filepath.Join(root, "nowhere.md"), filepath.Join(root, ".changeset", "dangling.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	reqs, out, err := publishWithRecording(t)
+	if err == nil {
+		t.Fatalf("publish went ahead past an unreadable changeset; output:\n%s", out)
+	}
+	if len(reqs) != 0 {
+		t.Errorf("publish asked %d package(s) to publish", len(reqs))
+	}
+}
