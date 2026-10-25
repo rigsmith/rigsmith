@@ -92,6 +92,7 @@ changesets and commits, and a run that writes refuses it),
 `pre`, `info`, `ui`, `tag`, `publish-plan` (what a publish would release, as
 `changeset publish-plan`), `pack` (build those packages into a directory, as
 `changeset pack`), `publish` (idempotent, confirm-gated on a TTY;
+refuses while changeset files are unreleased, `--allow-pending` to override;
 `--from-pack-dir` pushes what `pack` built, building nothing;
 `--yes` for CI), and `release` — the configurable step pipeline
 (`.changeset/release.jsonc`: steps/hooks/vars/confirm gates/secret masking,
