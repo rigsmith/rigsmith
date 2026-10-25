@@ -74,3 +74,14 @@ func TestPublishAsksNuGetForEnglishOutput(t *testing.T) {
 		t.Errorf("push args = %v, want --skip-duplicate and --force-english-output", args)
 	}
 }
+
+// A local folder feed can log "already exists at feed" and then "Your package
+// was pushed." for a package it did not add. "Already exists" decides it.
+func TestPublishReportsAFolderFeedDuplicateAsSkipped(t *testing.T) {
+	resp, _ := publishPacked(t, "Pushing acme.lib.1.2.0.nupkg to '/feeds/local'...\n"+
+		"warn : Package '/pack/packages/Acme.Lib.1.2.0.nupkg' already exists at feed '/feeds/local'.\n"+
+		"Your package was pushed.\n")
+	if resp.Published || !resp.Skipped {
+		t.Fatalf("folder-feed duplicate: Published=%v Skipped=%v, want skipped", resp.Published, resp.Skipped)
+	}
+}

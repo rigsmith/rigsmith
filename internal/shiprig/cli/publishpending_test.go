@@ -183,3 +183,66 @@ func gitCommit(t *testing.T, root, message string) {
 		}
 	}
 }
+
+// A repo with no .changeset/ directory has nothing pending, and publishing it
+// must not fail for want of one.
+func TestPublishWithNoChangesetDirectoryPublishes(t *testing.T) {
+	root := planRepo(t, `{}`)
+	if err := os.RemoveAll(filepath.Join(root, ".changeset")); err != nil {
+		t.Fatal(err)
+	}
+
+	reqs, out, err := publishWithRecording(t)
+	if err != nil {
+		t.Fatalf("publish with no .changeset/: %v\n%s", err, out)
+	}
+	if len(reqs) == 0 {
+		t.Error("publish published nothing")
+	}
+}
+
+// A first release with initialRelease.collapse folds its commits into one
+// synthetic "Initial release" changeset, which carries no commit SHA. It is
+// commit-derived all the same, so it must not block the publish.
+func TestPublishDoesNotCountACollapsedInitialRelease(t *testing.T) {
+	root := planRepo(t, `{"versioning": {"source": "both", "initialRelease": {"collapse": true}}}`)
+	// From the resolved path, as in TestPublishDoesNotCountCommitsAsUnreleasedChangesets.
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root = real
+	t.Chdir(root)
+	gitCommit(t, root, "feat(lib): the first feature, before any release tag")
+
+	// The case must really arise: a collapsed changeset with no commit SHA.
+	ws, err := commands.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgs, _, err := ws.Discover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sets, _, err := ws.LoadChangesets(context.Background(), pkgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collapsed := 0
+	for _, cs := range sets {
+		if cs.Commit == "" {
+			collapsed++
+		}
+	}
+	if collapsed == 0 {
+		t.Fatalf("no collapsed initial-release changeset without a commit SHA (%d changeset(s) loaded); the test is not testing anything", len(sets))
+	}
+
+	reqs, out, err := publishWithRecording(t)
+	if err != nil {
+		t.Fatalf("publish refused a collapsed initial release: %v\n%s", err, out)
+	}
+	if len(reqs) == 0 {
+		t.Error("publish published nothing")
+	}
+}

@@ -365,9 +365,11 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 // pushedDuplicate reports whether `dotnet nuget push --skip-duplicate` found the
 // version already on the feed rather than pushing it. Measured against a feed
 // answering 409: NuGet logs "Conflict …" then "Package '…' already exists at
-// feed '…'." and exits 0, without its "Your package was pushed." line.
+// feed '…'." and exits 0, without its "Your package was pushed." line. A local
+// folder feed can log both lines for a package it did not add, so "already
+// exists at feed" alone decides it.
 func pushedDuplicate(output string) bool {
-	return strings.Contains(output, "already exists at feed") && !strings.Contains(output, "Your package was pushed")
+	return strings.Contains(output, "already exists at feed")
 }
 
 // nugetAPIKey resolves the API key for a push and a short note describing how it
