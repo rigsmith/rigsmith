@@ -10,17 +10,15 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/completion"
 	"github.com/spf13/cobra"
 )
 
 // `rig setup` installs rig's shell integration: the `rig` wrapper function
 // (so `rig cd` can actually change the parent shell's directory — the binary
-// prints the target dir to stdout, see cd.go) and cobra's tab-completion
-// script, appended idempotently to the shell's rc file between markers so a
-// re-run replaces the block in place. The snippet text is adapted from the
-// .NET rig's CompletionSetup scripts; the completion engine itself is cobra's
-// `rig completion <shell>` (fang registers it) rather than the .NET tool's
-// self-contained [suggest] directive.
+// prints the target dir to stdout, see cd.go) and tab-completion integration,
+// appended idempotently to the shell's rc file between markers. For zsh the
+// generated files are installed on fpath; other shells load Cobra's script.
 
 // setupShells are the shells `rig setup` can write an rc snippet for.
 // "pwsh" is accepted as an alias for powershell.
@@ -31,13 +29,44 @@ var setupShells = []string{"zsh", "bash", "fish", "powershell"}
 // command's name, independent of which binary name the user invokes it under.
 const integrationBase = "rig"
 
-// companionTools are the sibling rig-family binaries whose tab-completion the
-// canonical `rig setup` block also loads, so one setup covers the whole family
-// (you never run setup once per tool). Each is cobra-based — so `<tool>
-// completion <shell>` produces a script — and is sourced only when present on
-// PATH, so a machine missing one simply skips it. They need no cd wrapper: none
-// has a `cd` subcommand; that's rig's alone.
+// companionTools are the sibling rig-family binaries whose completion the
+// canonical `rig setup` block also installs. A missing companion is skipped.
 var companionTools = []string{"shiprig", "changerig", "clauderig"}
+
+func installZshFamily(dev bool) error {
+	names := append([]string{integrationBase}, companionTools...)
+	for _, base := range names {
+		name := base
+		if dev {
+			name += "-dev"
+		}
+		if base == integrationBase {
+			exe, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			if _, _, err := completion.Install(name, exe, ""); err != nil {
+				return fmt.Errorf("installing %s zsh completion: %w", name, err)
+			}
+			continue
+		}
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue // A missing companion has no completion to install.
+		}
+		if dev {
+			// The launcher knows its selected worktree; let it build that binary.
+			if output, err := exec.Command(path, "completion", "install", "--dev").CombinedOutput(); err != nil {
+				return fmt.Errorf("installing %s zsh completion: %w: %s", name, err, output)
+			}
+			continue
+		}
+		if _, _, err := completion.Install(name, path, ""); err != nil {
+			return fmt.Errorf("installing %s zsh completion: %w", name, err)
+		}
+	}
+	return nil
+}
 
 // Markers bracketing the managed block in the rc file. They carry the program
 // name so a `--dev` block (rig-dev) and the normal block coexist in one rc file
@@ -60,9 +89,9 @@ Install rig's shell integration into your shell's startup file:
   - the rig() wrapper function, so "rig cd [query]" changes your directory
     (a subprocess can't cd its parent shell; rig prints the dir, the wrapper
     cds to it — everything else passes through to the binary), and
-  - tab completion, loaded via cobra's "rig completion <shell>" — for rig and
-    the rest of the family (shiprig, changerig, clauderig), so one setup wires
-    them all. A companion is loaded only when it's on your PATH.
+  - tab completion for rig and the rest of the family (shiprig, changerig,
+    clauderig). For zsh, setup installs autoload files and adds their directory
+    to fpath before compinit. A companion is installed only when on your PATH.
 
 The shell is taken from the argument, else $SHELL. Supported: zsh, bash, fish,
 powershell (alias: pwsh). Startup files: ~/.zshrc, ~/.bashrc,
@@ -113,6 +142,11 @@ Use --print to inspect the snippet (or wire it up yourself) without writing.
 					fmt.Fprintln(out, aliasSnippet(shell))
 				}
 				return nil
+			}
+			if shell == "zsh" {
+				if err := installZshFamily(dev); err != nil {
+					return err
+				}
 			}
 
 			changed, err := installSnippet(rcPath, snippet, prog)
@@ -356,6 +390,9 @@ func setupSnippet(shell, prog string) string {
 // `clauderig-dev <Tab>` completes against the live build. Returns "" when there
 // are no companions. Pure.
 func companionCompletions(shell, prog string) string {
+	if shell == "zsh" {
+		return "" // compinit discovers installed family files on fpath.
+	}
 	if len(companionTools) == 0 {
 		return ""
 	}
@@ -399,16 +436,26 @@ func companionCompletions(shell, prog string) string {
 	return strings.Join(lines, "\n")
 }
 
-// posixCompletion sources cobra's completion for zsh/bash. cobra binds the
-// completion function to the base name (integrationBase); when prog differs
-// (rig-dev), we additionally bind that same function to prog — its runtime
-// query uses the typed command, so one function serves both names.
+// posixCompletion adds zsh's autoload directory or sources Cobra's bash script.
+// The bash dev variant rebinds Cobra's base-name completer to rig-dev.
 func posixCompletion(shell, prog string) string {
 	var b strings.Builder
 	if shell == "zsh" {
-		// Initialize zsh's completion system if it isn't already (no-op on
-		// oh-my-zsh etc.) — cobra's script needs compdef.
+		// The files are installed by each tool's completion install command.
+		b.WriteString("fpath=(\"${XDG_DATA_HOME:-$HOME/.local/share}/rigsmith/zsh/site-functions\" $fpath)\n")
 		b.WriteString("(( $+functions[compdef] )) || { autoload -Uz compinit && compinit -u 2>/dev/null }\n")
+		family := "rig shiprig changerig clauderig"
+		if prog != integrationBase {
+			family = "rig-dev shiprig-dev changerig-dev clauderig-dev"
+		}
+		fmt.Fprintf(&b, "for __rig_completion in %s; do\n", family)
+		b.WriteString("  if [[ -f \"${fpath[1]}/_${__rig_completion}\" ]]; then\n")
+		b.WriteString("    autoload -Uz \"_${__rig_completion}\"\n")
+		b.WriteString("    compdef \"_${__rig_completion}\" \"${__rig_completion}\"\n")
+		b.WriteString("  fi\n")
+		b.WriteString("done\n")
+		b.WriteString("unset __rig_completion\n")
+		return b.String()
 	}
 	fmt.Fprintf(&b, `eval "$(command %s completion %s)"`, prog, shell)
 	if prog != integrationBase {

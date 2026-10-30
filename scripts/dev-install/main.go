@@ -47,6 +47,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -92,6 +93,11 @@ func run() error {
 		if err != nil {
 			return err
 		}
+		if runtime.GOOS != "windows" && isZshTool(t.Name) {
+			if output, err := exec.Command(devPath, "completion", "install", "--dev").CombinedOutput(); err != nil {
+				return fmt.Errorf("installing %s-dev zsh completion: %w: %s", t.Name, err, output)
+			}
+		}
 		made = append(made,
 			fmt.Sprintf("  %-18s build %s from cwd (RIGSMITH_DEV_SRC or pinned route, else repo)", filepath.Base(devPath), t.Name),
 			fmt.Sprintf("  %-18s run a worktree's %s; --use [query] pins it as the -dev route", filepath.Base(wtPath), t.Name),
@@ -105,6 +111,14 @@ func run() error {
 	fmt.Println(strings.Join(made, "\n"))
 	printPathHint(bin)
 	return nil
+}
+
+func isZshTool(name string) bool {
+	switch name {
+	case "rig", "shiprig", "changerig", "clauderig":
+		return true
+	}
+	return false
 }
 
 func installDir() string {
@@ -131,6 +145,11 @@ const (
 # surfaces the typo; only a pinned route whose worktree was removed falls back to
 # the repo. (go run -C would reset cwd to the repo, resolving the wrong workspace.)
 set -e
+completion_file="${XDG_DATA_HOME:-$HOME/.local/share}/rigsmith/zsh/site-functions/_{{NAME}}-dev"
+if [ "$#" -eq 2 ] && [ "$1" = completion ] && [ "$2" = zsh ] && [ -r "$completion_file" ]; then
+	cat "$completion_file"
+	exit 0
+fi
 src="${RIGSMITH_DEV_SRC:-}"
 if [ -z "$src" ] && [ -f "{{ROUTE}}" ]; then
 	src="$(cat "{{ROUTE}}")"

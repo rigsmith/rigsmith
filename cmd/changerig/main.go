@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/completion"
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 )
@@ -30,6 +31,12 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	return completion.Run(os.Args[1:], "changerig", os.Stdout, func() error {
+		return runCommand(ctx)
+	})
+}
+
+func runCommand(ctx context.Context) error {
 	root := commands.NewRootCmd()
 
 	// Bare, interactive `changerig` (no verb/flag) lands on the menu. Routing
