@@ -64,7 +64,8 @@ func Run(args []string, name string, out io.Writer, normal func() error) error {
 // ZshScript is Cobra's zsh completion script, with only the command name substituted.
 // Completion candidates still come from the running tool when Tab is pressed.
 func ZshScript(name string) string {
-	script := strings.ReplaceAll(zshTemplate, "{{NAME}}", name)
+	script := strings.ReplaceAll(zshTemplate, "\r\n", "\n")
+	script = strings.ReplaceAll(script, "{{NAME}}", name)
 	return strings.ReplaceAll(script, "{{PAD}}", strings.Repeat(" ", 37-len(name)))
 }
 
