@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/completion"
 	"github.com/rigsmith/rigsmith/core/gowork"
 	"github.com/rigsmith/rigsmith/scripts/internal/installutil"
 )
@@ -68,6 +69,11 @@ func run() error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("building %s: %w", t.Name, err)
 		}
+		if runtime.GOOS != "windows" && isZshTool(t.Name) {
+			if _, _, err := completion.Install(t.Name, out, ""); err != nil {
+				return fmt.Errorf("installing %s zsh completion: %w", t.Name, err)
+			}
+		}
 		made = append(made, fmt.Sprintf("  %-12s %s", t.Name, out))
 	}
 
@@ -78,6 +84,14 @@ func run() error {
 	fmt.Println(strings.Join(made, "\n"))
 	printPathHint(bin)
 	return nil
+}
+
+func isZshTool(name string) bool {
+	switch name {
+	case "rig", "shiprig", "changerig", "clauderig":
+		return true
+	}
+	return false
 }
 
 // installDir is ${RIGSMITH_INSTALL:-$HOME/.local}/bin — the same prefix the

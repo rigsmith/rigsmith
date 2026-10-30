@@ -106,6 +106,13 @@ install_binary() {
   trap - EXIT
 
   info "installed $bin -> $BIN_DIR/$bin"
+  case "$bin" in
+    rig | shiprig | changerig | clauderig)
+      if ! "$BIN_DIR/$bin" completion install >/dev/null; then
+        warn "could not install $bin zsh completion; run '$bin completion install' after updating"
+      fi
+      ;;
+  esac
 }
 
 # --- PATH hint ---------------------------------------------------------------

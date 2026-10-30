@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/rigsmith/rigsmith/core/brand"
+	"github.com/rigsmith/rigsmith/core/completion"
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/rigsmith/rigsmith/internal/clauderig/commands"
 )
@@ -28,6 +29,12 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	return completion.Run(os.Args[1:], "clauderig", os.Stdout, func() error {
+		return runCommand(ctx)
+	})
+}
+
+func runCommand(ctx context.Context) error {
 	root := commands.NewRootCmd(version)
 
 	// Bare, interactive `clauderig` lands on the dashboard — a discoverable hub

@@ -8,11 +8,14 @@ import (
 	"context"
 	"os"
 
+	"github.com/rigsmith/rigsmith/core/completion"
 	"github.com/rigsmith/rigsmith/internal/shiprig/cli"
 )
 
 func main() {
-	if err := cli.Execute(context.Background()); err != nil {
+	if err := completion.Run(os.Args[1:], "shiprig", os.Stdout, func() error {
+		return cli.Execute(context.Background())
+	}); err != nil {
 		os.Exit(1)
 	}
 }
