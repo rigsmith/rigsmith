@@ -1,0 +1,28 @@
+core/completion/completion.go
+  s_567bfae8dfbedd::t_695df73ff2b5a3 67-68
+core/completion/completion_test.go
+  s_567bfae8dfbedd::t_695df73ff2b5a3 27-28,31-40
+  s_567bfae8dfbedd::t_ca485f10187aec 29-30
+CHANGELOG.md
+  s_567bfae8dfbedd::t_049694b67d2c28 12
+go.mod
+  s_567bfae8dfbedd::t_5c06ff511c36ed 3
+ui/go.mod
+  s_567bfae8dfbedd::t_4eb76e9d70a536 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "42b714d7b4d02130182f9c0a83b59243cc5fe974",
+  "prompts": {},
+  "sessions": {
+    "s_567bfae8dfbedd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18e22-01d8-7d23-9e53-807167cea80a",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
