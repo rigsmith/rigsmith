@@ -6,6 +6,7 @@ package cli
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ func TestSetupSnippet_ZshCarriesCompletionAndTheCdWrapper(t *testing.T) {
 			t.Errorf("zsh snippet missing %q:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "completion zsh") || strings.Contains(s, "compdef _") {
+	if strings.Contains(s, "completion zsh") {
 		t.Errorf("zsh should autoload installed files without launching tools:\n%s", s)
 	}
 }
@@ -61,8 +62,54 @@ func TestSetupSnippet_DevTargetsRigDev(t *testing.T) {
 			t.Errorf("rig-dev zsh snippet missing %q:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "completion zsh") || strings.Contains(s, "compdef _") {
+	if strings.Contains(s, "completion zsh") {
 		t.Errorf("zsh should autoload installed -dev files without launching tools:\n%s", s)
+	}
+}
+
+func TestZshCompletionRegistersFilesAfterCompinit(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh is not installed")
+	}
+	for _, tc := range []struct {
+		prog      string
+		companion string
+	}{
+		{prog: "rig", companion: "shiprig"},
+		{prog: "rig-dev", companion: "shiprig-dev"},
+	} {
+		t.Run(tc.prog, func(t *testing.T) {
+			home := fakeHome(t)
+			dir := filepath.Join(home, ".local", "share", "rigsmith", "zsh", "site-functions")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			snippet := filepath.Join(home, "completion.zsh")
+			if err := os.WriteFile(snippet, []byte(posixCompletion("zsh", tc.prog)), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(zsh, "-fc", `
+autoload -Uz compinit
+compinit -u -d "$HOME/.zcompdump"
+unset "_comps[$2]" "_comps[$3]"
+if [[ -n "${_comps[$2]-}" || -n "${_comps[$3]-}" ]]; then
+  print -u2 -- "completion mappings were not cleared"
+  exit 1
+fi
+print -rl -- "#compdef $2" "_$2() { : }" > "$XDG_DATA_HOME/rigsmith/zsh/site-functions/_$2"
+print -rl -- "#compdef $3" "_$3() { : }" > "$XDG_DATA_HOME/rigsmith/zsh/site-functions/_$3"
+source "$1"
+	print -r -- "${_comps[$2]}|${_comps[$3]}"
+`, "zsh", snippet, tc.prog, tc.companion)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("zsh completion setup: %v\n%s", err, out)
+			}
+			if got, want := strings.TrimSpace(string(out)), "_"+tc.prog+"|_"+tc.companion; got != want {
+				t.Fatalf("completion mappings after compinit = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

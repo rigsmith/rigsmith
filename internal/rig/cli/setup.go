@@ -444,6 +444,17 @@ func posixCompletion(shell, prog string) string {
 		// The files are installed by each tool's completion install command.
 		b.WriteString("fpath=(\"${XDG_DATA_HOME:-$HOME/.local/share}/rigsmith/zsh/site-functions\" $fpath)\n")
 		b.WriteString("(( $+functions[compdef] )) || { autoload -Uz compinit && compinit -u 2>/dev/null }\n")
+		family := "rig shiprig changerig clauderig"
+		if prog != integrationBase {
+			family = "rig-dev shiprig-dev changerig-dev clauderig-dev"
+		}
+		fmt.Fprintf(&b, "for __rig_completion in %s; do\n", family)
+		b.WriteString("  if [[ -f \"${fpath[1]}/_${__rig_completion}\" ]]; then\n")
+		b.WriteString("    autoload -Uz \"_${__rig_completion}\"\n")
+		b.WriteString("    compdef \"_${__rig_completion}\" \"${__rig_completion}\"\n")
+		b.WriteString("  fi\n")
+		b.WriteString("done\n")
+		b.WriteString("unset __rig_completion\n")
 		return b.String()
 	}
 	fmt.Fprintf(&b, `eval "$(command %s completion %s)"`, prog, shell)
