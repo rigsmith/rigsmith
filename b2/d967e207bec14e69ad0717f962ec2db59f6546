@@ -1,0 +1,66 @@
+scripts/install_release_test.go
+  s_567bfae8dfbedd::t_df1ab4f5b104ef 1-61
+core/completion/completion_test.go
+  s_567bfae8dfbedd::t_1466800a0ae363 1-79
+cmd/clauderig/main.go
+  s_567bfae8dfbedd::t_b585a3051ba4e2 17,32-37
+cmd/shiprig/main.go
+  s_567bfae8dfbedd::t_b585a3051ba4e2 11,16-18
+internal/rig/cli/setup.go
+  s_567bfae8dfbedd::t_9a83510092990d 13,146-149
+  s_567bfae8dfbedd::t_343d1b07d6b7c5 19-21,92-94
+  s_567bfae8dfbedd::t_8b3aa7a147da27 32-33,439-440
+  s_567bfae8dfbedd::t_76e599f9b2c6d8 36-70
+  s_567bfae8dfbedd::t_fd65493443ad77 393-395,444-445
+  s_567bfae8dfbedd::t_ebdea70307756d 447-451
+  s_567bfae8dfbedd::t_330e01b5e0f1d9 452-457
+cmd/changerig/main.go
+  s_567bfae8dfbedd::t_b585a3051ba4e2 16,34-39
+scripts/source-install/main_test.go
+  s_567bfae8dfbedd::t_beeffb7e3d5b18 1-33
+internal/rig/cli/setup_test.go
+  s_567bfae8dfbedd::t_e38f53913568d9 9,47,65,70-74
+  s_567bfae8dfbedd::t_4db7d83811d035 23
+  s_567bfae8dfbedd::t_fb12fb1148693a 32-33,54-55
+  s_567bfae8dfbedd::t_818bc39ca9844f 46,64
+  s_567bfae8dfbedd::t_a269c44b945beb 56
+  s_567bfae8dfbedd::t_e67c73a47eaf92 75-92,95-96,100-101,103-112
+  s_567bfae8dfbedd::t_620e6684e2fe44 93-94,102
+  s_567bfae8dfbedd::t_aa57326236e14c 97
+  s_567bfae8dfbedd::t_79bbb93afc2d1f 98-99
+scripts/dev-install/main.go
+  s_567bfae8dfbedd::t_e0260f32a30dbd 50,96-100,116-121
+  s_567bfae8dfbedd::t_ab37bc74b72ee9 148-152
+core/completion/completion.go
+  s_567bfae8dfbedd::t_42764b2ac6a0b2 1-55,64-105,109-144
+  s_567bfae8dfbedd::t_d1a80a2c319d7b 56-63,106-108
+cmd/rig/main.go
+  s_567bfae8dfbedd::t_b585a3051ba4e2 11,16-18
+scripts/install.sh
+  s_567bfae8dfbedd::t_3b92170d0bef1e 109-115
+scripts/dev-install/main_test.go
+  s_567bfae8dfbedd::t_dd6bddcccb7e78 1-37
+  s_567bfae8dfbedd::t_868289dcd48fa1 38-85
+scripts/source-install/main.go
+  s_567bfae8dfbedd::t_7ad27b05edda26 26,72-76,89-94
+.changeset/jolly-geckos-jump.md
+  s_567bfae8dfbedd::t_257cff63d9ed13 1-6
+core/completion/zsh.tmpl
+  s_567bfae8dfbedd::t_4f2f50147efdca 1-212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b2d967e207bec14e69ad0717f962ec2db59f6546",
+  "prompts": {},
+  "sessions": {
+    "s_567bfae8dfbedd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18e22-01d8-7d23-9e53-807167cea80a",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
