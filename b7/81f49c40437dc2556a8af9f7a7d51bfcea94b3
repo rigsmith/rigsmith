@@ -1,0 +1,26 @@
+internal/rig/cli/setup_test.go
+  s_567bfae8dfbedd::t_aa57326236e14c 97
+  s_567bfae8dfbedd::t_e38f53913568d9 9,47,65,70-74
+  s_567bfae8dfbedd::t_620e6684e2fe44 93-94,102
+  s_567bfae8dfbedd::t_e67c73a47eaf92 75-92,95-96,100-101,103-112
+  s_567bfae8dfbedd::t_79bbb93afc2d1f 98-99
+internal/rig/cli/setup.go
+  s_567bfae8dfbedd::t_330e01b5e0f1d9 452-457
+  s_567bfae8dfbedd::t_ebdea70307756d 447-451
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b781f49c40437dc2556a8af9f7a7d51bfcea94b3",
+  "prompts": {},
+  "sessions": {
+    "s_567bfae8dfbedd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18e22-01d8-7d23-9e53-807167cea80a",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
