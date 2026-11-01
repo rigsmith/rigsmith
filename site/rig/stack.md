@@ -1146,6 +1146,21 @@ heavily shared graphs can cost more than a simple chain. There is no extra
 compilation or restore. Queries require the referenced project to import the
 overlay; projects hiding it cannot return their effective sets.
 
+SDK reference preparation uses private SDK targets and items. If an SDK project
+has evaluated ProjectReferences to existing files but preparation returns no
+candidates, the query fails with `RIGSTACK001`, naming a likely SDK item-contract
+change. Conditional references that evaluate away and missing files do not
+trigger this check. This is a hard error, independent of `TreatWarningsAsErrors`:
+a warning could be ignored and silently compile guarded code or tests out. A
+build with untrustworthy source signals must stop until rig or the SDK is updated.
+
+`BuildProjectReferences=false` suppresses referenced builds, not the read-only
+signal query: a caller being compiled still needs its effective constants even
+when sibling binaries already exist. `dotnet test --no-build` skips compilation
+and uses the constants baked into the existing test assembly; it does not need
+to recompute source signals. Build that assembly with the intended stack-source
+settings first. A no-build run cannot recover tests omitted by an earlier build.
+
 The static PackageReference closure remains as a conservative fallback for
 package edges inside swapped siblings. Direct conditional PackageReferences and
 ProjectReferences are evaluated by MSBuild, including the selected SDK framework.

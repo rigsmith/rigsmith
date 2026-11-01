@@ -431,6 +431,10 @@ func renderOverlay(redirects []plugin.Redirect) string {
       <_RigStackQueryFramework Include="$(TargetFrameworks)" Condition="'$(TargetFramework)' == ''" />
       <_RigStackQueryCandidate Include="@(_MSBuildProjectReferenceExistent)" Condition="'$(_RigStackQueryDependsOn)' != ''" />
       <_RigStackQueryCandidate Include="@(ProjectReference)" Condition="'$(_RigStackQueryDependsOn)' == ''" />
+      <_RigStackExistingReference Include="@(ProjectReference)" Condition="Exists('%(ProjectReference.FullPath)')" />
+    </ItemGroup>
+    <Error Code="RIGSTACK001" Condition="'$(_RigStackQueryDependsOn)' != '' and '@(_RigStackExistingReference)' != '' and '@(_RigStackQueryCandidate)' == ''" Text="rig stack cannot determine source signals for $(MSBuildProjectFullPath): SDK reference preparation returned no candidates for existing ProjectReferences. The SDK may have changed its _MSBuildProjectReferenceExistent item contract. Update rig or the SDK before building with stack sources." />
+    <ItemGroup>
       <_RigStackQueryReference Include="@(_RigStackQueryCandidate)" Condition="$([System.String]::Copy('$(_RigStackNextVisited)').IndexOf('|%(_RigStackQueryCandidate.FullPath)|', System.StringComparison.OrdinalIgnoreCase)) == -1" />
       <_RigStackProducer Include="@(StackSource)"><Package>%(StackSource.Identity)</Package></_RigStackProducer>
       <_RigStackProducerPath Include="@(_RigStackProducer->'$(MSBuildThisFileDirectory)%(Path)')" />

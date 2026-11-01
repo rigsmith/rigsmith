@@ -303,7 +303,9 @@ On .NET, `wire` source constants and target-time properties include the static
 PackageReference closure of each swapped sibling, propagated through evaluated
 ProjectReferences before compile, including incremental builds. Unreachable
 siblings stay absent; deeper package conditions remain conservative. Doctor
-follows literal ProjectReference paths in its static preview. See
+follows literal ProjectReference paths in its static preview. An empty SDK
+reference candidate set with existing references fails with `RIGSTACK001` so an
+SDK change cannot silently remove guarded code or tests. See
 [Source signals](stack.md#source-signals-from-the-net-overlay) for limitations.
 Hand-owned imports that continue the parent search are preserved; historical
 rig-owned ungated imports get a legacy advisory, with a manual remedy for customized blocks that wire cannot safely upgrade.

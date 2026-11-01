@@ -22,7 +22,8 @@ On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,
 keeping unreachable siblings absent.
 See [source signals](site/rig/stack.md#source-signals-from-the-net-overlay) for static package-condition
-and preview limitations.
+and preview limitations. SDK changes that erase reference candidates fail with
+`RIGSTACK001` instead of silently dropping guarded code or tests.
 
 These binaries are single, statically-linked Go executables — the north-star
 property: no .NET runtime, no Node, installable via `curl | sh` / Homebrew /

@@ -1041,7 +1041,7 @@ func TestReachableSourceSignals(t *testing.T) {
 	if !strings.Contains(body, `Condition="@(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Control')) Or @(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Core'))"`) {
 		t.Fatal(body)
 	}
-	for _, fragment := range []string{`Returns="@(_RigStackEffectiveSource)"`, `DependsOnTargets="RigStackGetSourceSignals" BeforeTargets="PrepareForBuild;CoreCompile"`, `Targets="RigStackGetSourceSignals"`, `System.StringComparison.OrdinalIgnoreCase`} {
+	for _, fragment := range []string{`Returns="@(_RigStackEffectiveSource)"`, `DependsOnTargets="RigStackGetSourceSignals" BeforeTargets="PrepareForBuild;CoreCompile"`, `Targets="RigStackGetSourceSignals"`, `System.StringComparison.OrdinalIgnoreCase`, `Code="RIGSTACK001"`, `Condition="Exists('%(ProjectReference.FullPath)')"`} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("missing source query contract %s", fragment)
 		}
@@ -1278,5 +1278,58 @@ func TestStackSourceQueryE2E(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, dir, "bin")); !os.IsNotExist(err) {
 			t.Fatalf("query created build output for %s: %v", dir, err)
 		}
+	}
+}
+
+func TestStackSourceSdkItemGuardE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("RIG_STACK_E2E=1")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("dotnet unavailable")
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "NuGet.Config"), `<configuration><packageSources><clear/></packageSources></configuration>`)
+	writeFile(t, filepath.Join(root, overlayFile), renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}))
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><Target Name="ForbidReferenceCompilation" BeforeTargets="CoreCompile" Condition="'$(ForbidReferenceCompilation)' == 'true'"><Error Text="source query compiled reference"/></Target></Project>`)
+	writeFile(t, filepath.Join(root, "lib/Lib.cs"), `public class Lib { public static int Source => 1; }`)
+	project := func(refs string) string {
+		return `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup>` + refs + `</ItemGroup><Target Name="SimulateSdkItemRename" BeforeTargets="RigStackGetSourceSignals" Condition="'$(SimulateSdkItemRename)' == 'true'"><ItemGroup><_RenamedSdkProjectReference Include="@(_MSBuildProjectReferenceExistent)"/><_MSBuildProjectReferenceExistent Remove="@(_MSBuildProjectReferenceExistent)"/></ItemGroup></Target></Project>`
+	}
+	app := filepath.Join(root, "app/App.csproj")
+	writeFile(t, app, project(`<ProjectReference Include="../lib/Lib.csproj"/>`))
+	writeFile(t, filepath.Join(root, "app/App.cs"), `#if STACK_ACME_CORE
+public class App { int value = Lib.Source; }
+#else
+#error missing normal source signal
+#endif`)
+	invoke := func(wantGuard bool, args ...string) {
+		t.Helper()
+		cmd := exec.Command("dotnet", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		hasGuard := strings.Contains(string(out), "RIGSTACK001")
+		if wantGuard {
+			if err == nil || !hasGuard || !strings.Contains(string(out), "SDK may have changed") {
+				t.Fatalf("missing SDK-contract error: %v\n%s", err, out)
+			}
+		} else if err != nil || hasGuard {
+			t.Fatalf("unexpected guard/build failure: %v\n%s", err, out)
+		}
+	}
+	invoke(false, "build", app)
+	invoke(false, "build", app, "--no-restore", "--no-incremental", "-p:BuildProjectReferences=false", "-p:ForbidReferenceCompilation=true")
+	invoke(true, "build", app, "--no-restore", "-p:SimulateSdkItemRename=true")
+	invoke(false, "msbuild", app, "-t:RigStackGetSourceSignals", "-p:UseStackSources=false", "-p:SimulateSdkItemRename=true")
+	// Evaluated-away and nonexistent references must not be diagnosed as SDK drift,
+	// even with the same simulated rename. Query without assets for these fixtures
+	// so a previous restore cannot add unrelated transitive references back in.
+	for _, tc := range []struct{ name, refs string }{
+		{"inactive", `<ProjectReference Include="../lib/Lib.csproj" Condition="'1' == '2'"/>`},
+		{"missing", `<ProjectReference Include="../missing/Missing.csproj"/>`},
+	} {
+		path := filepath.Join(root, tc.name, "App.csproj")
+		writeFile(t, path, project(tc.refs))
+		invoke(false, "msbuild", path, "-t:RigStackGetSourceSignals", "-p:SkipResolvePackageAssets=true", "-p:SimulateSdkItemRename=true")
 	}
 }
