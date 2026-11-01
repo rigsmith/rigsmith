@@ -14,8 +14,8 @@ esac
 bindir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/rig-bin.XXXXXX")"
 ext=tar.gz; [[ "$os" == windows ]] && ext=zip
 asset="rig_${version#v}_${os}_${arch}.${ext}"
-curl -fsSL -o "$bindir/archive.$ext" "https://github.com/rigsmith/rigsmith/releases/download/$version/$asset"
-curl -fsSL -o "$bindir/checksums.txt" "https://github.com/rigsmith/rigsmith/releases/download/$version/checksums.txt"
+curl -fsSL --retry 3 --connect-timeout 30 -o "$bindir/archive.$ext" "https://github.com/rigsmith/rigsmith/releases/download/$version/$asset"
+curl -fsSL --retry 3 --connect-timeout 30 -o "$bindir/checksums.txt" "https://github.com/rigsmith/rigsmith/releases/download/$version/checksums.txt"
 want="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$bindir/checksums.txt")"
 [[ "$want" =~ ^[0-9a-fA-F]{64}$ ]] || { echo 'Missing or invalid release checksum' >&2; exit 1; }
 if command -v sha256sum >/dev/null; then got="$(sha256sum < "$bindir/archive.$ext")"; else got="$(shasum -a 256 < "$bindir/archive.$ext")"; fi

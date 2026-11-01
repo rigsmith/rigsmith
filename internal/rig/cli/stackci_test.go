@@ -262,6 +262,7 @@ func stackCIActionScript(t *testing.T, name string) string {
 		Runs struct {
 			Steps []struct {
 				Name string
+				Env  map[string]string
 				Run  string
 			}
 		}
@@ -271,6 +272,13 @@ func stackCIActionScript(t *testing.T, name string) string {
 	}
 	for _, step := range action.Runs.Steps {
 		if step.Name == name {
+			if name == "Rebuild, wire, build and test" {
+				for key, input := range map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history"} {
+					if step.Env[key] != "${{ inputs."+input+" }}" {
+						t.Fatalf("input %s mapping: %q", input, step.Env[key])
+					}
+				}
+			}
 			return step.Run
 		}
 	}

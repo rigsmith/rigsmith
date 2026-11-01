@@ -20,7 +20,8 @@ Keep your plain-clone build matrix alongside this job. Install required language
 SDKs as usual. The checkout may be shallow. `rig-version` is required and must
 be an exact release tag. Installation verifies the archive against the release's
 `checksums.txt` before extraction; all download and verification failures are
-fatal, including missing assets. No source fallback survives. Josh uses rig's
+fatal, including missing assets. Both downloads retry transient failures up to
+three times with a 30-second connection timeout; checksum mismatches remain fatal. No source fallback survives. Josh uses rig's
 built-in version and source-pinned per-platform SHA256; custom pins are refused
 in CI. Restored josh binaries are hashed again before execution.
 

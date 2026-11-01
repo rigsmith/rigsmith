@@ -84,6 +84,7 @@ func TestStackCIInstallerTampered(t *testing.T) {
 	t.Setenv("FIXTURE_ARCHIVE", archive)
 	t.Setenv("FIXTURE_SUM", strings.Repeat("0", 64))
 	curl := `#!/bin/bash
+[[ "$*" == *"--retry 3 --connect-timeout 30"* ]] || { echo "missing bounded download retries" >&2; exit 98; }
 while [[ $# -gt 0 ]]; do if [[ $1 == -o ]]; then dest=$2; shift; fi; shift; done
 if [[ $dest == *checksums.txt ]]; then printf '%s  rig_1.23.1_linux_amd64.tar.gz\n' "$FIXTURE_SUM" > "$dest"; else cp "$FIXTURE_ARCHIVE" "$dest"; fi
 `
