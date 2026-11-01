@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -54,28 +56,68 @@ func TestStackCIFilteredCache(t *testing.T) {
 	}
 }
 func TestStackCIInstallerTampered(t *testing.T) {
+	platform := "linux"
+	if runtime.GOOS == "windows" {
+		platform = "windows"
+	}
+	t.Run(platform, func(t *testing.T) { stackCIInstallerFixture(t, platform) })
+	if platform != "windows" {
+		t.Run("windows-zip", func(t *testing.T) { stackCIInstallerFixture(t, "windows") })
+	}
+}
+
+func stackCIInstallerFixture(t *testing.T, platform string) {
 	dir := t.TempDir()
 	runnerTemp := filepath.Join(dir, `back\slash`)
-	if err := os.Mkdir(runnerTemp, 0700); err != nil {
+	if err := os.MkdirAll(runnerTemp, 0700); err != nil {
 		t.Fatal(err)
 	}
-	archive := filepath.Join(dir, "fixture.tar.gz")
+	// On Unix this is a literal backslash in one name; on Windows it is a
+	// separator, and RUNNER_TEMP retains its native drive/backslash spelling.
+	if !strings.Contains(runnerTemp, `\`) {
+		t.Fatal("fixture must exercise backslashes")
+	}
+	extension, binary, uname := "tar.gz", "rig", "Linux"
+	if platform == "windows" {
+		extension, binary, uname = "zip", "rig.exe", "MINGW64_NT"
+	}
+	archive := filepath.Join(dir, "fixture."+extension)
 	f, err := os.Create(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gz := gzip.NewWriter(f)
-	tw := tar.NewWriter(gz)
 	data := []byte("#!/bin/sh\nexit 0\n")
-	if err = tw.WriteHeader(&tar.Header{Name: "rig", Mode: 0755, Size: int64(len(data))}); err != nil {
+	if extension == "zip" {
+		zw := zip.NewWriter(f)
+		entry, e := zw.Create(binary)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = entry.Write(data); e != nil {
+			t.Fatal(e)
+		}
+		if e = zw.Close(); e != nil {
+			t.Fatal(e)
+		}
+	} else {
+		gz := gzip.NewWriter(f)
+		tw := tar.NewWriter(gz)
+		if err = tw.WriteHeader(&tar.Header{Name: binary, Mode: 0755, Size: int64(len(data))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tw.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if err = tw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err = gz.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = f.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tw.Write(data); err != nil {
-		t.Fatal(err)
-	}
-	tw.Close()
-	gz.Close()
-	f.Close()
 	blob, err := os.ReadFile(archive)
 	if err != nil {
 		t.Fatal(err)
@@ -83,10 +125,12 @@ func TestStackCIInstallerTampered(t *testing.T) {
 	sum := fmt.Sprintf("%x", sha256.Sum256(blob))
 	t.Setenv("FIXTURE_ARCHIVE", archive)
 	t.Setenv("FIXTURE_SUM", strings.Repeat("0", 64))
+	t.Setenv("FIXTURE_ASSET", "rig_1.23.1_"+platform+"_amd64."+extension)
+	t.Setenv("FIXTURE_UNAME", uname)
 	curl := `#!/bin/bash
 [[ "$*" == *"--retry 3 --connect-timeout 30"* ]] || { echo "missing bounded download retries" >&2; exit 98; }
 while [[ $# -gt 0 ]]; do if [[ $1 == -o ]]; then dest=$2; shift; fi; shift; done
-if [[ $dest == *checksums.txt ]]; then printf '%s  rig_1.23.1_linux_amd64.tar.gz\n' "$FIXTURE_SUM" > "$dest"; else cp "$FIXTURE_ARCHIVE" "$dest"; fi
+if [[ $dest == *checksums.txt ]]; then printf '%s  %s\n' "$FIXTURE_SUM" "$FIXTURE_ASSET" > "$dest"; else cp "$FIXTURE_ARCHIVE" "$dest"; fi
 `
 	os.WriteFile(filepath.Join(dir, "curl"), []byte(curl), 0755)
 	// macOS's native sha256sum does not escape names; exercise the GNU-style
@@ -98,19 +142,60 @@ if [[ $dest == *checksums.txt ]]; then printf '%s  rig_1.23.1_linux_amd64.tar.gz
 		}
 	}
 
-	os.WriteFile(filepath.Join(dir, "uname"), []byte("#!/bin/sh\ncase $1 in -s) echo Linux;; *) echo x86_64;; esac\n"), 0755)
-	c := exec.Command("bash", "../../../.github/actions/stack/install-rig.sh")
+	os.WriteFile(filepath.Join(dir, "uname"), []byte("#!/bin/sh\ncase $1 in -s) echo \"$FIXTURE_UNAME\";; *) echo x86_64;; esac\n"), 0755)
+	var bash string
+	if runtime.GOOS == "windows" {
+		git, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		bash = ""
+		for _, relative := range []string{"../bin/bash.exe", "../usr/bin/bash.exe", "../../bin/bash.exe"} {
+			candidate := filepath.Clean(filepath.Join(filepath.Dir(git), relative))
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				bash = candidate
+				break
+			}
+		}
+		if bash == "" {
+			t.Fatal("Git Bash is required to exercise the Windows installer; WSL bash cannot use this fixture")
+		}
+	}
+	if runtime.GOOS != "windows" {
+		bash, err = exec.LookPath("bash")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	installer, err := filepath.Abs("../../../.github/actions/stack/install-rig.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FIXTURE_BIN", dir)
+	t.Setenv("FIXTURE_INSTALLER", installer)
+	// Convert only shell lookup paths. Keep native RUNNER_TEMP backslashes to
+	// exercise the installer exactly as a Windows Actions runner invokes it.
+	launch := `if [[ -x /usr/bin/cygpath ]]; then
+  export FIXTURE_BIN="$(/usr/bin/cygpath -u "$FIXTURE_BIN")"
+  export FIXTURE_ARCHIVE="$(/usr/bin/cygpath -u "$FIXTURE_ARCHIVE")"
+  export FIXTURE_INSTALLER="$(/usr/bin/cygpath -u "$FIXTURE_INSTALLER")"
+  if [[ -n "${REAL_SHASUM:-}" ]]; then export REAL_SHASUM="$(/usr/bin/cygpath -u "$REAL_SHASUM")"; fi
+fi
+export PATH="$FIXTURE_BIN:/usr/bin:/bin:$PATH"
+exec /bin/bash "$FIXTURE_INSTALLER"`
+	command := func() *exec.Cmd { return exec.Command(bash, "--noprofile", "--norc", "-c", launch) }
+	c := command()
 	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"))
 	out, err := c.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "checksum mismatch") {
 		t.Fatalf("tampered download must fail verification: %v %s", err, out)
 	}
-	c = exec.Command("bash", "../../../.github/actions/stack/install-rig.sh")
+	c = command()
 	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum)
 	if out, err = c.CombinedOutput(); err != nil {
 		t.Fatalf("valid fixture: %v %s", err, out)
 	}
-	c = exec.Command("bash", "../../../.github/actions/stack/install-rig.sh")
+	c = command()
 	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum, "INPUT_RIG_SHA256="+strings.Repeat("f", 64))
 	if out, err = c.CombinedOutput(); err == nil || !strings.Contains(string(out), "pinned checksum mismatch") {
 		t.Fatalf("expected independent pin refusal: %v %s", err, out)
