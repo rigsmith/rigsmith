@@ -161,3 +161,59 @@ func TestStackCIGitSeparatesStderr(t *testing.T) {
 		t.Fatalf("stderr contaminated stdout: %q", data)
 	}
 }
+
+func TestStackCISetupExecutableFailure(t *testing.T) {
+	summary := filepath.Join(t.TempDir(), "summary")
+	t.Setenv("GITHUB_STEP_SUMMARY", summary)
+	old := stackCIExecutable
+	stackCIExecutable = func() (string, error) { return "", errors.New("executable unavailable") }
+	t.Cleanup(func() { stackCIExecutable = old })
+	c := newStackCICmd()
+	c.SetArgs([]string{"--manifest", "rig.stack.jsonc"})
+	err := c.Execute()
+	var stepErr *stackCIError
+	if !errors.As(err, &stepErr) || stepErr.ExitCode() != 10 {
+		t.Fatalf("want setup exit 10: %v", err)
+	}
+	data, err := os.ReadFile(summary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "setup: failed: executable unavailable") {
+		t.Fatalf("missing failure summary: %s", data)
+	}
+}
+
+func TestStackCIActionBoolean(t *testing.T) {
+	data, err := os.ReadFile("../../../.github/actions/stack/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, script, ok := strings.Cut(string(data), "      run: |\n")
+	if !ok {
+		t.Fatal("missing action script")
+	}
+	script = strings.ReplaceAll(script, "        ", "")
+	dir := t.TempDir()
+	if err = os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
+		t.Run(fmt.Sprintf("value=%q", value), func(t *testing.T) {
+			p := exec.Command("bash", "-e", "-c", script)
+			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+			output, err := p.CombinedOutput()
+			valid := value == "true" || value == "false"
+			if valid {
+				if err != nil {
+					t.Fatalf("%v: %s", err, output)
+				}
+				if strings.Contains(string(output), "--upstream-tip") != (value == "true") {
+					t.Fatalf("wrong mode: %s", output)
+				}
+			} else if err == nil || !strings.Contains(string(output), "upstream-tip must be exactly true or false") {
+				t.Fatalf("want input failure: %v %s", err, output)
+			}
+		})
+	}
+}
