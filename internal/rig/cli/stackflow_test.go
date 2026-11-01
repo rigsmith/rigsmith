@@ -183,6 +183,29 @@ func TestStackFlow(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	t.Run("pull dry run preserves stackspace", func(t *testing.T) {
+		stackDryRun(t)
+		before := mustGitStack(t, ws, "rev-parse", "HEAD")
+		manifest, err := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := runVerbOut(ctx, newStackPullCmd(), "libfoo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mustGitStack(t, ws, "rev-parse", "HEAD") != before || !bytes.Equal(manifest, after) || mustGitStack(t, ws, "status", "--porcelain") != "" {
+			t.Fatal("dry run changed HEAD, manifest/cursor, or worktree")
+		}
+		if !strings.Contains(out, "would pull") {
+			t.Fatalf("missing preview: %s", out)
+		}
+	})
+
 	// ---- pull takes the movement, and then send works again --------------
 
 	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err != nil {
@@ -1229,5 +1252,112 @@ func TestStackProposalsRecordedAndShown(t *testing.T) {
 	}
 	if !strings.Contains(out, "branch has moved since") {
 		t.Fatalf("status does not say the pull request is behind the branch:\n%s", out)
+	}
+}
+
+// The preview needs only remote refs, even when no engine is installed.
+func TestStackPullDryRunPreview(t *testing.T) {
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/app", "app")
+	cursor := strings.TrimSpace(mustGitStack(t, srv.path("acme/app"), "rev-parse", "main"))
+	srv.commit(t, "acme/app", "src/new.txt", "new\n", "advance")
+	tip := strings.TrimSpace(mustGitStack(t, srv.path("acme/app"), "rev-parse", "main"))
+	ws := t.TempDir()
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "you@example.com")
+	mustGitStack(t, ws, "config", "user.name", "you")
+	writeStackManifest(t, ws, fmt.Sprintf(`{"repos":{"app":{"upstream":%[1]q,"fork":%[1]q,"upstreamBranch":"main"}},"lastSync":{"app":%[2]q}}`, srv.spec("acme/app"), cursor))
+	mustGitStack(t, ws, "add", ".")
+	mustGitStack(t, ws, "commit", "-qm", "manifest")
+	chdir(t, ws)
+	stackDryRun(t)
+	head := mustGitStack(t, ws, "rev-parse", "HEAD")
+	manifest, _ := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	out, err := runVerbOut(context.Background(), newStackPullCmd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "would pull") || !strings.Contains(out, short(cursor)) || !strings.Contains(out, short(tip)) {
+		t.Fatalf("incomplete preview: %s", out)
+	}
+	after, _ := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	if head != mustGitStack(t, ws, "rev-parse", "HEAD") || !bytes.Equal(manifest, after) || mustGitStack(t, ws, "status", "--porcelain") != "" {
+		t.Fatal("preview mutated stackspace")
+	}
+	// A cached tag stays at its recorded cursor until --repin is requested.
+	mustGitStack(t, srv.path("acme/app"), "tag", "v1", tip)
+	if err := os.MkdirAll(filepath.Join(ws, "app"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "app", "file.txt"), []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeStackManifest(t, ws, fmt.Sprintf(`{"repos":{"app":{"upstream":%[1]q,"fork":%[1]q,"upstreamTag":"v1"}},"lastSync":{"app":%[2]q},"lastPin":{"app":"tag v1"}}`, srv.spec("acme/app"), cursor))
+	mustGitStack(t, ws, "add", ".")
+	mustGitStack(t, ws, "commit", "-qm", "pin app")
+	pinned, err := runVerbOut(context.Background(), newStackPullCmd())
+	if err != nil || !strings.Contains(pinned, "nothing to pull") {
+		t.Fatalf("cached pin preview: %v\n%s", err, pinned)
+	}
+	beforeRepin := mustGitStack(t, ws, "rev-parse", "HEAD")
+	pinManifest, _ := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	repin := newStackPullCmd()
+	if err := repin.Flags().Set("repin", "true"); err != nil {
+		t.Fatal(err)
+	}
+	preview, err := runVerbOut(context.Background(), repin)
+	if err != nil || !strings.Contains(preview, "would pull") || !strings.Contains(preview, short(tip)) {
+		t.Fatalf("repin preview: %v\n%s", err, preview)
+	}
+	pinAfter, _ := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
+	if !bytes.Equal(pinManifest, pinAfter) || mustGitStack(t, ws, "rev-parse", "HEAD") != beforeRepin || mustGitStack(t, ws, "status", "--porcelain") != "" {
+		t.Fatal("repin preview mutated stackspace")
+	}
+
+	if err := os.WriteFile(filepath.Join(ws, "dirty.txt"), []byte("dirty"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runVerbOut(context.Background(), newStackPullCmd()); err == nil || !strings.Contains(err.Error(), "uncommitted") {
+		t.Fatalf("dirty preview: %v", err)
+	}
+}
+
+func TestStackDryRunUnsupportedWriters(t *testing.T) {
+	stackDryRun(t)
+	for _, makeCmd := range []func() *cobra.Command{newStackInitCmd, newStackAddCmd, newStackRemoveCmd, newStackSetupCmd, newStackSeedCmd} {
+		cmd := makeCmd()
+		t.Run(cmd.Name(), func(t *testing.T) {
+			_, err := runVerbOut(context.Background(), cmd)
+			if err == nil || !strings.Contains(err.Error(), "--dry-run is not supported") {
+				t.Fatalf("expected refusal before discovery or writes: %v", err)
+			}
+		})
+	}
+}
+
+func TestStackDryRunWireAndDoctor(t *testing.T) {
+	stackDryRun(t)
+	ws := t.TempDir()
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	writeStackManifest(t, ws, `{"josh":"0.0.0-preview-test","repos":{}}`)
+	chdir(t, ws)
+	before := mustGitStack(t, ws, "status", "--porcelain")
+	for _, cmd := range []*cobra.Command{newStackWireCmd(), newStackDoctorCmd()} {
+		if cmd.Name() == "doctor" {
+			if err := cmd.Flags().Set("fix", "true"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out, err := runVerbOut(context.Background(), cmd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "would") {
+			t.Fatalf("missing preview: %s", out)
+		}
+		if got := mustGitStack(t, ws, "status", "--porcelain"); got != before {
+			t.Fatalf("preview wrote files: %s", got)
+		}
 	}
 }
