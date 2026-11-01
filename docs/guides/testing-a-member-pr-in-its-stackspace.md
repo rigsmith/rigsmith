@@ -5,13 +5,15 @@ separate stackspace job to compile code and tests against sibling sources.
 The two jobs answer different questions and should both be required checks.
 
 The composite lives at `.github/actions/stack/` in rigsmith. The short name
-`rigsmith/stack-action@v1` is the intended name but is not published yet. Copy that self-contained directory
+`rigsmith/stack-action` is the intended name but is not published yet. Copy that self-contained directory
 into your member repository to use the local path below. The workflow in
 [examples/github-workflows/stack.yml](../../examples/github-workflows/stack.yml)
 is ready to copy after selecting a rig release containing `stack ci`.
 
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  with:
+    persist-credentials: false
 - uses: ./.github/actions/stack
   with:
     rig-version: vX.Y.Z # exact release containing stack ci
@@ -46,13 +48,34 @@ The job needs no write token or secrets. Use `pull_request` and read-only
 may fail for fork PRs; the import error names the inaccessible member. Supply
 credentials only in trusted CI contexts. No proposal or push occurs.
 
-Caching, checksum-verified installation, warnings guards, dependency checks,
+Warnings guards, dependency checks,
 nightly canaries and topic testing are later work. Reverse-dependency matrices
 and cursor-lag checks are deliberately outside this implementation.
 
 No separate josh step is needed: stack init installs the manifest/default pinned
 josh on demand before imports. Fresh-runner installation was reasoned through
 the existing installer call path, not exercised against hosted downloads.
+
+Pin external actions by full reviewed SHA after publication. Until then copy
+from a reviewed rigsmith commit. The action verifies rig release checksums and
+supports `rig-sha256` pinned independently in the workflow; release checksums do
+not defend against replacement of the whole release. `allowed-hosts` defaults
+to `github.com`. Both fork and upstream must match; opt in enterprise hosts
+explicitly. Josh is version/checksum pinned and restored binaries are rechecked.
+Cursor-keyed member caches skip unchanged imports; only consumed hits enter the
+summary rate. Member commit/filter provenance is uploaded as JSON. LFS members
+are refused clearly rather than testing pointer files.
+
+Use no secrets, `permissions: {contents: read}` and checkout
+`persist-credentials: false` for fork PRs. Never execute PR code under
+`pull_request_target`; if privileged metadata handling is ever needed, isolate
+it in a workflow with no PR checkout and no execution of untrusted artifacts.
+
+Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
+should not trust restored filtered history. Cached bundles are not verified
+against upstream cursors; provenance records `source` and actual `filteredCommit`
+so a cached import is explicit. See the action README for the cache scope trust
+boundary and reproducibility limits.
 
 Write structured test reports to an absolute path outside the temporary stack,
 for example under `$GITHUB_WORKSPACE/test-results`. Relative report files in

@@ -323,8 +323,23 @@ requests, and the rules that will otherwise catch you out. Manifest keys are in
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.
 Keep this job alongside the plain-clone matrix. The self-contained composite is
-`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
-See [Stackspaces](./stack#testing-a-member-pr-in-its-stackspace) for a copyable workflow and other CI usage.
+`.github/actions/stack/`; `rigsmith/stack-action` is the intended name but is not published yet.
+See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
+
+Stack CI defaults to `--allowed-hosts github.com`; explicitly list other trusted
+fork/upstream hosts with `--allowed-hosts` (the action input is `allowed-hosts`).
+It rejects custom josh versions, LFS members and fused push destinations. The
+composite verifies rig release checksums, supports a workflow-pinned `rig-sha256`,
+reuses cursor-keyed member histories and reports consumed cache hits and member
+commit/filter provenance. Use `pull_request` with `permissions: {contents: read}`,
+no secrets and checkout `persist-credentials: false`. Pin external action uses
+by full commit SHA; `rigsmith/stack-action` is not published yet.
+
+Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
+should not trust restored filtered history. Cached bundles are not verified
+against upstream cursors; provenance records `source` and actual `filteredCommit`
+so a cached import is explicit. See the action README for the cache scope trust
+boundary and reproducibility limits.
 
 ## Prefix matching
 

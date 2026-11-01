@@ -1031,7 +1031,7 @@ stackspace job to test sibling source changes. Copy the self-contained
     test: rig test
 ```
 
-`rigsmith/stack-action@v1` is the intended name but is not published yet.
+`rigsmith/stack-action` is the intended name but is not published yet.
 No separate josh step is needed. Install your project's language SDK as usual.
 The committed manifest supplies sibling cursors; `upstream-tip: 'true'` selects
 upstream tips instead. Commands run from the selected member prefix in a
@@ -1046,3 +1046,12 @@ For other CI, install pinned rig and run
 The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
 wire (11), build (12), and test (13). Seed support follows in a later change.
+
+Stack CI defaults to `--allowed-hosts github.com`; explicitly list other trusted
+fork/upstream hosts with `--allowed-hosts` (the action input is `allowed-hosts`).
+It rejects custom josh versions, LFS members and fused push destinations. The
+composite verifies rig release checksums, supports a workflow-pinned `rig-sha256`,
+reuses cursor-keyed member histories and reports consumed cache hits and member
+commit/filter provenance. Use `pull_request` with `permissions: {contents: read}`,
+no secrets and checkout `persist-credentials: false`. Pin external action uses
+by full commit SHA; `rigsmith/stack-action` is not published yet.

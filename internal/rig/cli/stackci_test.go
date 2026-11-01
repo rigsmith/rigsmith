@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.yaml.in/yaml/v3"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v3"
 )
 
 func TestStackCIReplaceCheckout(t *testing.T) {
@@ -72,7 +74,11 @@ func TestStackCIValidation(t *testing.T) {
 	}
 }
 
-func TestStackCIFlow(t *testing.T) {
+func TestStackCIFlow(t *testing.T) { stackCIFlow(t, false) }
+
+func TestStackCIFlowFailures(t *testing.T) { stackCIFlow(t, true) }
+
+func stackCIFlow(t *testing.T, failures bool) {
 	if os.Getenv("RIG_STACK_E2E") == "" {
 		t.Skip("set RIG_STACK_E2E=1")
 	}
@@ -105,25 +111,58 @@ func TestStackCIFlow(t *testing.T) {
 	chdir(t, checkout)
 	summary := filepath.Join(work, "summary")
 	t.Setenv("GITHUB_STEP_SUMMARY", summary)
-	c := newStackCICmd()
-	c.SetArgs([]string{"--manifest", "rig.stack.jsonc", "--member", "app", "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt", "--test", "test -f only-in-pr"})
-	if e := c.Execute(); e != nil {
-		t.Fatal(e)
-	}
-	out, _ := os.ReadFile(summary)
-	if !strings.Contains(string(out), "test: passed") {
-		t.Fatal(string(out))
-	}
-	status, _ := stackCIGit(context.Background(), checkout, "status", "--porcelain")
-	if len(status) != 0 {
-		t.Fatalf("checkout modified: %s", status)
+	t.Setenv("RIG_STACK_CACHE", filepath.Join(work, "cache"))
+	report := filepath.Join(work, "cache-report")
+	t.Setenv("RIG_STACK_CACHE_REPORT", report)
+	t.Setenv("RIG_STACK_PROVENANCE", filepath.Join(work, "provenance.json"))
+	var c *cobra.Command
+	if !failures {
+		c = newStackCICmd()
+		c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt", "--test", "test -f only-in-pr"})
+		if e := c.Execute(); e != nil {
+			t.Fatal(e)
+		}
+		out, _ := os.ReadFile(summary)
+		if !strings.Contains(string(out), "test: passed") {
+			t.Fatal(string(out))
+		}
+		c = newStackCICmd()
+		c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "true", "--test", "true"})
+		if err := c.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		cacheReport, err := os.ReadFile(report)
+		if err != nil || strings.Count(string(cacheReport), "\tcache\t") != 2 {
+			t.Fatalf("repeat run did not reuse both members: %s %v", cacheReport, err)
+		}
+		provenance, err := os.ReadFile(filepath.Join(work, "provenance.json"))
+		if err != nil || !strings.Contains(string(provenance), ":prefix=lib") {
+			t.Fatalf("provenance: %s %v", provenance, err)
+		}
+		if !strings.Contains(string(provenance), `"source": "cache"`) || !strings.Contains(string(provenance), `"filteredCommit":`) {
+			t.Fatalf("missing honest cache provenance: %s", provenance)
+		}
+		c = newStackCICmd()
+		c.SetArgs([]string{"--cache-history=false", "--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "true", "--test", "true"})
+		if err := c.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		cacheReport, err = os.ReadFile(report)
+		if err != nil || strings.Contains(string(cacheReport), "\tcache\t") || strings.Count(string(cacheReport), "\tfetched\t") != 2 {
+			t.Fatalf("cache disabled: %s %v", cacheReport, err)
+		}
+		status, _ := stackCIGit(context.Background(), checkout, "status", "--porcelain")
+		if len(status) != 0 {
+			t.Fatalf("checkout modified: %s", status)
+		}
+		return
 	}
 	for _, tc := range []struct {
 		build, test string
 		code        int
 	}{{"false", "true", 12}, {"true", "false", 13}} {
 		c := newStackCICmd()
-		c.SetArgs([]string{"--manifest", "rig.stack.jsonc", "--member", "app", "--build", tc.build, "--test", tc.test})
+		c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", tc.build, "--test", tc.test})
 		e := c.Execute()
 		var ce *stackCIError
 		if !errors.As(e, &ce) || ce.ExitCode() != tc.code {
@@ -134,7 +173,7 @@ func TestStackCIFlow(t *testing.T) {
 	os.WriteFile(wrapper, []byte("#!/bin/bash\nif [[ $2 == wire ]]; then exit 7; fi\nexec "+exe+" \"$@\"\n"), 0755)
 	stackCIExecutable = func() (string, error) { return wrapper, nil }
 	c = newStackCICmd()
-	c.SetArgs([]string{"--manifest", "rig.stack.jsonc", "--member", "app"})
+	c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app"})
 	e = c.Execute()
 	var ce *stackCIError
 	if !errors.As(e, &ce) || ce.ExitCode() != 11 {
@@ -186,57 +225,79 @@ func TestStackCISetupExecutableFailure(t *testing.T) {
 }
 
 func TestStackCIActionBoolean(t *testing.T) {
+	script := stackCIActionScript(t, "Rebuild, wire, build and test")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{"STACK_TIP", "STACK_CACHE_HISTORY"} {
+		for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
+			t.Run(fmt.Sprintf("%s=%q", input, value), func(t *testing.T) {
+				p := exec.Command("bash", "-e", "-c", script)
+				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP=true", "STACK_CACHE_HISTORY=true", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+				output, err := p.CombinedOutput()
+				valid := value == "true" || value == "false"
+				if valid {
+					if err != nil {
+						t.Fatalf("%v: %s", err, output)
+					}
+					if input == "STACK_TIP" && strings.Contains(string(output), "--upstream-tip") != (value == "true") {
+						t.Fatalf("wrong mode: %s", output)
+					}
+				} else if err == nil || !strings.Contains(string(output), map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history"}[input]+" must be exactly true or false") {
+					t.Fatalf("want input failure: %v %s", err, output)
+				}
+			})
+		}
+	}
+}
+
+func stackCIActionScript(t *testing.T, name string) string {
+	t.Helper()
 	data, err := os.ReadFile("../../../.github/actions/stack/action.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	var action struct {
 		Runs struct {
 			Steps []struct {
-				ID  string            `yaml:"id"`
-				Env map[string]string `yaml:"env"`
-				Run string            `yaml:"run"`
-			} `yaml:"steps"`
-		} `yaml:"runs"`
+				Name string
+				Run  string
+			}
+		}
 	}
 	if err = yaml.Unmarshal(data, &action); err != nil {
 		t.Fatal(err)
 	}
-	var script string
-	var stepEnv map[string]string
 	for _, step := range action.Runs.Steps {
-		if step.ID == "run" {
-			script = step.Run
-			stepEnv = step.Env
+		if step.Name == name {
+			return step.Run
 		}
 	}
-	if script == "" {
-		t.Fatal("missing run step")
-	}
-	if stepEnv["STACK_TIP"] != "${{ inputs.upstream-tip }}" {
-		t.Fatalf("upstream-tip input mapping: %q", stepEnv["STACK_TIP"])
-	}
-
-	dir := t.TempDir()
-	if err = os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
-		t.Run(fmt.Sprintf("value=%q", value), func(t *testing.T) {
-			p := exec.Command("bash", "-e", "-c", script)
-			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
-			output, err := p.CombinedOutput()
-			valid := value == "true" || value == "false"
-			if valid {
-				if err != nil {
-					t.Fatalf("%v: %s", err, output)
-				}
-				if strings.Contains(string(output), "--upstream-tip") != (value == "true") {
-					t.Fatalf("wrong mode: %s", output)
-				}
-			} else if err == nil || !strings.Contains(string(output), "upstream-tip must be exactly true or false") {
-				t.Fatalf("want input failure: %v %s", err, output)
+	t.Fatalf("missing action script %s", name)
+	return ""
+}
+func TestStackCIActionCacheReport(t *testing.T) {
+	script := stackCIActionScript(t, "Report consumed member cache hits")
+	for _, rows := range []string{"", "app\tcache\tsha\nlib\tfetched\tsha\n"} {
+		t.Run(fmt.Sprint(len(rows)), func(t *testing.T) {
+			dir := t.TempDir()
+			summary := filepath.Join(dir, "summary")
+			if rows != "" {
+				os.WriteFile(filepath.Join(dir, "stack-cache-report"), []byte(rows), 0600)
+			}
+			p := exec.Command("bash", "-euo", "pipefail", "-c", script)
+			p.Env = append(os.Environ(), "RUNNER_TEMP="+dir, "GITHUB_STEP_SUMMARY="+summary)
+			if out, err := p.CombinedOutput(); err != nil {
+				t.Fatalf("report: %v %s", err, out)
+			}
+			data, err := os.ReadFile(summary)
+			want := "0/0 consumed hits (0%)"
+			if rows != "" {
+				want = "1/2 consumed hits (50%)"
+			}
+			if err != nil || !strings.Contains(string(data), want) {
+				t.Fatalf("report %s: %v", data, err)
 			}
 		})
 	}

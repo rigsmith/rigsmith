@@ -711,7 +711,7 @@ Seed support is deferred until the separate setup seed work merges. This verb
 requires `--manifest` and exposes no seed input.
 
 The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
-`git cat-file blob` bytes under the manifest prefix. This bypasses archive
+`git cat-file --batch` bytes under the manifest prefix. This bypasses archive
 export-ignore/export-subst and checkout smudge/EOL filters, including the
 checkout's local config; replacement objects are disabled. It needs no PR
 ancestry or complete history. File modes and contained symlinks are preserved.
@@ -727,7 +727,7 @@ outside GitHub. Commands run from the selected member and test results stream
 to stdout. See [the member CI guide](guides/testing-a-member-pr-in-its-stackspace.md).
 
 The action's final home is the separate `rigsmith/stack-action` repository,
-following the shiprig-action model. `rigsmith/stack-action@v1` is intended but
+following the shiprig-action model. `rigsmith/stack-action` is intended but
 not published yet. Until that later publication, ship the fully self-contained
 `.github/actions/stack/` directory with no references outside it; workflow
 examples use its in-repo path. This change does not create the new repository.
@@ -736,3 +736,44 @@ Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
 `ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
 The local E2E uses preinstalled josh to stay offline; fresh hosted downloads
 were verified by code-path inspection only.
+
+### CI cache and trust boundaries
+
+`init` previously reused only josh's host-level object/filter cache, still
+requesting each filtered cursor through a proxy. With `RIG_STACK_CACHE`, the
+import path first consumes a bundle containing only that filtered upstream
+history. Its key hashes source URL, exact cursor, prefix filter and engine
+version. A hit fetches locally into the fresh fused repository and skips proxy
+startup, upstream fetch and filtering. It never saves fused commits. Outer
+Actions cache restore prefixes retain unchanged member bundles across manifest
+changes and seed josh's host caches for changed members. Package download keys
+include the entire manifest's immutable sibling cursors (which identify all
+lockfiles/pins transitively) plus checkout lockfiles. No build outputs are cached.
+Only consumed member hits enter the reported hit rate.
+
+CI rejects custom josh pins and verifies restored binaries against the existing
+source-pinned platform hashes for `r26.07.19` / release `r26.07.19-win.3`.
+The rig installer is release-only: missing assets, network errors and checksum
+mismatches all fail, with no Go fallback. `checksums.txt` from the release covers
+corruption/mirror tampering, not a compromised release; workflow `rig-sha256`
+pins an independently trusted expected archive digest.
+
+The verb defaults to exact host allowlist `github.com`, matching its GitHub
+Actions purpose while refusing arbitrary manifest-controlled destinations.
+Enterprise hosts require explicit opt-in. Fused history has no remotes and a
+rejecting pre-push hook; configured destinations are refused. This is accidental
+push prevention, not a sandbox for build scripts. Read-only tokens, no persisted
+checkout credentials and no secrets remain the fork-PR boundary. Never execute
+PR code in a privileged `pull_request_target` workflow. A separate privileged
+metadata handler must neither check out PR code nor execute its artifacts.
+
+Raw-blob materialization now uses one `cat-file --batch` subprocess rather than
+one per file. LFS is deliberately refused, checking `.gitattributes` across all
+members for `filter=lfs`, so pointer-only builds cannot pass silently. Commits
+and prefix filters are written to summary and a JSON provenance artifact. Pin
+external actions by full reviewed SHA; `rigsmith/stack-action` remains unpublished.
+
+Local measurement (`BenchmarkStackCIMaterialize`, 100 committed seven-byte files,
+three iterations, macOS arm64): batch 74.98 ms/op versus per-file 2351.51 ms/op,
+about 31× faster. The retained benchmark includes materialization and compares
+101 Git subprocesses with two; this is fixture evidence, not a hosted-runner SLA.

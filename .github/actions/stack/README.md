@@ -1,11 +1,13 @@
 # Stackspace CI action
 
-Intended final home: `rigsmith/stack-action@v1`, which is not published yet.
+Intended final home: `rigsmith/stack-action`, which is not published yet.
 Until publication, copy this entire directory into your member repository and
 use the local path. It has no relative dependencies outside this directory.
 
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  with:
+    persist-credentials: false
 - uses: ./.github/actions/stack
   with:
     rig-version: vX.Y.Z # select an exact release containing stack ci
@@ -16,9 +18,11 @@ use the local path. It has no relative dependencies outside this directory.
 
 Keep your plain-clone build matrix alongside this job. Install required language
 SDKs as usual. The checkout may be shallow. `rig-version` is required and must
-be an exact release tag; installation downloads its release asset, falling
-back to `go install` at that pin (which requires Go). Josh uses the manifest's
-pin or rig's built-in pin and is installed by rig before importing members.
+be an exact release tag. Installation verifies the archive against the release's
+`checksums.txt` before extraction; all download and verification failures are
+fatal, including missing assets. No source fallback survives. Josh uses rig's
+built-in version and source-pinned per-platform SHA256; custom pins are refused
+in CI. Restored josh binaries are hashed again before execution.
 
 `manifest` is required.
 `member` defaults to matching origin URL. `upstream-tip: 'true'` selects tips
@@ -36,11 +40,102 @@ private upstreams may be unavailable to fork PRs. Never execute PR code under
 privileged `pull_request_target` credentials. The checkout stays untouched;
 temporary stackspaces are removed after execution. No pushing occurs.
 
-Caching, verified checksums and other CI modes are deferred.
+The `rig-sha256` input accepts the expected archive SHA256 pinned in your
+workflow. Set it to the platform-specific release archive hash obtained through
+an independently trusted channel. The release checksums alone detect corruption
+and a tampered mirror; they do not protect against a compromised release that
+replaces both archive and checksums. A workflow-pinned checksum adds that boundary
+as long as the workflow and action implementation remain trusted.
+
+`allowed-hosts` defaults to `github.com`, a narrow useful default for GitHub
+Actions. It is a comma-separated exact host list (include ports when needed).
+Both `fork` and `upstream` are checked by the verb before imports. Explicitly list
+enterprise hosts; do not derive this input from PR data. This is a manifest
+policy, not a network sandbox for arbitrary build commands.
+
+Caches include verified josh binaries, josh's fetched/filtered host object store,
+and filtered member bundles keyed by source URL, cursor, prefix filter and engine
+version. An outer manifest-keyed cache has a version/platform restore prefix:
+when one cursor moves, restored bundles still serve unchanged members. `init`
+consumes bundles directly, skipping the proxy fetch and filtering on a hit.
+Only successful bundle consumption counts in the summary's member hit rate;
+binary/package restore matches do not establish saved work and are not counted.
+
+NuGet, npm, Go module and Cargo download caches use the manifest (every sibling's
+immutable cursor transitively identifies its lockfiles and pins) plus checkout
+lockfiles/pins. Restore prefixes allow partial download reuse. These are download
+caches, never build-output caches; tools still validate their own packages.
+Tip mode is inherently mutable and its package cache is only a download seed.
+
+Each resolved commit and `:prefix=` filter is included in the job summary and
+`stack-provenance-<job>-<matrix-index>-<attempt>` JSON artifact. LFS is deliberately unsupported: any
+member `.gitattributes` containing `filter=lfs` fails clearly, even if the rule
+is currently unused. Fetch LFS content in a separately designed workflow first.
+
+The fused repository has no remotes, `push.default=nothing` and a rejecting
+pre-push hook. The verb refuses configured destinations. These prevent accidental
+publication; arbitrary untrusted build scripts can bypass local Git safeguards,
+so withholding credentials and write permissions is still essential.
 
 No separate josh step is needed: stack init installs the manifest/default pinned
 josh on demand before imports. Fresh-runner installation was reasoned through
 the existing installer call path, not exercised against hosted downloads.
+
+Use ordinary `pull_request`, `permissions: {contents: read}`, checkout
+`persist-credentials: false`, and no secrets. Fork jobs cannot access private
+upstreams without credentials and should fail clearly. Never run this action on
+untrusted PR code under `pull_request_target`: that event runs with base-repository
+privileges. If privileged PR metadata handling is ever needed, use a separate
+metadata-only job/workflow that never checks out or executes PR code, validates
+all input, and never consumes executable artifacts from the untrusted build.
+
+Pin all external actions by full reviewed commit SHA, including the eventual
+`rigsmith/stack-action@<full-reviewed-commit-sha>` after publication. Tags are
+mutable; the intended separate action repository is not published yet. For now
+copy this directory from a reviewed rigsmith commit and use its local path.
+
+### History cache trust
+
+A restored filtered bundle is trusted history. Git checks object integrity,
+but neither the bundle filename nor its Git object hashes prove that its
+filtered commit corresponds to the upstream cursor in the manifest. No local
+cursor-to-filtered-history verification is performed. The substituted-bundle
+unit fixture deliberately demonstrates that different valid history under the
+same cache key is accepted. An import record carried inside that same bundle
+would not provide an independent trust anchor.
+
+The trust boundary is GitHub's cache scoping: PR cache writes are scoped to that
+PR ref and cannot poison another ref's cache; poisoning a default-branch cache
+requires the ability to write caches in that branch's execution context. A
+compromised default-branch workflow or trusted cache writer can therefore
+substitute sibling sources. Cache keys and cursor provenance are not signatures.
+See [GitHub cache access restrictions](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#restrictions-for-accessing-a-cache).
+
+`cache-history: 'false'` disables restored member/host history and engine caches
+in the action and turns bundle consumption/writes off in the verb. Use it for
+release-grade runs that should not trust cached filtered history; the equivalent
+CLI flag is `--cache-history=false`. Existing host object caches on self-hosted
+runners remain josh's responsibility; use a clean runner for that trust boundary.
+Package download caching remains enabled and does not cache build outputs.
+
+The summary and JSON provenance record each member's `source` (`cache` or
+`fetched`) and the actual `filteredCommit` imported. The manifest `commit` is a
+requested upstream cursor, not an independently verified claim about cached
+content. The selected PR member always says `fetched` because its tree comes
+from checkout HEAD after import. Its `filteredCommit` describes the preceding
+import, not the replacement checkout commit. For cached siblings, retain the
+actual bundle/filtered history as well as the provenance to reproduce a build;
+the cursor alone is insufficient if the cache was substituted.
+
+Provenance artifact names include the job, matrix `strategy.job-index`, and
+`github.run_attempt`, avoiding collisions between matrix legs and reruns.
+GitHub documents strategy context access from job steps in its
+[contexts reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#strategy-context).
+The runner's [composite handler](https://github.com/actions/runner/blob/main/src/Runner.Worker/Handlers/CompositeActionHandler.cs)
+creates embedded children; [child-context creation](https://github.com/actions/runner/blob/main/src/Runner.Worker/ExecutionContext.cs)
+copies parent expression values. This source inspection supports strategy context
+availability inside the composite. Actual matrix uploads remain unverified on
+GitHub-hosted runners; local tests do not establish that integration.
 
 Write structured test reports to an absolute path outside the temporary stack,
 for example under `$GITHUB_WORKSPACE/test-results`. Relative report files in

@@ -241,6 +241,25 @@ func ensureJoshTool(ctx context.Context, version, tool string, out io.Writer) (s
 	if err != nil {
 		return "", err
 	}
+	if os.Getenv("RIG_STACK_CI_VERIFIED") == "1" {
+		if version != stackJoshVersion {
+			return "", fmt.Errorf("CI requires pinned josh")
+		}
+		if data, e := os.ReadFile(bin); e == nil {
+			target, e := stackJoshTarget()
+			if e != nil {
+				return "", e
+			}
+			sum := sha256.Sum256(data)
+			if hex.EncodeToString(sum[:]) == stackJoshChecksums[tool][target] {
+				return bin, nil
+			}
+		}
+		if e := downloadJoshTool(ctx, tool, bin, out); e != nil {
+			return "", e
+		}
+		return bin, nil
+	}
 	if err := stackJoshInstalled(bin); err == nil {
 		return bin, nil
 	}
