@@ -1067,6 +1067,71 @@ The action conditions and shell behavior are covered by local YAML-parsing and
 fork/non-fork script tests. Actual GitHub fork-PR restore/save behavior remains
 unverified locally; validate it on hosted runners before relying on that setup.
 
+## Cross-member topic completion
+
+Committed `proposals[prefix][topic].dependsOn` arrays hold directed edges to
+other member prefixes in the same topic. Propose upstream members first: new
+proposals record all already-proposed members of that topic. Re-proposing keeps
+the original edges to avoid cycles. Edit the arrays to correct direction or
+backfill older proposals, which default to no edges. This ordering is explicit;
+rig does not infer a package graph. Independent changes belong in separate topics.
+
+`propose --from` already records the topic and destination fork branch. The
+checker queries upstream PRs with that fork owner and branch, then fetches the
+PR details. Current head SHA comes from those details, so added commits and
+squashed proposal commits need no checkout ancestry. Ambiguous branch reuse is
+reported as could not check. The committed manifest must be supplied explicitly
+in the checkout used by the action; a shallow pull_request merge checkout need
+not contain the original proposal commit, nor any head trailer.
+
+Cursor inclusion is checked in **upstream history** with GitHub compare,
+from the API's `merge_commit_sha` to the manifest cursor. `ahead` and `identical`
+pass. A merge commit, a squash commit, and the final upstream rebased commit
+are therefore evaluated under the same rule; the original PR head is never
+used as the ancestry witness. Fused and filtered josh hashes are never compared.
+The `lastSync` contract is an unfiltered upstream SHA. Missing merge metadata,
+inaccessible private upstreams, comparison errors, and missing cursors remain
+non-green, distinctly labelled could not check. Closed unmerged PRs remain pending.
+
+Status publication uses current PR head SHAs and optional `statuses: write`.
+A denied write produces a workflow warning and job-summary text and does not
+fail the job. No privileged pull_request_target workflow is added. The action
+adds only one input and a reporting step; the Go verb owns all API logic.
+
+Automatic refresh is opt-in through the ready-to-copy scheduled workflow at
+`examples/github-workflows/stack-dependencies.yml`. Copy it into each dependent
+member repository, pin a released rig version, and maintain the latest committed
+manifest on that repository's default branch. On schedule (or workflow_dispatch)
+`rig stack deps --publish` discovers PR heads through the API without a PR payload.
+After an upstream merge and a committed cursor bump in that manifest, the next
+hourly sweep can turn the status green. Nothing is installed by default; a stale
+manifest continues to block. This example has not been exercised on real GitHub.
+
+Publication is restricted to the member upstream matching `GITHUB_REPOSITORY`.
+Unset or unmatched scope refuses publication with a clear warning. Other member
+states are read, never written. Tokens only need status-write access to the current
+repository and read access to the dependencies (including private ones). Local
+reads reuse `stackAuthForURL` / `gitrepo.CredentialFor`, which asks gh first and
+Git helpers second, only when no GITHUB_TOKEN is supplied. Lookup is lazy so a
+stackspace without dependency edges makes no API or credential calls.
+
+The upstream cursor invariant is established in `stackPullOne`
+(`internal/rig/cli/stack.go`): `tip` comes from `stackUpstreamTip` (or an explicit
+upstream import cursor); fork imports replace it with `repo.MergeBase` of the
+**unfiltered** fork and upstream commits. Only `fetch` goes through josh.
+`stackSetCursor(src, m, name, tip)` persists that unfiltered upstream witness,
+not `fetched` or the stackspace merge's HEAD. `TestStackFlow` in
+`internal/rig/cli/stackflow_test.go` asserts the rebuilt fork member's cursor
+matches `newTip` from the upstream bare repository, and that a later pull records
+the bare upstream's main SHA. The compare API therefore receives commits in the
+upstream repository; manually supplied invalid cursors still report could not check.
+
+The optional sticky comment is deferred: status and local output already show
+the chain, and comments would require another permission and upsert lifecycle.
+Local bare Git histories and fake API responses test merge, squash and rebase
+transitions; real GitHub token permissions, event delivery, and merge metadata
+remain integration verification for a real repository.
+
 ## CI warning guard: observed diagnostics and exact identity
 
 `rig stack ci-guard <project.csproj>` builds a single .NET project. Plain-clone

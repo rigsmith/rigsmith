@@ -232,11 +232,11 @@ func TestStackCIActionBoolean(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{"STACK_TIP", "STACK_CACHE_HISTORY", "STACK_CACHE_PACKAGES", "STACK_STRICT"} {
+	for _, input := range []string{"STACK_TIP", "STACK_CACHE_HISTORY", "STACK_CACHE_PACKAGES", "STACK_DEPENDENCIES", "STACK_STRICT"} {
 		for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
 			t.Run(fmt.Sprintf("%s=%q", input, value), func(t *testing.T) {
 				p := exec.Command("bash", "-e", "-c", script)
-				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_STRICT=false", "STACK_TIP=true", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR=false", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_GUARD_PROJECT=", "STACK_STRICT=false", "STACK_TIP=true", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR=false", "STACK_DEPENDENCIES=true", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
 				output, err := p.CombinedOutput()
 				valid := value == "true" || value == "false"
 				if valid {
@@ -249,7 +249,7 @@ func TestStackCIActionBoolean(t *testing.T) {
 					if input == "STACK_TIP" && strings.Contains(string(output), "--upstream-tip") != (value == "true") {
 						t.Fatalf("wrong mode: %s", output)
 					}
-				} else if err == nil || !strings.Contains(string(output), map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_STRICT": "strict"}[input]+" must be exactly true or false") {
+				} else if err == nil || !strings.Contains(string(output), map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_DEPENDENCIES": "dependencies", "STACK_STRICT": "strict"}[input]+" must be exactly true or false") {
 					t.Fatalf("want input failure: %v %s", err, output)
 				}
 			})
@@ -280,7 +280,7 @@ func stackCIActionScript(t *testing.T, name string) string {
 	for _, step := range action.Runs.Steps {
 		if step.Name == name {
 			if name == "Rebuild, wire, build and test" {
-				for key, input := range map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_STRICT": "strict"} {
+				for key, input := range map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_DEPENDENCIES": "dependencies", "STACK_STRICT": "strict"} {
 					if step.Env[key] != "${{ inputs."+input+" }}" {
 						t.Fatalf("input %s mapping: %q", input, step.Env[key])
 					}
@@ -511,7 +511,7 @@ func TestStackCIActionForkCacheExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
-			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_GUARD_PROJECT=", "STACK_STRICT=false", "STACK_TIP=false", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR="+fork, "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_DEPENDENCIES=true", "STACK_GUARD_PROJECT=", "STACK_STRICT=false", "STACK_TIP=false", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR="+fork, "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
 			out, err := p.CombinedOutput()
 			if err != nil {
 				t.Fatalf("run script: %v %s", err, out)

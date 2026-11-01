@@ -327,6 +327,16 @@ they touch and whether a pull left them behind are derived from the repository e
 time `status` runs, so a branch deleted after its pull request merged simply stops
 being listed instead of leaving the manifest claiming work that is not there.
 
+Each proposal may also hold a `dependsOn` array of member prefixes, referring to
+PRs in the same topic: for example, `"dependsOn": ["pty-core"]` on a consumer's
+proposal. Propose upstream members first: a new proposal records the members
+already proposed for that topic, and re-proposing preserves those edges. Edit
+the array to change direction or backfill older records; an absent array means
+no dependencies. A dependency is ready only after its PR merges upstream and
+its `lastSync` cursor includes the API-reported merge commit. See
+[topic dependencies](./stack#stack-topic-dependencies) for local reporting,
+status publication, and scheduled refresh.
+
 `branchPrefix` is prepended to the name you give `rig stack propose`, so
 `send pty-core read-timeout` creates `stack/read-timeout` on your fork. It
 defaults to `stack/`, keeping these branches apart from your own work on the
