@@ -1,0 +1,32 @@
+core/ecosystem/dotnet/localoverlay.go
+  s_49cd7f17150868::t_8677c5975431f1 306-308
+site/rig/verbs.md
+  s_a59bb8f95199c9::t_c454355d7f32db 329
+  s_49cd7f17150868::t_8677c5975431f1 330
+core/ecosystem/dotnet/localoverlay_test.go
+  s_49cd7f17150868::t_8677c5975431f1 947-1033
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5d6845960d568330751ca718b763865d0bc87d8a",
+  "prompts": {},
+  "sessions": {
+    "s_49cd7f17150868": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e4-1d53-7f71-8e3e-53f9836cb758",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    },
+    "s_a59bb8f95199c9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197f7-16ed-7e80-a3e1-484d0c378b33",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
