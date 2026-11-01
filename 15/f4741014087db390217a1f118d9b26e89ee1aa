@@ -1,0 +1,57 @@
+internal/rig/cli/stackdeps_test.go
+  s_594eddb4156d96::t_a4bb232019d75d 150-209
+  s_594eddb4156d96::t_fecfae9b878642 1-8,12-20,22-44,49-73,75-102,104-108,149
+  s_594eddb4156d96::t_06f33736d9c145 9-11,21,45-48,74,103,109-148
+internal/rig/cli/stack.go
+  s_594eddb4156d96::t_4076f739939a67 41,56,283
+  s_594eddb4156d96::t_94389efa34c023 273-274,1263,1269-1270
+.changeset/lucky-lemurs-race.md
+  s_594eddb4156d96::t_06f33736d9c145 1-7
+site/rig/verbs.md
+  s_594eddb4156d96::t_06f33736d9c145 411-416
+  s_594eddb4156d96::t_5b5709bbc3ea60 405-410,417-433
+cmd/rig/README.md
+  s_594eddb4156d96::t_06f33736d9c145 141-146
+  s_594eddb4156d96::t_5b5709bbc3ea60 135-140,147-163
+docs/GITHUB-ACTIONS.md
+  s_594eddb4156d96::t_5b5709bbc3ea60 118-123,130-146
+  s_594eddb4156d96::t_06f33736d9c145 124-129
+internal/rig/cli/stackdeps.go
+  s_594eddb4156d96::t_4076f739939a67 1-19,22-90,92-106,112-161,163,167-252
+  s_594eddb4156d96::t_06f33736d9c145 20-21,162,164-166
+  s_594eddb4156d96::t_656486e984e3e2 91,107-111
+site/public/schemas/rig-stack.json
+  s_594eddb4156d96::t_06f33736d9c145 190
+README.md
+  s_594eddb4156d96::t_06f33736d9c145 184-189
+  s_594eddb4156d96::t_5b5709bbc3ea60 178-183,190-206
+docs/STACK-DESIGN.md
+  s_594eddb4156d96::t_5b5709bbc3ea60 739-742,749-784
+  s_594eddb4156d96::t_06f33736d9c145 743-748
+internal/rig/cli/stackmanifest.go
+  s_594eddb4156d96::t_06f33736d9c145 15,196-198,231-243,774-776
+.github/actions/stack/action.yml
+  s_594eddb4156d96::t_fecfae9b878642 19-21,55-61
+site/rig/configuration.md
+  s_594eddb4156d96::t_06f33736d9c145 403-408
+  s_594eddb4156d96::t_5b5709bbc3ea60 397-402,409-425
+site/rig/stack.md
+  s_594eddb4156d96::t_5b5709bbc3ea60 1049-1054,1061-1077
+  s_594eddb4156d96::t_06f33736d9c145 1055-1060
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "15f4741014087db390217a1f118d9b26e89ee1aa",
+  "prompts": {},
+  "sessions": {
+    "s_594eddb4156d96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197eb-622e-7b50-9999-1aba0b1a34a9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
