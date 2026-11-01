@@ -677,6 +677,16 @@ records the cursor into that commit, and does not second-guess how you resolved
 it. Anything you committed on top since stays as it is; the cursor then gets a
 small commit of its own.
 
+Dry runs: `pull -n` reports each current cursor and upstream tip (including
+“nothing to pull”), without fetching objects, starting josh, or changing the
+stackspace. It retains the normal dirty-tree check; `--repin` resolves the pin
+again for the preview. Commit counts are omitted because upstream objects need
+not be present locally. Merge conflicts and replacement safety checks require a
+real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
+reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
+and `seed` refuse `--dry-run` before making changes. `status` and plain `doctor`
+are read-only; `propose`, `push`, and `pack` retain their existing previews.
+
 A [pinned](./configuration#stack) project has nothing to take: its tag was
 resolved once, and an upstream that later re-cuts that tag does not move you.
 Edit the pin to go somewhere else, or `rig stack pull --repin` to follow a moved

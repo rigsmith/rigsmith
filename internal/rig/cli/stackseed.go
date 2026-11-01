@@ -36,7 +36,8 @@ func newStackSeedCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "seed <dir>",
 		Short: "Export the root files as a small repo that `rig stack init` rebuilds the stackspace from",
-		Long: "Writes everything at the stackspace root that is not a member — the\n" +
+		Long: "--dry-run is not supported; this command refuses it before making changes.\n\n" +
+			"Writes everything at the stackspace root that is not a member — the\n" +
 			"manifest with its cursors, build overlays, packaging, the files kept out of\n" +
 			"every prefix on purpose — into <dir> as a fresh git repository with one\n" +
 			"commit. Push that wherever you like; it is a few kilobytes and holds no\n" +
@@ -57,6 +58,9 @@ func newStackSeedCmd() *cobra.Command {
 			"  git -C ../rigstack-acme remote add origin <url> && git -C ../rigstack-acme push -u origin main",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun {
+				return fmt.Errorf("--dry-run is not supported for stack seed")
+			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			m, _, repo, err := stackspace(ctx)
