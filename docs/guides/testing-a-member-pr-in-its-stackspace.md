@@ -89,3 +89,13 @@ the runner cannot create a contained symlink, setup fails (exit 10) naming the
 file and target; it does not replace the link with a regular file. Windows
 runners may need Developer Mode or symlink-creation privileges for members
 that commit symlinks. Members without symlinks need no such privilege.
+
+Fork PRs (head repository differs from the workflow repository) skip both shared
+cache restore/save steps and disable member-bundle creation. Their summary
+reports that caches were skipped. For eligible jobs, `cache-history` and
+`cache-packages` independently default to `'true'`; set both to `'false'` to turn
+off this action's shared caches. Push/schedule events retain caching, while
+same-repository PRs can still read base-branch caches by GitHub's design. These
+action guards do not change GitHub's cache access policy or erase existing
+self-hosted runner files. Real hosted fork behavior is unverified locally; see
+the action README for the confidentiality and trust limits.

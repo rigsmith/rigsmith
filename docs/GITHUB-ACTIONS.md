@@ -138,3 +138,13 @@ should not trust restored filtered history. Cached bundles are not verified
 against upstream cursors; provenance records `source` and actual `filteredCommit`
 so a cached import is explicit. See the action README for the cache scope trust
 boundary and reproducibility limits.
+
+Fork PRs (head repository differs from the workflow repository) skip both shared
+cache restore/save steps and disable member-bundle creation. Their summary
+reports that caches were skipped. For eligible jobs, `cache-history` and
+`cache-packages` independently default to `'true'`; set both to `'false'` to turn
+off this action's shared caches. Push/schedule events retain caching, while
+same-repository PRs can still read base-branch caches by GitHub's design. These
+action guards do not change GitHub's cache access policy or erase existing
+self-hosted runner files. Real hosted fork behavior is unverified locally; see
+the action README for the confidentiality and trust limits.

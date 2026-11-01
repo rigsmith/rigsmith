@@ -232,11 +232,11 @@ func TestStackCIActionBoolean(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{"STACK_TIP", "STACK_CACHE_HISTORY"} {
+	for _, input := range []string{"STACK_TIP", "STACK_CACHE_HISTORY", "STACK_CACHE_PACKAGES"} {
 		for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
 			t.Run(fmt.Sprintf("%s=%q", input, value), func(t *testing.T) {
 				p := exec.Command("bash", "-e", "-c", script)
-				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP=true", "STACK_CACHE_HISTORY=true", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP=true", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR=false", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
 				output, err := p.CombinedOutput()
 				valid := value == "true" || value == "false"
 				if valid {
@@ -246,7 +246,7 @@ func TestStackCIActionBoolean(t *testing.T) {
 					if input == "STACK_TIP" && strings.Contains(string(output), "--upstream-tip") != (value == "true") {
 						t.Fatalf("wrong mode: %s", output)
 					}
-				} else if err == nil || !strings.Contains(string(output), map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history"}[input]+" must be exactly true or false") {
+				} else if err == nil || !strings.Contains(string(output), map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages"}[input]+" must be exactly true or false") {
 					t.Fatalf("want input failure: %v %s", err, output)
 				}
 			})
@@ -277,7 +277,7 @@ func stackCIActionScript(t *testing.T, name string) string {
 	for _, step := range action.Runs.Steps {
 		if step.Name == name {
 			if name == "Rebuild, wire, build and test" {
-				for key, input := range map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history"} {
+				for key, input := range map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages"} {
 					if step.Env[key] != "${{ inputs."+input+" }}" {
 						t.Fatalf("input %s mapping: %q", input, step.Env[key])
 					}
@@ -299,7 +299,7 @@ func TestStackCIActionCacheReport(t *testing.T) {
 				os.WriteFile(filepath.Join(dir, "stack-cache-report"), []byte(rows), 0600)
 			}
 			p := exec.Command("bash", "-euo", "pipefail", "-c", script)
-			p.Env = append(os.Environ(), "RUNNER_TEMP="+dir, "GITHUB_STEP_SUMMARY="+summary)
+			p.Env = append(os.Environ(), "RUNNER_TEMP="+dir, "GITHUB_STEP_SUMMARY="+summary, "STACK_FORK_PR=false")
 			if out, err := p.CombinedOutput(); err != nil {
 				t.Fatalf("report: %v %s", err, out)
 			}
@@ -435,5 +435,111 @@ func TestStackCIMaterializeSymlinkPermission(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Windows") {
 		t.Fatalf("missing runner guidance: %v", err)
+	}
+}
+
+func TestStackCIActionForkCachePolicy(t *testing.T) {
+	data, err := os.ReadFile("../../../.github/actions/stack/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action struct {
+		Inputs map[string]struct{ Default string }
+		Runs   struct {
+			Steps []struct {
+				Name string
+				If   string
+				Uses string
+				Env  map[string]string
+			}
+		}
+	}
+	if err = yaml.Unmarshal(data, &action); err != nil {
+		t.Fatal(err)
+	}
+	guard := "(!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository)"
+	fork := "${{ github.event.pull_request != null && github.event.pull_request.head.repo.full_name != github.repository }}"
+	seen := map[string]bool{}
+	for _, step := range action.Runs.Steps {
+		switch step.Name {
+		case "Restore josh binaries and object history", "Restore package downloads":
+			input := "cache-history"
+			if step.Name == "Restore package downloads" {
+				input = "cache-packages"
+			}
+			want := "${{ inputs." + input + " == 'true' && " + guard + " }}"
+			if step.If != want {
+				t.Fatalf("%s must gate both restore and post-save on trusted repo: %q", step.Name, step.If)
+			}
+			if !strings.HasPrefix(step.Uses, "actions/cache@") {
+				t.Fatalf("unexpected cache implementation: %s", step.Uses)
+			}
+			if action.Inputs[input].Default != "true" {
+				t.Fatalf("%s should default true for non-fork jobs", input)
+			}
+			seen[step.Name] = true
+		case "Rebuild, wire, build and test":
+			want := "${{ inputs.cache-history == 'true' && " + guard + " && format('{0}/stack-history', runner.temp) || '' }}"
+			if step.Env["RIG_STACK_CACHE"] != want {
+				t.Fatalf("fork jobs must receive an empty bundle cache: %q", step.Env["RIG_STACK_CACHE"])
+			}
+			if step.Env["STACK_FORK_PR"] != fork {
+				t.Fatalf("missing fork classification: %q", step.Env["STACK_FORK_PR"])
+			}
+			seen[step.Name] = true
+		case "Report consumed member cache hits":
+			if step.Env["STACK_FORK_PR"] != fork {
+				t.Fatalf("report must classify fork jobs: %q", step.Env["STACK_FORK_PR"])
+			}
+			seen[step.Name] = true
+		}
+	}
+	if len(seen) != 4 {
+		t.Fatalf("missing cache policy steps: %v", seen)
+	}
+}
+
+func TestStackCIActionForkCacheExecution(t *testing.T) {
+	for _, fork := range []string{"true", "false"} {
+		t.Run(fork, func(t *testing.T) {
+			dir := t.TempDir()
+			cache := filepath.Join(dir, "history")
+			if err := os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf 'CACHE=%s\n' \"${RIG_STACK_CACHE-unset}\"\nprintf '%s\n' \"$@\"\n"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
+			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP=false", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR="+fork, "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+			out, err := p.CombinedOutput()
+			if err != nil {
+				t.Fatalf("run script: %v %s", err, out)
+			}
+			wantCache, wantFlag := cache, "--cache-history=true"
+			if fork == "true" {
+				wantCache, wantFlag = "unset", "--cache-history=false"
+			}
+			if !strings.Contains(string(out), "CACHE="+wantCache) || !strings.Contains(string(out), wantFlag) {
+				t.Fatalf("fork=%s inherited cache access: %s", fork, out)
+			}
+			summary := filepath.Join(dir, "summary")
+			if err = os.WriteFile(filepath.Join(dir, "stack-cache-report"), []byte("app\tcache\tsha\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			p = exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Report consumed member cache hits"))
+			p.Env = append(os.Environ(), "RUNNER_TEMP="+dir, "GITHUB_STEP_SUMMARY="+summary, "STACK_FORK_PR="+fork)
+			if out, err = p.CombinedOutput(); err != nil {
+				t.Fatalf("summary script: %v %s", err, out)
+			}
+			text, err := os.ReadFile(summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fork == "true" {
+				if !strings.Contains(string(text), "skipped because this is a fork PR") || strings.Contains(string(text), "consumed hits") {
+					t.Fatalf("misleading fork cache summary: %s", text)
+				}
+			} else if !strings.Contains(string(text), "1/1 consumed hits") {
+				t.Fatalf("non-fork report changed: %s", text)
+			}
+		})
 	}
 }

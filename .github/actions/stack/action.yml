@@ -14,7 +14,10 @@ inputs:
     description: Expected archive SHA256 pinned in the calling workflow (recommended).
     default: ''
   cache-history:
-    description: Trust restored member history bundles; disable for release-grade jobs.
+    description: Trust shared history caches; disabled for fork PRs.
+    default: 'true'
+  cache-packages:
+    description: Restore and save shared package downloads; disabled for fork PRs.
     default: 'true'
   allowed-hosts:
     description: Comma-separated allowed fork and upstream hosts.
@@ -46,7 +49,7 @@ runs:
         RIG_REPO: rigsmith/rigsmith
       run: bash "$GITHUB_ACTION_PATH/install-rig.sh"
     - name: Restore josh binaries and object history
-      if: inputs.cache-history == 'true'
+      if: ${{ inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
       id: history
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -60,6 +63,7 @@ runs:
         restore-keys: |
           stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-
     - name: Restore package downloads
+      if: ${{ inputs.cache-packages == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -82,10 +86,12 @@ runs:
         STACK_BUILD: ${{ inputs.build }}
         STACK_TEST: ${{ inputs.test }}
         STACK_CACHE_HISTORY: ${{ inputs.cache-history }}
+        STACK_CACHE_PACKAGES: ${{ inputs.cache-packages }}
+        STACK_FORK_PR: ${{ github.event.pull_request != null && github.event.pull_request.head.repo.full_name != github.repository }}
         STACK_TIP: ${{ inputs.upstream-tip }}
         STACK_ALLOWED_HOSTS: ${{ inputs.allowed-hosts }}
         RIG_STACK_CI_VERIFIED: '1'
-        RIG_STACK_CACHE: ${{ runner.temp }}/stack-history
+        RIG_STACK_CACHE: ${{ inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && format('{0}/stack-history', runner.temp) || '' }}
         RIG_STACK_CACHE_REPORT: ${{ runner.temp }}/stack-cache-report
         RIG_STACK_PROVENANCE: ${{ runner.temp }}/stack-provenance.json
       run: |
@@ -97,6 +103,14 @@ runs:
           true|false) ;;
           *) echo 'cache-history must be exactly true or false' >&2; exit 1 ;;
         esac
+        case "$STACK_CACHE_PACKAGES" in
+          true|false) ;;
+          *) echo 'cache-packages must be exactly true or false' >&2; exit 1 ;;
+        esac
+        if [[ "$STACK_FORK_PR" == true ]]; then
+          unset RIG_STACK_CACHE
+          STACK_CACHE_HISTORY=false
+        fi
         args=(stack ci --cache-history="$STACK_CACHE_HISTORY" --allowed-hosts "$STACK_ALLOWED_HOSTS" --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
@@ -105,7 +119,13 @@ runs:
     - name: Report consumed member cache hits
       if: always()
       shell: bash
+      env:
+        STACK_FORK_PR: ${{ github.event.pull_request != null && github.event.pull_request.head.repo.full_name != github.repository }}
       run: |
+        if [[ "$STACK_FORK_PR" == true ]]; then
+          printf '\nShared history and package caches skipped because this is a fork PR.\n' >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
         hits=0; total=0
         if [[ -f "$RUNNER_TEMP/stack-cache-report" ]]; then
           while IFS=$'\t' read -r member source commit; do

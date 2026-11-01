@@ -849,7 +849,10 @@ in the action and turns bundle consumption/writes off in the verb. Use it for
 release-grade runs that should not trust cached filtered history; the equivalent
 CLI flag is `--cache-history=false`. Existing host object caches on self-hosted
 runners remain josh's responsibility; use a clean runner for that trust boundary.
-Package download caching remains enabled and does not cache build outputs.
+`cache-packages` independently controls package-download cache restore/save and
+defaults to `'true'`, like `cache-history`. Set both inputs to `'false'` for a
+job that must not use this action's shared caches. Package caches contain only
+downloads, not build outputs. Fork PRs override both defaults as described below.
 
 The summary and JSON provenance record each member's `source` (`cache` or
 `fetched`) and the actual `filteredCommit` imported. The manifest `commit` is a
@@ -869,3 +872,28 @@ creates embedded children; [child-context creation](https://github.com/actions/r
 copies parent expression values. This source inspection supports strategy context
 availability inside the composite. Actual matrix uploads remain unverified on
 GitHub-hosted runners; local tests do not establish that integration.
+
+### Fork PR cache policy
+
+When a pull request's `github.event.pull_request.head.repo.full_name` differs
+from `github.repository`, this action skips both combined `actions/cache` steps:
+it neither restores nor saves history/engine caches or package caches. It also
+leaves `RIG_STACK_CACHE` empty, unsets it before invoking rig, and passes
+`--cache-history=false`, so the verb cannot write new filtered bundles. The
+summary says both caches were skipped because this is a fork PR, rather than
+presenting a hit rate. Push, schedule and other events without a pull-request
+payload retain input-controlled caching. `cache-history` and `cache-packages`
+each accept exactly `'true'` or `'false'` and default to `'true'` for eligible jobs.
+
+Same-repository PRs still read base-branch caches, by GitHub's design. Cache
+write scoping protects refs from some poisoning scenarios; it does not provide
+confidentiality. These guards control this action's cache operations, not the
+GitHub cache service's access policy: other steps or untrusted code that explicitly
+request accessible caches are outside this guard. Do not treat a cache as secret
+storage. Keep private workflows/material in a separate trust boundary when
+untrusted code could request those caches. Use clean runners: disabling these
+steps does not erase pre-existing files on self-hosted runners.
+
+The action conditions and shell behavior are covered by local YAML-parsing and
+fork/non-fork script tests. Actual GitHub fork-PR restore/save behavior remains
+unverified locally; validate it on hosted runners before relying on that setup.
