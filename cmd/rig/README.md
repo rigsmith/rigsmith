@@ -50,6 +50,11 @@ no-secret fork PR setup and cache trust limits.
 fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
 
+`rig stack deps` checks topic PR dependencies against upstream merge states and
+manifest cursors; `rig stack status` shows the same chain. See the
+[stack dependency guide](../../site/rig/stack.md#stack-topic-dependencies) for
+recording edges, publishing statuses, and enabling scheduled refresh.
+
 The default manifest home is a small seed repo shared by local setup and CI.
 First publication to an existing seed requires matching root files. If they
 differ, set up from that seed in a fresh directory and reconcile the root edits.

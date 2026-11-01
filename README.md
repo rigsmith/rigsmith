@@ -78,6 +78,11 @@ cache reuse and commit/filter provenance; `cache-history: 'false'` disables
 bundle reuse. See [stack CI](site/rig/stack.md#testing-a-member-pr-in-its-stackspace) for the read-only,
 no-secret fork PR setup and cache trust limits.
 
+`rig stack deps` checks topic PR dependencies against upstream merge states and
+manifest cursors; `rig stack status` shows the same chain. See the
+[stack dependency guide](site/rig/stack.md#stack-topic-dependencies) for recording
+edges, publishing statuses, and enabling scheduled refresh.
+
 The release engine — changeset parsing, the dependency **cascade** (a dependent
 is patch-bumped when its dependency releases), **linked/fixed/lockstep**
 grouping, version bumping, and changelog rendering — is a faithful port of

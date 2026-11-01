@@ -187,6 +187,7 @@
           "required": ["branch"],
           "properties": {
             "branch": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "The branch of your fork carrying this topic's pull request." },
+            "dependsOn": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "Member prefixes whose PRs in this topic must merge and enter lastSync before this PR is ready. New proposals record earlier proposals; re-proposing preserves edges." },
             "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$", "description": "The topic's tip when it was proposed, so status can tell a branch that has moved since." }
           },
           "additionalProperties": false

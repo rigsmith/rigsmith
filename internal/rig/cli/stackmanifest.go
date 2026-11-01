@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -192,8 +193,9 @@ type stackManifest struct {
 // and answers the more common question too — whether the pull request is behind
 // the branch.
 type stackProposal struct {
-	Branch string `json:"branch"`
-	Commit string `json:"commit,omitempty"`
+	Branch    string   `json:"branch"`
+	DependsOn []string `json:"dependsOn,omitempty"`
+	Commit    string   `json:"commit,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
@@ -226,8 +228,19 @@ func stackRememberProposal(src *cfgfind.Source, m *stackManifest, prefix, topic,
 	if m.Proposals[prefix] == nil {
 		m.Proposals[prefix] = map[string]stackProposal{}
 	}
-	want := stackProposal{Branch: branch, Commit: commit}
-	if m.Proposals[prefix][topic] == want {
+	old, exists := m.Proposals[prefix][topic]
+	deps := old.DependsOn
+	if !exists {
+		for _, name := range m.names() {
+			if name != prefix {
+				if _, ok := m.Proposals[name][topic]; ok {
+					deps = append(deps, name)
+				}
+			}
+		}
+	}
+	want := stackProposal{Branch: branch, Commit: commit, DependsOn: deps}
+	if old.Branch == want.Branch && old.Commit == want.Commit && slices.Equal(old.DependsOn, want.DependsOn) {
 		return nil // nothing to write, and no commit to make out of nothing
 	}
 	m.Proposals[prefix][topic] = want
@@ -490,6 +503,14 @@ func (m *stackManifest) validate() error {
 			if strings.TrimSpace(p.Branch) == "" {
 				return fmt.Errorf("the proposals map for %q records no branch for topic %q — remove the entry, or name the branch its pull request is on", prefix, topic)
 			}
+			for _, dep := range p.DependsOn {
+				if dep == prefix {
+					return fmt.Errorf("proposal %q topic %q: dependsOn entry %q cannot refer to its own member", prefix, topic, dep)
+				}
+				if strings.TrimSpace(dep) == "" || m.Repos[dep] == nil {
+					return fmt.Errorf("proposal %q topic %q: dependsOn entry %q must name a configured member", prefix, topic, dep)
+				}
+			}
 			// A malformed commit is worse than none. `status` compares every
 			// non-empty value against the topic's tip, and something that is not a
 			// SHA can never equal one — so the branch would be reported as having
@@ -497,6 +518,53 @@ func (m *stackManifest) validate() error {
 			// "recorded before the commit was tracked".
 			if p.Commit != "" && !stackIsSHA(p.Commit) {
 				return fmt.Errorf("the proposals map for %q records commit %q for topic %q — that must be a full 40-character commit SHA, or be left out", prefix, p.Commit, topic)
+			}
+		}
+	}
+	return m.validateProposalCycles()
+}
+
+// Dependencies connect proposals within one topic; unrelated topics have
+// independent graphs even when they use the same member names.
+func (m *stackManifest) validateProposalCycles() error {
+	topics := map[string]bool{}
+	for _, member := range m.names() {
+		for topic := range m.Proposals[member] {
+			topics[topic] = true
+		}
+	}
+	topicNames := make([]string, 0, len(topics))
+	for topic := range topics {
+		topicNames = append(topicNames, topic)
+	}
+	sort.Strings(topicNames)
+	for _, topic := range topicNames {
+		state := map[string]int{}
+		var path []string
+		var visit func(string) error
+		visit = func(member string) error {
+			switch state[member] {
+			case 1:
+				start := slices.Index(path, member)
+				cycle := append(append([]string{}, path[start:]...), member)
+				return fmt.Errorf("dependsOn cycle for topic %q: %s", topic, strings.Join(cycle, " -> "))
+			case 2:
+				return nil
+			}
+			state[member] = 1
+			path = append(path, member)
+			for _, dep := range m.Proposals[member][topic].DependsOn {
+				if err := visit(dep); err != nil {
+					return err
+				}
+			}
+			path = path[:len(path)-1]
+			state[member] = 2
+			return nil
+		}
+		for _, member := range m.names() {
+			if err := visit(member); err != nil {
+				return err
 			}
 		}
 	}
@@ -761,7 +829,9 @@ const stackManifestTemplate = `{
   //     rig stack propose <repo> <name> --from <topic>
   // recording which branch of your fork carries each topic's pull request, and
   // the commit that went to it, so "rig stack status" can say where each fix is
-  // and whether the branch has moved since. Written by rig, not by hand.
+  // and whether the branch has moved since. Propose upstream members first:
+  // each new proposal records already-proposed members of its topic in
+  // dependsOn. Re-proposing preserves those edges; edit them to change direction.
 }
 `
 
