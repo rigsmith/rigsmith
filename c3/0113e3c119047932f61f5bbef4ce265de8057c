@@ -1,0 +1,39 @@
+internal/rig/cli/stackadd.go
+  s_76b2694e8f48fb::t_c3d3c0493f3c82 21-22,33-35
+internal/rig/cli/stackflow_test.go
+  s_76b2694e8f48fb::t_c3d3c0493f3c82 187-207,1260-1269,1271-1287,1318-1342,1344-1362
+  s_76b2694e8f48fb::t_b64da0f832f259 1257-1259,1363
+  s_76b2694e8f48fb::t_b2b7eab45ba07f 1270,1343
+  s_76b2694e8f48fb::t_48cbca375ffe55 1288-1295,1297-1317
+  s_76b2694e8f48fb::t_6fa4cc8960b2cb 1296
+  s_76b2694e8f48fb::t_84ebeb7184ba0f 186,208
+internal/rig/cli/stackrm.go
+  s_76b2694e8f48fb::t_c3d3c0493f3c82 33-34,48-50
+internal/rig/cli/stackseed.go
+  s_76b2694e8f48fb::t_c3d3c0493f3c82 39-40,61-63
+internal/rig/cli/stack.go
+  s_76b2694e8f48fb::t_c3d3c0493f3c82 115-116,127-129,395-399,451-462,1939-1940,1950-1953,2026-2028,2056-2057
+internal/rig/cli/stacksetup.go
+  s_76b2694e8f48fb::t_c3d3c0493f3c82 28-29,36-38
+site/rig/stack.md
+  s_76b2694e8f48fb::t_b2b7eab45ba07f 680-689
+cmd/rig/README.md
+  s_76b2694e8f48fb::t_b2b7eab45ba07f 41
+  s_76b2694e8f48fb::t_48cbca375ffe55 42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c30113e3c119047932f61f5bbef4ce265de8057c",
+  "prompts": {},
+  "sessions": {
+    "s_76b2694e8f48fb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197f7-5301-7de1-82d2-28d8d5555962",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
