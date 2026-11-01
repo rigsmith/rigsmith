@@ -240,12 +240,8 @@ func newStackHomeCmd() *cobra.Command {
 }
 
 func stackDoctorHome(ctx context.Context, root string, m *stackManifest) error {
-	if stackHomeConfig(ctx, root, "URL") == "" {
-		return nil
-	}
-
-	remote, err := stackHomeGit(ctx, root, "remote", "get-url", "origin")
-	if err != nil {
+	remote := stackHomeConfig(ctx, root, "URL")
+	if remote == "" {
 		return nil
 	}
 	dir, err := os.MkdirTemp("", "rig-stack-doctor-")

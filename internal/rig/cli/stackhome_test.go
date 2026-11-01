@@ -145,10 +145,12 @@ func TestStackHomeDoctor(t *testing.T) {
 	if !strings.Contains(out.String(), "· seed origin could not be checked:") || strings.Contains(out.String(), "✗") {
 		t.Fatalf("unavailable: %s", out.String())
 	}
-	// A local bare origin carrying fused trees is a real finding.
+	// An unsafe configured home is a finding even with an unrelated origin.
 	bad := filepath.Join(t.TempDir(), "bad.git")
 	mustGitStack(t, root, "clone", "--bare", root, bad)
-	mustGitStack(t, root, "remote", "set-url", "origin", bad)
+	if err := stackConfigureHome(ctx, root, bad, "main", ""); err != nil {
+		t.Fatal(err)
+	}
 	out.Reset()
 	stackReportHomeDoctor(&out, stackDoctorHome(ctx, root, m))
 	if !strings.Contains(out.String(), "✗ seed origin: seed contains member tree") {
@@ -164,8 +166,26 @@ func TestStackHomeDoctor(t *testing.T) {
 	if err := stackPublishHomeTo(ctx, repo, m, good, "main", ""); err != nil {
 		t.Fatal(err)
 	}
-	mustGitStack(t, root, "remote", "set-url", "origin", good)
+	mustGitStack(t, root, "remote", "set-url", "origin", bad)
 	if err := stackDoctorHome(ctx, root, m); err != nil {
-		t.Fatalf("safe seed: %v", err)
+		t.Fatalf("safe home with unsafe origin: %v", err)
+	}
+	mustGitStack(t, root, "remote", "remove", "origin")
+	if err := stackDoctorHome(ctx, root, m); err != nil {
+		t.Fatalf("safe home without origin: %v", err)
+	}
+	if err := stackConfigureHome(ctx, root, bad, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	stackReportHomeDoctor(&out, stackDoctorHome(ctx, root, m))
+	if !strings.Contains(out.String(), "✗ seed origin: seed contains member tree") {
+		t.Fatalf("unsafe home without origin was not checked: %s", out.String())
+	}
+	mustGitStack(t, root, "remote", "add", "origin", good)
+	out.Reset()
+	stackReportHomeDoctor(&out, stackDoctorHome(ctx, root, m))
+	if !strings.Contains(out.String(), "✗ seed origin: seed contains member tree") {
+		t.Fatalf("unsafe home with safe origin was not checked: %s", out.String())
 	}
 }
