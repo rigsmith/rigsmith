@@ -1952,7 +1952,12 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			missing := stackMissingPrefixes(repo.Dir, m.names())
 			if dryRun {
+				if len(missing) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "would defer wiring: missing member directories: %s — run `rig stack setup` first\n", strings.Join(missing, ", "))
+					return nil
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), "would regenerate build overlay and generated README.md; checking current wiring:")
 				return newStackDoctorCmd().RunE(cmd, nil)
 			}
@@ -1962,7 +1967,7 @@ func newStackWireCmd() *cobra.Command {
 			// The heading follows the directory name, so a seed cloned under a
 			// different one is dirtied on sight, and the `setup` that follows
 			// refuses to import over it.
-			deferred := len(stackMissingPrefixes(repo.Dir, m.names())) > 0
+			deferred := len(missing) > 0
 			if _, err := stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false); err != nil {
 				return err
 			}

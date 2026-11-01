@@ -1278,7 +1278,8 @@ func TestStackPullDryRunPreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "would pull") || !strings.Contains(out, short(cursor)) || !strings.Contains(out, short(tip)) {
+	wantPreview := fmt.Sprintf("app: would pull cursor %s -> upstream %s (main); merge and replacement checks deferred\n", short(cursor), short(tip))
+	if out != wantPreview {
 		t.Fatalf("incomplete preview: %s", out)
 	}
 	after, _ := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
@@ -1405,5 +1406,30 @@ func TestStackDryRunValidationParity(t *testing.T) {
 	dryRun = true
 	if _, err := runVerbOut(context.Background(), cmd); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStackWireDryRunMissingMembers(t *testing.T) {
+	previous := dryRun
+	t.Cleanup(func() { dryRun = previous })
+	ws := t.TempDir()
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	writeStackManifest(t, ws, `{"repos":{"app":{"upstream":"github.com/acme/app","fork":"github.com/you/app"}}}`)
+	chdir(t, ws)
+	before := mustGitStack(t, ws, "status", "--porcelain")
+	dryRun = false
+	if _, err := runVerbOut(context.Background(), newStackWireCmd()); err != nil {
+		t.Fatal(err)
+	}
+	dryRun = true
+	out, err := runVerbOut(context.Background(), newStackWireCmd())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "would defer wiring") || !strings.Contains(out, "app") || strings.Contains(out, "would regenerate") {
+		t.Fatalf("misleading preview: %s", out)
+	}
+	if got := mustGitStack(t, ws, "status", "--porcelain"); got != before {
+		t.Fatalf("deferred wire wrote files: %s", got)
 	}
 }
