@@ -1361,3 +1361,49 @@ func TestStackDryRunWireAndDoctor(t *testing.T) {
 		}
 	}
 }
+
+func TestStackDryRunValidationParity(t *testing.T) {
+	previous := dryRun
+	t.Cleanup(func() { dryRun = previous })
+	ws := t.TempDir()
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	chdir(t, ws)
+	for _, malformed := range []bool{false, true} {
+		if malformed {
+			writeStackManifest(t, ws, `{"repos":`)
+		}
+		for _, makeCmd := range []func() *cobra.Command{newStackWireCmd, newStackPullCmd, newStackDoctorCmd} {
+			cmd := makeCmd()
+			// Doctor intentionally supports repositories without a manifest. Compare
+			// its regular read-only check there; --fix must still reject malformed input.
+			if malformed && cmd.Name() == "doctor" {
+				if err := cmd.Flags().Set("fix", "true"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			dryRun = false
+			_, realErr := runVerbOut(context.Background(), cmd)
+			dryRun = true
+			out, previewErr := runVerbOut(context.Background(), cmd)
+			if fmt.Sprint(realErr) != fmt.Sprint(previewErr) {
+				t.Fatalf("%s malformed=%v: real=%v preview=%v", cmd.Name(), malformed, realErr, previewErr)
+			}
+			if cmd.Name() != "doctor" && (previewErr == nil || strings.Contains(out, "would")) {
+				t.Fatalf("%s promised work without a valid manifest: %v\n%s", cmd.Name(), previewErr, out)
+			}
+		}
+	}
+	// --fix has the same intentional no-manifest support as plain doctor, but
+	// its dry run cannot install anything.
+	if err := os.Remove(filepath.Join(ws, "rig.stack.jsonc")); err != nil {
+		t.Fatal(err)
+	}
+	cmd := newStackDoctorCmd()
+	if err := cmd.Flags().Set("fix", "true"); err != nil {
+		t.Fatal(err)
+	}
+	dryRun = true
+	if _, err := runVerbOut(context.Background(), cmd); err != nil {
+		t.Fatal(err)
+	}
+}

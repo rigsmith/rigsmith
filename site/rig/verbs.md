@@ -286,17 +286,6 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | Verb | What |
 |------|------|
 | `stack setup` | Set up a freshly cloned stackspace: install the fusion engine, import the members, write the build overlay, print the status. The one command a new clone needs; safe to run again |
-Dry runs: `pull -n` reports each current cursor and upstream tip (including
-“nothing to pull”), without fetching objects, starting josh, or changing the
-stackspace. It retains the normal dirty-tree check; `--repin` resolves the pin
-again for the preview. Commit counts are omitted because upstream objects need
-not be present locally. Merge conflicts and replacement safety checks require a
-real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
-reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
-and `seed` refuse `--dry-run` before making changes. `status` and plain `doctor`
-are read-only; `propose`, `push`, and `pack` retain their existing previews.
-
-
 | `stack init` | Write the manifest, or import the repos it names into this history (and a generated `README.md`, unless one is there that rig does not own); a private upstream is reached with your `gh` login, and an import whose fetch brought nothing back is refused rather than recorded |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo — manifest entry, directory and overlay redirects; refuses while it holds unsent or uncommitted work, or files git ignores (`--force` overrides); `--keep-tree` keeps the directory, and needs a clean one even with `--force` |
@@ -308,6 +297,16 @@ are read-only; `propose`, `push`, and `pack` retain their existing previews.
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack pack [repo]` | Build a member's publishable packages from inside the stackspace, where the build overlay makes cross-member references resolve from source (every member with no argument); `--out` chooses the directory, default `dist/`; refuses while the overlay is missing, since without it the packages are the ones a bare checkout would produce |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
+
+Dry runs: `pull -n` reports each current cursor and upstream tip (including
+“nothing to pull”), without fetching objects, starting josh, or changing the
+stackspace. It retains the normal dirty-tree check; `--repin` resolves the pin
+again for the preview. Commit counts are omitted because upstream objects need
+not be present locally. Merge conflicts and replacement safety checks require a
+real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
+reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
+and `seed` refuse `--dry-run` before making changes. `status` and plain `doctor`
+are read-only; `propose`, `push`, and `pack` retain their existing previews.
 
 ```sh
 rig stack init                       # writes rig.stack.jsonc to fill in

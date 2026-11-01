@@ -1947,14 +1947,14 @@ func newStackWireCmd() *cobra.Command {
 			"`rig stack doctor` reports the same findings without writing anything.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if dryRun {
-				fmt.Fprintln(cmd.OutOrStdout(), "would regenerate build overlay and generated README.md; checking current wiring:")
-				return newStackDoctorCmd().RunE(cmd, nil)
-			}
 			ctx := cmd.Context()
 			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
+			}
+			if dryRun {
+				fmt.Fprintln(cmd.OutOrStdout(), "would regenerate build overlay and generated README.md; checking current wiring:")
+				return newStackDoctorCmd().RunE(cmd, nil)
 			}
 			// Asked before wiring, because a wire that defers still returns
 			// nil and the refresh below would go ahead anyway — writing a file
