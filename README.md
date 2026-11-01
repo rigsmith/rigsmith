@@ -86,7 +86,7 @@ JSON contract external plugins speak; `examples/plugins/changeset-changelog-chan
 is a Node reference plugin producing changelogen-style output. Set
 `"changelog": "<plugin>"` in config to swap it in.
 
-See [Stackspaces](site/rig/stack.md) for source build signals, member imports, and evaluation timing.
+See [Stackspaces](site/rig/stack.md) for early `RigStackAvailable_<id>` availability properties, source build signals, member imports, and evaluation timing.
 
 ## Design
 

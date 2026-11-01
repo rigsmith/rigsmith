@@ -328,16 +328,23 @@ build so the consumer compiles against source, sending and updating pull
 requests, and the rules that will otherwise catch you out. Manifest keys are in
 [Configuration](./configuration#stack).
 
-The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
+The .NET `stack wire` props overlay exposes early `RigStackspace`,
+`RigStackspaceRoot`, and stack-wide `RigStackAvailable_<id>` availability.
+These are usable in project-body conditions; availability does not imply a swap.
+The targets overlay exposes `RigStackspace`, `RigStackspaceRoot`,
 per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
 compile constants, plus `RIG_STACK`. Per-package properties are available inside
 targets after `RigStackSourceSignals`, not in project evaluation conditions.
-`UseStackSources=false` disables all signals and swaps. Member imports check the
-nearest parent `Directory.Build.targets` for rig's generated-overlay or
-member-import marker, or the literal `<RigStackspace>true</RigStackspace>`
-declaration. Retain that declaration when taking ownership of an overlay;
-an ancestor stack manifest alone does not trigger the import. Re-running `wire`
-upgrades rig-owned member imports; `stack doctor` previews the signals by project. See [the stack guide](stack.md) for naming and timing.
+Global `-p:UseStackSources=false` disables all signals and swaps; a value first
+set in the project body cannot undo early evaluation. Member imports check the
+nearest parent props or targets file for rig's generated-overlay or member-import
+marker, or the literal `<RigStackspace>true</RigStackspace>` declaration. Retain
+that declaration when taking ownership of an overlay; an ancestor stack manifest
+alone does not trigger the import. Re-running `wire` upgrades rig-owned imports;
+`stack doctor`
+previews the signals by project. Optional props issues (missing, stale, hand-owned
+root props or member shadowing) are advisory and do not block packing; targets
+issues remain blocking. See [the stack guide](stack.md) for naming and timing.
 
 ### Stackspace member CI
 
