@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.yaml.in/yaml/v3"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,11 +190,34 @@ func TestStackCIActionBoolean(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, script, ok := strings.Cut(string(data), "      run: |\n")
-	if !ok {
-		t.Fatal("missing action script")
+
+	var action struct {
+		Runs struct {
+			Steps []struct {
+				ID  string            `yaml:"id"`
+				Env map[string]string `yaml:"env"`
+				Run string            `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"runs"`
 	}
-	script = strings.ReplaceAll(script, "        ", "")
+	if err = yaml.Unmarshal(data, &action); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	var stepEnv map[string]string
+	for _, step := range action.Runs.Steps {
+		if step.ID == "run" {
+			script = step.Run
+			stepEnv = step.Env
+		}
+	}
+	if script == "" {
+		t.Fatal("missing run step")
+	}
+	if stepEnv["STACK_TIP"] != "${{ inputs.upstream-tip }}" {
+		t.Fatalf("upstream-tip input mapping: %q", stepEnv["STACK_TIP"])
+	}
+
 	dir := t.TempDir()
 	if err = os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
 		t.Fatal(err)
@@ -213,6 +237,54 @@ func TestStackCIActionBoolean(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(string(output), "upstream-tip must be exactly true or false") {
 				t.Fatalf("want input failure: %v %s", err, output)
+			}
+		})
+	}
+}
+
+func TestStackCIExitCode(t *testing.T) {
+	for _, code := range []int{10, 11, 12, 13} {
+		got, ok := StackCIExitCode(fmt.Errorf("wrapped: %w", &stackCIError{"phase", code, errors.New("failed")}))
+		if !ok || got != code {
+			t.Fatalf("want %d: %d %v", code, got, ok)
+		}
+	}
+	for _, err := range []error{nil, errors.New("failure"), &exec.ExitError{}, &exitError{code: 7}} {
+		if code, ok := StackCIExitCode(err); ok {
+			t.Fatalf("unexpected propagation %T: %d", err, code)
+		}
+	}
+}
+
+func TestStackCIMaterializeSymlinks(t *testing.T) {
+	for _, target := range []string{"/outside", "../../outside", "kept"} {
+		t.Run(target, func(t *testing.T) {
+			checkout := t.TempDir()
+			dest := t.TempDir()
+			mustGitStack(t, checkout, "init", "-q")
+			mustGitStack(t, checkout, "config", "user.name", "test")
+			mustGitStack(t, checkout, "config", "user.email", "t@t")
+			if err := os.WriteFile(filepath.Join(checkout, "kept"), []byte("source"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(checkout, "link")); err != nil {
+				t.Fatal(err)
+			}
+			mustGitStack(t, checkout, "add", ".")
+			mustGitStack(t, checkout, "commit", "-qm", "symlink tree")
+			err := stackCIMaterialize(context.Background(), checkout, dest)
+			if target != "kept" {
+				if err == nil || !strings.Contains(err.Error(), "escapes prefix") {
+					t.Fatalf("want escape refusal: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			link, err := os.Readlink(filepath.Join(dest, "link"))
+			if err != nil || link != target {
+				t.Fatalf("link %q: %v", link, err)
 			}
 		})
 	}

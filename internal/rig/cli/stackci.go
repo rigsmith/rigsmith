@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,16 @@ type stackCIError struct {
 func (e *stackCIError) Error() string { return fmt.Sprintf("stack ci %s: %v", e.step, e.err) }
 func (e *stackCIError) Unwrap() error { return e.err }
 func (e *stackCIError) ExitCode() int { return e.code }
+
+// StackCIExitCode recognizes only the explicit stack CI phase status contract.
+// Other subprocess failures retain the CLI's default exit status.
+func StackCIExitCode(err error) (int, bool) {
+	var phase *stackCIError
+	if errors.As(err, &phase) {
+		return phase.ExitCode(), true
+	}
+	return 0, false
+}
 
 var stackCIExecutable = os.Executable
 
