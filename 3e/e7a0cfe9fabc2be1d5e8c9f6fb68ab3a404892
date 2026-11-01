@@ -1,0 +1,40 @@
+internal/rig/cli/stack.go
+  s_49cd7f17150868::t_539de714a8872f 2058
+internal/rig/cli/stackoverlay.go
+  s_49cd7f17150868::t_f906da1de05e35 40,359-362,393-398,416,455-458,460-461
+  s_49cd7f17150868::t_539de714a8872f 41-43,66,449,454
+docs/STACK-DESIGN.md
+  s_49cd7f17150868::t_f906da1de05e35 731-734
+site/rig/stack.md
+  s_49cd7f17150868::t_f906da1de05e35 1045-1048
+core/ecosystem/dotnet/localoverlay_test.go
+  s_49cd7f17150868::t_690dc53b243feb 560,566-567,571-581,677-732
+  s_49cd7f17150868::t_539de714a8872f 516,557,643
+site/rig/verbs.md
+  s_49cd7f17150868::t_f906da1de05e35 321-328
+core/ecosystem/dotnet/localoverlay.go
+  s_49cd7f17150868::t_f906da1de05e35 219-223
+  s_49cd7f17150868::t_539de714a8872f 150,164,166-168,233-238,252-255,257
+internal/rig/cli/stackoverlay_test.go
+  s_49cd7f17150868::t_539de714a8872f 344-352
+cmd/rig/README.md
+  s_49cd7f17150868::t_f906da1de05e35 45-46
+README.md
+  s_49cd7f17150868::t_f906da1de05e35 83-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3ee7a0cfe9fabc2be1d5e8c9f6fb68ab3a404892",
+  "prompts": {},
+  "sessions": {
+    "s_49cd7f17150868": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e4-1d53-7f71-8e3e-53f9836cb758",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
