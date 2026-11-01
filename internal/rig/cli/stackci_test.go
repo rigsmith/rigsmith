@@ -218,27 +218,32 @@ func TestStackCIActionBoolean(t *testing.T) {
 		t.Fatalf("upstream-tip input mapping: %q", stepEnv["STACK_TIP"])
 	}
 
+	if stepEnv["STACK_STRICT"] != "${{ inputs.strict }}" {
+		t.Fatalf("strict input mapping: %q", stepEnv["STACK_STRICT"])
+	}
 	dir := t.TempDir()
 	if err = os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
-		t.Run(fmt.Sprintf("value=%q", value), func(t *testing.T) {
-			p := exec.Command("bash", "-e", "-c", script)
-			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
-			output, err := p.CombinedOutput()
-			valid := value == "true" || value == "false"
-			if valid {
-				if err != nil {
-					t.Fatalf("%v: %s", err, output)
+	for _, field := range []struct{ env, flag, label string }{{"STACK_TIP", "--upstream-tip", "upstream-tip"}, {"STACK_STRICT", "--strict", "strict"}} {
+		for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
+			t.Run(fmt.Sprintf("%s=%q", field.label, value), func(t *testing.T) {
+				p := exec.Command("bash", "-e", "-c", script)
+				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP=false", "STACK_STRICT=false", field.env+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+				output, err := p.CombinedOutput()
+				valid := value == "true" || value == "false"
+				if valid {
+					if err != nil {
+						t.Fatalf("%v: %s", err, output)
+					}
+					if strings.Contains(string(output), field.flag) != (value == "true") {
+						t.Fatalf("wrong mode: %s", output)
+					}
+				} else if err == nil || !strings.Contains(string(output), field.label+" must be exactly true or false") {
+					t.Fatalf("want input failure: %v %s", err, output)
 				}
-				if strings.Contains(string(output), "--upstream-tip") != (value == "true") {
-					t.Fatalf("wrong mode: %s", output)
-				}
-			} else if err == nil || !strings.Contains(string(output), "upstream-tip must be exactly true or false") {
-				t.Fatalf("want input failure: %v %s", err, output)
-			}
-		})
+			})
+		}
 	}
 }
 

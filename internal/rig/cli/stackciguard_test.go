@@ -273,3 +273,72 @@ func TestStackCIGuardAssemblyE2E(t *testing.T) {
 		t.Fatalf("assembly conflict was not rejected: %v\n%s", err, out.String())
 	}
 }
+
+func TestStackCIGuardReviewE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("set RIG_STACK_E2E=1 for warning-policy regression builds")
+	}
+	for _, mode := range []string{"plain-tolerance", "sibling"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			write := func(path, body string) {
+				t.Helper()
+				path = filepath.Join(root, path)
+				if e := os.MkdirAll(filepath.Dir(path), 0755); e != nil {
+					t.Fatal(e)
+				}
+				if e := os.WriteFile(path, []byte(body), 0644); e != nil {
+					t.Fatal(e)
+				}
+			}
+			write("NuGet.Config", `<configuration><packageSources><clear/></packageSources></configuration>`)
+			project := filepath.Join(root, "app/App.csproj")
+			invoke := func(want bool, strict bool) string {
+				t.Helper()
+				c := newStackCIGuardCmd()
+				var out bytes.Buffer
+				c.SetOut(&out)
+				c.SetErr(&out)
+				args := []string{project}
+				if strict {
+					args = append(args, "--strict")
+				}
+				c.SetArgs(args)
+				err := c.Execute()
+				if (err == nil) != want {
+					t.Fatalf("success=%v: %v\n%s", want, err, out.String())
+				}
+				return out.String()
+			}
+			if mode == "plain-tolerance" {
+				write("app/App.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><WarningsNotAsErrors>CS0168</WarningsNotAsErrors></PropertyGroup><ItemGroup><StackOnlyWarning Include="CS1030"/></ItemGroup></Project>`)
+				write("app/App.cs", "#warning source only\npublic class App { void M() { int unused; } }")
+				out := invoke(true, false)
+				if !strings.Contains(out, "CS0168") {
+					t.Fatal("tolerated warning hidden")
+				}
+				write("app/App.cs", "#warning source only\npublic class App { void M() { int unused; int assigned = 1; } }")
+				invoke(false, false)
+				return
+			}
+			write("lib/Lib.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Acme.Core</PackageId><TreatWarningsAsErrors>true</TreatWarningsAsErrors><WarningsAsErrors>CS0168</WarningsAsErrors></PropertyGroup></Project>`)
+			write("lib/Core.cs", `public class Core { void M() { int unused; } }`)
+			write("app/App.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><WarningsNotAsErrors>CS0219</WarningsNotAsErrors></PropertyGroup><ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0"/><ProjectReference Include="support/Support.csproj"/><Compile Remove="support/**/*.cs"/></ItemGroup></Project>`)
+			write("app/App.cs", `public class App { void M() { int assigned = 1; } }`)
+			write("app/support/Support.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><WarningsNotAsErrors>CS0168</WarningsNotAsErrors></PropertyGroup></Project>`)
+			write("app/support/Support.cs", `public class Support { void M() { int unused; } }`)
+			write("rig.stack.jsonc", `{"repos":{"app":{"upstream":"github.com/acme/app"},"lib":{"upstream":"github.com/acme/lib"}}}`)
+			_, err := dotnet.New().LocalOverlay(context.Background(), plugin.LocalOverlayRequest{Root: root, Write: true, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := invoke(true, false)
+			if !strings.Contains(out, "CS0168") || !strings.Contains(out, "1 sibling warnings observed") {
+				t.Fatalf("sibling warning not visible and counted:\n%s", out)
+			}
+			invoke(false, true)
+			write("app/App.cs", `public class App { void M() { int unused; } }`)
+			invoke(false, false)
+		})
+	}
+}

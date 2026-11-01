@@ -1088,13 +1088,26 @@ informational notes, not blocking problems; non-writable members are left alone.
 `doctor` previews the properties/constants by project from static discovery;
 conditional references still depend on the configuration MSBuild builds.
 
+## CI warning guard
+
 `rig stack ci-guard app/App.csproj` builds one .NET project with
 `TreatWarningsAsErrors=true` and reports observed stack-only diagnostics in
 `GITHUB_STEP_SUMMARY`. In a plain clone, declare eligible compiler diagnostics
 with `<StackOnlyWarning Include="ACME0001" />` in the project. In a stackspace,
 only NU1603/NU1608/NU1605 events matched to a rewired package identity in NuGet's
-assets log are eligible. Other warnings fail; MSB3277 stays an error because
+assets log are eligible. Sibling compiler warnings stay visible and are counted
+separately without failing the member job; new warnings in the member's own code
+remain fatal. Existing member `WarningsNotAsErrors` entries are preserved and
+tolerated events are reported separately. Other warnings fail; MSB3277 stays an error because
 exact assembly scoping is not established. `--strict` disables holding warnings
 back. The composite stack action accepts `guard-project: app/App.csproj` (relative
 to the member, replacing its build command) and `strict: 'true'`; the equivalent
 runner flag is `rig stack ci --guard-project app/App.csproj`.
+
+Stack-mode fusion holdback is **unproven**: .NET 10 accepted the swapped project
+regardless of the tested package minimum/exact version constraint, so the
+predicted NU16xx warnings did not occur in that form. A clean source build is
+not proof that a fusion warning was held back. This remains unconfirmed against
+a real stack or the reference member's platform matrix. Runtime warning
+log-message patterns are not implemented; eligibility uses MSBuild diagnostic
+codes and observed NuGet events only.

@@ -121,8 +121,16 @@ See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testi
 `GITHUB_STEP_SUMMARY`. In a plain clone, declare eligible compiler diagnostics
 with `<StackOnlyWarning Include="ACME0001" />` in the project. In a stackspace,
 only NU1603/NU1608/NU1605 events matched to a rewired package identity in NuGet's
-assets log are eligible. Other warnings fail; MSB3277 stays an error because
+assets log are eligible. Sibling compiler warnings remain visible and counted
+without failing the member job; `strict: 'true'` makes them fatal. The member's
+existing `WarningsNotAsErrors` entries are retained. Other warnings fail; MSB3277 stays an error because
 exact assembly scoping is not established. `--strict` disables holding warnings
 back. The composite stack action accepts `guard-project: app/App.csproj` (relative
 to the member, replacing its build command) and `strict: 'true'`; the equivalent
 runner flag is `rig stack ci --guard-project app/App.csproj`.
+
+Stack-mode fusion holdback is not yet proven against a real stack: .NET 10
+accepted the tested swapped project regardless of its package constraint and
+emitted no NU16xx in that fixture. Runtime log-message warning patterns are not
+implemented. See [Stackspaces](../site/rig/stack.md#ci-warning-guard) for the
+verified scope and remaining limits.

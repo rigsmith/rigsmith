@@ -57,6 +57,10 @@ runs:
           true|false) ;;
           *) echo 'upstream-tip must be exactly true or false' >&2; exit 1 ;;
         esac
+        case "$STACK_STRICT" in
+          true|false) ;;
+          *) echo 'strict must be exactly true or false' >&2; exit 1 ;;
+        esac
         args=(stack ci --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi

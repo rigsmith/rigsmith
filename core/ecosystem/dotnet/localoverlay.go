@@ -418,7 +418,31 @@ func StackSourceName(id string) string {
 
 // Warning policy is read while NuGet constructs the restore graph. This target
 // runs after items exist, before that policy is copied. NoWarn loses evidence.
-const overlayCIGuard = `  <Target Name="RigStackCIWarningPolicy" BeforeTargets="_GenerateRestoreProjectSpec;CoreCompile" Condition="'$(RigStackCIGuard)' == 'true' And '@(_StackPresent)' != ''">
+const overlayCIGuard = `  <!-- Keep member warning policy off source siblings. Removal is explicit:
+       MSBuild otherwise forwards command-line properties to every reference. -->
+  <ItemGroup Condition="'$(RigStackCIGuard)' == 'true' And '$(RigStackCIMemberRoot)' != ''">
+    <ProjectReference Update="@(ProjectReference)">
+      <GlobalPropertiesToRemove>%(ProjectReference.GlobalPropertiesToRemove);WarningsAsErrors;WarningsNotAsErrors</GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Update="@(ProjectReference)" Condition="!$([System.String]::Copy('%(ProjectReference.FullPath)').StartsWith('$(RigStackCIMemberRoot)'))">
+      <GlobalPropertiesToRemove>%(ProjectReference.GlobalPropertiesToRemove);TreatWarningsAsErrors;WarningsAsErrors;WarningsNotAsErrors</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(RigStackCIGuard)' == 'true' And '$(RigStackCIMemberRoot)' != '' And !$([System.String]::Copy('$(MSBuildProjectFullPath)').StartsWith('$(RigStackCIMemberRoot)'))">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningsAsErrors></WarningsAsErrors>
+    <MSBuildWarningsAsErrors></MSBuildWarningsAsErrors>
+  </PropertyGroup>
+
+  <Target Name="RigStackCISiblingWarningPolicy" BeforeTargets="CoreCompile" Condition="'$(RigStackCIGuard)' == 'true' And '$(RigStackCIMemberRoot)' != '' And !$([System.String]::Copy('$(MSBuildProjectFullPath)').StartsWith('$(RigStackCIMemberRoot)'))">
+    <PropertyGroup>
+      <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+      <WarningsAsErrors></WarningsAsErrors>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="RigStackCIWarningPolicy" BeforeTargets="_GenerateRestoreProjectSpec;CoreCompile" Condition="'$(RigStackCIGuard)' == 'true' And '@(_StackPresent)' != ''">
     <PropertyGroup>
       <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1603;NU1608;NU1605</WarningsNotAsErrors>
     </PropertyGroup>

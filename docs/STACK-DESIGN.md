@@ -806,7 +806,18 @@ standalone suppression: only the guard may use that switch. It validates every
 observed event: exact project, exact code and complete message matched against
 `project.assets.json` logs, and `libraryId` equal to a swapped identity. Unmatched
 warnings remain visible and fail the guard, including non-swapped packages with
-the same code. Other projects' warnings fail closed. No MSB3277 exemption is
+the same code. Generated reference metadata removes member-specific global
+warning lists before entering referenced projects. References outside the member
+also remove global `TreatWarningsAsErrors`; a guard-only target disables compiler
+promotion there. The member is the first prefix directory below the overlay
+root, matching the manifest's single-directory member names. This applies even
+when a sibling normally sets `TreatWarningsAsErrors=true`. Sibling compiler
+warnings (CS/FS/BC) remain visible and are separately counted, while member
+warnings still fail unless held by an explicit declaration or tolerated by that
+project's own `WarningsNotAsErrors` policy. Warning lists are merged for the
+entry project and evaluated separately for other member projects; its original
+list entries are preserved. Strict mode keeps sibling warnings fatal too.
+Restore and assembly warnings outside exact eligibility still fail closed. No MSB3277 exemption is
 emitted: a warning code cannot establish that both assemblies were swapped.
 
 The job summary counts distinct observed diagnostic records, never declarations
@@ -823,5 +834,12 @@ A package minimum/exact constraint against a lower-version source project did
 **not** produce NU1605 on .NET 10; the clean stack build is not evidence that a
 fusion event was held. Successful real stack-mode fusion-event classification
 and exact MSB3277 assembly filtering still require proof. The real
-member project named in the pawprint is unavailable; its platform matrix is not
+reference member project is unavailable; its platform matrix is not
 verified here. Tests invoking the SDK require `RIG_STACK_E2E=1` and local feeds.
+
+Runtime warning log-message patterns are not implemented. Stack-mode fusion
+holdback remains unproven and unconfirmed against a real stack: NuGet accepted
+the swapped project whatever the tested package minimum/exact constraint, so
+the predicted warnings may not occur in that form. The sibling and member-policy
+regression fixtures were run red against the preceding implementation, then
+green after the fix; they also check strict and new member-code failures.
