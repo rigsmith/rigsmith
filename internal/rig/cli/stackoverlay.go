@@ -446,7 +446,7 @@ func stackReportSourceSignals(ctx context.Context, out io.Writer, root string, l
 			continue
 		}
 		for _, p := range scan.Packages {
-			fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", p.ManifestPath, root)
+			fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", filepath.ToSlash(p.ManifestPath), filepath.ToSlash(root))
 			for _, d := range p.Dependencies {
 				if !d.ViaRegistry || !ids[d.Name] {
 					continue
