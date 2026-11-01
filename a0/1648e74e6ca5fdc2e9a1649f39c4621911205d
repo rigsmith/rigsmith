@@ -1,0 +1,35 @@
+internal/rig/cli/stackciguardpath_windows_test.go
+  s_305a3d2195b124::t_bba5920402fc77 1-44
+internal/rig/cli/stackciguard_test.go
+  s_305a3d2195b124::t_12ae7e8c46bc2a 23-25,29,33,38
+.changeset/jolly-shrimp-whisper.md
+  s_305a3d2195b124::t_2f4c4f729c3896 1-7
+docs/STACK-DESIGN.md
+  s_305a3d2195b124::t_2f4c4f729c3896 855-865
+internal/rig/cli/stackciguardpath_test.go
+  s_305a3d2195b124::t_bba5920402fc77 1-69,73-93,116
+  s_305a3d2195b124::t_17e9bf40dc2cfd 70-72
+  s_305a3d2195b124::t_2f4c4f729c3896 94-115
+internal/rig/cli/stackciguard.go
+  s_305a3d2195b124::t_bba5920402fc77 302
+  s_305a3d2195b124::t_17e9bf40dc2cfd 294-295
+  s_305a3d2195b124::t_12ae7e8c46bc2a 32,42,104-105,208,219,280-291
+internal/rig/cli/stackciguardpath.go
+  s_305a3d2195b124::t_12ae7e8c46bc2a 1-72
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a01648e74e6ca5fdc2e9a1649f39c4621911205d",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
