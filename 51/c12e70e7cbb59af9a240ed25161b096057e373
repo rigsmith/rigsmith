@@ -1,0 +1,23 @@
+README.md
+  s_0d27d52fc83271::t_ea41478974e888 12
+site/rig/verbs.md
+  s_0d27d52fc83271::t_ea41478974e888 316-327
+cmd/rig/README.md
+  s_0d27d52fc83271::t_ea41478974e888 45-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "51c12e70e7cbb59af9a240ed25161b096057e373",
+  "prompts": {},
+  "sessions": {
+    "s_0d27d52fc83271": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e3-232a-7362-8714-960078f0746b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
