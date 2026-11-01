@@ -1,0 +1,18 @@
+name: Stackspace member
+on: [pull_request, push]
+permissions:
+  contents: read
+jobs:
+  # Keep your existing plain-clone matrix alongside this job.
+  stackspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      # Intended: rigsmith/stack-action@v1 (not published yet).
+      # Copy .github/actions/stack from rigsmith into this repository first.
+      - uses: ./.github/actions/stack
+        with:
+          rig-version: vX.Y.Z # Replace with a release containing stack ci.
+          manifest: stack/rig.stack.jsonc
+          member: app
+          test: rig test

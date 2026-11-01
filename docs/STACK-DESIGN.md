@@ -742,3 +742,46 @@ Legacy ungated imports still resolve sources correctly and are reported as
 informational notes, not blocking problems; non-writable members are left alone.
 `doctor` previews the properties/constants by project from static discovery;
 conditional references still depend on the configuration MSBuild builds.
+
+## Member CI reconstruction
+
+`rig stack ci` builds in an automatically removed temporary repository, outside
+the checkout. Manifest mode reads the committed manifest from checkout HEAD,
+normalizes sibling imports to exact cursors (ignoring proposal branches), and
+uses the existing init import path. Tip mode drops cursor and tag/commit pins.
+Seed support is deferred until the separate setup seed work merges. This verb
+requires `--manifest` and exposes no seed input.
+
+The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
+`git cat-file blob` bytes under the manifest prefix. This bypasses archive
+export-ignore/export-subst and checkout smudge/EOL filters, including the
+checkout's local config; replacement objects are disabled. It needs no PR
+ancestry or complete history. File modes and contained symlinks are preserved.
+A throwaway local commit records the replacement for wire's HEAD discovery.
+Wire runs again after replacement, keeping sibling relative references within
+the fused root. The checkout and its index remain untouched. Submodules are
+not materialized; `.gitmodules` and gitlink entries fail setup explicitly.
+
+The verb owns setup, wire, build and test reporting and distinct exit statuses;
+the composite only installs pinned rig and dispatches it. Engine installation
+uses rig's manifest/default josh pin on first import. Summary writing is optional
+outside GitHub. Commands run from the selected member and test results stream
+to stdout. See [the member CI guide](guides/testing-a-member-pr-in-its-stackspace.md).
+
+The action's final home is the separate `rigsmith/stack-action` repository,
+following the shiprig-action model. `rigsmith/stack-action@v1` is intended but
+not published yet. Until that later publication, ship the fully self-contained
+`.github/actions/stack/` directory with no references outside it; workflow
+examples use its in-repo path. This change does not create the new repository.
+
+Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
+`ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
+The local E2E uses preinstalled josh to stay offline; fresh hosted downloads
+were verified by code-path inspection only.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.

@@ -391,7 +391,10 @@ func insideRoot(root, path string) bool {
 func realPath(path string) string {
 	vol := filepath.VolumeName(path)
 	cur := vol + string(filepath.Separator)
-	for _, part := range strings.Split(strings.TrimPrefix(path, vol), string(filepath.Separator)) {
+	// Normalize separators without cleaning: on Windows both slash forms are
+	// separators. Leaving a slash-containing component intact lets Join clean
+	// away a symlink followed by .. before it can be resolved.
+	for _, part := range strings.Split(filepath.ToSlash(strings.TrimPrefix(path, vol)), "/") {
 		switch part {
 		case "", ".":
 			continue
