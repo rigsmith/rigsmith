@@ -327,9 +327,12 @@ func TestStackCIMaterializePathEscape(t *testing.T) {
 		t.Fatalf("outside file was touched: %v", err)
 	}
 	// Keep '..' unresolved until insideRoot walks existing symlinks.
-	if insideRoot(dest, dest+string(filepath.Separator)+"src/../outside") {
-		t.Fatal("insideRoot accepted traversal through an escaping symlink")
+	for _, suffix := range []string{"src/../outside", "src" + string(filepath.Separator) + ".." + string(filepath.Separator) + "outside"} {
+		if insideRoot(dest, dest+string(filepath.Separator)+suffix) {
+			t.Fatalf("insideRoot accepted traversal through an escaping symlink: %q", suffix)
+		}
 	}
+
 }
 
 // Create a committed link independently of Windows checkout/symlink privileges.
