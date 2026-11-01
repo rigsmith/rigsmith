@@ -134,8 +134,10 @@ if [[ $dest == *checksums.txt ]]; then printf '%s  %s\n' "$FIXTURE_SUM" "$FIXTUR
 `
 	os.WriteFile(filepath.Join(dir, "curl"), []byte(curl), 0755)
 	// macOS's native sha256sum does not escape names; exercise the GNU-style
-	// behavior using real shasum when it is available, rather than hide the bug.
-	if tool, err := exec.LookPath("shasum"); err == nil {
+	// behavior using real shasum on Unix, rather than hide the bug. Windows
+	// uses Git Bash sha256sum; a native shasum.bat (e.g. Strawberry Perl)
+	// cannot be executed by this POSIX wrapper.
+	if tool, err := exec.LookPath("shasum"); runtime.GOOS != "windows" && err == nil {
 		t.Setenv("REAL_SHASUM", tool)
 		if err = os.WriteFile(filepath.Join(dir, "sha256sum"), []byte("#!/bin/sh\nexec \"$REAL_SHASUM\" -a 256 \"$@\"\n"), 0755); err != nil {
 			t.Fatal(err)
