@@ -53,7 +53,7 @@ manifest cursors; `rig stack status` shows the same chain. See the
 [stack dependency guide](../../site/rig/stack.md#stack-topic-dependencies) for
 recording edges, publishing statuses, and enabling scheduled refresh.
 
-See [Stackspaces](../../site/rig/stack.md) for source build signals, member imports, and evaluation timing.
+See [Stackspaces](../../site/rig/stack.md) for early `RigStackAvailable_<id>` availability properties, source build signals, member imports, and evaluation timing.
 
 ## Verbs
 
