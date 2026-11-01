@@ -1,0 +1,21 @@
+core/ecosystem/dotnet/localoverlay.go
+  s_305a3d2195b124::t_9df4ceac398e65 232-234
+site/rig/verbs.md
+  s_305a3d2195b124::t_9df4ceac398e65 326-331
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "656e6c3e7518561c6b86d8b1239ec5ab5c687455",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
