@@ -1025,45 +1025,6 @@ proposal. What was missing was only that nothing said so.
   [seed](#seed) instead — the root files alone — and let `init` rebuild the
   members there.
 
-## Testing a member PR in its stackspace
-
-Keep the plain-clone matrix to test released dependencies, and add a separate
-stackspace job to test sibling source changes. Copy the self-contained
-`.github/actions/stack/` directory from rigsmith into your member repository:
-
-```yaml
-- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-- uses: ./.github/actions/stack
-  with:
-    rig-version: vX.Y.Z # exact release containing stack ci; required
-    manifest: stack/rig.stack.jsonc
-    member: app
-    test: rig test
-```
-
-`rigsmith/stack-action@v1` is the intended name but is not published yet.
-No separate josh step is needed. Install your project's language SDK as usual.
-The committed manifest supplies sibling cursors; `upstream-tip: 'true'` selects
-upstream tips instead. Commands run from the selected member prefix in a
-temporary fused tree, leaving checkout untouched. The committed checkout HEAD
-is materialized without archive export attributes or checkout filters, so shallow
-PR merge checkouts work. Submodules are unsupported: `.gitmodules` or gitlinks
-fail setup. Use read-only contents permission and ordinary `pull_request` jobs;
-private upstreams may be inaccessible to fork PRs.
-
-For other CI, install pinned rig and run
-`rig stack ci --manifest stack/rig.stack.jsonc --member app --test 'rig test'`.
-The verb prints resolved commits and test output, appending phase results and
-commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
-wire (11), build (12), and test (13). Seed support follows in a later change.
-
-Committed symlinks must stay within the member prefix. Rooted targets and
-links escaping that prefix are rejected, including Windows rooted paths. If
-the runner cannot create a contained symlink, setup fails (exit 10) naming the
-file and target; it does not replace the link with a regular file. Windows
-runners may need Developer Mode or symlink-creation privileges for members
-that commit symlinks. Members without symlinks need no such privilege.
-
 ### Source signals from the .NET overlay
 
 With `UseStackSources` other than `false`, the overlay sets
@@ -1106,6 +1067,45 @@ informational notes, not blocking problems; non-writable members are left alone.
 `doctor` previews the properties/constants by project from static discovery;
 conditional references still depend on the configuration MSBuild builds.
 
+## Testing a member PR in its stackspace
+
+Keep the plain-clone matrix to test released dependencies, and add a separate
+stackspace job to test sibling source changes. Copy the self-contained
+`.github/actions/stack/` directory from rigsmith into your member repository:
+
+```yaml
+- uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+- uses: ./.github/actions/stack
+  with:
+    rig-version: vX.Y.Z # exact release containing stack ci; required
+    manifest: stack/rig.stack.jsonc
+    member: app
+    test: rig test
+```
+
+`rigsmith/stack-action@v1` is the intended name but is not published yet.
+No separate josh step is needed. Install your project's language SDK as usual.
+The committed manifest supplies sibling cursors; `upstream-tip: 'true'` selects
+upstream tips instead. Commands run from the selected member prefix in a
+temporary fused tree, leaving checkout untouched. The committed checkout HEAD
+is materialized without archive export attributes or checkout filters, so shallow
+PR merge checkouts work. Submodules are unsupported: `.gitmodules` or gitlinks
+fail setup. Use read-only contents permission and ordinary `pull_request` jobs;
+private upstreams may be inaccessible to fork PRs.
+
+For other CI, install pinned rig and run
+`rig stack ci --manifest stack/rig.stack.jsonc --member app --test 'rig test'`.
+The verb prints resolved commits and test output, appending phase results and
+commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
+wire (11), build (12), and test (13). Seed support follows in a later change.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.
+
 ## CI warning guard
 
 `rig stack ci-guard app/App.csproj` builds one .NET project with
@@ -1129,4 +1129,3 @@ not proof that a fusion warning was held back. This remains unconfirmed against
 a real stack or the reference member's platform matrix. Runtime warning
 log-message patterns are not implemented; eligibility uses MSBuild diagnostic
 codes and observed NuGet events only.
-
