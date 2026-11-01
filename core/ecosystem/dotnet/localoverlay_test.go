@@ -3,6 +3,7 @@ package dotnet
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,7 +78,7 @@ func TestLocalOverlay(t *testing.T) {
 		}
 	})
 
-	t.Run("names each package once", func(t *testing.T) {
+	t.Run("declares each package once", func(t *testing.T) {
 		// The point of the set-arithmetic form: no condition per redirect, so
 		// nothing is written against %(Filename), which MSBuild splits at the
 		// last dot and would match a differently-named sibling.
@@ -89,7 +90,7 @@ func TestLocalOverlay(t *testing.T) {
 			},
 		})
 		body := got.Files[overlayFile]
-		if n := strings.Count(body, "Pty.Core.Native"); n != 1 {
+		if n := strings.Count(body, `StackSource Include="Pty.Core.Native"`); n != 1 {
 			t.Errorf("Pty.Core.Native appears %d times, want once", n)
 		}
 		if strings.Contains(body, "Filename") {
@@ -486,5 +487,298 @@ func TestLocalOverlayLeftOverWhenNothingCrosses(t *testing.T) {
 	writeFile(t, filepath.Join(root, overlayFile), "<Project><!-- mine --></Project>\n")
 	if got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root}); !got.Skipped || len(got.Problems) != 0 {
 		t.Fatalf("hand-written overlay with no redirects: skipped=%v %+v", got.Skipped, got.Problems)
+	}
+}
+
+func TestStackSourceNames(t *testing.T) {
+	for id, want := range map[string]string{"Acme.Core": "Acme_Core", "9-a_b": "9_a_b", "é.a": "__a"} {
+		if got := StackSourceName(id); got != want {
+			t.Errorf("%q: %q != %q", id, got, want)
+		}
+	}
+	body := renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}})
+	for _, want := range []string{"<RigStackspace>true", "<RigStackspaceRoot>$(MSBuildThisFileDirectory)", "BeforeTargets=\"PrepareForBuild;CoreCompile\"", "@(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Core'))", "<RigStackSource_Acme_Core>true", ";STACK_ACME_CORE", ";RIG_STACK"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+}
+
+func TestStackImportUpgrade(t *testing.T) {
+	old := `<Project><!-- Added by rig. historical explanation -->
+ <PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+ <!-- member content --></Project>`
+	if !legacyWalkUp(old) {
+		t.Fatal("old block not detected")
+	}
+	got, ok := patchWalkUp(old)
+	if !ok || legacyWalkUp(got) || strings.Count(got, "<Import ") != 1 || !strings.Contains(got, "'$(_RigStackParent)' == 'true'") || !strings.Contains(got, "member content") {
+		t.Fatal(got)
+	}
+}
+
+func TestStackSourceSignalsE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("set RIG_STACK_E2E=1 for real dotnet builds")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("dotnet unavailable")
+	}
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("dotnet", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("dotnet %v: %v\n%s", args, err, out)
+		}
+	}
+	writeFile(t, filepath.Join(root, "NuGet.Config"), `<configuration><packageSources><clear/><add key="fixture" value="./feed" /></packageSources></configuration>`)
+	lib := filepath.Join(root, "lib/Lib.csproj")
+	writeFile(t, lib, `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Acme.Core</PackageId><Version>1.0.0</Version></PropertyGroup></Project>`)
+	writeFile(t, filepath.Join(root, "lib/Core.cs"), `public class Core { public static int Released => 1; }`)
+	run("pack", lib, "-o", filepath.Join(root, "feed"))
+	writeFile(t, filepath.Join(root, "lib/Core.cs"), `public class Core { public static int SourceOnly => 1; }`)
+	overlay := renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}, {Package: "Acme.Unused", Path: "unused/Unused.csproj"}})
+	writeFile(t, filepath.Join(root, overlayFile), overlay)
+	writeFile(t, filepath.Join(root, "rig.stack.jsonc"), `{}`)
+	member, _ := patchWalkUp(`<Project>
+ <PropertyGroup><EvaluationSawSource Condition="'$(RigStackSource_Acme_Core)' == 'true'">true</EvaluationSawSource></PropertyGroup>
+ <Target Name="CheckSignals" AfterTargets="RigStackSourceSignals" Condition="'$(UseStackSources)' != 'false'">
+ <Error Condition="'$(RigStackspace)' != 'true' Or '$(RigStackspaceRoot)' == ''" Text="missing root signals" />
+ <Error Condition="'$(RigStackSource_Acme_Core)' != 'true'" Text="missing source property" />
+ <Error Condition="'$(RigStackSource_Acme_Unused)' != ''" Text="unused source property" />
+ <Error Condition="'$(EvaluationSawSource)' != ''" Text="unexpected evaluation signal" />
+ <PropertyGroup><TargetSawSource Condition="'$(RigStackSource_Acme_Core)' == 'true'">true</TargetSawSource></PropertyGroup>
+ <Error Condition="'$(TargetSawSource)' != 'true'" Text="target property condition failed" />
+ </Target>
+ <Target Name="CheckDisabledSignals" BeforeTargets="CoreCompile" Condition="'$(UseStackSources)' == 'false' Or '$(_RigStackParent)' != 'true'">
+ <Error Condition="'$(RigStackspace)' != '' Or '$(RigStackspaceRoot)' != '' Or '$(RigStackSource_Acme_Core)' != ''" Text="disabled properties leaked" />
+ </Target></Project>`)
+	for _, mode := range []string{"stack", "stack-json", "stack-inline", "hand-owned", "optout", "plain", "plain-config"} {
+		dir := "app"
+		if strings.HasPrefix(mode, "plain") {
+			dir = "plain/app"
+			writeFile(t, filepath.Join(root, "plain", overlayFile), `<Project><Target Name="Unrelated" BeforeTargets="Build"><Error Text="unrelated ancestor imported" /></Target></Project>`)
+		}
+		for _, name := range []string{"rig.stack.jsonc", "rig.stack.json", ".rig.json"} {
+			if err := os.Remove(filepath.Join(root, name)); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+		switch mode {
+		case "stack", "hand-owned", "optout":
+			writeFile(t, filepath.Join(root, "rig.stack.jsonc"), `{}`)
+		case "stack-json":
+			writeFile(t, filepath.Join(root, "rig.stack.json"), `{}`)
+		case "stack-inline":
+			writeFile(t, filepath.Join(root, ".rig.json"), `{"stack":{"repos":{}}}`)
+		case "plain-config":
+			writeFile(t, filepath.Join(root, "plain/.rig.json"), `{"primary":"dotnet"}`)
+		}
+
+		body := overlay
+		if mode == "hand-owned" {
+			body = strings.Replace(body, overlayMarker, "", 1)
+		}
+		writeFile(t, filepath.Join(root, overlayFile), body)
+		t.Logf("building mode %s", mode)
+		writeFile(t, filepath.Join(root, dir, overlayFile), member)
+		writeFile(t, filepath.Join(root, dir, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0" /></ItemGroup></Project>`)
+		writeFile(t, filepath.Join(root, dir, "App.cs"), `#if STACK_ACME_UNUSED
+#error unused sibling constant
+#endif
+#if STACK_ACME_CORE
+#if !RIG_STACK
+#error missing stack constant
+#endif
+public class App { int value = Core.SourceOnly; }
+#else
+#if RIG_STACK
+#error unexpected stack constant
+#endif
+public class App { int value = Core.Released; }
+#endif
+`)
+		args := []string{"build", filepath.Join(root, dir, "App.csproj"), "--no-incremental", "-p:RestorePackagesPath=" + filepath.Join(root, "packages")}
+		if mode == "optout" {
+			args = append(args, "-p:UseStackSources=false")
+		}
+		run(args...)
+	}
+}
+
+func TestLocalOverlayLegacyImport(t *testing.T) {
+	const legacy = `<Project><!-- Added by rig. historical explanation -->
+ <PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+ <!-- member content --></Project>`
+	for _, tc := range []struct {
+		name            string
+		write, writable bool
+	}{
+		{"wire upgrades writable member", true, true},
+		{"wire leaves non-writable member working", true, false},
+		{"doctor advises without editing", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			redirects := []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}
+			writeFile(t, filepath.Join(root, "lib/Lib.csproj"), "<Project/>")
+			path := filepath.Join(root, "app", overlayFile)
+			writeFile(t, path, legacy)
+			writeFile(t, filepath.Join(root, overlayFile), renderOverlay(redirects))
+			req := plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: tc.write}
+			if tc.writable {
+				req.Writable = []string{"app"}
+			}
+			got, err := New().LocalOverlay(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Problems) != 0 {
+				t.Fatalf("working import reported as blocking: %+v", got.Problems)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.write && tc.writable {
+				if len(got.Fixed) != 1 || len(got.Notes) != 0 || legacyWalkUp(string(after)) || !strings.Contains(string(after), "'$(_RigStackParent)' == 'true'") || !strings.Contains(string(after), "member content") {
+					t.Fatalf("upgrade: %+v\n%s", got, after)
+				}
+				again, err := New().LocalOverlay(context.Background(), req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				twice, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(again.Fixed) != 0 || len(again.Problems) != 0 || len(again.Notes) != 0 || string(after) != string(twice) {
+					t.Fatalf("second wire changed the import: %+v", again)
+				}
+			} else {
+				if len(got.Fixed) != 0 || string(after) != legacy || len(got.Notes) != 1 {
+					t.Fatalf("advisory changed member: %+v\n%s", got, after)
+				}
+				for _, want := range []string{"app/Directory.Build.targets", "still works", "not gated", "plain clone", "unrelated Directory.Build.targets"} {
+					if !strings.Contains(got.Notes[0], want) {
+						t.Errorf("missing %q: %s", want, got.Notes[0])
+					}
+				}
+				advice := "not writable"
+				if tc.writable {
+					advice = "re-run `rig stack wire`"
+				}
+				if !strings.Contains(got.Notes[0], advice) {
+					t.Fatal(got.Notes)
+				}
+			}
+		})
+	}
+}
+
+func TestLocalOverlayUnrecognizedLegacyImport(t *testing.T) {
+	root := t.TempDir()
+	// The original block has been reformatted: it works, but rig cannot safely
+	// recognize its exact boundaries for replacement.
+	legacy := `<Project><!-- Added by rig. historical explanation -->
+ <PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Condition="'$(StackParentTargets)' != ''" Project="$(StackParentTargets)" />
+ </Project>`
+	path := filepath.Join(root, "app", overlayFile)
+	writeFile(t, path, legacy)
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project/>`)
+	req := plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}, Write: true, Writable: []string{"app"}}
+	for i := 0; i < 2; i++ {
+		got, err := New().LocalOverlay(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != legacy || len(got.Fixed) != 0 || len(got.Notes) != 1 || len(got.Problems) != 0 {
+			t.Fatalf("unsafe upgrade: %+v\n%s", got, after)
+		}
+	}
+}
+
+func TestLocalOverlayUpgradesManifestGate(t *testing.T) {
+	root := t.TempDir()
+	old := `<Project><!-- rig:stack-import -->
+ <PropertyGroup><StackManifest>$([MSBuild]::GetPathOfFileAbove('rig.stack.jsonc', '$(MSBuildThisFileDirectory)../'))</StackManifest>
+ <StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Project="$(StackParentTargets)" Condition="Exists('$(StackManifest)')" />
+ <!-- /rig:stack-import --><!-- mine --></Project>`
+	path := filepath.Join(root, "app", overlayFile)
+	writeFile(t, path, old)
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project/>`)
+	req := plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}, Write: true, Writable: []string{"app"}}
+	got, err := New().LocalOverlay(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fixed) != 1 || len(got.Problems) != 0 || strings.Contains(string(after), "<StackManifest>") || strings.Count(string(after), "<Import ") != 1 || !strings.Contains(string(after), "<!-- mine -->") {
+		t.Fatalf("upgrade failed: %+v\n%s", got, after)
+	}
+	got, err = New().LocalOverlay(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fixed) != 0 {
+		t.Fatal(got)
+	}
+}
+
+func TestLocalOverlayPreservesCustomizedLegacyBlock(t *testing.T) {
+	const comment = `<!-- Added by rig. historical explanation -->`
+	const property = `<PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>`
+	const importElement = `<Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />`
+	for _, custom := range []string{
+		`<PropertyGroup><MemberProperty>keep me</MemberProperty></PropertyGroup>`,
+		`<Target Name="MemberTarget"><Message Text="keep me" /></Target>`,
+		`<!-- member comment: keep me -->`,
+	} {
+		for _, position := range []string{"before property", "before import", "inside property"} {
+			t.Run(position+"/"+custom, func(t *testing.T) {
+				block := comment + "\n" + property + "\n" + importElement
+				switch position {
+				case "before property":
+					block = comment + custom + property + importElement
+				case "before import":
+					block = comment + property + custom + importElement
+				case "inside property":
+					block = comment + strings.Replace(property, "</PropertyGroup>", custom+"</PropertyGroup>", 1) + importElement
+				}
+				body := "<Project>" + block + "</Project>"
+				root := t.TempDir()
+				path := filepath.Join(root, "app", overlayFile)
+				writeFile(t, path, body)
+				writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project/>`)
+				req := plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}, Write: true, Writable: []string{"app"}}
+				for i := 0; i < 2; i++ {
+					got, err := New().LocalOverlay(context.Background(), req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					after, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(after) != body || len(got.Fixed) != 0 || len(got.Notes) != 1 || len(got.Problems) != 0 {
+						t.Fatalf("member content changed: %+v\n%s", got, after)
+					}
+				}
+			})
+		}
 	}
 }

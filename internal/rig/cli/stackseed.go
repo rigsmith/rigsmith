@@ -37,7 +37,8 @@ func newStackSeedCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "seed [dir]",
 		Short: "Export the root files as a small repo that `rig stack init` rebuilds the stackspace from",
-		Long: "Default: publish a manifest home with --publish owner/repo@branch.\n" +
+		Long: "--dry-run previews publication; offline directory export refuses it.\n\n" +
+			"Default: publish a manifest home with --publish owner/repo@branch.\n" +
 			"Without a directory, retry publication to the configured home.\n" +
 			"Local manifest homes must be bare repositories for publication.\n" +
 			"Publication refuses unsent member work; --force overrides only this reconstruction check.\n" +
@@ -65,6 +66,9 @@ func newStackSeedCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if publish != "" && len(args) > 0 {
 				return fmt.Errorf("a seed directory cannot be combined with --publish")
+			}
+			if dryRun && len(args) > 0 {
+				return fmt.Errorf("--dry-run is not supported for stack seed directory export")
 			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
