@@ -1,0 +1,43 @@
+examples/github-workflows/stack-dependencies.yml
+  s_594eddb4156d96::t_eb19a1a0114ca8 1-28
+.github/actions/stack/action.yml
+  s_594eddb4156d96::t_eb19a1a0114ca8 35-36,57
+cmd/rig/README.md
+  s_594eddb4156d96::t_2df5f0614f611e 141-142,151-152,159-169
+.changeset/lucky-lemurs-race.md
+  s_594eddb4156d96::t_e5de9d5887bd22 7
+docs/GITHUB-ACTIONS.md
+  s_594eddb4156d96::t_2df5f0614f611e 124-125,134-135,142-152
+README.md
+  s_594eddb4156d96::t_2df5f0614f611e 184-185,194-195,202-212
+internal/rig/cli/stackdeps.go
+  s_594eddb4156d96::t_eb19a1a0114ca8 40-41,62-77,159-172,210-211,215,228-235,239
+site/rig/stack.md
+  s_594eddb4156d96::t_2df5f0614f611e 1055-1056,1065-1066,1073-1083
+site/rig/verbs.md
+  s_594eddb4156d96::t_2df5f0614f611e 411-412,421-422,429-439
+site/rig/configuration.md
+  s_594eddb4156d96::t_2df5f0614f611e 403-404,413-414,421-431
+internal/rig/cli/stackdeps_test.go
+  s_594eddb4156d96::t_e5de9d5887bd22 235-237
+  s_594eddb4156d96::t_01e6b7a771dca4 5,8-9,17,216-234,238-343
+  s_594eddb4156d96::t_eb19a1a0114ca8 21,36,185
+docs/STACK-DESIGN.md
+  s_594eddb4156d96::t_2df5f0614f611e 772-798
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "17c8666711072b2f2ac227a1a980ffb0b39a38e3",
+  "prompts": {},
+  "sessions": {
+    "s_594eddb4156d96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197eb-622e-7b50-9999-1aba0b1a34a9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
