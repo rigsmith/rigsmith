@@ -1,0 +1,34 @@
+README.md
+  s_ae62a8c3b75595::t_9dd4bfe5eb5cdc 25-26
+core/ecosystem/dotnet/localoverlay_test.go
+  s_ae62a8c3b75595::t_aaacccf62f46bd 1044,1323
+  s_ae62a8c3b75595::t_3d1f709fd89b51 1283-1322,1324-1335
+site/rig/verbs.md
+  s_ae62a8c3b75595::t_aaacccf62f46bd 306-308
+site/rig/stack.md
+  s_ae62a8c3b75595::t_aaacccf62f46bd 1149-1163
+cmd/rig/README.md
+  s_ae62a8c3b75595::t_9dd4bfe5eb5cdc 47-48
+core/ecosystem/dotnet/localoverlay.go
+  s_ae62a8c3b75595::t_7d4281e4dd2099 434-437
+.changeset/happy-pandas-wander.md
+  s_ae62a8c3b75595::t_aaacccf62f46bd 7
+docs/STACK-DESIGN.md
+  s_ae62a8c3b75595::t_aaacccf62f46bd 869-883
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "34cdf37a0a74c4b7bae25646ee311992cebc87f6",
+  "prompts": {},
+  "sessions": {
+    "s_ae62a8c3b75595": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19879-05b9-7d93-88d1-89a8310952a2",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
