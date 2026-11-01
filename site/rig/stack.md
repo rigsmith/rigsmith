@@ -1305,19 +1305,34 @@ command itself succeeds when dependencies are pending or unavailable.
 
 ## CI warning guard
 
-`rig stack ci-guard app/App.csproj` builds one .NET project with
-`TreatWarningsAsErrors=true` and reports observed stack-only diagnostics in
-`GITHUB_STEP_SUMMARY`. In a plain clone, declare eligible compiler diagnostics
-with `<StackOnlyWarning Include="ACME0001" />` in the project. In a stackspace,
-only NU1603/NU1608/NU1605 events matched to a rewired package identity in NuGet's
-assets log are eligible. Sibling compiler warnings stay visible and are counted
-separately without failing the member job; new warnings in the member's own code
-remain fatal. Existing member `WarningsNotAsErrors` entries are preserved and
-tolerated events are reported separately. Other warnings fail; MSB3277 stays an error because
-exact assembly scoping is not established. `--strict` disables holding warnings
-back. The composite stack action accepts `guard-project: app/App.csproj` (relative
-to the member, replacing its build command) and `strict: 'true'`; the equivalent
-runner flag is `rig stack ci --guard-project app/App.csproj`.
+`rig stack ci-guard app/App.csproj` guards one .NET build and reports observed
+stack-only diagnostics in `GITHUB_STEP_SUMMARY`. In a plain clone, declare
+eligible diagnostics with `<StackOnlyWarning Include="ACME0001" />`.
+In a stackspace, only NU1603/NU1608/NU1605 events matched to a rewired package
+identity in NuGet's assets log are eligible for fusion holdback.
+
+New warnings in the member's own code fail unless explicitly declared
+stack-only or covered by its existing `WarningsNotAsErrors` policy. In a
+stackspace, sibling warnings, including SDK warnings such as `NETSDK1138`, stay
+visible, counted and non-fatal unless `--strict` (action `strict: 'true'`) is set.
+A sibling may be an upstream fork targeting an out-of-support framework; that
+warning is not a defect in this member. NU/MSB infrastructure warnings without
+exact swap attribution fail closed; `MSB3277` remains fatal.
+
+The composite action's `guard-project: app/App.csproj` input replaces its build
+command; the runner flag is `rig stack ci --guard-project app/App.csproj`.
+**The policy applies only to the guarded build step.** The subsequent `test`
+command runs independently. If that command builds projects, its build uses its
+own warning policy and can fail on sibling warnings. To reuse a guarded build,
+guard the test project and run the same project without rebuilding:
+
+```yaml
+guard-project: tests/Acme.Tests.csproj
+test: dotnet test tests/Acme.Tests.csproj --no-build
+```
+
+The guarded build must produce all test outputs for the configuration and target
+frameworks the test command will run. `--no-build` cannot run missing outputs.
 
 Stack-mode fusion holdback is **unproven**: .NET 10 accepted the swapped project
 regardless of the tested package minimum/exact version constraint, so the

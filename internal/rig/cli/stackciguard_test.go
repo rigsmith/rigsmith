@@ -472,25 +472,58 @@ func TestStackCIGuardMetadataStreams(t *testing.T) {
 	}
 }
 
-func TestStackCIGuardSiblingAnalyzerCRLF(t *testing.T) {
+func TestStackCIGuardSiblingDiagnosticCRLF(t *testing.T) {
 	root, member, sibling := stackGuardPathFixture(t)
 	var meta stackGuardMetadata
 	meta.Properties.RigStackspaceRoot = root
 	meta.MemberRoot = filepath.Dir(member)
-	for _, code := range []string{"xUnit1004", "Acme2Rule100"} {
+	for _, code := range []string{"xUnit1004", "Acme2Rule100", "NETSDK1138", "NETSDK1179", "NETSDK1206"} {
 		output := fmt.Sprintf("a.cs(1,1): warning %s: analyzer [%s]\r\nBuild succeeded.\r\n", code, sibling)
 		_, visible := stackGuardOutput(output, member, meta, false)
 		siblings, _, fatal := stackGuardVisiblePolicy(visible, member, meta, false)
 		if fatal || len(siblings) != 1 {
-			t.Fatalf("analyzer not attributed: %s %v %v", code, siblings, fatal)
+			t.Fatalf("sibling diagnostic not attributed: %s %v %v", code, siblings, fatal)
 		}
 		_, _, fatal = stackGuardVisiblePolicy(visible, member, meta, true)
 		if !fatal {
-			t.Fatal("strict analyzer warning was ignored")
+			t.Fatal("strict sibling warning was ignored")
 		}
 	}
 	_, _, fatal := stackGuardVisiblePolicy([]string{fmt.Sprintf("a.cs: warning MSB3277: assembly conflict [%s]\r", sibling)}, member, meta, false)
 	if !fatal {
 		t.Fatal("unattributed assembly conflict exempted")
+	}
+}
+
+func TestStackCIGuardHookApostropheE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("set RIG_STACK_E2E=1 for hook path build fixture")
+	}
+	root := filepath.Join(t.TempDir(), "acme's checkout")
+	if err := os.MkdirAll(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"NuGet.Config":     `<configuration><packageSources><clear/></packageSources></configuration>`,
+		"App.csproj":       `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><CustomAfterMicrosoftCommonTargets>$(MSBuildThisFileDirectory)original.targets</CustomAfterMicrosoftCommonTargets></PropertyGroup><Target Name="CheckOriginalHook" BeforeTargets="CoreCompile"><Error Condition="'$(AcmeOriginalHook)' != 'true'" Text="original hook was lost"/></Target></Project>`,
+		"App.cs":           `public class App {}`,
+		"original.targets": `<Project><PropertyGroup><AcmeOriginalHook>true</AcmeOriginalHook></PropertyGroup></Project>`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	project := filepath.Join(root, "App.csproj")
+	baseline := exec.Command("dotnet", "build", project, "-tl:off")
+	if out, err := baseline.CombinedOutput(); err != nil {
+		t.Fatalf("ordinary build failed: %v\n%s", err, out)
+	}
+	c := newStackCIGuardCmd()
+	var output bytes.Buffer
+	c.SetOut(&output)
+	c.SetErr(&output)
+	c.SetArgs([]string{project})
+	if err := c.Execute(); err != nil {
+		t.Fatalf("guarded build failed: %v\n%s", err, output.String())
 	}
 }

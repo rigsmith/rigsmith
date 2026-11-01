@@ -596,3 +596,30 @@ func TestStackCIActionForkCacheExecution(t *testing.T) {
 		})
 	}
 }
+
+func TestStackCIActionGuardProject(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	project := "tests/Acme App Tests/Acme App Tests.csproj"
+	p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
+	p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR=false", "STACK_GUARD_PROJECT="+project, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+	output, err := p.CombinedOutput()
+	if err != nil {
+		t.Fatalf("action run failed: %v %s", err, output)
+	}
+	args := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+	found := 0
+	for i, arg := range args {
+		if arg == "--guard-project" {
+			found++
+			if i+1 >= len(args) || args[i+1] != project {
+				t.Fatalf("guard path split or changed: %q", args)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("want one --guard-project argument: %q", args)
+	}
+}

@@ -188,18 +188,22 @@ still evaluates old cursors. Local publication also requires explicit
 A caller must treat pending statuses as a merge gate if desired; the reporting
 command itself succeeds when dependencies are pending or unavailable.
 
-`rig stack ci-guard app/App.csproj` builds one .NET project with
-`TreatWarningsAsErrors=true` and reports observed stack-only diagnostics in
-`GITHUB_STEP_SUMMARY`. In a plain clone, declare eligible compiler diagnostics
-with `<StackOnlyWarning Include="ACME0001" />` in the project. In a stackspace,
-only NU1603/NU1608/NU1605 events matched to a rewired package identity in NuGet's
-assets log are eligible. Sibling compiler warnings remain visible and counted
-without failing the member job; `strict: 'true'` makes them fatal. The member's
-existing `WarningsNotAsErrors` entries are retained. Other warnings fail; MSB3277 stays an error because
-exact assembly scoping is not established. `--strict` disables holding warnings
-back. The composite stack action accepts `guard-project: app/App.csproj` (relative
-to the member, replacing its build command) and `strict: 'true'`; the equivalent
-runner flag is `rig stack ci --guard-project app/App.csproj`.
+`rig stack ci-guard app/App.csproj` guards one .NET build and records observed
+holdback in `GITHUB_STEP_SUMMARY`. Plain clones opt in with
+`<StackOnlyWarning Include="ACME0001" />`. Stack fusion exemptions require an
+observed NU1603/NU1608/NU1605 event matched to a rewired package identity.
+New member-code warnings fail except for explicit stack-only declarations and
+existing member warning tolerances. In a stack, sibling warnings, including SDK
+warnings such as `NETSDK1138`, remain visible, counted and non-fatal unless
+`strict: 'true'` is set. NU/MSB warnings without exact swap attribution fail
+closed; `MSB3277` remains fatal.
+
+Action `guard-project` (CLI `stack ci --guard-project`) replaces only the build
+step. The test command runs independently; any build it starts uses its own
+warning policy. Guard the test project, then use
+`test: dotnet test tests/Acme.Tests.csproj --no-build` to reuse its outputs for
+the same configuration and target frameworks. A test command building another
+graph is outside the guard's policy.
 
 Stack-mode fusion holdback is not yet proven against a real stack: .NET 10
 accepted the tested swapped project regardless of its package constraint and

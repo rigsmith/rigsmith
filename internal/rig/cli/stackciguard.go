@@ -15,7 +15,7 @@ import (
 // the final decision; a warning whose package cannot be established fails closed.
 func newStackCIGuardCmd() *cobra.Command {
 	var strict bool
-	c := &cobra.Command{Use: "ci-guard <project.csproj>", Short: "Build a .NET project with an observed stack warning guard", Long: "Builds a .NET project with TreatWarningsAsErrors. In plain clones only\nStackOnlyWarning items are held back. In stacks only observed NU1603, NU1608\nand NU1605 diagnostics for rewired package identities are eligible. Sibling\ncompiler/analyzer warnings remain visible and counted; --strict makes them fatal.\nMember WarningsNotAsErrors entries are retained. Other warnings fail the\nguard. MSB3277 remains an error because assembly scope cannot\nbe proven. Writes observed diagnostics to GITHUB_STEP_SUMMARY. Use --strict\nto disable the guard. Requires the dotnet SDK; accepts one project, not a solution.", Args: cobra.ExactArgs(1)}
+	c := &cobra.Command{Use: "ci-guard <project.csproj>", Short: "Build a .NET project with an observed stack warning guard", Long: "Builds one .NET project with observed warning reporting. New warnings in the\nmember's own code fail unless declared stack-only or covered by its existing\nWarningsNotAsErrors. In a stack, sibling warnings, including NETSDK warnings,\nstay visible, counted and non-fatal unless --strict. NU/MSB infrastructure\nwarnings without exact swap attribution fail closed; MSB3277 remains fatal.\nPlain clones use StackOnlyWarning items. Stack mode supports observed\nNU1603/NU1608/NU1605 events for rewired package identities. Reports go to\nGITHUB_STEP_SUMMARY. Requires dotnet; accepts one project, not a solution.", Args: cobra.ExactArgs(1)}
 	_ = c.MarkZshCompPositionalArgumentFile(1, "*.csproj")
 	c.Flags().BoolVar(&strict, "strict", false, "Keep all warnings as errors")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -278,7 +278,7 @@ func stackGuardSourceCode(code string) bool {
 	return !stackGuardInfrastructureCode.MatchString(code)
 }
 
-// Sibling compiler warnings remain in the output. Assembly/restore warnings
+// Sibling warnings remain visible and counted. Assembly/restore warnings
 // still require attribution; an unrelated MSB3277 must never become harmless.
 func stackGuardVisiblePolicy(lines []string, project string, meta stackGuardMetadata, strict bool) (siblings, tolerated []string, fatal bool) {
 	seen := map[string]bool{}

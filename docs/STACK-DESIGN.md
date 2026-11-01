@@ -1159,14 +1159,14 @@ list, preserving all other entries. This temporary demotion is not
 standalone suppression: only the guard may use that switch. It validates every
 observed event: exact project, exact code and complete message matched against
 `project.assets.json` logs, and `libraryId` equal to a swapped identity. Unmatched
-warnings remain visible and fail the guard, including non-swapped packages with
+NU/MSB infrastructure warnings remain visible and fail the guard, including non-swapped packages with
 the same code. Generated reference metadata removes member-specific global
 warning lists before entering referenced projects. References outside the member
 also remove global `TreatWarningsAsErrors`; a guard-only target disables compiler
 promotion there. The member is the first prefix directory below the overlay
 root, matching the manifest's single-directory member names. This applies even
-when a sibling normally sets `TreatWarningsAsErrors=true`. Sibling compiler/analyzer
-warnings remain visible and are separately counted, while member
+when a sibling normally sets `TreatWarningsAsErrors=true`. Sibling warnings, including compiler, analyzer and SDK diagnostics such as
+`NETSDK1138`, remain visible, counted and non-fatal, while new member
 warnings still fail unless held by an explicit declaration or tolerated by that
 project's own `WarningsNotAsErrors` policy. Warning lists are merged for the
 entry project and evaluated separately for other member projects; its original
@@ -1222,5 +1222,15 @@ Metadata queries disable the MSBuild console logger, parse stdout only, preserve
 stderr for evaluation errors and set `DOTNET_NOLOGO=1`. Build diagnostics keep
 both streams. Diagnostic parsing strips CRLF line endings and shares a single
 mixed-case alphanumeric ID grammar with `StackOnlyWarning` validation, including
-analyzer IDs such as `xUnit1004`. Sibling analyzer warnings follow the source
-warning policy; NuGet and MSBuild codes still require exact attribution.
+analyzer IDs such as `xUnit1004`. Sibling compiler, analyzer and SDK warnings
+follow the sibling policy; NU/MSB infrastructure warnings still require exact
+swap attribution or fail closed.
+
+The guard is scoped to `ci`'s build phase. The test phase deliberately executes
+the configured command separately; a build triggered by that command receives
+none of the guard's temporary policy. A new test mode is not required: set
+`guard-project` to the test project, then use
+`dotnet test tests/Acme.Tests.csproj --no-build` for the same project,
+configuration and target frameworks. The guarded build must produce those test
+outputs first. A test command that builds another graph can fail on sibling
+warnings under its own policy.

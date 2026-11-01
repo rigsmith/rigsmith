@@ -45,7 +45,9 @@ func stackGuardPlainTargets(original, toolsPath string) (string, func(), error) 
 			cleanup()
 			return "", nil, err
 		}
-		fmt.Fprintf(&body, "  <Import Project=\"%s\" Condition=\"Exists('%s')\" />\n", escaped.String(), escaped.String())
+		fmt.Fprintf(&body, "  <PropertyGroup><_RigStackOriginalHook>%s</_RigStackOriginalHook></PropertyGroup>\n", escaped.String())
+		body.WriteString(`  <Import Project="$(_RigStackOriginalHook)" Condition="Exists('$(_RigStackOriginalHook)')" />
+`)
 	}
 	body.WriteString(`  <Target Name="RigStackCIPlainReferences" BeforeTargets="AssignProjectConfiguration;_GenerateRestoreProjectPathWalk">
     <ItemGroup>
