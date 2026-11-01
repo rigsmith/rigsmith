@@ -7,12 +7,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestStackCIAllowedHosts(t *testing.T) {
@@ -128,7 +132,7 @@ func stackCIInstallerFixture(t *testing.T, platform string) {
 	t.Setenv("FIXTURE_ASSET", "rig_1.23.1_"+platform+"_amd64."+extension)
 	t.Setenv("FIXTURE_UNAME", uname)
 	curl := `#!/bin/bash
-[[ "$*" == *"--retry 3 --connect-timeout 30"* ]] || { echo "missing bounded download retries" >&2; exit 98; }
+[[ "$*" == *"--retry 3 --connect-timeout 30 --max-time 300"* ]] || { echo "missing bounded download retries" >&2; exit 98; }
 while [[ $# -gt 0 ]]; do if [[ $1 == -o ]]; then dest=$2; shift; fi; shift; done
 if [[ $dest == *checksums.txt ]]; then printf '%s  %s\n' "$FIXTURE_SUM" "$FIXTURE_ASSET" > "$dest"; else cp "$FIXTURE_ARCHIVE" "$dest"; fi
 `
@@ -196,6 +200,11 @@ exec /bin/bash "$FIXTURE_INSTALLER"`
 	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum)
 	if out, err = c.CombinedOutput(); err != nil {
 		t.Fatalf("valid fixture: %v %s", err, out)
+	}
+	c = command()
+	c.Env = append(os.Environ(), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+strings.ToUpper(sum), "INPUT_RIG_SHA256="+strings.ToUpper(sum))
+	if out, err = c.CombinedOutput(); err != nil {
+		t.Fatalf("uppercase checksum and pin: %v %s", err, out)
 	}
 	c = command()
 	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum, "INPUT_RIG_SHA256="+strings.Repeat("f", 64))
@@ -301,5 +310,96 @@ func TestStackCISubstitutedBundleIsTrusted(t *testing.T) {
 	got, err = stackCIFilteredCache(context.Background(), dir, "github.com/acme/app", cursor, "app", stackJoshVersion, fetch)
 	if err != nil || got != cursor || calls != 2 {
 		t.Fatalf("disabled cache did not fetch: %s calls=%d err=%v", got, calls, err)
+	}
+}
+
+func TestStackCICacheWriteBestEffort(t *testing.T) {
+	for _, mode := range []string{"blocked-directory", "bundle-destination", "readonly-directory", "locked-ref"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			mustGitStack(t, dir, "init", "-q")
+			mustGitStack(t, dir, "-c", "user.name=test", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "fixture")
+			sha := strings.TrimSpace(mustGitStack(t, dir, "rev-parse", "HEAD"))
+			cache := t.TempDir()
+			key := fmt.Sprintf("%x", sha256.Sum256([]byte("github.com/acme/app\n"+sha+"\n"+stackPrefixFilter("app")+"\n"+stackJoshVersion)))
+			switch mode {
+			case "blocked-directory":
+				blocker := filepath.Join(cache, "file")
+				if err := os.WriteFile(blocker, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+				cache = filepath.Join(blocker, "cache")
+			case "bundle-destination":
+				if err := os.Mkdir(filepath.Join(cache, key+".bundle"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "readonly-directory":
+				if runtime.GOOS == "windows" {
+					if err := os.Mkdir(filepath.Join(cache, key+".bundle"), 0700); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.Chmod(cache, 0500); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { os.Chmod(cache, 0700) })
+					// Root can bypass Unix permissions; block the bundle destination there.
+					if os.Geteuid() == 0 {
+						if err := os.Mkdir(filepath.Join(cache, key+".bundle"), 0700); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			case "locked-ref":
+				refs := filepath.Join(dir, ".git", "refs", "rigsmith")
+				if err := os.MkdirAll(refs, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(refs, "cache.lock"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("RIG_STACK_CACHE", cache)
+			warnings, err := os.CreateTemp(t.TempDir(), "warnings")
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := os.Stderr
+			os.Stderr = warnings
+			got, err := stackCIFilteredCache(context.Background(), dir, "github.com/acme/app", sha, "app", stackJoshVersion, func() (string, error) { return sha, nil })
+			os.Stderr = old
+			warnings.Close()
+			if err != nil || got != sha {
+				t.Fatalf("cache failure broke successful import: %s %v", got, err)
+			}
+			if _, err = stackCIGit(context.Background(), dir, "show-ref", "--verify", "refs/rigsmith/cache"); err == nil {
+				t.Fatal("temporary cache ref remains")
+			}
+			data, err := os.ReadFile(warnings.Name())
+			if err != nil || !strings.Contains(string(data), "warning: caching filtered history") {
+				t.Fatalf("missing cache warning: %s %v", data, err)
+			}
+		})
+	}
+}
+
+func TestStackCICurlRetriesTransferTimeout(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			<-r.Context().Done()
+			return
+		}
+		fmt.Fprint(w, "retried")
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	p := exec.CommandContext(ctx, "curl", "-fsSL", "--retry", "1", "--connect-timeout", "1", "--max-time", "0.25", server.URL)
+	var stderr strings.Builder
+	p.Stderr = &stderr
+	out, err := p.Output()
+	if err != nil || string(out) != "retried" || attempts.Load() != 2 {
+		t.Fatalf("timeout was not retried: attempts=%d out=%s err=%v stderr=%s", attempts.Load(), out, err, stderr.String())
 	}
 }

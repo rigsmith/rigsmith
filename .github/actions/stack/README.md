@@ -21,7 +21,8 @@ SDKs as usual. The checkout may be shallow. `rig-version` is required and must
 be an exact release tag. Installation verifies the archive against the release's
 `checksums.txt` before extraction; all download and verification failures are
 fatal, including missing assets. Both downloads retry transient failures up to
-three times with a 30-second connection timeout; checksum mismatches remain fatal. No source fallback survives. Josh uses rig's
+three times with a 30-second connection timeout and a 300-second total limit
+per attempt. Curl retries transfer timeouts with `--retry`; checksum mismatches remain fatal. No source fallback survives. Josh uses rig's
 built-in version and source-pinned per-platform SHA256; custom pins are refused
 in CI. Restored josh binaries are hashed again before execution.
 
@@ -59,6 +60,8 @@ and filtered member bundles keyed by source URL, cursor, prefix filter and engin
 version. An outer manifest-keyed cache has a version/platform restore prefix:
 when one cursor moves, restored bundles still serve unchanged members. `init`
 consumes bundles directly, skipping the proxy fetch and filtering on a hit.
+Cache-write failures warn on stderr and do not fail an already successful import;
+the temporary cache ref is cleaned up on every write path.
 Only successful bundle consumption counts in the summary's member hit rate;
 binary/package restore matches do not establish saved work and are not counted.
 

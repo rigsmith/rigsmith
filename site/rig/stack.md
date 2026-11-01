@@ -1075,6 +1075,8 @@ stackspace job to test sibling source changes. Copy the self-contained
 
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  with:
+    persist-credentials: false
 - uses: ./.github/actions/stack
   with:
     rig-version: vX.Y.Z # exact release containing stack ci; required

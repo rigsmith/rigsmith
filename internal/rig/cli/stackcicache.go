@@ -37,15 +37,26 @@ func stackCIFilteredCache(ctx context.Context, dir, source, cursor, name, versio
 		return "", err
 	}
 	stackCICacheResult(name, "fetched", sha)
-	if err = os.MkdirAll(cache, 0700); err != nil {
-		return "", err
+	// Cache persistence is optional once the filtered history is available.
+	save := func() error {
+		defer func() {
+			if _, e := stackCIGit(context.WithoutCancel(ctx), dir, "update-ref", "-d", "refs/rigsmith/cache"); e != nil {
+				fmt.Fprintf(os.Stderr, "warning: cleaning filtered history cache ref for %s: %v\n", name, e)
+			}
+		}()
+		if e := os.MkdirAll(cache, 0700); e != nil {
+			return e
+		}
+		if _, e := stackCIGit(ctx, dir, "update-ref", "refs/rigsmith/cache", sha); e != nil {
+			return e
+		}
+		_, e := stackCIGit(ctx, dir, "bundle", "create", path, "refs/rigsmith/cache")
+		return e
 	}
-	if _, err = stackCIGit(ctx, dir, "update-ref", "refs/rigsmith/cache", sha); err != nil {
-		return "", err
+	if e := save(); e != nil {
+		fmt.Fprintf(os.Stderr, "warning: caching filtered history for %s: %v\n", name, e)
 	}
-	defer stackCIGit(ctx, dir, "update-ref", "-d", "refs/rigsmith/cache")
-	_, err = stackCIGit(ctx, dir, "bundle", "create", path, "refs/rigsmith/cache")
-	return sha, err
+	return sha, nil
 }
 func stackCICacheResult(name, source, sha string) {
 	if p := os.Getenv("RIG_STACK_CACHE_REPORT"); p != "" {
