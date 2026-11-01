@@ -1,0 +1,29 @@
+docs/guides/testing-a-member-pr-in-its-stackspace.md
+  s_c5dbcd58496eeb::t_213f99ee6222a6 62-68
+internal/rig/cli/stackci_test.go
+  s_c5dbcd58496eeb::t_213f99ee6222a6 11,13,264,274,276-277,286-292,334-365
+site/rig/stack.md
+  s_c5dbcd58496eeb::t_213f99ee6222a6 1049-1055
+.github/actions/stack/README.md
+  s_c5dbcd58496eeb::t_213f99ee6222a6 50-56
+docs/STACK-DESIGN.md
+  s_c5dbcd58496eeb::t_213f99ee6222a6 739-745
+internal/rig/cli/stackci.go
+  s_c5dbcd58496eeb::t_213f99ee6222a6 38,290,293-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "fa9a227d697fdc04b87b3518ef63f60a85922c81",
+  "prompts": {},
+  "sessions": {
+    "s_c5dbcd58496eeb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e3-6941-7ea1-93aa-1c0189c8bc13",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
