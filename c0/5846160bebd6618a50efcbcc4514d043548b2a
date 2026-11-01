@@ -1,0 +1,43 @@
+site/rig/stack.md
+  s_49cd7f17150868::t_65ffe98b529710 1017-1050
+README.md
+  s_49cd7f17150868::t_65ffe98b529710 170-177
+internal/rig/cli/stackoverlay_test.go
+  s_49cd7f17150868::t_90792a40b33996 337-352
+core/ecosystem/dotnet/localoverlay_test.go
+  s_49cd7f17150868::t_83d753fcbe0fa3 556-558
+  s_49cd7f17150868::t_d6eaa919b89844 6,494-504,508,512-518,522-547,560-574,589-594
+  s_49cd7f17150868::t_90792a40b33996 81,93,550,583-585
+  s_49cd7f17150868::t_2b226bb09bc0fc 492-493,505-507,509-511,519-521,548-549,551-555,559,575-582,586-588
+cmd/rig/README.md
+  s_49cd7f17150868::t_65ffe98b529710 127-134
+site/rig/verbs.md
+  s_49cd7f17150868::t_65ffe98b529710 397-404
+docs/STACK-DESIGN.md
+  s_49cd7f17150868::t_65ffe98b529710 703-736
+internal/rig/cli/stack.go
+  s_49cd7f17150868::t_d6eaa919b89844 2057-2059
+internal/rig/cli/stackoverlay.go
+  s_49cd7f17150868::t_d6eaa919b89844 14,436-458
+.changeset/quiet-ravens-ponder.md
+  s_49cd7f17150868::t_65ffe98b529710 1-7
+core/ecosystem/dotnet/localoverlay.go
+  s_49cd7f17150868::t_75b6d0ce7005dc 148,205,207-208,223,225-226,228-229,297-305,310-313,375-379,386
+  s_49cd7f17150868::t_d6eaa919b89844 10,206,210-211,296,307-309,314-315,380-385
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c05846160bebd6618a50efcbcc4514d043548b2a",
+  "prompts": {},
+  "sessions": {
+    "s_49cd7f17150868": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e4-1d53-7f71-8e3e-53f9836cb758",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
