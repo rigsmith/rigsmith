@@ -124,3 +124,11 @@ default-setter) preserve comments via the JSONC editor.
 The remaining ergonomics tail (`[suggest]` completion, menu project-pickers,
 `setup`/`self-update`, the interactive `default` verb, test-class fuzzy match)
 is tracked in [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).
+
+## Stackspace member CI
+
+`rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
+builds the committed checkout against sibling sources in a temporary stackspace.
+Keep this job alongside the plain-clone matrix. The self-contained composite is
+`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
+See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.

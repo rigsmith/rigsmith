@@ -167,3 +167,11 @@ theirs:
 
 Independently: the release engine is a faithful port of **net-changesets**, which
 is itself a .NET port of [changesets](https://github.com/changesets/changesets).
+
+## Stackspace member CI
+
+`rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
+builds the committed checkout against sibling sources in a temporary stackspace.
+Keep this job alongside the plain-clone matrix. The self-contained composite is
+`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
+See [the guide](docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.

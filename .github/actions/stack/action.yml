@@ -1,0 +1,56 @@
+name: Stackspace CI
+description: Build and test the checkout against sibling sources in a temporary stackspace.
+inputs:
+  manifest:
+    description: Path to a committed rig.stack.jsonc (exclusive with seed).
+    default: ''
+  seed:
+    description: Seed owner/repo@ref passed to rig stack setup (exclusive with manifest).
+    default: ''
+  member:
+    description: Member prefix; otherwise match origin URL.
+    default: ''
+  rig-version:
+    description: Exact rig tag containing stack ci; required until this verb is released.
+    required: true
+  build:
+    description: Build command in the member directory.
+    default: rig build
+  test:
+    description: Test command in the member directory. Results stream to the job log.
+    default: rig test
+  upstream-tip:
+    description: Use upstream tips instead of manifest cursors.
+    default: 'false'
+outputs:
+  commits:
+    description: JSON object mapping members to resolved commits.
+    value: ${{ steps.run.outputs.commits }}
+  test-result:
+    description: Test phase result; empty when not reached.
+    value: ${{ steps.run.outputs.test-result }}
+runs:
+  using: composite
+  steps:
+    - name: Install pinned rig
+      shell: bash
+      env:
+        INPUT_RIG_VERSION: ${{ inputs.rig-version }}
+        RIG_REPO: rigsmith/rigsmith
+      run: bash "$GITHUB_ACTION_PATH/install-rig.sh"
+    - id: run
+      name: Rebuild, wire, build and test
+      shell: bash
+      env:
+        STACK_MANIFEST: ${{ inputs.manifest }}
+        STACK_SEED: ${{ inputs.seed }}
+        STACK_MEMBER: ${{ inputs.member }}
+        STACK_BUILD: ${{ inputs.build }}
+        STACK_TEST: ${{ inputs.test }}
+        STACK_TIP: ${{ inputs.upstream-tip }}
+      run: |
+        args=(stack ci --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
+        if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
+        if [[ -n "$STACK_SEED" ]]; then args+=(--seed "$STACK_SEED"); fi
+        if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
+        rig "${args[@]}"

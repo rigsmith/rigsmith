@@ -1,0 +1,127 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestStackCIReplaceCheckout(t *testing.T) {
+	work := t.TempDir()
+	checkout := filepath.Join(work, "checkout")
+	fused := filepath.Join(work, "fused")
+	for _, p := range []string{checkout, fused} {
+		os.Mkdir(p, 0755)
+		mustGitStack(t, p, "init", "-q")
+		mustGitStack(t, p, "config", "user.name", "test")
+		mustGitStack(t, p, "config", "user.email", "t@t")
+	}
+	os.WriteFile(filepath.Join(checkout, "only-in-pr"), []byte("PR tree"), 0755)
+	mustGitStack(t, checkout, "add", ".")
+	mustGitStack(t, checkout, "commit", "-qm", "PR only")
+	os.Mkdir(filepath.Join(fused, "app"), 0755)
+	os.WriteFile(filepath.Join(fused, "app", "old"), []byte("cursor"), 0644)
+	mustGitStack(t, fused, "add", ".")
+	mustGitStack(t, fused, "commit", "-qm", "unrelated fused root")
+	sha, e := stackCIReplace(context.Background(), checkout, fused, "app")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(sha) != 40 {
+		t.Fatal(sha)
+	}
+	if _, e = os.Stat(filepath.Join(fused, "app", "old")); !os.IsNotExist(e) {
+		t.Fatal("cursor tree survived")
+	}
+	b, e := os.ReadFile(filepath.Join(fused, "app", "only-in-pr"))
+	if e != nil || string(b) != "PR tree" {
+		t.Fatalf("%s: %v", b, e)
+	}
+	if _, e = os.Stat(filepath.Join(checkout, "only-in-pr")); e != nil {
+		t.Fatal(e)
+	}
+}
+
+func TestStackCIValidation(t *testing.T) {
+	c := newStackCICmd()
+	c.SetArgs([]string{})
+	if e := c.Execute(); e == nil || !strings.Contains(e.Error(), "exactly one") {
+		t.Fatalf("%v", e)
+	}
+}
+
+func TestStackCIFlow(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") == "" {
+		t.Skip("set RIG_STACK_E2E=1")
+	}
+	bin, e := stackJoshProxyBin(stackJoshVersion)
+	if e != nil || stackJoshInstalled(bin) != nil {
+		t.Fatal("install pinned josh before running E2E")
+	}
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "acme/app", "app")
+	srv.seed(t, "acme/lib", "lib")
+	checkout := filepath.Join(work, "checkout")
+	mustGitStack(t, work, "clone", "--depth=1", "--branch=main", "file://"+srv.path("acme/app"), checkout)
+	mustGitStack(t, checkout, "config", "user.name", "test")
+	mustGitStack(t, checkout, "config", "user.email", "t@t")
+	a, _ := stackCIGit(context.Background(), srv.path("acme/app"), "rev-parse", "main")
+	b, _ := stackCIGit(context.Background(), srv.path("acme/lib"), "rev-parse", "main")
+	os.WriteFile(filepath.Join(checkout, "only-in-pr"), []byte("checkout commit"), 0644)
+	writeStackManifest(t, checkout, fmt.Sprintf(`{"repos":{"app":{"upstream":%q,"fork":%q},"lib":{"upstream":%q,"fork":%q}},"lastSync":{"app":%q,"lib":%q}}`, srv.spec("acme/app"), srv.spec("acme/app"), srv.spec("acme/lib"), srv.spec("acme/lib"), strings.TrimSpace(string(a)), strings.TrimSpace(string(b))))
+	mustGitStack(t, checkout, "add", ".")
+	mustGitStack(t, checkout, "commit", "-qm", "checkout-only PR")
+	exe := filepath.Join(work, "rig")
+	p := exec.Command("go", "build", "-o", exe, "../../../cmd/rig")
+	if out, e := p.CombinedOutput(); e != nil {
+		t.Fatalf("build: %v %s", e, out)
+	}
+	old := stackCIExecutable
+	stackCIExecutable = func() (string, error) { return exe, nil }
+	t.Cleanup(func() { stackCIExecutable = old })
+	chdir(t, checkout)
+	summary := filepath.Join(work, "summary")
+	t.Setenv("GITHUB_STEP_SUMMARY", summary)
+	c := newStackCICmd()
+	c.SetArgs([]string{"--manifest", "rig.stack.jsonc", "--member", "app", "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt", "--test", "test -f only-in-pr"})
+	if e := c.Execute(); e != nil {
+		t.Fatal(e)
+	}
+	out, _ := os.ReadFile(summary)
+	if !strings.Contains(string(out), "test: passed") {
+		t.Fatal(string(out))
+	}
+	status, _ := stackCIGit(context.Background(), checkout, "status", "--porcelain")
+	if len(status) != 0 {
+		t.Fatalf("checkout modified: %s", status)
+	}
+	for _, tc := range []struct {
+		build, test string
+		code        int
+	}{{"false", "true", 12}, {"true", "false", 13}} {
+		c := newStackCICmd()
+		c.SetArgs([]string{"--manifest", "rig.stack.jsonc", "--member", "app", "--build", tc.build, "--test", tc.test})
+		e := c.Execute()
+		var ce *stackCIError
+		if !errors.As(e, &ce) || ce.ExitCode() != tc.code {
+			t.Fatalf("want %d: %v", tc.code, e)
+		}
+	}
+	wrapper := filepath.Join(work, "rig-wrapper")
+	os.WriteFile(wrapper, []byte("#!/bin/bash\nif [[ $2 == wire ]]; then exit 7; fi\nexec "+exe+" \"$@\"\n"), 0755)
+	stackCIExecutable = func() (string, error) { return wrapper, nil }
+	c = newStackCICmd()
+	c.SetArgs([]string{"--manifest", "rig.stack.jsonc", "--member", "app"})
+	e = c.Execute()
+	var ce *stackCIError
+	if !errors.As(e, &ce) || ce.ExitCode() != 11 {
+		t.Fatalf("want wire failure: %v", e)
+	}
+
+}

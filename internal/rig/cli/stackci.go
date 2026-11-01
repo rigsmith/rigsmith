@@ -1,0 +1,270 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+)
+
+type stackCIError struct {
+	step string
+	code int
+	err  error
+}
+
+func (e *stackCIError) Error() string { return fmt.Sprintf("stack ci %s: %v", e.step, e.err) }
+func (e *stackCIError) Unwrap() error { return e.err }
+func (e *stackCIError) ExitCode() int { return e.code }
+
+var stackCIExecutable = os.Executable
+
+func newStackCICmd() *cobra.Command {
+	var manifest, seed, member, build, test string
+	var tip bool
+	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a manifest or seed in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified.", Args: cobra.NoArgs}
+	c.Flags().StringVar(&manifest, "manifest", "", "Path to a committed rig.stack.jsonc")
+	c.Flags().StringVar(&seed, "seed", "", "Seed owner/repo@ref (passed to stack setup)")
+	c.Flags().StringVar(&member, "member", "", "Member prefix (default: match origin URL)")
+	c.Flags().StringVar(&build, "build", "rig build", "Build command, run from the member")
+	c.Flags().StringVar(&test, "test", "rig test", "Test command, run from the member")
+	c.Flags().BoolVar(&tip, "upstream-tip", false, "Use upstream tips instead of manifest cursors")
+	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		resolved := map[string]string{}
+		results := map[string]string{}
+		var summary strings.Builder
+		summary.WriteString("## Stackspace CI\n\n")
+		defer func() {
+			if p := os.Getenv("GITHUB_OUTPUT"); p != "" {
+				b, _ := json.Marshal(resolved)
+				f, e := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+				if e == nil {
+					fmt.Fprintf(f, "commits=%s\ntest-result=%s\n", b, results["test"])
+					f.Close()
+				} else {
+					fmt.Fprintf(cmd.ErrOrStderr(), "writing outputs: %v\n", e)
+				}
+			}
+			if p := os.Getenv("GITHUB_STEP_SUMMARY"); p != "" {
+				f, e := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+				if e == nil {
+					_, e = f.WriteString(summary.String())
+					f.Close()
+				}
+				if e != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "writing summary: %v\n", e)
+				}
+			}
+		}()
+		step := func(name string, code int, fn func() error) error {
+			fmt.Fprintf(cmd.OutOrStdout(), "· %s\n", name)
+			e := fn()
+			result := "passed"
+			if e != nil {
+				result = "failed: " + e.Error()
+			}
+			results[name] = result
+			fmt.Fprintf(&summary, "- %s: %s\n", name, result)
+			if e != nil {
+				return &stackCIError{name, code, e}
+			}
+			return nil
+		}
+		checkout, e := stackRoot(cmd.Context())
+		if e != nil {
+			return step("setup", 10, func() error { return e })
+		}
+		temp, e := os.MkdirTemp("", "rig-stack-ci-")
+		if e != nil {
+			return e
+		}
+		defer os.RemoveAll(temp)
+		root := filepath.Join(temp, "stack")
+		exe, e := stackCIExecutable()
+		if e != nil {
+			return e
+		}
+		run := func(dir string, args ...string) error {
+			p := exec.CommandContext(cmd.Context(), exe, args...)
+			p.Dir = dir
+			p.Stdout = cmd.OutOrStdout()
+			p.Stderr = cmd.ErrOrStderr()
+			p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost")
+			return p.Run()
+		}
+		e = step("setup", 10, func() error {
+			if (manifest == "") == (seed == "") {
+				return fmt.Errorf("provide exactly one of --manifest or --seed")
+			}
+			if seed != "" {
+				if e := run(temp, "stack", "setup", seed, root); e != nil {
+					return e
+				}
+			} else {
+				if e := os.Mkdir(root, 0700); e != nil {
+					return e
+				}
+				p := manifest
+				if !filepath.IsAbs(p) {
+					p = filepath.Join(checkout, p)
+				}
+				rel, e := filepath.Rel(checkout, p)
+				if e != nil {
+					return e
+				}
+				data, e := stackCIGit(cmd.Context(), checkout, "show", "HEAD:"+filepath.ToSlash(rel))
+				if e != nil {
+					return fmt.Errorf("manifest must be committed: %w", e)
+				}
+				if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
+					return e
+				}
+				if _, e = stackCIGit(cmd.Context(), root, "init", "-q"); e != nil {
+					return e
+				}
+			}
+			m, _, e := loadStackManifest(root)
+			if e != nil {
+				return e
+			}
+			if m == nil {
+				return fmt.Errorf("seed has no manifest")
+			}
+			if member == "" {
+				b, e := stackCIGit(cmd.Context(), checkout, "remote", "get-url", "origin")
+				if e != nil {
+					return e
+				}
+				spec := stackNormalizeSpec(strings.TrimSpace(string(b)))
+				for _, n := range m.names() {
+					r := m.Repos[n]
+					if strings.EqualFold(spec, r.Upstream) || strings.EqualFold(spec, r.Fork) {
+						if member != "" {
+							return fmt.Errorf("origin matches multiple members; set --member")
+						}
+						member = n
+					}
+				}
+			}
+			if m.Repos[member] == nil {
+				return fmt.Errorf("cannot match member; set --member to a manifest prefix")
+			}
+			// CI cursor mode must not silently select a proposed fork branch.
+			for _, n := range m.names() {
+				r := m.Repos[n]
+				r.TrackBranch = ""
+				if tip {
+					r.UpstreamCommit = ""
+					r.UpstreamTag = ""
+					delete(m.LastSync, n)
+				} else if n != member {
+					if !stackIsSHA(m.cursor(n)) {
+						return fmt.Errorf("member %s has no full manifest cursor", n)
+					}
+					r.UpstreamBranch = ""
+					r.Branch = ""
+					r.UpstreamTag = ""
+					r.UpstreamCommit = m.cursor(n)
+				}
+			}
+			m.LastPropose = nil
+			data, e := json.MarshalIndent(m, "", "  ")
+			if e != nil {
+				return e
+			}
+			if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
+				return e
+			}
+			if e = run(root, "stack", "init"); e != nil {
+				return fmt.Errorf("rebuilding members (private upstreams may be unavailable to fork PRs): %w", e)
+			}
+			m, _, e = loadStackManifest(root)
+			if e != nil {
+				return e
+			}
+			for _, n := range m.names() {
+				resolved[n] = m.cursor(n)
+			}
+			sha, e := stackCIReplace(cmd.Context(), checkout, root, member)
+			if e != nil {
+				return e
+			}
+			resolved[member] = sha
+			summary.WriteString("\n| Member | Resolved commit |\n| --- | --- |\n")
+			for _, n := range m.names() {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", n, resolved[n])
+				fmt.Fprintf(&summary, "| %s | `%s` |\n", n, resolved[n])
+			}
+			summary.WriteString("\n")
+			return nil
+		})
+		if e != nil {
+			return e
+		}
+		if e = step("wire", 11, func() error { return run(root, "stack", "wire") }); e != nil {
+			return e
+		}
+		shell := func(s string) error {
+			if s == "" {
+				return nil
+			}
+			p := exec.CommandContext(cmd.Context(), "bash", "-eo", "pipefail", "-c", s)
+			p.Dir = filepath.Join(root, member)
+			p.Stdout = cmd.OutOrStdout()
+			p.Stderr = cmd.ErrOrStderr()
+			return p.Run()
+		}
+		if e = step("build", 12, func() error { return shell(build) }); e != nil {
+			return e
+		}
+		return step("test", 13, func() error { return shell(test) })
+	}
+	return c
+}
+
+func stackCIGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	p := exec.CommandContext(ctx, "git", args...)
+	p.Dir = dir
+	p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost")
+	b, e := p.CombinedOutput()
+	if e != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), e, b)
+	}
+	return b, nil
+}
+
+// Archive HEAD rather than merge a shallow PR ref into unrelated fused history.
+func stackCIReplace(ctx context.Context, checkout, root, member string) (string, error) {
+	if e := stackValidPrefix(member); e != nil {
+		return "", e
+	}
+	sha, e := stackCIGit(ctx, checkout, "rev-parse", "HEAD")
+	if e != nil {
+		return "", e
+	}
+	data, e := stackCIGit(ctx, checkout, "archive", "--format=tar", "HEAD")
+	if e != nil {
+		return "", e
+	}
+	dest := filepath.Join(root, member)
+	if e = os.RemoveAll(dest); e != nil {
+		return "", e
+	}
+	if e = os.MkdirAll(dest, 0755); e != nil {
+		return "", e
+	}
+	if e = untar(bytes.NewReader(data), dest); e != nil {
+		return "", e
+	}
+	if _, e = stackCIGit(ctx, root, "add", "-A", "--", member); e != nil {
+		return "", e
+	}
+	_, e = stackCIGit(ctx, root, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "stack ci: checkout "+strings.TrimSpace(string(sha)))
+	return strings.TrimSpace(string(sha)), e
+}

@@ -700,3 +700,32 @@ base, not a rebase onto an existing commit. That is a separate piece of design a
 deliberately not a flag on `pull`, because a flag that is right only when a prefix has
 exactly one unmerged topic — and silently wrong otherwise — is worse than the manual
 step it replaces.
+
+## Member CI reconstruction
+
+`rig stack ci` builds in an automatically removed temporary repository, outside
+the checkout. Manifest mode reads the committed manifest from checkout HEAD,
+normalizes sibling imports to exact cursors (ignoring proposal branches), and
+uses the existing init import path. Tip mode drops cursor and tag/commit pins.
+Seed mode delegates acquisition to `rig stack setup` without parsing `@ref`.
+The seed form therefore depends on setup supporting that interface.
+
+The member tree comes from `git archive HEAD`, extracted under its manifest
+prefix after removing the imported tree. This needs no PR ancestry or complete
+history: shallow checkout and synthetic merge refs work. A throwaway local
+commit records this replacement, satisfying wire's HEAD-based discovery. Wire
+runs again after replacement; sibling relative references point within the
+same fused root. The checkout and its index remain untouched. Archive extraction
+reuses seed's traversal/link guards. Submodules are not materialized by archive.
+
+The verb owns setup, wire, build and test reporting and distinct exit statuses;
+the composite only installs pinned rig and dispatches it. Engine installation
+uses rig's manifest/default josh pin on first import. Summary writing is optional
+outside GitHub. Commands run from the selected member and test results stream
+to stdout. See [the member CI guide](guides/testing-a-member-pr-in-its-stackspace.md).
+
+The action's final home is the separate `rigsmith/stack-action` repository,
+following the shiprig-action model. `rigsmith/stack-action@v1` is intended but
+not published yet. Until that later publication, ship the fully self-contained
+`.github/actions/stack/` directory with no references outside it; workflow
+examples use its in-repo path. This hunt does not create the new repository.
