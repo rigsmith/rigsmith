@@ -29,6 +29,7 @@ func newStackCIGuardCmd() *cobra.Command {
 			p.Env = append(os.Environ(), "DOTNET_CLI_UI_LANGUAGE=en-US", "VSLANG=1033")
 			return p.CombinedOutput()
 		}
+		project = stackGuardPath(project)
 		var meta stackGuardMetadata
 		out, e := run("msbuild", project, "-nologo", "-p:TreatWarningsAsErrors=true", "-getItem:StackOnlyWarning,_StackPresent", "-getProperty:RigStackspace,RigStackspaceRoot,ProjectAssetsFile,WarningsAsErrors,WarningsNotAsErrors")
 		if e != nil {
@@ -38,6 +39,7 @@ func newStackCIGuardCmd() *cobra.Command {
 			return fmt.Errorf("evaluate guard metadata: %w", e)
 		}
 		if meta.Properties.RigStackspace == "true" {
+			meta.Properties.RigStackspaceRoot = stackGuardPath(meta.Properties.RigStackspaceRoot)
 			rel, err := filepath.Rel(meta.Properties.RigStackspaceRoot, project)
 			if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return fmt.Errorf("project is outside the stackspace")
@@ -99,8 +101,8 @@ func newStackCIGuardCmd() *cobra.Command {
 				if len(m) == 0 {
 					continue
 				}
-				origin := filepath.Clean(strings.Split(m[4], "::")[0])
-				if !insideRoot(meta.MemberRoot, origin) {
+				origin := stackGuardPath(strings.Split(m[4], "::")[0])
+				if !stackGuardWithin(meta.MemberRoot, origin) {
 					continue
 				}
 				if _, ok := meta.MemberTolerances[origin]; ok {
@@ -203,7 +205,7 @@ func stackGuardOutput(output, project string, meta stackGuardMetadata, strict bo
 		origin = strings.Split(origin, "::")[0]
 		if len(records) > 0 && strings.HasPrefix(m[3], " ") {
 			last := &records[len(records)-1]
-			if last.code == m[2] && last.project == origin {
+			if last.code == m[2] && stackGuardSamePath(last.project, origin) {
 				last.message += "\n" + m[3]
 				last.lines = append(last.lines, line)
 				continue
@@ -214,7 +216,7 @@ func stackGuardOutput(output, project string, meta stackGuardMetadata, strict bo
 	seen := map[string]bool{}
 	for _, record := range records {
 		allowed := false
-		if !strict && record.code != "" && filepath.Clean(record.project) == project {
+		if !strict && record.code != "" && stackGuardSamePath(record.project, project) {
 			if meta.Properties.RigStackspace != "true" {
 				for _, item := range meta.Items.StackOnlyWarning {
 					allowed = allowed || item.Identity == record.code
@@ -275,20 +277,29 @@ func stackGuardVisiblePolicy(lines []string, project string, meta stackGuardMeta
 			fatal = true
 			continue
 		}
-		origin := filepath.Clean(strings.Split(m[4], "::")[0])
-		if stackGuardCompilerCode.MatchString(m[2]) && meta.MemberRoot != "" && insideRoot(meta.Properties.RigStackspaceRoot, origin) && !insideRoot(meta.MemberRoot, origin) {
+		origin := stackGuardPath(strings.Split(m[4], "::")[0])
+		allowed := false
+		policy, known := meta.MemberTolerances[origin]
+		if !known {
+			for path, value := range meta.MemberTolerances {
+				if stackGuardSamePath(path, origin) {
+					policy, known = value, true
+					break
+				}
+			}
+		}
+		if stackGuardSamePath(origin, project) {
+			policy = meta.Properties.WarningsNotAsErrors
+			known = true
+		}
+		if !known && stackGuardCompilerCode.MatchString(m[2]) && meta.MemberRoot != "" && stackGuardWithin(meta.Properties.RigStackspaceRoot, origin) && !stackGuardWithin(meta.MemberRoot, origin) {
 			if !seen[line] {
 				siblings = append(siblings, line)
 				seen[line] = true
 			}
 			continue
 		}
-		allowed := false
-		policy, known := meta.MemberTolerances[origin]
-		if origin == project {
-			policy = meta.Properties.WarningsNotAsErrors
-			known = true
-		}
+
 		if known {
 			for _, code := range strings.Split(policy, ";") {
 				if strings.EqualFold(strings.TrimSpace(code), m[2]) {

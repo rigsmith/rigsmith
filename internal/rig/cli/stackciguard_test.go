@@ -20,21 +20,22 @@ import (
 func TestStackCIGuardOutput(t *testing.T) {
 	var meta stackGuardMetadata
 	meta.Items.StackOnlyWarning = []stackGuardItem{{Identity: "ACME0001"}}
-	output := "a.cs(1,1): warning ACME0001: source only [/acme/App.csproj]\na.cs(2,1): warning CS0168: unused [/acme/App.csproj]"
-	held, visible := stackGuardOutput(output, "/acme/App.csproj", meta, false)
+	project := filepath.Join(t.TempDir(), "acme", "App.csproj")
+	output := "a.cs(1,1): warning ACME0001: source only [" + project + "]\na.cs(2,1): warning CS0168: unused [" + project + "]"
+	held, visible := stackGuardOutput(output, project, meta, false)
 	if len(held) != 1 || len(visible) != 1 || !strings.Contains(visible[0], "CS0168") {
 		t.Fatalf("held=%v visible=%v", held, visible)
 	}
-	held, _ = stackGuardOutput(output, "/acme/App.csproj", meta, true)
+	held, _ = stackGuardOutput(output, project, meta, true)
 	if len(held) != 0 {
 		t.Fatal("strict held back warnings")
 	}
-	held, _ = stackGuardOutput(output, "/other/App.csproj", meta, false)
+	held, _ = stackGuardOutput(output, filepath.Join(t.TempDir(), "other", "App.csproj"), meta, false)
 	if len(held) != 0 {
 		t.Fatal("other project warnings held back")
 	}
 	meta.Properties.RigStackspace = "true"
-	held, _ = stackGuardOutput(output, "/acme/App.csproj", meta, false)
+	held, _ = stackGuardOutput(output, project, meta, false)
 	if len(held) != 0 {
 		t.Fatal("stack held plain diagnostics")
 	}

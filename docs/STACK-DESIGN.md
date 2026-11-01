@@ -852,3 +852,14 @@ the predicted warnings may not occur in that form. The sibling and member-policy
 regression fixtures were run red against the preceding implementation, then
 green after the fix; they also check strict and new member-code failures.
 
+
+Project attribution compares existing files with `os.SameFile`; entry-project
+and member-root paths resolve symlinks and Windows long names before relative
+path calculations. Sibling attribution compares actual ancestor directory
+identities, so drive case, path case and 8.3 aliases do not change ownership.
+Missing paths and symlinks escaping the stack do not qualify as siblings.
+Non-gated tests exercise differently named links to real project files and
+Windows case/drive/available 8.3 aliases through the diagnostic classifiers.
+The normal Windows test job does not set `RIG_STACK_E2E`, so real SDK guard
+builds remain gated there; these path tests require neither that switch nor
+an installed SDK. The 8.3 subtest skips if the volume has no short-name aliases.
