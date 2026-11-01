@@ -69,6 +69,11 @@ rig stack propose some-lib read-timeout --dry-run   # what would go to your fork
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```
 
+`rig stack deps` checks topic PR dependencies against upstream merge states and
+manifest cursors; `rig stack status` shows the same chain. See the
+[stack dependency guide](site/rig/stack.md#stack-topic-dependencies) for recording
+edges, publishing statuses, and enabling scheduled refresh.
+
 The release engine — changeset parsing, the dependency **cascade** (a dependent
 is patch-bumped when its dependency releases), **linked/fixed/lockstep**
 grouping, version bumping, and changelog rendering — is a faithful port of
@@ -175,40 +180,3 @@ builds the committed checkout against sibling sources in a temporary stackspace.
 Keep this job alongside the plain-clone matrix. The self-contained composite is
 `.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
 See [the guide](docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
-
-
-### Stack topic dependencies
-
-`rig stack deps --manifest rig.stack.jsonc` checks the committed `proposals`
-records through the GitHub API, using `GITHUB_TOKEN` and `GITHUB_API_URL`.
-Without a token, local runs reuse stack's gh-first, git-helper-second credentials.
-Manifests with no dependency edges make no API or credential lookups.
-Propose upstream members first: a new proposal records the already-proposed
-members of that topic in `proposals[prefix][topic].dependsOn` (an array of
-member prefixes). Re-proposing preserves these edges; edit the array to change
-direction or backfill older proposals. Each dependency must merge upstream and
-its `lastSync` cursor must include the API-reported merge commit. `rig stack status` displays the same chain
-from the local manifest. Older records without `dependsOn` have no dependencies.
-
-`rig stack deps --publish` posts the `stack dependencies` commit status to
-current PR **head** SHAs only in `GITHUB_REPOSITORY`, which must match a
-member upstream. Unset or unmatched repository scope refuses publication. The composite action enables this with its
-`dependencies` input (default `true`). Workflows may optionally grant
-`statuses: write`; read-only fork tokens produce an annotation and job summary
-instead of failing for a denied write. API errors and private repositories
-without access appear as **could not check**, never as passing. Do not use
-`pull_request_target` to grant these writes.
-
-For automatic refresh, copy `examples/github-workflows/stack-dependencies.yml`
-into each dependent member repository's `.github/workflows/` directory and set
-its release pin and manifest path. The hourly schedule uses the default branch's
-committed manifest and API PR head SHAs; it needs no PR event payload. Keep cursor
-bumps in that manifest current. A sweep then refreshes pending checks after upstream
-merges and cursor updates without waiting for another PR event. Nothing is installed
-by default, and the workflow has not been run on real GitHub. The token needs read
-access to private dependencies and optional `statuses: write` in this repository;
-it never publishes statuses in sibling repositories. Rerunning an old checkout
-still evaluates old cursors. Local publication also requires explicit
-`GITHUB_REPOSITORY=acme/app` scope.
-A caller must treat pending statuses as a merge gate if desired; the reporting
-command itself succeeds when dependencies are pending or unavailable.
