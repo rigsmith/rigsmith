@@ -322,9 +322,12 @@ The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
 per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
 compile constants, plus `RIG_STACK`. Per-package properties are available inside
 targets after `RigStackSourceSignals`, not in project evaluation conditions.
-`UseStackSources=false` disables all signals and swaps. Member imports are gated
-on an ancestor stack manifest and upgraded when wired again; `stack doctor`
-previews the signals by project. See [the stack guide](stack.md) for naming and timing.
+`UseStackSources=false` disables all signals and swaps. Member imports check the
+nearest parent `Directory.Build.targets` for rig's generated-overlay or
+member-import marker, or the literal `<RigStackspace>true</RigStackspace>`
+declaration. Retain that declaration when taking ownership of an overlay;
+an ancestor stack manifest alone does not trigger the import. Re-running `wire`
+upgrades rig-owned member imports; `stack doctor` previews the signals by project. See [the stack guide](stack.md) for naming and timing.
 
 ## Prefix matching
 
