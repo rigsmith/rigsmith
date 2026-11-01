@@ -1,0 +1,25 @@
+site/rig/verbs.md
+  s_594eddb4156d96::t_840d89d1451a28 293,317-320
+site/rig/configuration.md
+  s_594eddb4156d96::t_840d89d1451a28 330-339
+cmd/rig/README.md
+  s_594eddb4156d96::t_840d89d1451a28 45-49
+README.md
+  s_594eddb4156d96::t_840d89d1451a28 72-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f5a157121445efe3a67cf61535735a60a4646e92",
+  "prompts": {},
+  "sessions": {
+    "s_594eddb4156d96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197eb-622e-7b50-9999-1aba0b1a34a9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
