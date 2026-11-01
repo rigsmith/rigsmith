@@ -1061,3 +1061,10 @@ should not trust restored filtered history. Cached bundles are not verified
 against upstream cursors; provenance records `source` and actual `filteredCommit`
 so a cached import is explicit. See the action README for the cache scope trust
 boundary and reproducibility limits.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.

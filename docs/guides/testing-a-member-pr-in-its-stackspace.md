@@ -82,3 +82,10 @@ for example under `$GITHUB_WORKSPACE/test-results`. Relative report files in
 the member directory are deleted with the temporary stack before later steps
 run. Configure your test runner's output path accordingly and use `if: always()`
 on the subsequent artifact upload step so failure reports are retained too.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.
