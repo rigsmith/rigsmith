@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -236,7 +238,7 @@ func TestStackCIActionBoolean(t *testing.T) {
 		for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
 			t.Run(fmt.Sprintf("%s=%q", input, value), func(t *testing.T) {
 				p := exec.Command("bash", "-e", "-c", script)
-				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_GUARD_PROJECT=", "STACK_STRICT=false", "STACK_TIP=true", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR=false", "STACK_DEPENDENCIES=true", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+				p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR=false", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
 				output, err := p.CombinedOutput()
 				valid := value == "true" || value == "false"
 				if valid {
@@ -255,6 +257,54 @@ func TestStackCIActionBoolean(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Derive defaults so a new action input does not break unrelated script fixtures.
+func stackCIActionDefaultEnv(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile("../../../.github/actions/stack/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action struct {
+		Inputs map[string]struct{ Default string }
+		Runs   struct {
+			Steps []struct {
+				ID  string
+				Env map[string]string
+			}
+		}
+	}
+	if err := yaml.Unmarshal(data, &action); err != nil {
+		t.Fatal(err)
+	}
+	reference := regexp.MustCompile(`^\$\{\{ inputs\.([A-Za-z_][A-Za-z0-9_-]*) \}\}$`)
+	for _, step := range action.Runs.Steps {
+		if step.ID != "run" {
+			continue
+		}
+		env := os.Environ()
+		keys := make([]string, 0, len(step.Env))
+		for key := range step.Env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			match := reference.FindStringSubmatch(step.Env[key])
+			if len(match) == 0 {
+				continue
+			}
+			input := match[1]
+			definition, ok := action.Inputs[input]
+			if !ok {
+				t.Fatalf("step env %s names undefined input %s", key, input)
+			}
+			env = append(env, key+"="+definition.Default)
+		}
+		return env
+	}
+	t.Fatal("missing action run step")
+	return nil
 }
 
 func stackCIActionScript(t *testing.T, name string) string {
@@ -511,7 +561,7 @@ func TestStackCIActionForkCacheExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
-			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_DEPENDENCIES=true", "STACK_GUARD_PROJECT=", "STACK_STRICT=false", "STACK_TIP=false", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR="+fork, "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+			p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR="+fork, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
 			out, err := p.CombinedOutput()
 			if err != nil {
 				t.Fatalf("run script: %v %s", err, out)
