@@ -3,6 +3,7 @@ package dotnet
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -77,7 +78,7 @@ func TestLocalOverlay(t *testing.T) {
 		}
 	})
 
-	t.Run("names each package once", func(t *testing.T) {
+	t.Run("declares each package once", func(t *testing.T) {
 		// The point of the set-arithmetic form: no condition per redirect, so
 		// nothing is written against %(Filename), which MSBuild splits at the
 		// last dot and would match a differently-named sibling.
@@ -89,7 +90,7 @@ func TestLocalOverlay(t *testing.T) {
 			},
 		})
 		body := got.Files[overlayFile]
-		if n := strings.Count(body, "Pty.Core.Native"); n != 1 {
+		if n := strings.Count(body, `StackSource Include="Pty.Core.Native"`); n != 1 {
 			t.Errorf("Pty.Core.Native appears %d times, want once", n)
 		}
 		if strings.Contains(body, "Filename") {
@@ -486,5 +487,109 @@ func TestLocalOverlayLeftOverWhenNothingCrosses(t *testing.T) {
 	writeFile(t, filepath.Join(root, overlayFile), "<Project><!-- mine --></Project>\n")
 	if got, _ := a.LocalOverlay(ctx, plugin.LocalOverlayRequest{Root: root}); !got.Skipped || len(got.Problems) != 0 {
 		t.Fatalf("hand-written overlay with no redirects: skipped=%v %+v", got.Skipped, got.Problems)
+	}
+}
+
+func TestStackSourceNames(t *testing.T) {
+	for id, want := range map[string]string{"Acme.Core": "Acme_Core", "9-a_b": "9_a_b", "é.a": "__a"} {
+		if got := StackSourceName(id); got != want {
+			t.Errorf("%q: %q != %q", id, got, want)
+		}
+	}
+	body := renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}})
+	for _, want := range []string{"<RigStackspace>true", "<RigStackspaceRoot>$(MSBuildThisFileDirectory)", "BeforeTargets=\"PrepareForBuild;CoreCompile\"", "@(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Core'))", "<RigStackSource_Acme_Core>true", ";STACK_ACME_CORE", ";RIG_STACK"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+}
+
+func TestStackImportUpgrade(t *testing.T) {
+	old := `<Project><!-- Added by rig. historical explanation -->
+ <PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+ <!-- member content --></Project>`
+	if !legacyWalkUp(old) {
+		t.Fatal("old block not detected")
+	}
+	got, ok := patchWalkUp(old)
+	if !ok || legacyWalkUp(got) || strings.Count(got, "<Import ") != 1 || !strings.Contains(got, "Exists('$(StackManifest)')") || !strings.Contains(got, "member content") {
+		t.Fatal(got)
+	}
+}
+
+func TestStackSourceSignalsE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("set RIG_STACK_E2E=1 for real dotnet builds")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("dotnet unavailable")
+	}
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("dotnet", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("dotnet %v: %v\n%s", args, err, out)
+		}
+	}
+	writeFile(t, filepath.Join(root, "NuGet.Config"), `<configuration><packageSources><clear/><add key="fixture" value="./feed" /></packageSources></configuration>`)
+	lib := filepath.Join(root, "lib/Lib.csproj")
+	writeFile(t, lib, `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Acme.Core</PackageId><Version>1.0.0</Version></PropertyGroup></Project>`)
+	writeFile(t, filepath.Join(root, "lib/Core.cs"), `public class Core { public static int Released => 1; }`)
+	run("pack", lib, "-o", filepath.Join(root, "feed"))
+	writeFile(t, filepath.Join(root, "lib/Core.cs"), `public class Core { public static int SourceOnly => 1; }`)
+	overlay := renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}, {Package: "Acme.Unused", Path: "unused/Unused.csproj"}})
+	writeFile(t, filepath.Join(root, overlayFile), overlay)
+	writeFile(t, filepath.Join(root, "rig.stack.jsonc"), `{}`)
+	member, _ := patchWalkUp(`<Project>
+ <PropertyGroup><EvaluationSawSource Condition="'$(RigStackSource_Acme_Core)' == 'true'">true</EvaluationSawSource></PropertyGroup>
+ <Target Name="CheckSignals" AfterTargets="RigStackSourceSignals" Condition="'$(UseStackSources)' != 'false'">
+ <Error Condition="'$(RigStackspace)' != 'true' Or '$(RigStackspaceRoot)' == ''" Text="missing root signals" />
+ <Error Condition="'$(RigStackSource_Acme_Core)' != 'true'" Text="missing source property" />
+ <Error Condition="'$(RigStackSource_Acme_Unused)' != ''" Text="unused source property" />
+ <Error Condition="'$(EvaluationSawSource)' != ''" Text="unexpected evaluation signal" />
+ <PropertyGroup><TargetSawSource Condition="'$(RigStackSource_Acme_Core)' == 'true'">true</TargetSawSource></PropertyGroup>
+ <Error Condition="'$(TargetSawSource)' != 'true'" Text="target property condition failed" />
+ </Target>
+ <Target Name="CheckDisabledSignals" BeforeTargets="CoreCompile" Condition="'$(UseStackSources)' == 'false' Or '$(StackManifest)' == ''">
+ <Error Condition="'$(RigStackspace)' != '' Or '$(RigStackspaceRoot)' != '' Or '$(RigStackSource_Acme_Core)' != ''" Text="disabled properties leaked" />
+ </Target></Project>`)
+	for _, mode := range []string{"stack", "optout", "plain"} {
+		dir := "app"
+		if mode == "plain" {
+			dir = "plain/app"
+			writeFile(t, filepath.Join(root, "plain", overlayFile), `<Project><Target Name="Unrelated" BeforeTargets="Build"><Error Text="unrelated ancestor imported" /></Target></Project>`)
+		}
+		// A plain clone has the rig-owned import, but no stack manifest above it.
+		if mode == "plain" {
+			if err := os.Remove(filepath.Join(root, "rig.stack.jsonc")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		writeFile(t, filepath.Join(root, dir, overlayFile), member)
+		writeFile(t, filepath.Join(root, dir, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0" /></ItemGroup></Project>`)
+		writeFile(t, filepath.Join(root, dir, "App.cs"), `#if STACK_ACME_UNUSED
+#error unused sibling constant
+#endif
+#if STACK_ACME_CORE
+#if !RIG_STACK
+#error missing stack constant
+#endif
+public class App { int value = Core.SourceOnly; }
+#else
+#if RIG_STACK
+#error unexpected stack constant
+#endif
+public class App { int value = Core.Released; }
+#endif
+`)
+		args := []string{"build", filepath.Join(root, dir, "App.csproj"), "--no-incremental", "-p:RestorePackagesPath=" + filepath.Join(root, "packages")}
+		if mode == "optout" {
+			args = append(args, "-p:UseStackSources=false")
+		}
+		run(args...)
 	}
 }

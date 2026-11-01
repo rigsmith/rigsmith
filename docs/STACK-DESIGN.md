@@ -700,3 +700,37 @@ base, not a rebase onto an existing commit. That is a separate piece of design a
 deliberately not a flag on `pull`, because a flag that is right only when a prefix has
 exactly one unmerged topic — and silently wrong otherwise — is worse than the manual
 step it replaces.
+
+### Source signals from the .NET overlay
+
+With `UseStackSources` other than `false`, the overlay sets
+`RigStackspace=true` and `RigStackspaceRoot` (an absolute directory with a trailing
+separator). Before `PrepareForBuild` / `CoreCompile`, target
+`RigStackSourceSignals` appends `RIG_STACK` to `DefineConstants`. For each package
+actually swapped in this project, it also sets `RigStackSource_Acme_Core=true`
+and appends `STACK_ACME_CORE`. A project referencing no sibling gets only the
+stack-wide signals.
+
+Names come from the **referenced package ID**, including a republished ID:
+replace each character outside ASCII `A-Z`, `a-z`, `0-9` with `_`; preserve case
+for the property suffix and uppercase for the constant suffix. For example,
+`Acme.Core` becomes `RigStackSource_Acme_Core` and `STACK_ACME_CORE`. Prefixes
+make leading digits safe. IDs that sanitise to the same name share a signal;
+choose distinct IDs if you need to distinguish them.
+
+MSBuild evaluates properties before items. The per-package properties are
+therefore **not available in evaluation-time conditions**, including the project
+body and `Directory.Build.targets` property/item groups. Use them inside a
+member target with `AfterTargets="RigStackSourceSignals"` (or a later build
+target), where property and item conditions can read them. `RigStackspace` and
+`RigStackspaceRoot` are evaluation properties, but the overlay is imported after
+the project body, so earlier project-body property assignments cannot read them
+either. Compile guards such as `#if STACK_ACME_CORE` work without member switches.
+
+`-p:UseStackSources=false` disables the swap, properties and constants together.
+Rig-owned member imports check for an ancestor `rig.stack.jsonc` before importing
+the nearest parent `Directory.Build.targets`. Re-running `wire` upgrades the old
+rig-owned ungated block in writable members, preserving their other content.
+A plain clone's import does nothing even beneath unrelated build targets.
+`doctor` previews the properties/constants by project from static discovery;
+conditional references still depend on the configuration MSBuild builds.

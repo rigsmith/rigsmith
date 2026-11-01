@@ -394,3 +394,11 @@ curate the set live:
 
 Exclusions are written to `.rig.json`'s [`exclude`](./configuration) globs and
 match against the project's full name, short name, and repo-relative path.
+
+The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
+per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
+compile constants, plus `RIG_STACK`. Per-package properties are available inside
+targets after `RigStackSourceSignals`, not in project evaluation conditions.
+`UseStackSources=false` disables all signals and swaps. Member imports are gated
+on an ancestor stack manifest and upgraded when wired again; `stack doctor`
+previews the signals by project. See [the stack guide](stack.md) for naming and timing.

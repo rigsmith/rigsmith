@@ -334,3 +334,19 @@ func owned(names ...string) *stackManifest {
 	}
 	return m
 }
+
+func TestStackSourceDoctorReport(t *testing.T) {
+	root := t.TempDir()
+	csproj(t, root, "app", "Acme.App", "Acme.Core")
+	csproj(t, root, "lib", "Acme.Core")
+	var out strings.Builder
+	stackReportSourceSignals(context.Background(), &out, root, []stackLink{{Redirect: plugin.Redirect{Package: "Acme.Core", Path: "lib/lib.csproj"}}})
+	for _, want := range []string{"app/app.csproj", "lib/lib.csproj", "RigStackspace=true", "RigStackspaceRoot=" + root, "RIG_STACK", "RigStackSource_Acme_Core=true; STACK_ACME_CORE", "when PackageReference is active"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in %s", want, out.String())
+		}
+	}
+	if strings.Count(out.String(), "RigStackSource_Acme_Core=true") != 1 {
+		t.Fatal(out.String())
+	}
+}

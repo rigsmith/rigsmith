@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/ecosystem"
+	"github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
@@ -431,4 +432,28 @@ func stackEcosystems() []plugin.Ecosystem { return ecosystem.Default().All() }
 // patch.
 func localOverlayRequest(root string, links []stackLink, writable []string) plugin.LocalOverlayRequest {
 	return plugin.LocalOverlayRequest{Root: root, Redirects: redirectsOf(links), Write: true, Writable: writable}
+}
+
+// stackReportSourceSignals is a static preview; MSBuild decides conditional
+// PackageReferences for the selected configuration at build time.
+func stackReportSourceSignals(ctx context.Context, out io.Writer, root string, links []stackLink) {
+	ids := map[string]bool{}
+	for _, l := range links {
+		ids[l.Package] = true
+	}
+	for _, scan := range stackScan(ctx, root, stackScanOptions{Registry: true}) {
+		if scan.Eco.Info().ID != "dotnet" || scan.Err != nil {
+			continue
+		}
+		for _, p := range scan.Packages {
+			fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", p.ManifestPath, root)
+			for _, d := range p.Dependencies {
+				if !d.ViaRegistry || !ids[d.Name] {
+					continue
+				}
+				name := dotnet.StackSourceName(d.Name)
+				fmt.Fprintf(out, "      RigStackSource_%s=true; STACK_%s (when PackageReference is active; available in targets after RigStackSourceSignals)\n", name, strings.ToUpper(name))
+			}
+		}
+	}
 }
