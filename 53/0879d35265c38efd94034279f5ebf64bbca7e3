@@ -1,0 +1,21 @@
+internal/rig/cli/stackhome.go
+  s_0d27d52fc83271::t_a0cf80be9e9a97 426-427,429-440
+internal/rig/cli/stackhome_test.go
+  s_0d27d52fc83271::t_a0cf80be9e9a97 489-491
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "530879d35265c38efd94034279f5ebf64bbca7e3",
+  "prompts": {},
+  "sessions": {
+    "s_0d27d52fc83271": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e3-232a-7362-8714-960078f0746b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
