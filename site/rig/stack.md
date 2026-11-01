@@ -1113,10 +1113,33 @@ proposal. What was missing was only that nothing said so.
 With `UseStackSources` other than `false`, the overlay sets
 `RigStackspace=true` and `RigStackspaceRoot` (an absolute directory with a trailing
 separator). Before `PrepareForBuild` / `CoreCompile`, target
-`RigStackSourceSignals` appends `RIG_STACK` to `DefineConstants`. For each package
-actually swapped in this project, it also sets `RigStackSource_Acme_Core=true`
+`RigStackSourceSignals` appends `RIG_STACK` to `DefineConstants`. For each sibling whose source is reached directly by a swap or transitively
+through a swapped sibling, it also sets `RigStackSource_Acme_Core=true`
 and appends `STACK_ACME_CORE`. A project referencing no sibling gets only the
 stack-wide signals.
+
+`wire` computes a sorted, deduplicated closure of scanned PackageReference
+edges per producing project and emits it with each redirect. Cycles terminate
+and diamonds share one signal. A closure is activated only when MSBuild actually
+swaps its root PackageReference in the consuming project. Unreachable members
+remain absent. `doctor` previews the same closure; its full generated-file
+comparison detects stale links, so re-run `wire` after reference changes.
+
+Conditional references in the consuming project are evaluated by MSBuild.
+Deeper conditions in sibling projects are not evaluated by this static scan:
+the closure includes every scanned edge, even if inactive for this configuration
+or TFM. This deliberately prefers a visible compile error from an overly broad
+true signal to silently losing guarded code from a false signal. ProjectReference
+edges inside a member are not traversed by this closure; siblings reached only
+through those edges are currently omitted. The scanner records those edges by
+filename rather than an unambiguous resolved project path. References introduced
+by imported targets are likewise outside the static scan. Use direct package
+references when source-only guards require signals along those paths.
+
+`UseStackSources=false` disables swaps, source properties and constants together.
+Hand-owned gated parent imports are preserved without a legacy advisory.
+Historical ungated rig imports remain detectable; customized blocks that wire
+cannot safely replace get a manual inspection remedy.
 
 Names come from the **referenced package ID**, including a republished ID:
 replace each character outside ASCII `A-Z`, `a-z`, `0-9` with `_`; preserve case
@@ -1163,9 +1186,9 @@ Use `STACK_ACME_CORE` for that compile-time decision.
 
 `RigStackSource_*` remains available only in targets after
 `RigStackSourceSignals`; `STACK_*` still means this assembly compiles against
-that source. Conditional PackageReferences are resolved by MSBuild for the
-selected configuration/TFM: availability can be true while no swap or constant
-is produced. Use availability to condition a PackageReference, but use the
+that source. Direct conditional PackageReferences are resolved by MSBuild for the
+selected configuration/TFM; transitive signals use the static closure described
+above. Availability can be true while no swap or constant is produced. Use availability to condition a PackageReference, but use the
 compile constant to guard source-only APIs. No static per-project facts are
 promised. Re-run `wire` after changing members or references.
 

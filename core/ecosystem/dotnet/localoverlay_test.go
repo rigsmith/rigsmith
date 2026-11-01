@@ -1031,3 +1031,112 @@ func TestLocalOverlayPreservesCustomizedLegacyPropsBlock(t *testing.T) {
 		}
 	}
 }
+
+func TestReachableSourceSignals(t *testing.T) {
+	body := renderOverlay([]plugin.Redirect{
+		{Package: "Acme.Control", Path: "control/Control.csproj", Reachable: []string{"Acme.Core"}},
+		{Package: "Acme.Core", Path: "core/Core.csproj"},
+		{Package: "Acme.Unused", Path: "unused/Unused.csproj"},
+	})
+	if !strings.Contains(body, `Condition="@(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Control')) Or @(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Core'))"`) {
+		t.Fatal(body)
+	}
+}
+
+func TestHandOwnedGatedWalkUp(t *testing.T) {
+	body := `<Project><!-- Added by rig. This file is maintained by you. -->
+<PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+<Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != '' and Exists('$(MSBuildThisFileDirectory)../rig.stack.jsonc')" /></Project>`
+	if !continuesWalkUp(body) || legacyWalkUp(body) {
+		t.Fatal("hand-owned gated import misclassified")
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", overlayFile), body)
+	resp, err := New().LocalOverlay(context.Background(), plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "core/Core.csproj"}}, Writable: []string{"app"}, Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, note := range resp.Notes {
+		if strings.Contains(note, "legacy") {
+			t.Fatal(note)
+		}
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+	if string(got) != body {
+		t.Fatal("hand-owned file changed")
+	}
+}
+
+func TestStackTransitiveSourceSignalsE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("RIG_STACK_E2E=1")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("dotnet unavailable")
+	}
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("dotnet", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("dotnet %v: %v\n%s", args, err, out)
+		}
+	}
+	writeFile(t, filepath.Join(root, "NuGet.Config"), `<configuration><packageSources><clear/><add key="fixture" value="./feed"/></packageSources></configuration>`)
+	project := func(name, refs string) string {
+		return `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Acme.` + name + `</PackageId><Version>1.0.0</Version></PropertyGroup>` + refs + `</Project>`
+	}
+	core := filepath.Join(root, "core/Core.csproj")
+	writeFile(t, core, project("Core", ""))
+	writeFile(t, filepath.Join(root, "core/Core.cs"), `public class Core { public static int Released => 1; }`)
+	run("pack", core, "-o", filepath.Join(root, "feed"))
+	control := filepath.Join(root, "control/Control.csproj")
+	writeFile(t, control, project("Control", `<ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0"/></ItemGroup>`))
+	writeFile(t, filepath.Join(root, "control/Control.cs"), `public class Control {}`)
+	run("pack", control, "-o", filepath.Join(root, "feed"))
+	writeFile(t, filepath.Join(root, "core/Core.cs"), `public class Core { public static int SourceOnly => 1; }`)
+	writeFile(t, filepath.Join(root, "unused/Unused.csproj"), project("Unused", ""))
+	writeFile(t, filepath.Join(root, overlayFile), renderOverlay([]plugin.Redirect{{Package: "Acme.Control", Path: "control/Control.csproj", Reachable: []string{"Acme.Core"}}, {Package: "Acme.Core", Path: "core/Core.csproj"}, {Package: "Acme.Unused", Path: "unused/Unused.csproj"}}))
+	for _, mode := range []string{"stack", "optout", "plain"} {
+		dir := filepath.Join(root, mode)
+		writeFile(t, filepath.Join(dir, "App.csproj"), project("App", `<ItemGroup><PackageReference Include="Acme.Control" Version="1.0.0"/></ItemGroup><Target Name="Check" AfterTargets="RigStackSourceSignals" Condition="'$(UseStackSources)' != 'false'"><Error Condition="'$(RigStackSource_Acme_Core)' != 'true' Or '$(RigStackSource_Acme_Unused)' != ''" Text="incorrect transitive properties"/></Target>`))
+		writeFile(t, filepath.Join(dir, "App.cs"), `#if STACK_ACME_UNUSED
+#error unreachable sibling
+#endif
+#if STACK_ACME_CORE
+public class App { int value = Core.SourceOnly; }
+#else
+#if RIG_STACK
+#error missing transitive constant
+#endif
+public class App { int value = Core.Released; }
+#endif`)
+		args := []string{"build", filepath.Join(dir, "App.csproj"), "--no-incremental", "-p:RestorePackagesPath=" + filepath.Join(root, "packages")}
+		if mode == "plain" {
+			writeFile(t, filepath.Join(dir, overlayFile), `<Project/>`)
+			writeFile(t, filepath.Join(dir, "Directory.Build.props"), `<Project/>`)
+		}
+		if mode == "optout" {
+			args = append(args, "-p:UseStackSources=false")
+		}
+		run(args...)
+		if mode == "stack" {
+			// A direct-only overlay reproduces the old behavior against the
+			// same real graph; this fixture must reject the missing signal.
+			original, _ := os.ReadFile(filepath.Join(root, overlayFile))
+			writeFile(t, filepath.Join(root, overlayFile), renderOverlay([]plugin.Redirect{
+				{Package: "Acme.Control", Path: "control/Control.csproj"},
+				{Package: "Acme.Core", Path: "core/Core.csproj"},
+			}))
+			cmd := exec.Command("dotnet", args...)
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "incorrect transitive properties") {
+				t.Fatalf("direct-only overlay should fail: %v\n%s", err, out)
+			}
+			writeFile(t, filepath.Join(root, overlayFile), string(original))
+		}
+	}
+}

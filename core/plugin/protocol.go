@@ -527,6 +527,10 @@ type Redirect struct {
 	Package string `json:"package"`
 	// Path is the producing project's manifest, relative to Root.
 	Path string `json:"path"`
+	// Reachable is the static set of redirected package IDs reachable through
+	// this producer, excluding itself. Optional, additive protocol v1 field;
+	// older adapters ignore it and retain direct-only source signals.
+	Reachable []string `json:"reachable,omitempty"`
 }
 
 // LocalOverlayRequest asks an adapter to make Redirects resolve from source.

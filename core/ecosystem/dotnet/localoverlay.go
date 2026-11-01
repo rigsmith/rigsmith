@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -236,7 +237,9 @@ func overlayProblemsFile(req plugin.LocalOverlayRequest, overlayFile string) ([]
 			if oldGatedWalkUp(string(data)) {
 				message = rel + ": the old rig import can miss supported stack overlays; upgrade it to recognize every manifest format and hand-owned overlays"
 			}
-			if allowed {
+			if legacyWalkUp(string(data)) && !legacyImportRE.MatchString(string(data)) {
+				message += " — this customized import is hand-owned; inspect its gate manually because wire cannot safely upgrade it"
+			} else if allowed {
 				message += " — re-run `rig stack wire` to upgrade the import"
 			} else {
 				message += " — this member is not writable; upgrade its rig-owned import in a writable checkout"
@@ -283,9 +286,13 @@ func underAny(rel string, dirs []string) bool {
 	return false
 }
 
+var legacyImportRE = regexp.MustCompile(`(?s)<!-- Added by rig\.[^<]*?-->\s*<PropertyGroup>\s*<StackParentTargets>[^<]*</StackParentTargets>\s*</PropertyGroup>\s*<Import Project="\$\(StackParentTargets\)" Condition="'\$\(StackParentTargets\)' != ''"\s*/>`)
+
 // legacyWalkUp identifies the historical rig-owned, ungated member import.
 func legacyWalkUp(body string) bool {
-	return strings.Contains(body, "<!-- Added by rig.") && !strings.Contains(body, "<!-- rig:stack-import -->")
+	return strings.Contains(body, "<!-- Added by rig.") &&
+		!strings.Contains(body, "<!-- rig:stack-import -->") &&
+		regexp.MustCompile(`<Import\b[^>]*\bCondition="'\$\(StackParentTargets\)' != ''"[^>]*>`).MatchString(body)
 }
 
 // oldGatedWalkUp identifies imports from before hand-owned overlay detection.
@@ -305,7 +312,7 @@ func patchWalkUp(body string) (string, bool) { return patchWalkUpFile(body, over
 func patchWalkUpFile(body, file string) (string, bool) {
 	// Require the historical structure: custom XML between these elements
 	// belongs to the member and must never be removed as part of an upgrade.
-	stripped := regexp.MustCompile(`(?s)<!-- Added by rig\.[^<]*?-->\s*<PropertyGroup>\s*<StackParentTargets>[^<]*</StackParentTargets>\s*</PropertyGroup>\s*<Import Project="\$\(StackParentTargets\)" Condition="'\$\(StackParentTargets\)' != ''"\s*/>`).ReplaceAllString(body, "")
+	stripped := legacyImportRE.ReplaceAllString(body, "")
 	if legacyWalkUp(body) && stripped == body {
 		return "", false
 	}
@@ -411,11 +418,17 @@ func renderOverlay(redirects []plugin.Redirect) string {
 `)
 	for _, r := range sorted {
 		name := StackSourceName(r.Package)
-		fmt.Fprintf(&b, `    <PropertyGroup Condition="@(_StackPresent->AnyHaveMetadataValue('Identity', '%s'))">
+		var conditions []string
+		for _, source := range sorted {
+			if source.Package == r.Package || slices.Contains(source.Reachable, r.Package) {
+				conditions = append(conditions, fmt.Sprintf("@(_StackPresent->AnyHaveMetadataValue('Identity', '%s'))", source.Package))
+			}
+		}
+		fmt.Fprintf(&b, `    <PropertyGroup Condition="%s">
       <RigStackSource_%s>true</RigStackSource_%s>
       <DefineConstants>$(DefineConstants);STACK_%s</DefineConstants>
     </PropertyGroup>
-`, r.Package, name, name, strings.ToUpper(name))
+`, strings.Join(conditions, " Or "), name, name, strings.ToUpper(name))
 	}
 	b.WriteString("  </Target>\n\n")
 	b.WriteString(overlayNoRefAssemblies)
