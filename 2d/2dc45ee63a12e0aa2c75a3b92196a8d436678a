@@ -1,0 +1,19 @@
+.changeset/lucky-badgers-whisper.md
+  s_c5dbcd58496eeb::t_e52849dbfc99ac 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2d2dc45ee63a12e0aa2c75a3b92196a8d436678a",
+  "prompts": {},
+  "sessions": {
+    "s_c5dbcd58496eeb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e3-6941-7ea1-93aa-1c0189c8bc13",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
