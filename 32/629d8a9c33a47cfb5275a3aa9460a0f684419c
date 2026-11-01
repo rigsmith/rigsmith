@@ -1,0 +1,27 @@
+internal/rig/cli/stackdeps_test.go
+  s_c96043ad2be0d4::t_570aee5f2d0ed4 169,489-572
+site/rig/stack.md
+  s_c96043ad2be0d4::t_570aee5f2d0ed4 1270-1272,1279-1281
+internal/rig/cli/stack.go
+  s_c96043ad2be0d4::t_570aee5f2d0ed4 1664
+.changeset/eager-geckos-dance.md
+  s_c96043ad2be0d4::t_570aee5f2d0ed4 1-7
+internal/rig/cli/stackmanifest.go
+  s_c96043ad2be0d4::t_570aee5f2d0ed4 12-13,226-231,233-235,240-241,243-252,257-261,263-267,570
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "32629d8a9c33a47cfb5275a3aa9460a0f684419c",
+  "prompts": {},
+  "sessions": {
+    "s_c96043ad2be0d4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19882-da70-7653-b55b-ac99df15a1e1",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
