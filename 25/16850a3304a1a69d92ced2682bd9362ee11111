@@ -1,0 +1,19 @@
+internal/rig/cli/stackci_test.go
+  s_3ca2df27ba04aa::t_50c56fa59058b9 239,246,249,257-317,440-511
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2516850a3304a1a69d92ced2682bd9362ee11111",
+  "prompts": {},
+  "sessions": {
+    "s_3ca2df27ba04aa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19858-d7ae-7ba1-8d4d-db5fabc475c4",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": null
+    }
+  }
+}
