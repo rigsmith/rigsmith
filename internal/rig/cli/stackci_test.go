@@ -508,7 +508,7 @@ func TestStackCIActionForkCacheExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
-			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP=false", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR="+fork, "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_DEPENDENCIES=true", "STACK_TIP=false", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR="+fork, "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
 			out, err := p.CombinedOutput()
 			if err != nil {
 				t.Fatalf("run script: %v %s", err, out)
