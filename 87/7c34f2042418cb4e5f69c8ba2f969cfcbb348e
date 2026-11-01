@@ -1,0 +1,33 @@
+internal/rig/cli/stackoverlay_test.go
+  s_305a3d2195b124::t_599f3f3cba95bf 11,338-383
+core/ecosystem/dotnet/localoverlay_test.go
+  s_305a3d2195b124::t_599f3f3cba95bf 6,81,93,492-664
+internal/rig/cli/stack.go
+  s_305a3d2195b124::t_599f3f3cba95bf 2058-2061
+core/plugin/protocol.go
+  s_305a3d2195b124::t_599f3f3cba95bf 580-581
+.changeset/quiet-ravens-ponder.md
+  s_305a3d2195b124::t_599f3f3cba95bf 1-7
+internal/rig/cli/stackrm.go
+  s_305a3d2195b124::t_599f3f3cba95bf 478-480
+core/ecosystem/dotnet/localoverlay.go
+  s_305a3d2195b124::t_599f3f3cba95bf 10,73,76,127,130,150,164-173,196-197,211-215,224-225,237,239-240,242-243,310-329,389-400
+internal/rig/cli/stackoverlay.go
+  s_305a3d2195b124::t_599f3f3cba95bf 14,436-458
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "877c34f2042418cb4e5f69c8ba2f969cfcbb348e",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
