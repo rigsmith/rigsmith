@@ -42,6 +42,9 @@ rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path o
 fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
 
+The default manifest home is a small seed repo shared by local setup and CI.
+See [Stackspaces](../../site/rig/stack.md) for publishing, setup and member pointers.
+
 ## Verbs
 
 | Verb | What |
@@ -124,17 +127,3 @@ default-setter) preserve comments via the JSONC editor.
 The remaining ergonomics tail (`[suggest]` completion, menu project-pickers,
 `setup`/`self-update`, the interactive `default` verb, test-class fuzzy match)
 is tracked in [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).
-
-
-The default stack manifest home is a small seed repo containing the manifest,
-README and root overlays. Publish with `rig stack seed --publish acme/rigstack-app@main`;
-rebuild in an empty directory with `rig stack setup acme/rigstack-app@main`.
-Pull and propose publish root-only updates without sending fused history.
-Use `rig stack seed` to retry a failed publication; local work is retained.
-A member's `.rig-stack` contains that same seed reference; `rig stack home` reads it.
-
-
-Only setup with an explicit seed opts into a manifest home; no-argument setup
-leaves origin and home configuration unchanged. After a manual clone, opt in
-with `rig stack seed --publish <seed>`. A publication failure after pull
-returns non-zero while retaining the successful local pull and cursor.

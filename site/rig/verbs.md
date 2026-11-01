@@ -313,6 +313,18 @@ tree is already what upstream wants. rig fetches a verified `josh-proxy` on
 first use where one is published for your platform and pinned version, and
 builds it from source otherwise.
 
+The default stack manifest home is a small seed repo containing the manifest,
+README and root overlays. Publish with `rig stack seed --publish acme/rigstack-app@main`;
+rebuild in an empty directory with `rig stack setup acme/rigstack-app@main`.
+Pull and propose publish root-only updates without sending fused history.
+Use `rig stack seed` to retry a failed publication; local work is retained.
+A member's `.rig-stack` contains that same seed reference; `rig stack home` reads it.
+
+Only setup with an explicit seed opts into a manifest home; no-argument setup
+leaves origin and home configuration unchanged. After a manual clone, opt in
+with `rig stack seed --publish <seed>`. A publication failure after pull
+returns non-zero while retaining the successful local pull and cursor.
+
 **[Stackspaces](./stack)** is the full guide: setting one up, wiring the
 build so the consumer compiles against source, sending and updating pull
 requests, and the rules that will otherwise catch you out. Manifest keys are in
@@ -394,17 +406,3 @@ curate the set live:
 
 Exclusions are written to `.rig.json`'s [`exclude`](./configuration) globs and
 match against the project's full name, short name, and repo-relative path.
-
-
-The default stack manifest home is a small seed repo containing the manifest,
-README and root overlays. Publish with `rig stack seed --publish acme/rigstack-app@main`;
-rebuild in an empty directory with `rig stack setup acme/rigstack-app@main`.
-Pull and propose publish root-only updates without sending fused history.
-Use `rig stack seed` to retry a failed publication; local work is retained.
-A member's `.rig-stack` contains that same seed reference; `rig stack home` reads it.
-
-
-Only setup with an explicit seed opts into a manifest home; no-argument setup
-leaves origin and home configuration unchanged. After a manual clone, opt in
-with `rig stack seed --publish <seed>`. A publication failure after pull
-returns non-zero while retaining the successful local pull and cursor.

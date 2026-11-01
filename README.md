@@ -9,7 +9,7 @@ and the shared engine under `core/`:
 | Path | Binary | What it is |
 |---|---|---|
 | [`core/`](core/) | — | `github.com/rigsmith/rigsmith/core` — the shared engine: semver, changeset parsing, the release planner (cascade + grouping), the plugin contract, the built-in ecosystem adapters (.NET, Node, Go, Rust), and `pathmap` (cross-OS path resolution). No external dependencies. |
-| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust), plus parallel worktrees and **stackspaces** (`rig stack`) — your app and the repos you have forked, fused into one history. Export a portable seed with `rig stack seed ../rigstack-acme`. Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
+| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust), plus parallel worktrees and **stackspaces** (`rig stack`) — your app and the repos you have forked, fused into one history. Keep one seed repo as the manifest home for local setup and CI; see [Stackspaces](site/rig/stack.md). Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
 | [`cmd/changerig/`](cmd/changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Its `commands` package (under `internal/changerig`) is reused by shiprig. Aliased `changeset`. |
 | [`cmd/shiprig/`](cmd/shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
 | [`cmd/clauderig/`](cmd/clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction, complete staged-text secret scanning, Git byte preservation, and transcript chunking (on for new configurations). Restore checks that recreated memory links resolve inside the selected folder and skips links pointing outside it. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |
@@ -167,17 +167,3 @@ theirs:
 
 Independently: the release engine is a faithful port of **net-changesets**, which
 is itself a .NET port of [changesets](https://github.com/changesets/changesets).
-
-
-The default stack manifest home is a small seed repo containing the manifest,
-README and root overlays. Publish with `rig stack seed --publish acme/rigstack-app@main`;
-rebuild in an empty directory with `rig stack setup acme/rigstack-app@main`.
-Pull and propose publish root-only updates without sending fused history.
-Use `rig stack seed` to retry a failed publication; local work is retained.
-A member's `.rig-stack` contains that same seed reference; `rig stack home` reads it.
-
-
-Only setup with an explicit seed opts into a manifest home; no-argument setup
-leaves origin and home configuration unchanged. After a manual clone, opt in
-with `rig stack seed --publish <seed>`. A publication failure after pull
-returns non-zero while retaining the successful local pull and cursor.
