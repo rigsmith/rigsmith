@@ -31,7 +31,7 @@ Commands run with bash from the member prefix. Build defaults to `rig build`,
 test to `rig test`; an empty command skips that phase. Install the language
 SDKs your commands need using your existing workflow setup steps.
 
-Other CI systems install a pinned rig and its pinned josh, then run
+Other CI systems install a pinned rig, then run
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test 'dotnet test'`.
 `--upstream-tip` selects upstream branch tips instead of cursors. Cursor mode
 ignores proposed fork branches so its sibling sources remain reproducible.
