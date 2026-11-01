@@ -1,0 +1,19 @@
+cmd/rig/hermeticgit_test.go
+  s_c5dbcd58496eeb::t_109ec2079caf88 1-3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8dc64b0d2d9e25ea85b096979c8fcbfc09ce3c55",
+  "prompts": {},
+  "sessions": {
+    "s_c5dbcd58496eeb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197e3-6941-7ea1-93aa-1c0189c8bc13",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
