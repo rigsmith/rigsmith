@@ -1,0 +1,33 @@
+site/rig/verbs.md
+  ai_agent 321-327
+core/ecosystem/dotnet/localoverlay_test.go
+  ai_agent 516,557,560,562,566-567,571-587,649,684-738
+internal/rig/cli/stackoverlay.go
+  s_305a3d2195b124::t_0c4ac3e909504e 40-43,66,359-362,393-398,416,449,454-458,460-461
+docs/STACK-DESIGN.md
+  s_305a3d2195b124::t_0c4ac3e909504e 766-773
+internal/rig/cli/stackoverlay_test.go
+  s_305a3d2195b124::t_0c4ac3e909504e 344-353,358-359
+site/rig/stack.md
+  s_305a3d2195b124::t_0c4ac3e909504e 1076-1083
+internal/rig/cli/stack.go
+  s_305a3d2195b124::t_0c4ac3e909504e 2060
+core/ecosystem/dotnet/localoverlay.go
+  s_305a3d2195b124::t_0c4ac3e909504e 150,164,166-168,219-223,233-238,252-256,258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b36033f0564f7d9ff91001f5f57ca6b7e18dc9dc",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
