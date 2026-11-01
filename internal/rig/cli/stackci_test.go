@@ -229,7 +229,7 @@ func TestStackCIActionBoolean(t *testing.T) {
 	for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
 		t.Run(fmt.Sprintf("value=%q", value), func(t *testing.T) {
 			p := exec.Command("bash", "-e", "-c", script)
-			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP="+value, "STACK_DEPENDENCIES=true", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
 			output, err := p.CombinedOutput()
 			valid := value == "true" || value == "false"
 			if valid {

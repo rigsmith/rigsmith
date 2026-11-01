@@ -13,7 +13,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -341,5 +343,110 @@ func TestStackDepsDescriptionUnicode(t *testing.T) {
 	text := stackDepsDescription(strings.Repeat("界", 141))
 	if !utf8.ValidString(text) || len([]rune(text)) != 140 || !strings.HasSuffix(text, "...") {
 		t.Fatal(text)
+	}
+}
+
+// The handler reads output while status is still running.
+type stackDepsLiveOutput struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (o *stackDepsLiveOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.b.Write(p)
+}
+func (o *stackDepsLiveOutput) String() string { o.mu.Lock(); defer o.mu.Unlock(); return o.b.String() }
+
+func TestStackDepsStatusLocalFirstAndBounded(t *testing.T) {
+	var out stackDepsLiveOutput
+	observed := make(chan time.Time, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(out.String(), "app") {
+			t.Error("network report preceded local status")
+		}
+		select {
+		case observed <- time.Now():
+		default:
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_API_URL", server.URL)
+	t.Setenv("GITHUB_TOKEN", "fake")
+	root := t.TempDir()
+	mustGitStack(t, root, "init", "-q")
+	mustGitStack(t, root, "config", "user.name", "you")
+	mustGitStack(t, root, "config", "user.email", "you@example.com")
+	sha := strings.Repeat("a", 40)
+	m := &stackManifest{Repos: map[string]*stackRepo{"app": {Upstream: "github.com/acme/app", Fork: "github.com/you/app", UpstreamCommit: sha}, "lib": {Upstream: "github.com/acme/lib", Fork: "github.com/you/lib", UpstreamCommit: sha}}, Proposals: map[string]map[string]stackProposal{"app": {"topic": {Branch: "stack/topic", DependsOn: []string{"lib"}}}, "lib": {"topic": {Branch: "stack/topic"}}}}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeStackManifest(t, root, string(data))
+	mustGitStack(t, root, "add", ".")
+	mustGitStack(t, root, "commit", "-qm", "manifest")
+	t.Chdir(root)
+	c := newStackStatusCmd()
+	c.SetOut(&out)
+	c.SetErr(&out)
+	if err = c.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case started := <-observed:
+		if elapsed := time.Since(started); elapsed > 4*time.Second {
+			t.Fatalf("dependency report stalled for %v", elapsed)
+		}
+	default:
+		t.Fatal("hanging server was not reached")
+	}
+
+	if !strings.Contains(out.String(), "could not check") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestStackDepsInvalidMemberRejectedBeforePublication(t *testing.T) {
+	for _, dep := range []string{"", " ", "missing"} {
+		t.Run(fmt.Sprintf("dependency=%q", dep), func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				t.Error("invalid manifest reached API", r.Method)
+				w.WriteHeader(500)
+			}))
+			defer server.Close()
+			t.Setenv("GITHUB_API_URL", server.URL)
+			t.Setenv("GITHUB_TOKEN", "fake")
+			t.Setenv("GITHUB_REPOSITORY", "acme/app")
+			root := t.TempDir()
+			mustGitStack(t, root, "init", "-q")
+			mustGitStack(t, root, "config", "user.name", "you")
+			mustGitStack(t, root, "config", "user.email", "you@example.com")
+			m := &stackManifest{Repos: map[string]*stackRepo{"app": {Upstream: "github.com/acme/app", Fork: "github.com/you/app"}}, Proposals: map[string]map[string]stackProposal{"app": {"topic": {Branch: "stack/topic", DependsOn: []string{dep}}}}}
+			if err := m.validate(); err == nil || !strings.Contains(err.Error(), "dependsOn entry") {
+				t.Fatalf("validation: %v", err)
+			}
+			data, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeStackManifest(t, root, string(data))
+			mustGitStack(t, root, "add", ".")
+			mustGitStack(t, root, "commit", "-qm", "manifest")
+			t.Chdir(root)
+			var out bytes.Buffer
+			c := newStackDepsCmd()
+			c.SetOut(&out)
+			c.SetErr(&out)
+			c.SetArgs([]string{"--publish"})
+			err = c.Execute()
+			if err == nil || !strings.Contains(err.Error(), "dependsOn entry") || calls != 0 {
+				t.Fatalf("error %v; API calls %d", err, calls)
+			}
+		})
 	}
 }

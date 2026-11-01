@@ -47,6 +47,9 @@ func stackDepsClient() stackDepsAPI {
 	return stackDepsAPI{strings.TrimRight(base, "/"), os.Getenv("GITHUB_TOKEN"), &http.Client{Timeout: 15 * time.Second}}
 }
 func (a stackDepsAPI) request(ctx context.Context, method, path string, body, result any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var b bytes.Buffer
 	if body != nil {
 		if err := json.NewEncoder(&b).Encode(body); err != nil {
@@ -225,6 +228,13 @@ func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out 
 		}
 	}
 }
+func stackStatusDependencies(ctx context.Context, m *stackManifest, out io.Writer) {
+	// One deadline for the entire optional report, including credential helpers.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	stackDepsReport(ctx, m, stackDepsClient(), out, false)
+}
+
 func stackDepsDescription(s string) string {
 	runes := []rune(s)
 	if len(runes) > 140 {

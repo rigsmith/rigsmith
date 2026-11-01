@@ -503,6 +503,11 @@ func (m *stackManifest) validate() error {
 			if strings.TrimSpace(p.Branch) == "" {
 				return fmt.Errorf("the proposals map for %q records no branch for topic %q — remove the entry, or name the branch its pull request is on", prefix, topic)
 			}
+			for _, dep := range p.DependsOn {
+				if strings.TrimSpace(dep) == "" || m.Repos[dep] == nil {
+					return fmt.Errorf("proposal %q topic %q: dependsOn entry %q must name a configured member", prefix, topic, dep)
+				}
+			}
 			// A malformed commit is worse than none. `status` compares every
 			// non-empty value against the topic's tip, and something that is not a
 			// SHA can never equal one — so the branch would be reported as having

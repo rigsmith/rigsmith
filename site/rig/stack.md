@@ -1155,17 +1155,25 @@ that commit symlinks. Members without symlinks need no such privilege.
 records through the GitHub API, using `GITHUB_TOKEN` and `GITHUB_API_URL`.
 Without a token, local runs reuse stack's gh-first, git-helper-second credentials.
 Manifests with no dependency edges make no API or credential lookups.
+`stack status` prints its member and topic output before checking dependencies;
+the optional dependency report has a two-second total budget. Unavailable or
+timed-out lookups are shown as **could not check**.
 Propose upstream members first: a new proposal records the already-proposed
 members of that topic in `proposals[prefix][topic].dependsOn` (an array of
 member prefixes). Re-proposing preserves these edges; edit the array to change
 direction or backfill older proposals. Each dependency must merge upstream and
 its `lastSync` cursor must include the API-reported merge commit. `rig stack status` displays the same chain
 from the local manifest. Older records without `dependsOn` have no dependencies.
+Blank or unknown member names in `dependsOn` are rejected when loading the
+manifest, before any status can be published.
 
 `rig stack deps --publish` posts the `stack dependencies` commit status to
 current PR **head** SHAs only in `GITHUB_REPOSITORY`, which must match a
 member upstream. Unset or unmatched repository scope refuses publication. The composite action enables this with its
-`dependencies` input (default `true`). Workflows may optionally grant
+`dependencies` input (default `true`); only literal `true` and `false` are
+accepted. Reporting failures (including an older rig without `stack deps` or
+a summary-write error) warn without changing the build/test job result.
+Workflows may optionally grant
 `statuses: write`; read-only fork tokens produce an annotation and job summary
 instead of failing for a denied write. API errors and private repositories
 without access appear as **could not check**, never as passing. Do not use

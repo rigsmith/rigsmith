@@ -275,7 +275,7 @@ func newStackStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Each repo's cursor, unsent work and topic PR dependency chain",
-		Long:  "Shows cursor and unsent work per member, plus recorded topic PR dependencies\nchecked through the GitHub API. Unavailable API data is labelled could not check.",
+		Long:  "Shows cursor and unsent work per member, plus recorded topic PR dependencies\nchecked after local output with a two-second total API lookup budget.\nUnavailable API data is labelled could not check.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -284,7 +284,6 @@ func newStackStatusCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			stackDepsReport(ctx, m, stackDepsClient(), out, false)
 			// One status call for the whole stackspace: the prefixes are filtered
 			// out of it per repo below, rather than shelling out once each.
 			dirty, err := repo.DirtyPaths(ctx)
@@ -387,6 +386,7 @@ func newStackStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "\ntopics in flight: %s\n", strings.Join(topics, ", "))
 				fmt.Fprintf(out, "  propose one with `rig stack propose <repo> <name> --from %s`\n", strings.TrimPrefix(topics[0], stackTopicPrefix))
 			}
+			stackStatusDependencies(ctx, m, out)
 			return nil
 		},
 	}

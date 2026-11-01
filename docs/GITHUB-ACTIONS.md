@@ -133,7 +133,10 @@ from the local manifest. Older records without `dependsOn` have no dependencies.
 `rig stack deps --publish` posts the `stack dependencies` commit status to
 current PR **head** SHAs only in `GITHUB_REPOSITORY`, which must match a
 member upstream. Unset or unmatched repository scope refuses publication. The composite action enables this with its
-`dependencies` input (default `true`). Workflows may optionally grant
+`dependencies` input (default `true`), which accepts only literal `true` or
+`false`. Dependency reporting failures warn without changing the build/test
+result, including an older rig pin without `stack deps` or a summary-write
+error. Workflows may optionally grant
 `statuses: write`; read-only fork tokens produce an annotation and job summary
 instead of failing for a denied write. API errors and private repositories
 without access appear as **could not check**, never as passing. Do not use

@@ -48,10 +48,15 @@ runs:
         STACK_BUILD: ${{ inputs.build }}
         STACK_TEST: ${{ inputs.test }}
         STACK_TIP: ${{ inputs.upstream-tip }}
+        STACK_DEPENDENCIES: ${{ inputs.dependencies }}
       run: |
         case "$STACK_TIP" in
           true|false) ;;
           *) echo 'upstream-tip must be exactly true or false' >&2; exit 1 ;;
+        esac
+        case "$STACK_DEPENDENCIES" in
+          true|false) ;;
+          *) echo 'dependencies must be exactly true or false' >&2; exit 1 ;;
         esac
         args=(stack ci --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
@@ -63,4 +68,10 @@ runs:
       env:
         STACK_MANIFEST: ${{ inputs.manifest }}
         GITHUB_TOKEN: ${{ github.token }}
-      run: rig stack deps --manifest "$STACK_MANIFEST" --publish
+      run: |
+        if rig stack deps --manifest "$STACK_MANIFEST" --publish; then
+          :
+        else
+          status=$?
+          echo "::warning::Stack dependency reporting failed (exit $status); build and test results are unchanged. Check the rig version and summary output."
+        fi
