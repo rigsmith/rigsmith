@@ -82,16 +82,13 @@ func newStackCICmd() *cobra.Command {
 		if e != nil {
 			return step("setup", 10, func() error { return e })
 		}
-		temp, e := os.MkdirTemp("", "rig-stack-ci-")
-		if e != nil {
-			return e
-		}
-		defer os.RemoveAll(temp)
-		root := filepath.Join(temp, "stack")
-		exe, e := stackCIExecutable()
-		if e != nil {
-			return e
-		}
+		var temp, root, exe string
+		defer func() {
+			if temp != "" {
+				_ = os.RemoveAll(temp)
+			}
+		}()
+
 		run := func(dir string, args ...string) error {
 			p := exec.CommandContext(cmd.Context(), exe, args...)
 			p.Dir = dir
@@ -101,6 +98,16 @@ func newStackCICmd() *cobra.Command {
 			return p.Run()
 		}
 		e = step("setup", 10, func() error {
+			temp, e = os.MkdirTemp("", "rig-stack-ci-")
+			if e != nil {
+				return e
+			}
+			root = filepath.Join(temp, "stack")
+			exe, e = stackCIExecutable()
+			if e != nil {
+				return e
+			}
+
 			if manifest == "" {
 				return fmt.Errorf("--manifest is required")
 			}

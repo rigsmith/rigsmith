@@ -69,6 +69,10 @@ rig stack propose some-lib read-timeout --dry-run   # what would go to your fork
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```
 
+`rig stack ci` tests a member checkout against sibling sources alongside its
+plain-clone CI matrix. See [Stackspaces](site/rig/stack.md#testing-a-member-pr-in-its-stackspace)
+for the composite action and workflow.
+
 The release engine — changeset parsing, the dependency **cascade** (a dependent
 is patch-bumped when its dependency releases), **linked/fixed/lockstep**
 grouping, version bumping, and changelog rendering — is a faithful port of
