@@ -1,0 +1,40 @@
+.changeset/lucky-lemurs-race.md
+  s_594eddb4156d96::t_8ce9e2d3008d6a 7-9
+internal/rig/cli/stackdeps_action_test.go
+  s_594eddb4156d96::t_3adb8439f68b8c 1-74
+docs/GITHUB-ACTIONS.md
+  s_594eddb4156d96::t_8ce9e2d3008d6a 136-139
+site/rig/stack.md
+  s_594eddb4156d96::t_8ce9e2d3008d6a 1158-1160,1167-1168,1173-1176
+internal/rig/cli/stackci_test.go
+  s_594eddb4156d96::t_0dc89d991f3769 232
+internal/rig/cli/stackdeps.go
+  s_594eddb4156d96::t_8ce9e2d3008d6a 50-52
+  s_594eddb4156d96::t_0dc89d991f3769 231-237
+internal/rig/cli/stackmanifest.go
+  s_594eddb4156d96::t_0dc89d991f3769 506-510
+internal/rig/cli/stackdeps_test.go
+  s_594eddb4156d96::t_8ce9e2d3008d6a 364,366-368,370,399-401,406
+  s_594eddb4156d96::t_3adb8439f68b8c 16,18,348-363,365,369,371-398,402-405,407-450
+internal/rig/cli/stack.go
+  s_594eddb4156d96::t_0dc89d991f3769 389
+  s_594eddb4156d96::t_8ce9e2d3008d6a 278
+.github/actions/stack/action.yml
+  s_594eddb4156d96::t_0dc89d991f3769 51,57-60,71-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "70108ce8afb0cacd66b916e69156b7c84b74dcbd",
+  "prompts": {},
+  "sessions": {
+    "s_594eddb4156d96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197eb-622e-7b50-9999-1aba0b1a34a9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
