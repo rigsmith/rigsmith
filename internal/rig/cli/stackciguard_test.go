@@ -155,8 +155,10 @@ func TestStackCIGuardE2E(t *testing.T) {
 	if !strings.Contains(observed, ": warning NU1605:") || !strings.Contains(observed, "Acme.Other") {
 		t.Fatalf("late warning demotion not observed:\n%s", observed)
 	}
-	if err := os.Remove(filepath.Join(root, "Directory.Build.targets")); err != nil {
-		t.Fatal(err)
+	for _, file := range []string{"Directory.Build.targets", "Directory.Build.props"} {
+		if err := os.Remove(filepath.Join(root, file)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	pack("Acme.Approx", "2.0.0", "")
 	pack("Acme.ExactParent", "1.0.0", `<dependencies><dependency id="Acme.Core" version="[1.0.0]"/></dependencies>`)

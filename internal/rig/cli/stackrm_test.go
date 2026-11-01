@@ -34,6 +34,9 @@ func rmStackspaceWith(t *testing.T, manifest string, markers bool) string {
 	if err := os.WriteFile(filepath.Join(root, "Directory.Build.targets"), []byte(overlay), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "Directory.Build.props"), []byte(overlay), 0644); err != nil {
+		t.Fatal(err)
+	}
 	mustGitStack(t, root, "add", "-A")
 	mustGitStack(t, root, "commit", "-qm", "stack: stackspace manifest")
 	for _, name := range []string{"pty-core", "term-core"} {
@@ -109,6 +112,9 @@ func TestStackRm(t *testing.T) {
 		}
 		if log := mustGitStack(t, root, "log", "-1", "--format=%s"); !strings.Contains(log, "stack: remove pty-core") {
 			t.Errorf("commit subject = %q", log)
+		}
+		if _, err := os.Stat(filepath.Join(root, "Directory.Build.props")); !os.IsNotExist(err) {
+			t.Fatal("stale props still present")
 		}
 		for _, want := range []string{"removed from", "deleted from the tree", "Directory.Build.targets removed", "committed"} {
 			if !strings.Contains(out, want) {
