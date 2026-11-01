@@ -107,3 +107,11 @@ the same run builds and publishes, with the changelog entry as the GitHub releas
 release makes no `ui/` tag, so only the CLI build runs. The composite
 `release` action here isn't used by this repo; it's built for other repos that want it. Copy the
 [example workflows](../examples/github-workflows) to adopt it and `require-changeset`.
+
+## Stackspace member CI
+
+`rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
+builds the committed checkout against sibling sources in a temporary stackspace.
+Keep this job alongside the plain-clone matrix. The self-contained composite is
+`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
+See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.

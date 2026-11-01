@@ -302,6 +302,20 @@ func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Doctor must report stale early facts independently of the targets file.
+	propsPath := filepath.Join(root, "Directory.Build.props")
+	data, err := os.ReadFile(propsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(propsPath, []byte(strings.Replace(string(data), "RigStackAvailable_Acme_Lib", "RigStackAvailable_Old", -1)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	staleReports, _, _, _ := stackCheckOverlay(ctx, root, owned("app", "lib"))
+	stale := dotnetReport(staleReports)
+	if stale == nil || len(stale.Resp.Problems) != 0 || len(stale.Resp.Notes) != 1 || !strings.Contains(stale.Resp.Notes[0], "Directory.Build.props: out of date") {
+		t.Fatalf("stale props: %+v", stale)
+	}
 	csproj(t, root, "app/src/App", "Acme.App")
 
 	reports, _, _, failed = stackCheckOverlay(ctx, root, owned("app", "lib"))
@@ -350,7 +364,7 @@ func TestStackSourceDoctorReport(t *testing.T) {
 		t.Fatalf("missing cached discovery: %+v", rep)
 	}
 	stackReportSourceSignals(&out, root, rep.Links, rep.Packages)
-	for _, want := range []string{"app/app.csproj", "lib/lib.csproj", "RigStackspace=true", "RigStackspaceRoot=" + filepath.ToSlash(root), "RIG_STACK", "RigStackSource_Acme_Core=true; STACK_ACME_CORE", "when PackageReference is active"} {
+	for _, want := range []string{"app/app.csproj", "lib/lib.csproj", "RigStackspace=true", "RigStackspaceRoot=" + filepath.ToSlash(root), "RIG_STACK", "RigStackAvailable_Acme_Core=true (stack-wide availability during props evaluation", "RigStackSource_Acme_Core=true; STACK_ACME_CORE", "when PackageReference is active"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing %q in %s", want, out.String())
 		}
@@ -391,5 +405,66 @@ func TestStackWireLegacyImportIsAdvisory(t *testing.T) {
 	rep := dotnetReport(reports)
 	if rep == nil || len(rep.Resp.Problems) != 0 || len(rep.Resp.Notes) != 1 {
 		t.Fatalf("doctor: %+v", rep)
+	}
+}
+
+func TestStackOptionalPropsCompatibility(t *testing.T) {
+	for _, rootProps := range []bool{false, true} {
+		t.Run(map[bool]string{false: "member props", true: "root props"}[rootProps], func(t *testing.T) {
+			root := t.TempDir()
+			csproj(t, root, "app", "Acme.App", "Acme.Core")
+			csproj(t, root, "lib", "Acme.Core")
+			const props = `<Project><PropertyGroup><OwnedByYou>true</OwnedByYou></PropertyGroup></Project>`
+			path := filepath.Join(root, "app/Directory.Build.props")
+			if rootProps {
+				path = filepath.Join(root, "Directory.Build.props")
+			}
+			if err := os.WriteFile(path, []byte(props), 0644); err != nil {
+				t.Fatal(err)
+			}
+			m := owned("app", "lib")
+			m.Repos["app"].Owned = false
+			var out strings.Builder
+			if _, err := stackWire(context.Background(), &out, m, &gitrepo.Repo{Dir: root}, "", true); err != nil {
+				t.Fatalf("wire: %v", err)
+			}
+			data, _ := os.ReadFile(path)
+			if string(data) != props {
+				t.Fatal("hand owned props changed")
+			}
+			reports, _, _, failed := stackCheckOverlay(context.Background(), root, m)
+			if len(failed) != 0 {
+				t.Fatal(failed)
+			}
+			rep := dotnetReport(reports)
+			if rep == nil || len(rep.Resp.Problems) != 0 || len(rep.Resp.Notes) == 0 {
+				t.Fatalf("doctor: %+v", rep)
+			}
+			if err := stackPackRequireOverlay(context.Background(), root, m); err != nil {
+				t.Fatalf("pack: %v", err)
+			}
+		})
+	}
+}
+
+func TestStackMissingPropsDoesNotBlockPack(t *testing.T) {
+	root := t.TempDir()
+	csproj(t, root, "app", "Acme.App", "Acme.Core")
+	csproj(t, root, "lib", "Acme.Core")
+	m := owned("app", "lib")
+	var out strings.Builder
+	if _, err := stackWire(context.Background(), &out, m, &gitrepo.Repo{Dir: root}, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "Directory.Build.props")); err != nil {
+		t.Fatal(err)
+	}
+	reports, _, _, _ := stackCheckOverlay(context.Background(), root, m)
+	rep := dotnetReport(reports)
+	if rep == nil || len(rep.Resp.Problems) != 0 || len(rep.Resp.Notes) != 1 || !strings.Contains(rep.Resp.Notes[0], "Directory.Build.props: not written") {
+		t.Fatalf("missing props: %+v", rep)
+	}
+	if err := stackPackRequireOverlay(context.Background(), root, m); err != nil {
+		t.Fatalf("pack: %v", err)
 	}
 }

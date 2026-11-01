@@ -16,6 +16,13 @@ func main() {
 	if err := completion.Run(os.Args[1:], "rig", os.Stdout, func() error {
 		return cli.Execute(context.Background())
 	}); err != nil {
-		os.Exit(1)
+		os.Exit(exitStatus(err))
 	}
+}
+
+func exitStatus(err error) int {
+	if code, ok := cli.StackCIExitCode(err); ok {
+		return code
+	}
+	return 1
 }

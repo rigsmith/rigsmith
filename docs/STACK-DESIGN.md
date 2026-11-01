@@ -835,18 +835,60 @@ for the property suffix and uppercase for the constant suffix. For example,
 make leading digits safe. IDs that sanitise to the same name share a signal;
 choose distinct IDs if you need to distinguish them.
 
-MSBuild evaluates properties before items. The per-package properties are
-therefore **not available in evaluation-time conditions**, including the project
-body and `Directory.Build.targets` property/item groups. Use them inside a
-member target with `AfterTargets="RigStackSourceSignals"` (or a later build
-target), where property and item conditions can read them. `RigStackspace` and
-`RigStackspaceRoot` are evaluation properties, but the overlay is imported after
-the project body, so earlier project-body property assignments cannot read them
-either. Compile guards such as `#if STACK_ACME_CORE` work without member switches.
+The generated root `Directory.Build.props` exposes `RigStackspace`,
+`RigStackspaceRoot`, and `RigStackAvailable_Acme_Core=true` before the project
+body. Availability means the overlay offers that package's source stack-wide;
+it does not mean this project references it. The same ID sanitising rule applies.
+Project-body property and item conditions, and member props after the marked
+import, can use these early signals. `wire` patches writable member props using
+the same marked, gated import as targets; `doctor` checks both generated files
+for staleness. When no cross-member references remain, generated root files and
+marked imports in writable members are removed together. Hand-owned files are
+preserved and must be maintained by you.
+
+Early props signals are optional. A hand-owned root `Directory.Build.props`
+is left unchanged: `wire` still generates the targets redirects and reports a
+note explaining how to add early signals yourself. Likewise, a member's props
+that hides the root import produces a note, including for non-writable members.
+Missing or stale generated props are notes too: existing wired stacks see one
+`Directory.Build.props: not written` note until `wire` generates it. These notes
+do not block `doctor` or `pack`. Missing or shadowed targets remain blocking
+problems because those builds silently resolve registry packages instead.
+
+To add early signals to a hand-owned root props file, use the same condition and
+naming rules (keep the literal root declaration so member imports recognise it):
+
+```xml
+<PropertyGroup Condition="'$(UseStackSources)' != 'false'">
+  <RigStackspace>true</RigStackspace>
+  <RigStackspaceRoot>$(MSBuildThisFileDirectory)</RigStackspaceRoot>
+  <RigStackAvailable_Acme_Core>true</RigStackAvailable_Acme_Core>
+</PropertyGroup>
+```
+
+Maintain the availability list when members or references change. Availability
+can be true for a project that does not reference that sibling: conditioning a
+PackageReference on it is fine, but it must not guard source-only API usage.
+Use `STACK_ACME_CORE` for that compile-time decision.
+
+`RigStackSource_*` remains available only in targets after
+`RigStackSourceSignals`; `STACK_*` still means this assembly compiles against
+that source. Conditional PackageReferences are resolved by MSBuild for the
+selected configuration/TFM: availability can be true while no swap or constant
+is produced. Use availability to condition a PackageReference, but use the
+compile constant to guard source-only APIs. No static per-project facts are
+promised. Re-run `wire` after changing members or references.
+
+A command-line/global `UseStackSources=false` disables early signals too.
+A value first assigned in the project body is too late to undo props evaluation:
+earlier properties/items may already have been selected, even though the later
+swap and constants are disabled. Set the opt-out globally or before the marked
+props import. Early availability and later source signals have distinct names;
+the later overlay reasserts the root signals when enabled.
 
 `-p:UseStackSources=false` disables the swap, properties and constants together.
-Rig-owned member imports check the nearest parent `Directory.Build.targets`
-for rig's generated-overlay or member-import marker, or the literal declaration
+Rig-owned member imports check the nearest parent `Directory.Build.props` or
+`Directory.Build.targets`, respectively, for rig's generated-overlay or member-import marker, or the literal declaration
 `<RigStackspace>true</RigStackspace>`, before importing it. The declaration
 keeps an overlay discoverable after you drop the ownership marker to maintain
 it by hand; retain that declaration in a hand-owned overlay. A custom overlay
@@ -854,8 +896,51 @@ written from scratch should include it too. This
 supports `rig.stack.jsonc`, `rig.stack.json`, and inline `.rig.json` stacks
 without treating an unrelated `.rig.json` as a stack. Re-running `wire` upgrades the old
 rig-owned ungated block in writable members, preserving their other content.
-A plain clone's import does nothing even beneath unrelated build targets.
+A plain clone's imports do nothing even beneath unrelated build props or targets.
 Legacy ungated imports still resolve sources correctly and are reported as
 informational notes, not blocking problems; non-writable members are left alone.
 `doctor` previews the properties/constants by project from static discovery;
 conditional references still depend on the configuration MSBuild builds.
+
+## Member CI reconstruction
+
+`rig stack ci` builds in an automatically removed temporary repository, outside
+the checkout. Manifest mode reads the committed manifest from checkout HEAD,
+normalizes sibling imports to exact cursors (ignoring proposal branches), and
+uses the existing init import path. Tip mode drops cursor and tag/commit pins.
+Seed support is deferred until the separate setup seed work merges. This verb
+requires `--manifest` and exposes no seed input.
+
+The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
+`git cat-file blob` bytes under the manifest prefix. This bypasses archive
+export-ignore/export-subst and checkout smudge/EOL filters, including the
+checkout's local config; replacement objects are disabled. It needs no PR
+ancestry or complete history. File modes and contained symlinks are preserved.
+A throwaway local commit records the replacement for wire's HEAD discovery.
+Wire runs again after replacement, keeping sibling relative references within
+the fused root. The checkout and its index remain untouched. Submodules are
+not materialized; `.gitmodules` and gitlink entries fail setup explicitly.
+
+The verb owns setup, wire, build and test reporting and distinct exit statuses;
+the composite only installs pinned rig and dispatches it. Engine installation
+uses rig's manifest/default josh pin on first import. Summary writing is optional
+outside GitHub. Commands run from the selected member and test results stream
+to stdout. See [the member CI guide](guides/testing-a-member-pr-in-its-stackspace.md).
+
+The action's final home is the separate `rigsmith/stack-action` repository,
+following the shiprig-action model. `rigsmith/stack-action@v1` is intended but
+not published yet. Until that later publication, ship the fully self-contained
+`.github/actions/stack/` directory with no references outside it; workflow
+examples use its in-repo path. This change does not create the new repository.
+
+Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
+`ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
+The local E2E uses preinstalled josh to stay offline; fresh hosted downloads
+were verified by code-path inspection only.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.
