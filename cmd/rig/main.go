@@ -6,7 +6,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os"
 
 	"github.com/rigsmith/rigsmith/core/completion"
@@ -17,9 +16,8 @@ func main() {
 	if err := completion.Run(os.Args[1:], "rig", os.Stdout, func() error {
 		return cli.Execute(context.Background())
 	}); err != nil {
-		var code interface{ ExitCode() int }
-		if errors.As(err, &code) {
-			os.Exit(code.ExitCode())
+		if code, ok := cli.StackCIExitCode(err); ok {
+			os.Exit(code)
 		}
 		os.Exit(1)
 	}

@@ -730,7 +730,7 @@ The action's final home is the separate `rigsmith/stack-action` repository,
 following the shiprig-action model. `rigsmith/stack-action@v1` is intended but
 not published yet. Until that later publication, ship the fully self-contained
 `.github/actions/stack/` directory with no references outside it; workflow
-examples use its in-repo path. This hunt does not create the new repository.
+examples use its in-repo path. This change does not create the new repository.
 
 Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
 `ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
