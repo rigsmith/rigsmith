@@ -1,0 +1,50 @@
+core/ecosystem/dotnet/localoverlay.go
+  s_a59bb8f95199c9::t_c454355d7f32db 48-51,141,218
+  s_a59bb8f95199c9::t_9ad766eb0b2cd0 60,81-83,233,242-244
+  s_a59bb8f95199c9::t_6d5dd7bc334176 33-47,52-56,59,61-80,84,123,177-180,210,287-289,319,475-487
+site/rig/verbs.md
+  s_a59bb8f95199c9::t_9ad766eb0b2cd0 321-324
+  s_a59bb8f95199c9::t_c454355d7f32db 328-330
+docs/STACK-DESIGN.md
+  s_a59bb8f95199c9::t_d3093b80f75a91 721-727,732-745,757
+  s_a59bb8f95199c9::t_c454355d7f32db 728,748
+  s_a59bb8f95199c9::t_e33e25218b8210 729-730,749
+site/rig/stack.md
+  s_a59bb8f95199c9::t_c454355d7f32db 215-216,1043,1063
+  s_a59bb8f95199c9::t_9ad766eb0b2cd0 1036-1042,1046-1060,1072
+  s_a59bb8f95199c9::t_e33e25218b8210 220,224,1044-1045,1064
+.changeset/swift-shrimp-march.md
+  s_a59bb8f95199c9::t_9ad766eb0b2cd0 1-7
+internal/rig/cli/stackoverlay_test.go
+  s_a59bb8f95199c9::t_ecbc9291916fe8 295,305-318,329,367
+cmd/rig/README.md
+  s_a59bb8f95199c9::t_9ad766eb0b2cd0 45
+core/ecosystem/dotnet/localoverlay_test.go
+  s_a59bb8f95199c9::t_a5449026dc6fdb 880-897
+  s_a59bb8f95199c9::t_892a484bc00a2d 558,561,573,592,621-631
+  s_a59bb8f95199c9::t_642768e6539549 593,784-854
+  s_a59bb8f95199c9::t_ecbc9291916fe8 616,855-877
+  s_a59bb8f95199c9::t_aefcb23e52b58c 41,590-591,594-615,617-620,675
+internal/rig/cli/stackoverlay.go
+  s_a59bb8f95199c9::t_642768e6539549 454-456
+README.md
+  s_a59bb8f95199c9::t_9ad766eb0b2cd0 83
+internal/rig/cli/stackrm_test.go
+  s_a59bb8f95199c9::t_ecbc9291916fe8 37-39,116-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4e02276ea9a20327555ef8763c9569cf1c5aa4a9",
+  "prompts": {},
+  "sessions": {
+    "s_a59bb8f95199c9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197f7-16ed-7e80-a3e1-484d0c378b33",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
