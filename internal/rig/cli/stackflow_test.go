@@ -823,6 +823,10 @@ func TestStackProposeDryRun(t *testing.T) {
 
 	chdir(t, ws)
 	stackDryRun(t)
+	missingHome := filepath.Join(work, "missing-home.git")
+	if err := stackConfigureHome(context.Background(), ws, missingHome, "main", "unchanged"); err != nil {
+		t.Fatal(err)
+	}
 	manifestBefore, err := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
 	if err != nil {
 		t.Fatal(err)
@@ -835,6 +839,12 @@ func TestStackProposeDryRun(t *testing.T) {
 
 	if !strings.Contains(out, "would push ") || !strings.Contains(out, " to "+srv.spec("you/lib")+":stack/fix (proposing to "+srv.spec("acme/lib")+")") {
 		t.Fatalf("dry run did not say what it would push and where:\n%s", out)
+	}
+	if !strings.Contains(out, "would publish") || !strings.Contains(out, missingHome) {
+		t.Fatalf("missing home preview: %s", out)
+	}
+	if _, err := os.Stat(missingHome); !os.IsNotExist(err) {
+		t.Fatal("propose preview touched home")
 	}
 	if strings.Contains(out, "proposed ") || strings.Contains(out, "pushed ") {
 		t.Fatalf("dry run claims to have proposed:\n%s", out)

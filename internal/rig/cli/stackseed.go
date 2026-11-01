@@ -39,7 +39,7 @@ func newStackSeedCmd() *cobra.Command {
 		Short: "Export the root files as a small repo that `rig stack init` rebuilds the stackspace from",
 		Long: "Default: publish a manifest home with --publish owner/repo@branch.\n" +
 			"Without a directory, retry publication to the configured home.\n" +
-			"Local publication targets must be bare repositories or branches not checked out.\n" +
+			"Local manifest homes must be bare repositories for publication.\n" +
 			"A directory argument cannot be combined with --publish.\n\n" +
 			"Writes everything at the stackspace root that is not a member — the\n" +
 			"manifest with its cursors, build overlays, packaging, the files kept out of\n" +
@@ -83,13 +83,13 @@ func newStackSeedCmd() *cobra.Command {
 						ref = stackHomeConfig(ctx, repo.Dir, "Branch")
 					}
 				}
-				return stackPublishHomeTo(ctx, repo, m, remote, ref, base)
+				return stackPublishHomeTo(ctx, repo, m, remote, ref, base, out)
 			}
 			if len(args) == 0 {
 				if stackHomeConfig(ctx, repo.Dir, "URL") == "" {
 					return fmt.Errorf("no manifest home configured — pass a directory or --publish <seed>")
 				}
-				return stackPublishHome(ctx, repo, m)
+				return stackPublishHome(ctx, repo, m, out)
 			}
 			dest := args[0]
 			written, err := stackSeed(ctx, repo, m, dest, force)

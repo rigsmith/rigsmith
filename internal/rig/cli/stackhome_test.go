@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -237,9 +238,9 @@ func TestStackHomeErrorsRedactCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stackConfigureHome(context.Background(), root, remote, "READ_ONLY", ""); err != nil {
-		t.Fatal(err)
-	}
+	// Simulate a home configured by an older rig that accepted userinfo.
+	mustGitStack(t, root, "config", "--local", "rig.stackHomeURL", remote)
+	mustGitStack(t, root, "config", "--local", "rig.stackHomeBranch", "READ_ONLY")
 	err = stackPublishHome(context.Background(), repo, m)
 	if err == nil || strings.Contains(err.Error(), "seed-user") || strings.Contains(err.Error(), "seed-secret") {
 		t.Fatalf("publication error: %v", err)
@@ -300,5 +301,66 @@ func TestStackHomeCheckedOutPublicationExplained(t *testing.T) {
 	}
 	if got := strings.TrimSpace(mustGitStack(t, seed, "rev-parse", "HEAD")); got != base {
 		t.Fatal("checked-out seed changed")
+	}
+}
+
+func TestStackHomeRejectsStoredCredentials(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	remote := "https://seed-user:seed-secret@example.invalid/seed.git"
+	if _, _, err := stackSeedReference(remote); err == nil || strings.Contains(err.Error(), "seed-secret") {
+		t.Fatalf("seed reference: %v", err)
+	}
+	if err := stackConfigureHome(context.Background(), root, remote, "main", ""); err == nil || strings.Contains(err.Error(), "seed-secret") {
+		t.Fatalf("credential storage: %v", err)
+	}
+	if got := mustGitStack(t, root, "config", "--local", "--list"); strings.Contains(got, "seed-secret") {
+		t.Fatal("token stored in local configuration")
+	}
+}
+
+func TestStackHomeGitRedactsCapturedErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake Git diagnostic uses a POSIX shell; URL redaction is also tested directly")
+	}
+	dir := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s\n' 'fatal: cannot access https://seed-user:seed-secret@example.invalid/seed.git' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	_, err := stackHomeGit(context.Background(), dir, "clone", "https://seed-user:seed-secret@example.invalid/seed.git", ".")
+	if err == nil || !strings.Contains(err.Error(), "fatal: cannot access") || strings.Contains(err.Error(), "seed-user") || strings.Contains(err.Error(), "seed-secret") {
+		t.Fatalf("captured Git error: %v", err)
+	}
+}
+
+func TestStackHomePublicationDryRun(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "does-not-exist.git")
+	if err := stackConfigureHome(ctx, root, missing, "main", "unchanged"); err != nil {
+		t.Fatal(err)
+	}
+	stackDryRun(t)
+	var out strings.Builder
+	if err := stackPublishAfterPull(ctx, repo, m, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "would publish") || !strings.Contains(out.String(), missing) {
+		t.Fatalf("preview: %s", out.String())
+	}
+	if stackHomeConfig(ctx, root, "Base") != "unchanged" {
+		t.Fatal("preview changed publication state")
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("preview touched remote")
 	}
 }

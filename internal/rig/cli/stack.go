@@ -456,7 +456,7 @@ func newStackPullCmd() *cobra.Command {
 				moved = append(moved, name)
 			}
 			if len(moved) == 0 {
-				return stackPublishAfterPull(ctx, repo, m)
+				return stackPublishAfterPull(ctx, repo, m, cmd.OutOrStdout())
 			}
 			bin, err := stackEngine(ctx, m, cmd)
 			if err != nil {
@@ -494,7 +494,7 @@ func newStackPullCmd() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.\n")
 			}
-			return stackPublishAfterPull(ctx, repo, m)
+			return stackPublishAfterPull(ctx, repo, m, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().BoolVar(&repin, "repin", false, "resolve a tag pin again, taking it where upstream has moved it")
@@ -1567,7 +1567,7 @@ func newStackSendCmd() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "would push %s to %s:%s (proposing to %s)\n",
 					short(commit), r.Fork, branch, r.Upstream)
 				stackReportStackOnlyPins(cmd.OutOrStdout(), pins, name, pinScanFailed)
-				return nil
+				return stackPublishHome(ctx, repo, m, cmd.OutOrStdout())
 			}
 
 			// Each send synthesizes a fresh commit parented on the upstream tip,
@@ -1668,7 +1668,7 @@ func newStackSendCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "manifest home publication deferred — commit the manifest, then run rig stack seed")
 				return nil
 			}
-			return stackPublishHome(ctx, repo, m)
+			return stackPublishHome(ctx, repo, m, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "", "commit message for the branch")

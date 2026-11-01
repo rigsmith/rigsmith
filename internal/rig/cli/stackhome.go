@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,9 @@ import (
 // URLs, scp remotes and local paths retain git's normal spelling.
 func stackSeedReference(s string) (remote, ref string, err error) {
 	s = strings.TrimSpace(s)
+	if err := stackValidateHomeRemote(s); err != nil {
+		return "", "", err
+	}
 	if s == "" || strings.HasPrefix(s, "-") {
 		return "", "", fmt.Errorf("empty or invalid seed reference")
 	}
@@ -100,14 +104,29 @@ func stackReportHomeDoctor(out io.Writer, err error) {
 	}
 }
 
-func stackPublishAfterPull(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) error {
-	if err := stackPublishHome(ctx, repo, m); err != nil {
+func stackPublishAfterPull(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, out ...io.Writer) error {
+	if err := stackPublishHome(ctx, repo, m, out...); err != nil {
 		return fmt.Errorf("pull succeeded locally, but the manifest home was not updated: %w", err)
 	}
 	return nil
 }
 
+// Credentials belong in Git's credential helper, never persisted in the home URL.
+func stackValidateHomeRemote(remote string) error {
+	u, err := url.Parse(remote)
+	if err == nil && u.User != nil {
+		_, password := u.User.Password()
+		if u.Scheme == "http" || u.Scheme == "https" || password {
+			return fmt.Errorf("seed URL credentials are not supported; configure a Git credential helper and use a URL without userinfo")
+		}
+	}
+	return nil
+}
+
 func stackConfigureHome(ctx context.Context, dir, remote, branch, base string) error {
+	if err := stackValidateHomeRemote(remote); err != nil {
+		return err
+	}
 	for _, pair := range [][2]string{{"URL", remote}, {"Branch", branch}, {"Base", base}} {
 		if _, err := stackHomeGit(ctx, dir, "config", "--local", "rig.stackHome"+pair[0], pair[1]); err != nil {
 			return err
@@ -118,21 +137,30 @@ func stackConfigureHome(ctx context.Context, dir, remote, branch, base string) e
 
 // Publication has no object connection to the fused repository. Only an archive
 // crosses the boundary; the parent is always the separately cloned seed tip.
-func stackPublishHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) error {
+func stackPublishHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, out ...io.Writer) error {
 	remote := stackHomeConfig(ctx, repo.Dir, "URL")
 	if remote == "" {
 		return nil
 	}
 	branch := stackHomeConfig(ctx, repo.Dir, "Branch")
 	base := stackHomeConfig(ctx, repo.Dir, "Base")
-	err := stackPublishHomeTo(ctx, repo, m, remote, branch, base)
+	err := stackPublishHomeTo(ctx, repo, m, remote, branch, base, out...)
 	if err != nil {
 		return fmt.Errorf("local stack changes are retained; manifest home was not updated: %w; retry with `rig stack seed --publish %q` after reconciling seed updates", err, ghrepo.SafeRemote(remote))
 	}
 	return nil
 }
 
-func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, remote, branch, base string) error {
+func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, remote, branch, base string, out ...io.Writer) error {
+	if err := stackValidateHomeRemote(remote); err != nil {
+		return err
+	}
+	if dryRun {
+		if len(out) > 0 {
+			fmt.Fprintf(out[0], "would publish committed manifest, README and root overlays to %s (branch %s)\n", ghrepo.SafeRemote(remote), branch)
+		}
+		return nil
+	}
 	if dirty, err := repo.Dirty(ctx); err != nil {
 		return err
 	} else if dirty {
@@ -229,7 +257,7 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 	}
 	if _, err := stackHomeGit(ctx, dir, "push", "origin", "HEAD:refs/heads/"+branch); err != nil {
 		if strings.Contains(err.Error(), "refusing to update checked out branch") {
-			return fmt.Errorf("%w; publish to a bare seed repository or a branch that is not checked out", err)
+			return fmt.Errorf("%w; publish to a bare seed repository for local manifest homes", err)
 		}
 		return err
 	}

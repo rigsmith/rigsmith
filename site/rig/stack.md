@@ -50,9 +50,19 @@ parsed.
 Existing relative paths take precedence over GitHub shorthand and are resolved
 to absolute paths before storing the home. Use an explicit ./ prefix for a
 local path that does not yet exist. Local setup can clone a non-bare seed, but
-publication targets must be bare repositories or branches that are not checked
-out; rig never changes another working tree or weakens Git's receive protection.
+local manifest homes must be bare repositories for publication. Rig never
+changes another working tree or weakens Git's receive protection.
 A seed directory argument and --publish are mutually exclusive.
+
+Publication under -n/--dry-run prints the destination and root files it would
+publish, then stops before any seed clone, commit, push or home configuration.
+This applies to explicit seed publication and the publication steps after
+pull/propose; pull's own preview behavior is a separate concern.
+
+HTTPS seed URLs with userinfo are rejected before clone or home configuration:
+keep tokens in Git credential helpers rather than rig.stackHomeURL or origin.
+Error rendering redacts userinfo even for legacy configured URLs and captured
+Git diagnostics.
 
 Pull also publishes committed root updates when every member is already current,
 so it can retry publication without creating another local merge.

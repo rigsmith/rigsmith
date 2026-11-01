@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/spf13/cobra"
 )
 
 func TestStackSeed(t *testing.T) {
@@ -412,5 +413,35 @@ func TestStackSeedRejectsDirectoryWithPublish(t *testing.T) {
 	err := cmd.RunE(cmd, []string{"./snapshot"})
 	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("mixed seed modes: %v", err)
+	}
+}
+
+func TestStackSeedPublishDryRun(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+	before := mustGitStack(t, remote, "for-each-ref")
+	cmd := newStackSeedCmd()
+	// Use Cobra's persistent flag path, matching the real global -n flag.
+	previous := dryRun
+	t.Cleanup(func() { dryRun = previous })
+	parent := &cobra.Command{Use: "rig", SilenceUsage: true}
+	parent.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "preview")
+	parent.AddCommand(cmd)
+	var out bytes.Buffer
+	parent.SetOut(&out)
+	parent.SetErr(&out)
+	parent.SetArgs([]string{"seed", "--publish", remote, "-n"})
+	if err := parent.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("seed --publish -n: %v", err)
+	}
+	if !strings.Contains(out.String(), "would publish") {
+		t.Fatalf("missing preview: %s", out.String())
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got != before {
+		t.Fatal("dry run moved remote")
+	}
+	if stackHomeConfig(context.Background(), root, "URL") != "" {
+		t.Fatal("dry run configured home")
 	}
 }
