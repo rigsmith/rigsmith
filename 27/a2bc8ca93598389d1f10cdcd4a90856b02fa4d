@@ -1,0 +1,26 @@
+site/rig/stack.md
+  s_594eddb4156d96::t_df343dc27d7427 1167-1169
+internal/rig/cli/stackdeps_test.go
+  s_594eddb4156d96::t_df343dc27d7427 413,453-484
+  s_594eddb4156d96::t_e65031f638dfbc 291
+internal/rig/cli/stackmanifest.go
+  s_594eddb4156d96::t_df343dc27d7427 507-509,524-567
+.changeset/lucky-lemurs-race.md
+  s_594eddb4156d96::t_df343dc27d7427 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "27a2bc8ca93598389d1f10cdcd4a90856b02fa4d",
+  "prompts": {},
+  "sessions": {
+    "s_594eddb4156d96": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197eb-622e-7b50-9999-1aba0b1a34a9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
