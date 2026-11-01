@@ -1,0 +1,19 @@
+internal/rig/cli/stackdeps_test.go
+  s_c96043ad2be0d4::t_1f0fa29bf05ad7 543-546
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8b5a5f3455f6da1bada74ce64473536e506086d7",
+  "prompts": {},
+  "sessions": {
+    "s_c96043ad2be0d4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19882-da70-7653-b55b-ac99df15a1e1",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
