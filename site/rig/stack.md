@@ -1046,3 +1046,10 @@ For other CI, install pinned rig and run
 The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
 wire (11), build (12), and test (13). Seed support follows in a later change.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.

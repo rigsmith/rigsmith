@@ -35,6 +35,7 @@ func StackCIExitCode(err error) (int, bool) {
 }
 
 var stackCIExecutable = os.Executable
+var stackCISymlink = os.Symlink
 
 func newStackCICmd() *cobra.Command {
 	var manifest, member, build, test string
@@ -286,11 +287,11 @@ func stackCIMaterialize(ctx context.Context, checkout, dest string) error {
 		switch fields[0] {
 		case "120000":
 			link := string(data)
-			if filepath.IsAbs(link) || !insideRoot(dest, filepath.Dir(target)+string(filepath.Separator)+link) {
+			if filepath.IsAbs(link) || filepath.VolumeName(link) != "" || strings.HasPrefix(link, "/") || strings.HasPrefix(link, `\`) || !insideRoot(dest, filepath.Dir(target)+string(filepath.Separator)+link) {
 				return fmt.Errorf("member symlink escapes prefix: %s", path)
 			}
-			if err = os.Symlink(link, target); err != nil {
-				return err
+			if err = stackCISymlink(link, target); err != nil {
+				return fmt.Errorf("cannot create member symlink %q -> %q; the runner must support symlinks (Windows may require Developer Mode or symlink privileges): %w", path, link, err)
 			}
 		case "100644", "100755":
 			mode := os.FileMode(0644)
