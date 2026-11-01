@@ -423,12 +423,21 @@ func stackGuardMemberHome(ctx context.Context, repo *gitrepo.Repo, remote string
 
 func stackSameHomeRepo(a, b string) bool {
 	a, b = stackNormalizeSpec(a), stackNormalizeSpec(b)
-	hostA, _, _ := strings.Cut(a, "/")
-	hostB, _, _ := strings.Cut(b, "/")
-	if strings.EqualFold(hostA, "github.com") && strings.EqualFold(hostB, "github.com") {
-		return strings.EqualFold(a, b)
+	if filepath.IsAbs(a) || filepath.IsAbs(b) {
+		return a == b
 	}
-	return a == b
+	hostA, pathA, hasPathA := strings.Cut(a, "/")
+	hostB, pathB, hasPathB := strings.Cut(b, "/")
+	if !hasPathA || !hasPathB {
+		return a == b
+	}
+	if !strings.EqualFold(hostA, hostB) {
+		return false
+	}
+	if strings.EqualFold(hostA, "github.com") {
+		return strings.EqualFold(pathA, pathB)
+	}
+	return pathA == pathB
 }
 
 // Git chooses the longest matching prefix, with pushInsteadOf preferred for

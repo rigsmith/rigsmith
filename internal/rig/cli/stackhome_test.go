@@ -486,6 +486,9 @@ func TestStackGuardMemberHome(t *testing.T) {
 		{"unconfigured", "", "", "github.com/acme/member", false},
 		{"GitHub case", "https://GITHUB.COM/acme/seed.git", "", "git@github.com:Acme/Seed.git", true},
 		{"local case", "/tmp/CaseSeed", "", "/tmp/caseseed", false},
+		{"GitLab host case", "https://GitLab.com/acme/seed.git", "", "gitlab.com/acme/seed", true},
+		{"GitLab path case", "https://GitLab.com/Acme/Seed.git", "", "gitlab.com/acme/seed", false},
+		{"self-hosted host case", "https://Forge.Acme.test/acme/seed.git", "", "forge.acme.test/acme/seed", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
