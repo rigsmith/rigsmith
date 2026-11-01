@@ -1,0 +1,35 @@
+core/ecosystem/dotnet/localoverlay.go
+  s_a59bb8f95199c9::t_7dbffafebe117d 37,56-72,158,248-249,335,505-517
+.changeset/swift-shrimp-march.md
+  s_a59bb8f95199c9::t_3fe863bbe57d3c 7
+internal/rig/cli/stackoverlay_test.go
+  s_a59bb8f95199c9::t_7dbffafebe117d 295,316,329
+  s_a59bb8f95199c9::t_01aeb9ee522aa9 410-448
+  s_a59bb8f95199c9::t_4c8f35d029f242 449-470
+site/rig/verbs.md
+  s_a59bb8f95199c9::t_3fe863bbe57d3c 331-333
+docs/STACK-DESIGN.md
+  s_a59bb8f95199c9::t_3fe863bbe57d3c 732-756
+core/ecosystem/dotnet/localoverlay_test.go
+  s_a59bb8f95199c9::t_01aeb9ee522aa9 881,887-888,890-891
+  s_a59bb8f95199c9::t_4c8f35d029f242 898-945
+  s_a59bb8f95199c9::t_7dbffafebe117d 822-823
+site/rig/stack.md
+  s_a59bb8f95199c9::t_3fe863bbe57d3c 1047-1071
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "65cb76c14f38148ef969213cf6200d3f27be6232",
+  "prompts": {},
+  "sessions": {
+    "s_a59bb8f95199c9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197f7-16ed-7e80-a3e1-484d0c378b33",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
