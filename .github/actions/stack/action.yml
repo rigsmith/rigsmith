@@ -16,6 +16,9 @@ inputs:
   test:
     description: Test command in the member directory. Results stream to the job log.
     default: rig test
+  dependencies:
+    description: Check and publish topic dependency statuses (optional statuses write permission).
+    default: 'true'
   upstream-tip:
     description: Use upstream tips instead of manifest cursors.
     default: 'false'
@@ -49,3 +52,10 @@ runs:
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
         rig "${args[@]}"
+    - name: Report topic dependencies
+      if: ${{ always() && inputs.dependencies == 'true' }}
+      shell: bash
+      env:
+        STACK_MANIFEST: ${{ inputs.manifest }}
+        GITHUB_TOKEN: ${{ github.token }}
+      run: rig stack deps --manifest "$STACK_MANIFEST" --publish

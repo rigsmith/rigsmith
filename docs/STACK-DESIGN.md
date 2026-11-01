@@ -736,3 +736,49 @@ Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
 `ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
 The local E2E uses preinstalled josh to stay offline; fresh hosted downloads
 were verified by code-path inspection only.
+
+
+## Cross-member topic completion
+
+Committed `proposals[prefix][topic].dependsOn` arrays hold directed edges to
+other member prefixes in the same topic. Propose upstream members first: new
+proposals record all already-proposed members of that topic. Re-proposing keeps
+the original edges to avoid cycles. Edit the arrays to correct direction or
+backfill older proposals, which default to no edges. This ordering is explicit;
+rig does not infer a package graph. Independent changes belong in separate topics.
+
+`propose --from` already records the topic and destination fork branch. The
+checker queries upstream PRs with that fork owner and branch, then fetches the
+PR details. Current head SHA comes from those details, so added commits and
+squashed proposal commits need no checkout ancestry. Ambiguous branch reuse is
+reported as could not check. The committed manifest must be supplied explicitly
+in the checkout used by the action; a shallow pull_request merge checkout need
+not contain the original proposal commit, nor any head trailer.
+
+Cursor inclusion is checked in **upstream history** with GitHub compare,
+from the API's `merge_commit_sha` to the manifest cursor. `ahead` and `identical`
+pass. A merge commit, a squash commit, and the final upstream rebased commit
+are therefore evaluated under the same rule; the original PR head is never
+used as the ancestry witness. Fused and filtered josh hashes are never compared.
+The `lastSync` contract is an unfiltered upstream SHA. Missing merge metadata,
+inaccessible private upstreams, comparison errors, and missing cursors remain
+non-green, distinctly labelled could not check. Closed unmerged PRs remain pending.
+
+Status publication uses current PR head SHAs and optional `statuses: write`.
+A denied write produces a workflow warning and job-summary text and does not
+fail the job. No privileged pull_request_target workflow is added. The action
+adds only one input and a reporting step; the Go verb owns all API logic.
+
+There is **no automatic refresh service** in this change. Upstream merges do
+not trigger dependent PR workflows. After merging upstream and committing a
+cursor bump, run `rig stack deps --publish` from the new manifest revision.
+An operator can schedule that command in the stackspace repository with a token
+allowed to write statuses in the member upstreams. A rerun of an old checkout
+cannot observe a cursor bump. This deliberately does not claim the original
+“green by itself” acceptance without a configured external sweep.
+
+The optional sticky comment is deferred: status and local output already show
+the chain, and comments would require another permission and upsert lifecycle.
+Local bare Git histories and fake API responses test merge, squash and rebase
+transitions; real GitHub token permissions, event delivery, and merge metadata
+remain integration verification for a real repository.

@@ -38,6 +38,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
 			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
 			"  rig stack seed <dir>                a small repo of just the root files, to rebuild from elsewhere\n" +
+			"  rig stack deps                      topic PR dependencies and cursor inclusion\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack propose [repo] [branch]   a branch on your fork, prefixed stack/ (asks)\n" +
@@ -52,7 +53,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackCICmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackDepsCmd(), newStackCICmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -269,7 +270,8 @@ func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfin
 func newStackStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Each repo's cursor vs its upstream, and what has not left the stackspace",
+		Short: "Each repo's cursor, unsent work and topic PR dependency chain",
+		Long:  "Shows cursor and unsent work per member, plus recorded topic PR dependencies\nchecked through the GitHub API. Unavailable API data is labelled could not check.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -278,6 +280,7 @@ func newStackStatusCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
+			stackDepsReport(ctx, m, stackDepsClient(), out, false)
 			// One status call for the whole stackspace: the prefixes are filtered
 			// out of it per repo below, rather than shelling out once each.
 			dirty, err := repo.DirtyPaths(ctx)
@@ -1257,12 +1260,14 @@ func newStackSendCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "propose [repo] [new-branch]",
 		Aliases: []string{"send"},
-		Short:   "Propose a repo's stackspace changes to its upstream, via your fork",
+		Short:   "Propose stackspace changes via your fork and record topic dependencies",
 		Long: "Takes this stackspace's version of <repo> and commits it on top of that\n" +
 			"project's upstream tip, as <new-branch> on your fork. The branch holds\n" +
 			"one commit whose diff is exactly what the stackspace changed, with none of\n" +
 			"the stackspace's own history: nothing upstream has to know this repo is\n" +
 			"fused with anything else. PR from there as usual.\n\n" +
+			"Propose upstream members first: new topic proposals depend on the already-\n" +
+			"proposed members of that topic. Re-proposing preserves these manifest edges.\n\n" +
 			"<new-branch> is a branch you are creating on your fork, named per change\n" +
 			"(read-timeout). It is unrelated to the manifest's upstreamBranch, which\n" +
 			"is the branch of *upstream* this directory follows. Sending twice to the\n" +

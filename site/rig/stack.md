@@ -1046,3 +1046,32 @@ For other CI, install pinned rig and run
 The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
 wire (11), build (12), and test (13). Seed support follows in a later change.
+
+
+### Stack topic dependencies
+
+`rig stack deps --manifest rig.stack.jsonc` checks the committed `proposals`
+records through the GitHub API, using `GITHUB_TOKEN` and `GITHUB_API_URL`.
+Propose upstream members first: a new proposal records the already-proposed
+members of that topic in `proposals[prefix][topic].dependsOn` (an array of
+member prefixes). Re-proposing preserves these edges; edit the array to change
+direction or backfill older proposals. Each dependency must merge upstream and
+its `lastSync` cursor must include the API-reported merge commit. `rig stack status` displays the same chain
+from the local manifest. Older records without `dependsOn` have no dependencies.
+
+`rig stack deps --publish` posts the `stack dependencies` commit status to
+current PR **head** SHAs. The composite action enables this with its
+`dependencies` input (default `true`). Workflows may optionally grant
+`statuses: write`; read-only fork tokens produce an annotation and job summary
+instead of failing for a denied write. API errors and private repositories
+without access appear as **could not check**, never as passing. Do not use
+`pull_request_target` to grant these writes.
+
+Checks refresh when the command runs. No scheduled sweep is installed:
+after upstream merges, commit updated cursors, then rerun dependency checking
+from that manifest revision with `--publish`. Rerunning a workflow pinned to an
+old manifest still evaluates its old cursors. Repositories may schedule this
+command from a trusted stackspace checkout with a token authorized for each
+upstream repository; without that setup, checks do not turn green by themselves.
+A caller must treat pending statuses as a merge gate if desired; the reporting
+command itself succeeds when dependencies are pending or unavailable.

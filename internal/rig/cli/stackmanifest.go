@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -192,8 +193,9 @@ type stackManifest struct {
 // and answers the more common question too — whether the pull request is behind
 // the branch.
 type stackProposal struct {
-	Branch string `json:"branch"`
-	Commit string `json:"commit,omitempty"`
+	Branch    string   `json:"branch"`
+	DependsOn []string `json:"dependsOn,omitempty"`
+	Commit    string   `json:"commit,omitempty"`
 }
 
 func (m *stackManifest) cursor(name string) string { return m.LastSync[name] }
@@ -226,8 +228,19 @@ func stackRememberProposal(src *cfgfind.Source, m *stackManifest, prefix, topic,
 	if m.Proposals[prefix] == nil {
 		m.Proposals[prefix] = map[string]stackProposal{}
 	}
-	want := stackProposal{Branch: branch, Commit: commit}
-	if m.Proposals[prefix][topic] == want {
+	old, exists := m.Proposals[prefix][topic]
+	deps := old.DependsOn
+	if !exists {
+		for _, name := range m.names() {
+			if name != prefix {
+				if _, ok := m.Proposals[name][topic]; ok {
+					deps = append(deps, name)
+				}
+			}
+		}
+	}
+	want := stackProposal{Branch: branch, Commit: commit, DependsOn: deps}
+	if old.Branch == want.Branch && old.Commit == want.Commit && slices.Equal(old.DependsOn, want.DependsOn) {
 		return nil // nothing to write, and no commit to make out of nothing
 	}
 	m.Proposals[prefix][topic] = want
@@ -758,7 +771,9 @@ const stackManifestTemplate = `{
   //     rig stack propose <repo> <name> --from <topic>
   // recording which branch of your fork carries each topic's pull request, and
   // the commit that went to it, so "rig stack status" can say where each fix is
-  // and whether the branch has moved since. Written by rig, not by hand.
+  // and whether the branch has moved since. Propose upstream members first:
+  // each new proposal records already-proposed members of its topic in
+  // dependsOn. Re-proposing preserves those edges; edit them to change direction.
 }
 `
 
