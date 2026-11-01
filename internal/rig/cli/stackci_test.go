@@ -22,6 +22,10 @@ func TestStackCIReplaceCheckout(t *testing.T) {
 		mustGitStack(t, p, "config", "user.email", "t@t")
 	}
 	os.WriteFile(filepath.Join(checkout, "only-in-pr"), []byte("PR tree"), 0755)
+	os.Mkdir(filepath.Join(checkout, "tests"), 0755)
+	os.WriteFile(filepath.Join(checkout, "tests", "kept"), []byte("committed tests"), 0644)
+	os.WriteFile(filepath.Join(checkout, "subst"), []byte("$Format:%H$"), 0644)
+	os.WriteFile(filepath.Join(checkout, ".gitattributes"), []byte("tests/ export-ignore\nsubst export-subst\n"), 0644)
 	mustGitStack(t, checkout, "add", ".")
 	mustGitStack(t, checkout, "commit", "-qm", "PR only")
 	os.Mkdir(filepath.Join(fused, "app"), 0755)
@@ -42,6 +46,18 @@ func TestStackCIReplaceCheckout(t *testing.T) {
 	if e != nil || string(b) != "PR tree" {
 		t.Fatalf("%s: %v", b, e)
 	}
+	for path, want := range map[string]string{"tests/kept": "committed tests", "subst": "$Format:%H$"} {
+		data, err := os.ReadFile(filepath.Join(fused, "app", path))
+		if err != nil || string(data) != want {
+			t.Fatalf("materialized %s: %q, %v", path, data, err)
+		}
+	}
+	os.WriteFile(filepath.Join(checkout, ".gitmodules"), []byte("# submodules"), 0644)
+	mustGitStack(t, checkout, "add", ".")
+	mustGitStack(t, checkout, "commit", "-qm", "submodules")
+	if _, err := stackCIReplace(context.Background(), checkout, fused, "app"); err == nil || !strings.Contains(err.Error(), "submodules") {
+		t.Fatalf("want clear submodule failure: %v", err)
+	}
 	if _, e = os.Stat(filepath.Join(checkout, "only-in-pr")); e != nil {
 		t.Fatal(e)
 	}
@@ -50,7 +66,7 @@ func TestStackCIReplaceCheckout(t *testing.T) {
 func TestStackCIValidation(t *testing.T) {
 	c := newStackCICmd()
 	c.SetArgs([]string{})
-	if e := c.Execute(); e == nil || !strings.Contains(e.Error(), "exactly one") {
+	if e := c.Execute(); e == nil || !strings.Contains(e.Error(), "--manifest is required") {
 		t.Fatalf("%v", e)
 	}
 }
@@ -124,4 +140,24 @@ func TestStackCIFlow(t *testing.T) {
 		t.Fatalf("want wire failure: %v", e)
 	}
 
+}
+
+func TestStackCIGitSeparatesStderr(t *testing.T) {
+	dir := t.TempDir()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := filepath.Join(dir, "git")
+	if err = os.WriteFile(wrapper, []byte("#!/bin/sh\necho warning >&2\nexec '"+git+"' \"$@\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	data, err := stackCIGit(context.Background(), dir, "--version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "warning") || !strings.HasPrefix(string(data), "git version") {
+		t.Fatalf("stderr contaminated stdout: %q", data)
+	}
 }

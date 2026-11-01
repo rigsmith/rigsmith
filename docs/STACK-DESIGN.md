@@ -707,16 +707,18 @@ step it replaces.
 the checkout. Manifest mode reads the committed manifest from checkout HEAD,
 normalizes sibling imports to exact cursors (ignoring proposal branches), and
 uses the existing init import path. Tip mode drops cursor and tag/commit pins.
-Seed mode delegates acquisition to `rig stack setup` without parsing `@ref`.
-The seed form therefore depends on setup supporting that interface.
+Seed support is deferred until the separate setup seed work merges. This verb
+requires `--manifest` and exposes no seed input.
 
-The member tree comes from `git archive HEAD`, extracted under its manifest
-prefix after removing the imported tree. This needs no PR ancestry or complete
-history: shallow checkout and synthetic merge refs work. A throwaway local
-commit records this replacement, satisfying wire's HEAD-based discovery. Wire
-runs again after replacement; sibling relative references point within the
-same fused root. The checkout and its index remain untouched. Archive extraction
-reuses seed's traversal/link guards. Submodules are not materialized by archive.
+The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
+`git cat-file blob` bytes under the manifest prefix. This bypasses archive
+export-ignore/export-subst and checkout smudge/EOL filters, including the
+checkout's local config; replacement objects are disabled. It needs no PR
+ancestry or complete history. File modes and contained symlinks are preserved.
+A throwaway local commit records the replacement for wire's HEAD discovery.
+Wire runs again after replacement, keeping sibling relative references within
+the fused root. The checkout and its index remain untouched. Submodules are
+not materialized; `.gitmodules` and gitlink entries fail setup explicitly.
 
 The verb owns setup, wire, build and test reporting and distinct exit statuses;
 the composite only installs pinned rig and dispatches it. Engine installation
@@ -729,3 +731,8 @@ following the shiprig-action model. `rigsmith/stack-action@v1` is intended but
 not published yet. Until that later publication, ship the fully self-contained
 `.github/actions/stack/` directory with no references outside it; workflow
 examples use its in-repo path. This hunt does not create the new repository.
+
+Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
+`ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
+The local E2E uses preinstalled josh to stay offline; fresh hosted downloads
+were verified by code-path inspection only.

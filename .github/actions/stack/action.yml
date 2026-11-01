@@ -2,11 +2,8 @@ name: Stackspace CI
 description: Build and test the checkout against sibling sources in a temporary stackspace.
 inputs:
   manifest:
-    description: Path to a committed rig.stack.jsonc (exclusive with seed).
-    default: ''
-  seed:
-    description: Seed owner/repo@ref passed to rig stack setup (exclusive with manifest).
-    default: ''
+    description: Path to a committed rig.stack.jsonc (required).
+    required: true
   member:
     description: Member prefix; otherwise match origin URL.
     default: ''
@@ -43,7 +40,6 @@ runs:
       shell: bash
       env:
         STACK_MANIFEST: ${{ inputs.manifest }}
-        STACK_SEED: ${{ inputs.seed }}
         STACK_MEMBER: ${{ inputs.member }}
         STACK_BUILD: ${{ inputs.build }}
         STACK_TEST: ${{ inputs.test }}
@@ -51,6 +47,5 @@ runs:
       run: |
         args=(stack ci --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
-        if [[ -n "$STACK_SEED" ]]; then args+=(--seed "$STACK_SEED"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
         rig "${args[@]}"

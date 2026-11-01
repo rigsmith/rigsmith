@@ -26,11 +26,10 @@ func (e *stackCIError) ExitCode() int { return e.code }
 var stackCIExecutable = os.Executable
 
 func newStackCICmd() *cobra.Command {
-	var manifest, seed, member, build, test string
+	var manifest, member, build, test string
 	var tip bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a manifest or seed in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&manifest, "manifest", "", "Path to a committed rig.stack.jsonc")
-	c.Flags().StringVar(&seed, "seed", "", "Seed owner/repo@ref (passed to stack setup)")
 	c.Flags().StringVar(&member, "member", "", "Member prefix (default: match origin URL)")
 	c.Flags().StringVar(&build, "build", "rig build", "Build command, run from the member")
 	c.Flags().StringVar(&test, "test", "rig test", "Test command, run from the member")
@@ -99,42 +98,37 @@ func newStackCICmd() *cobra.Command {
 			return p.Run()
 		}
 		e = step("setup", 10, func() error {
-			if (manifest == "") == (seed == "") {
-				return fmt.Errorf("provide exactly one of --manifest or --seed")
+			if manifest == "" {
+				return fmt.Errorf("--manifest is required")
 			}
-			if seed != "" {
-				if e := run(temp, "stack", "setup", seed, root); e != nil {
-					return e
-				}
-			} else {
-				if e := os.Mkdir(root, 0700); e != nil {
-					return e
-				}
-				p := manifest
-				if !filepath.IsAbs(p) {
-					p = filepath.Join(checkout, p)
-				}
-				rel, e := filepath.Rel(checkout, p)
-				if e != nil {
-					return e
-				}
-				data, e := stackCIGit(cmd.Context(), checkout, "show", "HEAD:"+filepath.ToSlash(rel))
-				if e != nil {
-					return fmt.Errorf("manifest must be committed: %w", e)
-				}
-				if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
-					return e
-				}
-				if _, e = stackCIGit(cmd.Context(), root, "init", "-q"); e != nil {
-					return e
-				}
+
+			if e := os.Mkdir(root, 0700); e != nil {
+				return e
+			}
+			p := manifest
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(checkout, p)
+			}
+			rel, e := filepath.Rel(checkout, p)
+			if e != nil {
+				return e
+			}
+			data, e := stackCIGit(cmd.Context(), checkout, "show", "HEAD:"+filepath.ToSlash(rel))
+			if e != nil {
+				return fmt.Errorf("manifest must be committed: %w", e)
+			}
+			if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
+				return e
+			}
+			if _, e = stackCIGit(cmd.Context(), root, "init", "-q"); e != nil {
+				return e
 			}
 			m, _, e := loadStackManifest(root)
 			if e != nil {
 				return e
 			}
 			if m == nil {
-				return fmt.Errorf("seed has no manifest")
+				return fmt.Errorf("no stack manifest")
 			}
 			if member == "" {
 				b, e := stackCIGit(cmd.Context(), checkout, "remote", "get-url", "origin")
@@ -174,7 +168,7 @@ func newStackCICmd() *cobra.Command {
 				}
 			}
 			m.LastPropose = nil
-			data, e := json.MarshalIndent(m, "", "  ")
+			data, e = json.MarshalIndent(m, "", "  ")
 			if e != nil {
 				return e
 			}
@@ -229,26 +223,77 @@ func newStackCICmd() *cobra.Command {
 }
 
 func stackCIGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	p := exec.CommandContext(ctx, "git", args...)
+	p := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects"}, args...)...)
 	p.Dir = dir
 	p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost")
-	b, e := p.CombinedOutput()
+	var stderr bytes.Buffer
+	p.Stderr = &stderr
+	b, e := p.Output()
 	if e != nil {
-		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), e, b)
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), e, stderr.String())
 	}
 	return b, nil
 }
 
-// Archive HEAD rather than merge a shallow PR ref into unrelated fused history.
+// Read raw tree blobs: archive export attributes and checkout filters must not
+// remove or rewrite the committed source. No index or worktree config is used.
+func stackCIMaterialize(ctx context.Context, checkout, dest string) error {
+	entries, err := stackCIGit(ctx, checkout, "ls-tree", "-rz", "--full-tree", "HEAD")
+	if err != nil {
+		return err
+	}
+	for _, entry := range bytes.Split(entries, []byte{0}) {
+		if len(entry) == 0 {
+			continue
+		}
+		meta, path, ok := strings.Cut(string(entry), "\t")
+		fields := strings.Fields(meta)
+		if !ok || len(fields) != 3 {
+			return fmt.Errorf("invalid HEAD tree entry")
+		}
+		if path == ".gitmodules" || fields[0] == "160000" {
+			return fmt.Errorf("member contains submodules (.gitmodules or gitlink %s); stack ci cannot materialize them", path)
+		}
+		target := filepath.Join(dest, filepath.FromSlash(path))
+		if !insideRoot(dest, filepath.Dir(target)) {
+			return fmt.Errorf("member path escapes prefix: %s", path)
+		}
+		if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		data, err := stackCIGit(ctx, checkout, "cat-file", "blob", fields[2])
+		if err != nil {
+			return err
+		}
+		switch fields[0] {
+		case "120000":
+			link := string(data)
+			if filepath.IsAbs(link) || !insideRoot(dest, filepath.Dir(target)+string(filepath.Separator)+link) {
+				return fmt.Errorf("member symlink escapes prefix: %s", path)
+			}
+			if err = os.Symlink(link, target); err != nil {
+				return err
+			}
+		case "100644", "100755":
+			mode := os.FileMode(0644)
+			if fields[0] == "100755" {
+				mode = 0755
+			}
+			if err = os.WriteFile(target, data, mode); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported member tree mode %s", fields[0])
+		}
+	}
+	return nil
+}
+
 func stackCIReplace(ctx context.Context, checkout, root, member string) (string, error) {
 	if e := stackValidPrefix(member); e != nil {
 		return "", e
 	}
 	sha, e := stackCIGit(ctx, checkout, "rev-parse", "HEAD")
-	if e != nil {
-		return "", e
-	}
-	data, e := stackCIGit(ctx, checkout, "archive", "--format=tar", "HEAD")
 	if e != nil {
 		return "", e
 	}
@@ -259,7 +304,7 @@ func stackCIReplace(ctx context.Context, checkout, root, member string) (string,
 	if e = os.MkdirAll(dest, 0755); e != nil {
 		return "", e
 	}
-	if e = untar(bytes.NewReader(data), dest); e != nil {
+	if e = stackCIMaterialize(ctx, checkout, dest); e != nil {
 		return "", e
 	}
 	if _, e = stackCIGit(ctx, root, "add", "-A", "--", member); e != nil {

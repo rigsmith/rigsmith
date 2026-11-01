@@ -23,16 +23,14 @@ is ready to copy after selecting a rig release containing `stack ci`.
 Commit the manifest and its full `lastSync` cursors. `member` defaults to a
 unique match of origin against manifest upstream/fork URLs; specify it for fork
 PRs with a different origin. The selected tree is checkout HEAD, including a
-GitHub PR merge commit when checkout selects one. Uncommitted files, ignored
-files and submodule contents are not imported; commit source before running.
+GitHub PR merge commit when checkout selects one. Uncommitted and ignored files are not imported; commit source before running.
+Submodules are not materialized: a committed `.gitmodules` or gitlink fails setup clearly.
 Commands run with bash from the member prefix. Build defaults to `rig build`,
 test to `rig test`; an empty command skips that phase. Install the language
 SDKs your commands need using your existing workflow setup steps.
 
 Other CI systems install a pinned rig and its pinned josh, then run
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test 'dotnet test'`.
-Use `--seed acme/stack@ref` instead of `--manifest` to delegate seed acquisition
-to `rig stack setup`; this requires a rig version supporting setup's seed form.
 `--upstream-tip` selects upstream branch tips instead of cursors. Cursor mode
 ignores proposed fork branches so its sibling sources remain reproducible.
 
@@ -51,3 +49,7 @@ credentials only in trusted CI contexts. No proposal or push occurs.
 Caching, checksum-verified installation, warnings guards, dependency checks,
 nightly canaries and topic testing are later work. Reverse-dependency matrices
 and cursor-lag checks are deliberately outside this implementation.
+
+No separate josh step is needed: stack init installs the manifest/default pinned
+josh on demand before imports. Fresh-runner installation was reasoned through
+the existing installer call path, not exercised against hosted downloads.

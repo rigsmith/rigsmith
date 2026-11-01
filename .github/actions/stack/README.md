@@ -20,8 +20,7 @@ be an exact release tag; installation downloads its release asset, falling
 back to `go install` at that pin (which requires Go). Josh uses the manifest's
 pin or rig's built-in pin and is installed by rig before importing members.
 
-Choose `manifest` or `seed` exclusively. `seed` passes `owner/repo@ref` through
-to `rig stack setup` and requires a rig release supporting that setup form.
+`manifest` is required.
 `member` defaults to matching origin URL. `upstream-tip: 'true'` selects tips
 instead of committed sibling cursors. `build` and `test` default to `rig build`
 and `rig test` and run from the member prefix with bash; empty skips a command.
@@ -38,3 +37,7 @@ privileged `pull_request_target` credentials. The checkout stays untouched;
 temporary stackspaces are removed after execution. No pushing occurs.
 
 Caching, verified checksums and other CI modes are deferred.
+
+No separate josh step is needed: stack init installs the manifest/default pinned
+josh on demand before imports. Fresh-runner installation was reasoned through
+the existing installer call path, not exercised against hosted downloads.
