@@ -1,0 +1,57 @@
+internal/rig/cli/stackci_security_test.go
+  s_1e10c41f1dfcea::t_276a697500f701 58-61,102,108,113,186-215
+  s_1e10c41f1dfcea::t_b929c07c5a00c7 91-99
+cmd/rig/README.md
+  s_1e10c41f1dfcea::t_89ea541c9e00a6 49
+  s_1e10c41f1dfcea::t_c321e96bd176cc 45-48,50-51
+examples/github-workflows/stack.yml
+  s_1e10c41f1dfcea::t_30e66cdf9868d5 21
+internal/rig/cli/stackcicache.go
+  s_1e10c41f1dfcea::t_eaf71a42003c14 13-14,18-22,30,39,50,53
+.github/actions/stack/README.md
+  s_1e10c41f1dfcea::t_fa734c45f91197 134-138
+  s_1e10c41f1dfcea::t_30e66cdf9868d5 71,96-133
+site/rig/stack.md
+  s_1e10c41f1dfcea::t_30e66cdf9868d5 1058-1063
+.github/actions/stack/action.yml
+  s_1e10c41f1dfcea::t_eaf71a42003c14 16-18,49,84,96-100,109-120,125
+docs/GITHUB-ACTIONS.md
+  s_1e10c41f1dfcea::t_30e66cdf9868d5 135-140
+internal/rig/cli/stackci_test.go
+  s_1e10c41f1dfcea::t_276a697500f701 135,142-152
+  s_1e10c41f1dfcea::t_c321e96bd176cc 14,228-256,261-267,269,272-300
+.github/actions/stack/install-rig.sh
+  s_1e10c41f1dfcea::t_eaf71a42003c14 21
+README.md
+  s_1e10c41f1dfcea::t_c321e96bd176cc 72-75,77-78
+  s_1e10c41f1dfcea::t_89ea541c9e00a6 76
+docs/STACK-DESIGN.md
+  s_1e10c41f1dfcea::t_30e66cdf9868d5 780-817
+  s_1e10c41f1dfcea::t_fa734c45f91197 818-822
+site/rig/verbs.md
+  s_1e10c41f1dfcea::t_c321e96bd176cc 321-343
+internal/rig/cli/stack.go
+  s_1e10c41f1dfcea::t_eaf71a42003c14 968-975
+  s_1e10c41f1dfcea::t_fa734c45f91197 35
+internal/rig/cli/stackci.go
+  s_1e10c41f1dfcea::t_eaf71a42003c14 34-35,44,91,103-106,115-121,245-246,248-260,263,269
+  s_1e10c41f1dfcea::t_30e66cdf9868d5 247
+docs/guides/testing-a-member-pr-in-its-stackspace.md
+  s_1e10c41f1dfcea::t_30e66cdf9868d5 73-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "647b10d6ee4bf8e9f54df29b9284b6f25ac1e2bc",
+  "prompts": {},
+  "sessions": {
+    "s_1e10c41f1dfcea": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197eb-19bf-7f33-a77f-d67fb633ea53",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
