@@ -44,6 +44,8 @@ rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path o
 fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
 
+See [Stackspaces](../../site/rig/stack.md) for source build signals, member imports, and evaluation timing.
+
 ## Verbs
 
 | Verb | What |

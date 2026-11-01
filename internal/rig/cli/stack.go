@@ -2088,6 +2088,10 @@ func newStackDoctorCmd() *cobra.Command {
 					for _, l := range rep.Links {
 						fmt.Fprintf(out, "    %s\n", l.describe())
 					}
+					if rep.Eco == "dotnet" && len(rep.Links) > 0 {
+						stackReportSourceSignals(out, root, rep.Links, rep.Packages)
+					}
+					stackReportNotes(out, rep.Resp.Notes)
 					for _, p := range rep.Resp.Problems {
 						where := p.Path
 						if where == "" {
