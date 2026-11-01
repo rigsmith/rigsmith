@@ -303,8 +303,9 @@ func oldGatedWalkUp(body string) bool {
 func patchWalkUp(body string) (string, bool) { return patchWalkUpFile(body, overlayFile) }
 
 func patchWalkUpFile(body, file string) (string, bool) {
-	// Replace only the historical rig-owned block, preserving member content.
-	stripped := regexp.MustCompile(`(?s)<!-- Added by rig\..*?<Import Project="\$\(StackParentTargets\)"[^>]*?/?>`).ReplaceAllString(body, "")
+	// Require the historical structure: custom XML between these elements
+	// belongs to the member and must never be removed as part of an upgrade.
+	stripped := regexp.MustCompile(`(?s)<!-- Added by rig\.[^<]*?-->\s*<PropertyGroup>\s*<StackParentTargets>[^<]*</StackParentTargets>\s*</PropertyGroup>\s*<Import Project="\$\(StackParentTargets\)" Condition="'\$\(StackParentTargets\)' != ''"\s*/>`).ReplaceAllString(body, "")
 	if legacyWalkUp(body) && stripped == body {
 		return "", false
 	}
