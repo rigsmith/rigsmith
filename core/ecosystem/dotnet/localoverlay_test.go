@@ -739,6 +739,50 @@ func TestLocalOverlayUpgradesManifestGate(t *testing.T) {
 	}
 }
 
+func TestLocalOverlayPreservesCustomizedLegacyBlock(t *testing.T) {
+	const comment = `<!-- Added by rig. historical explanation -->`
+	const property = `<PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>`
+	const importElement = `<Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />`
+	for _, custom := range []string{
+		`<PropertyGroup><MemberProperty>keep me</MemberProperty></PropertyGroup>`,
+		`<Target Name="MemberTarget"><Message Text="keep me" /></Target>`,
+		`<!-- member comment: keep me -->`,
+	} {
+		for _, position := range []string{"before property", "before import", "inside property"} {
+			t.Run(position+"/"+custom, func(t *testing.T) {
+				block := comment + "\n" + property + "\n" + importElement
+				switch position {
+				case "before property":
+					block = comment + custom + property + importElement
+				case "before import":
+					block = comment + property + custom + importElement
+				case "inside property":
+					block = comment + strings.Replace(property, "</PropertyGroup>", custom+"</PropertyGroup>", 1) + importElement
+				}
+				body := "<Project>" + block + "</Project>"
+				root := t.TempDir()
+				path := filepath.Join(root, "app", overlayFile)
+				writeFile(t, path, body)
+				writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project/>`)
+				req := plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}, Write: true, Writable: []string{"app"}}
+				for i := 0; i < 2; i++ {
+					got, err := New().LocalOverlay(context.Background(), req)
+					if err != nil {
+						t.Fatal(err)
+					}
+					after, err := os.ReadFile(path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(after) != body || len(got.Fixed) != 0 || len(got.Notes) != 1 || len(got.Problems) != 0 {
+						t.Fatalf("member content changed: %+v\n%s", got, after)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestLocalOverlayCIGuard(t *testing.T) {
 	body := renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}})
 	for _, want := range []string{"BeforeTargets=\"_GenerateRestoreProjectSpec;CoreCompile\"", "'$(RigStackCIGuard)' == 'true' And '@(_StackPresent)' != ''", "<WarningsNotAsErrors>$(WarningsNotAsErrors);NU1603;NU1608;NU1605</WarningsNotAsErrors>"} {
