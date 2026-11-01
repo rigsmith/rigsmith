@@ -540,7 +540,10 @@ func TestStackDepsRememberProposalSkipsCyclicEdges(t *testing.T) {
 }
 
 func TestStackDepsExistingCycleErrorNamesFileChainAndRepair(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustGitStack(t, root, "init", "-q")
 	t.Chdir(root)
 	m := &stackManifest{Repos: map[string]*stackRepo{"app": {Upstream: "github.com/acme/app", Fork: "github.com/you/app"}, "lib": {Upstream: "github.com/acme/lib", Fork: "github.com/you/lib"}}, Proposals: map[string]map[string]stackProposal{"app": {"topic": {Branch: "stack/topic", DependsOn: []string{"lib"}}}, "lib": {"topic": {Branch: "stack/topic", DependsOn: []string{"app"}}}}}
