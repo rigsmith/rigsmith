@@ -1,0 +1,23 @@
+.github/actions/stack/action.yml
+  s_305a3d2195b124::t_7a19b1685d0af3 56-59
+internal/rig/cli/stackci.go
+  s_305a3d2195b124::t_7a19b1685d0af3 85-91,101-110
+internal/rig/cli/stackci_test.go
+  s_305a3d2195b124::t_7a19b1685d0af3 164-219
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9de67fe60e1c1268ab2755c0e856e88e9ce05668",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
