@@ -32,11 +32,12 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
-			"  rig stack setup                     set up a fresh clone: engine, members, overlay\n" +
+			"  rig stack setup [seed]              clone a manifest home; engine, members, overlay\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
 			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
-			"  rig stack seed <dir>                a small repo of just the root files, to rebuild from elsewhere\n" +
+			"  rig stack seed [dir]                export root files; --publish updates the manifest home\n" +
+			"  rig stack home [pointer-file]       read a member seed pointer\n" +
 			"  rig stack status                    cursor vs upstream, per repo\n" +
 			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
 			"  rig stack propose [repo] [branch]   a branch on your fork, prefixed stack/ (asks)\n" +
@@ -51,7 +52,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -493,7 +494,7 @@ func newStackPullCmd() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.\n")
 			}
-			return nil
+			return stackPublishHome(ctx, repo, m)
 		},
 	}
 	cmd.Flags().BoolVar(&repin, "repin", false, "resolve a tag pin again, taking it where upstream has moved it")
@@ -1302,6 +1303,15 @@ func newStackSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			for _, member := range m.Repos {
+				if err := stackGuardMemberHome(ctx, repo, stackRemoteURL(member.Fork)); err != nil {
+					return err
+				}
+				if err := stackGuardMemberHome(ctx, repo, stackRemoteURL(member.Upstream)); err != nil {
+					return err
+				}
+			}
+
 			if err := m.requireRepos(); err != nil {
 				return err
 			}
@@ -1654,7 +1664,11 @@ func newStackSendCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "proposed %s — pushed to %s:%s, open the PR against %s\n",
 				name, r.Fork, branch, r.Upstream)
 			stackReportStackOnlyPins(cmd.OutOrStdout(), pins, name, pinScanFailed)
-			return nil
+			if manifestWasDirty {
+				fmt.Fprintln(cmd.OutOrStdout(), "manifest home publication deferred — commit the manifest, then run rig stack seed")
+				return nil
+			}
+			return stackPublishHome(ctx, repo, m)
 		},
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "", "commit message for the branch")
@@ -1692,6 +1706,15 @@ func newStackPushCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			for _, member := range m.Repos {
+				if err := stackGuardMemberHome(ctx, repo, stackRemoteURL(member.Fork)); err != nil {
+					return err
+				}
+				if err := stackGuardMemberHome(ctx, repo, stackRemoteURL(member.Upstream)); err != nil {
+					return err
+				}
+			}
+
 			// Only a repo of your own can be pushed, so with exactly one there is
 			// nothing to disambiguate and naming it is ceremony. With several, ask
 			// rather than guess — this one writes to somebody's remote.
@@ -2018,6 +2041,10 @@ func newStackDoctorCmd() *cobra.Command {
 				fmt.Fprintln(out, "· no stack manifest here (fine outside a stackspace)")
 			default:
 				fmt.Fprintf(out, "✓ manifest: %d repo(s)\n", len(m.Repos))
+				if err := stackDoctorHome(ctx, root, m); err != nil {
+					fmt.Fprintf(out, "✗ seed origin: %v\n", err)
+				}
+
 			}
 			bin, binErr := stackJoshProxyBin(version)
 			if binErr == nil {

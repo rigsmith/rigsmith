@@ -222,12 +222,18 @@ func TestStackFlow(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(seed, "libfoo")); !os.IsNotExist(err) {
 		t.Fatal("seed carries a member directory")
 	}
+	seedRemote := filepath.Join(work, "seed.git")
+	mustGitStack(t, work, "clone", "--bare", seed, seedRemote)
 	rebuilt := filepath.Join(work, "rebuilt")
-	mustGitStack(t, work, "clone", "-q", seed, rebuilt)
-	mustGitStack(t, rebuilt, "config", "user.email", "t@t")
-	mustGitStack(t, rebuilt, "config", "user.name", "t")
+	if err := os.MkdirAll(rebuilt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@t")
 	chdir(t, rebuilt)
-	out, err = runVerbOut(ctx, newStackInitCmd())
+	out, err = runVerbOut(ctx, newStackSetupCmd(), seedRemote)
 	if err != nil {
 		t.Fatalf("init on the seed: %v\n%s", err, out)
 	}

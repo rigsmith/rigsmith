@@ -1,0 +1,240 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+
+	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/spf13/cobra"
+)
+
+// Seed references deliberately reserve @ only for the owner/repo shorthand.
+// URLs, scp remotes and local paths retain git's normal spelling.
+func stackSeedReference(s string) (remote, ref string, err error) {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.HasPrefix(s, "-") {
+		return "", "", fmt.Errorf("empty or invalid seed reference")
+	}
+	if !strings.Contains(s, ":") && !strings.HasPrefix(s, ".") && !filepath.IsAbs(s) && strings.Count(strings.SplitN(s, "@", 2)[0], "/") == 1 {
+		remote, ref, _ = strings.Cut(s, "@")
+		if strings.Contains(s, "@") && ref == "" {
+			return "", "", fmt.Errorf("seed reference needs a ref after @")
+		}
+		return "https://github.com/" + strings.TrimSuffix(remote, ".git") + ".git", ref, nil
+	}
+	return s, "", nil
+}
+
+func stackHomeGit(ctx context.Context, dir string, args ...string) (string, error) {
+	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	b, err := c.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(b)))
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+func stackHomeConfig(ctx context.Context, dir, key string) string {
+	s, _ := stackHomeGit(ctx, dir, "config", "--local", "--get", "rig.stackHome"+key)
+	return s
+}
+
+// Every reachable commit is checked, not merely the tip: deleted member trees
+// must not smuggle fused ancestors into the home.
+func stackCheckHome(ctx context.Context, dir string, m *stackManifest) error {
+	commits, err := stackHomeGit(ctx, dir, "rev-list", "HEAD")
+	if err != nil {
+		return err
+	}
+	for _, sha := range strings.Fields(commits) {
+		names, err := stackHomeGit(ctx, dir, "ls-tree", "--name-only", sha)
+		if err != nil {
+			return err
+		}
+		for _, name := range strings.Split(names, "\n") {
+			if m.Repos[name] != nil {
+				return fmt.Errorf("seed contains member tree %s in %s; refusing fused history", name, sha)
+			}
+		}
+	}
+	return nil
+}
+
+func stackConfigureHome(ctx context.Context, dir, remote, branch, base string) error {
+	for _, pair := range [][2]string{{"URL", remote}, {"Branch", branch}, {"Base", base}} {
+		if _, err := stackHomeGit(ctx, dir, "config", "--local", "rig.stackHome"+pair[0], pair[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Publication has no object connection to the fused repository. Only an archive
+// crosses the boundary; the parent is always the separately cloned seed tip.
+func stackPublishHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) error {
+	remote := stackHomeConfig(ctx, repo.Dir, "URL")
+	if remote == "" {
+		return nil
+	}
+	branch := stackHomeConfig(ctx, repo.Dir, "Branch")
+	base := stackHomeConfig(ctx, repo.Dir, "Base")
+	err := stackPublishHomeTo(ctx, repo, m, remote, branch, base)
+	if err != nil {
+		return fmt.Errorf("local stack changes are retained; manifest home was not updated: %w; retry with `rig stack seed --publish %q` after reconciling seed updates", err, remote)
+	}
+	return nil
+}
+
+func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, remote, branch, base string) error {
+	if dirty, err := repo.Dirty(ctx); err != nil {
+		return err
+	} else if dirty {
+		return fmt.Errorf("commit stack changes before publishing the manifest home")
+	}
+	if branch == "READ_ONLY" {
+		return fmt.Errorf("seed is pinned to a tag; publication requires a branch")
+	}
+	dir, err := os.MkdirTemp("", "rig-stack-home-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	args := []string{"clone", "--no-local"}
+	args = append(args, "--", remote, dir)
+	if _, err := stackHomeGit(ctx, repo.Dir, args...); err != nil {
+		return err
+	}
+	if branch != "" {
+		if _, err := stackHomeGit(ctx, dir, "show-ref", "--verify", "refs/remotes/origin/"+branch); err == nil {
+			if _, err := stackHomeGit(ctx, dir, "checkout", "-B", branch, "refs/remotes/origin/"+branch); err != nil {
+				return err
+			}
+		} else if tip, _ := stackHomeGit(ctx, dir, "rev-parse", "--verify", "HEAD"); tip == "" {
+			if _, err := stackHomeGit(ctx, dir, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
+				return err
+			}
+		} else {
+			return fmt.Errorf("seed branch %q does not exist; publication requires a branch", branch)
+		}
+	}
+	tip, _ := stackHomeGit(ctx, dir, "rev-parse", "--verify", "HEAD")
+	if base != "" && tip != base {
+		return fmt.Errorf("seed moved since last sync (%s -> %s); reconcile its manifest before publishing", base, tip)
+	}
+	if tip != "" {
+		if err := stackCheckHome(ctx, dir, m); err != nil {
+			return err
+		}
+	}
+	if branch == "" {
+		branch, err = stackHomeGit(ctx, dir, "symbolic-ref", "--short", "HEAD")
+		if err != nil {
+			return err
+		}
+	}
+	names, err := repo.TopLevelNames(ctx, "HEAD")
+	if err != nil {
+		return err
+	}
+	var keep []string
+	for _, n := range names {
+		if m.Repos[n] == nil {
+			keep = append(keep, n)
+		}
+	}
+	data, err := repo.ArchiveTar(ctx, "HEAD", keep)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != ".git" {
+			if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	if err := untar(bytes.NewReader(data), dir); err != nil {
+		return err
+	}
+	if _, err := stackHomeGit(ctx, dir, "add", "-A"); err != nil {
+		return err
+	}
+	diff, err := stackHomeGit(ctx, dir, "diff", "--cached", "--name-only")
+	if err != nil {
+		return err
+	}
+	if diff != "" && tip != "" && base == "" {
+		return fmt.Errorf("existing seed differs from this stack; set up from the seed and reconcile before publishing")
+	}
+	if diff != "" {
+		if _, err := stackHomeGit(ctx, dir, "-c", "user.name=rig", "-c", "user.email=rig@localhost", "commit", "-m", "stack: update manifest home"); err != nil {
+			return err
+		}
+	}
+	if err := stackCheckHome(ctx, dir, m); err != nil {
+		return err
+	}
+	if _, err := stackHomeGit(ctx, dir, "push", "origin", "HEAD:refs/heads/"+branch); err != nil {
+		return err
+	}
+	tip, err = stackHomeGit(ctx, dir, "rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	return stackConfigureHome(ctx, repo.Dir, remote, branch, tip)
+}
+
+func newStackHomeCmd() *cobra.Command {
+	return &cobra.Command{Use: "home [pointer-file]", Short: "Read a member's .rig-stack seed pointer", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		path := ".rig-stack"
+		if len(args) > 0 {
+			path = args[0]
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		s := strings.TrimSpace(string(b))
+		if _, _, err := stackSeedReference(s); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), s)
+		return nil
+	}}
+}
+
+func stackDoctorHome(ctx context.Context, root string, m *stackManifest) error {
+	remote, err := stackHomeGit(ctx, root, "remote", "get-url", "origin")
+	if err != nil {
+		return nil
+	}
+	dir, err := os.MkdirTemp("", "rig-stack-doctor-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if _, err := stackHomeGit(ctx, root, "clone", "--no-local", "--", remote, dir); err != nil {
+		return err
+	}
+	return stackCheckHome(ctx, dir, m)
+}
+
+func stackGuardMemberHome(ctx context.Context, repo *gitrepo.Repo, remote string) error {
+	home := stackHomeConfig(ctx, repo.Dir, "URL")
+	if home == "" {
+		home, _ = stackHomeGit(ctx, repo.Dir, "remote", "get-url", "origin")
+	}
+	if home != "" && stackNormalizeSpec(home) == stackNormalizeSpec(remote) {
+		return fmt.Errorf("member destination is the manifest home; refusing to push member history")
+	}
+	return nil
+}

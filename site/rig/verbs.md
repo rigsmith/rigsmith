@@ -394,3 +394,11 @@ curate the set live:
 
 Exclusions are written to `.rig.json`'s [`exclude`](./configuration) globs and
 match against the project's full name, short name, and repo-relative path.
+
+
+The default stack manifest home is a small seed repo containing the manifest,
+README and root overlays. Publish with `rig stack seed --publish acme/rigstack-app@main`;
+rebuild in an empty directory with `rig stack setup acme/rigstack-app@main`.
+Pull and propose publish root-only updates without sending fused history.
+Use `rig stack seed` to retry a failed publication; local work is retained.
+A member's `.rig-stack` contains that same seed reference; `rig stack home` reads it.

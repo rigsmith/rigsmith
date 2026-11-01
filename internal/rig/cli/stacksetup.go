@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -23,16 +24,36 @@ import (
 // than a required setup step.
 func newStackSetupCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "setup",
+		Use:   "setup [seed]",
 		Short: "Set up a freshly cloned stackspace: engine, members, build overlay",
 		Long: "Runs the steps a new clone needs, in an order where each can see what it\n" +
 			"is judging: installs the fusion engine, reconstitutes the member\n" +
 			"directories, writes the build overlay if it is missing, commits what it\n" +
 			"generated, and prints the status.\n\n" +
-			"Safe to run again — every step is a no-op once it has been done.",
-		Args: cobra.NoArgs,
+			"Safe to run again — every step is a no-op once it has been done.\n" +
+			"An optional seed (owner/repo@ref, URL or local path) is cloned into the current empty directory.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, out := cmd.Context(), cmd.OutOrStdout()
+			if len(args) == 1 {
+				remote, ref, err := stackSeedReference(args[0])
+				if err != nil {
+					return err
+				}
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				clone := []string{"clone"}
+				if ref != "" {
+					clone = append(clone, "--branch", ref)
+				}
+				clone = append(clone, "--", remote, ".")
+				if _, err := stackHomeGit(ctx, cwd, clone...); err != nil {
+					return err
+				}
+			}
+
 			root, err := stackRoot(ctx)
 			if err != nil {
 				return err
@@ -55,6 +76,33 @@ func newStackSetupCmd() *cobra.Command {
 			repo, err := gitrepo.Open(ctx, root)
 			if err != nil {
 				return err
+			}
+			// Remember the unfused seed before init adds member ancestors.
+			if stackHomeConfig(ctx, root, "URL") == "" {
+				remote, _ := stackHomeGit(ctx, root, "remote", "get-url", "origin")
+				if remote != "" {
+					if err := stackCheckHome(ctx, root, m); err != nil {
+						return err
+					}
+					base, err := stackHomeGit(ctx, root, "rev-parse", "HEAD")
+					if err != nil {
+						return err
+					}
+					branch, err := stackHomeGit(ctx, root, "symbolic-ref", "--short", "HEAD")
+					if err != nil {
+						branch = ""
+					} // pinned tags are read-only
+					if branch == "" {
+						branch = "READ_ONLY"
+					}
+					if err := stackConfigureHome(ctx, root, remote, branch, base); err != nil {
+						return err
+					}
+					// Disable accidental plain git pushes without affecting rig's isolated clone.
+					if _, err := stackHomeGit(ctx, root, "remote", "set-url", "--push", "origin", "disabled://fused-stackspace"); err != nil {
+						return err
+					}
+				}
 			}
 			// What is already dirty is the user's, and stays theirs. Everything
 			// setup goes on to produce is the difference against this.

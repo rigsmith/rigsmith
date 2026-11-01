@@ -33,10 +33,13 @@ const seedPrefix = "rigstack-"
 // nothing: the manifest already records which commit each prefix held.
 func newStackSeedCmd() *cobra.Command {
 	var force bool
+	var publish string
 	cmd := &cobra.Command{
-		Use:   "seed <dir>",
+		Use:   "seed [dir]",
 		Short: "Export the root files as a small repo that `rig stack init` rebuilds the stackspace from",
-		Long: "Writes everything at the stackspace root that is not a member — the\n" +
+		Long: "Default: publish a manifest home with --publish owner/repo@branch.\n" +
+			"Without a directory, retry publication to the configured home.\n\n" +
+			"Writes everything at the stackspace root that is not a member — the\n" +
 			"manifest with its cursors, build overlays, packaging, the files kept out of\n" +
 			"every prefix on purpose — into <dir> as a fresh git repository with one\n" +
 			"commit. Push that wherever you like; it is a few kilobytes and holds no\n" +
@@ -55,13 +58,33 @@ func newStackSeedCmd() *cobra.Command {
 			"and the prefix says so at a glance in a list of repositories.\n\n" +
 			"  rig stack seed ../rigstack-acme\n" +
 			"  git -C ../rigstack-acme remote add origin <url> && git -C ../rigstack-acme push -u origin main",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
+			}
+			if publish != "" {
+				remote, ref, err := stackSeedReference(publish)
+				if err != nil {
+					return err
+				}
+				base := ""
+				if stackHomeConfig(ctx, repo.Dir, "URL") == remote {
+					base = stackHomeConfig(ctx, repo.Dir, "Base")
+					if ref == "" {
+						ref = stackHomeConfig(ctx, repo.Dir, "Branch")
+					}
+				}
+				return stackPublishHomeTo(ctx, repo, m, remote, ref, base)
+			}
+			if len(args) == 0 {
+				if stackHomeConfig(ctx, repo.Dir, "URL") == "" {
+					return fmt.Errorf("no manifest home configured — pass a directory or --publish <seed>")
+				}
+				return stackPublishHome(ctx, repo, m)
 			}
 			dest := args[0]
 			written, err := stackSeed(ctx, repo, m, dest, force)
@@ -73,6 +96,7 @@ func newStackSeedCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&publish, "publish", "", "publish root files safely to a manifest home (owner/repo@branch, URL or local path)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "seed even where a member holds commits that have not left the stackspace")
 	return cmd
 }

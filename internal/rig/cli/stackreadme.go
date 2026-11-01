@@ -113,15 +113,11 @@ func renderStackReadme(root string, m *stackManifest) string {
 		"at the real paths, rooted on upstream.\n\n")
 	// A clone arrives with the very remote the rule above warns about, so
 	// "never add one" is advice that arrives after the fact.
-	b.WriteString("If this was cloned from a seed repository it already has an `origin`, and that " +
-		"is the remote the rule is about — a stray `git push` would put the fused history " +
-		"where the seed lives. Once it is set up there is nothing more to take from it:\n\n")
-	b.WriteString("```sh\n")
-	b.WriteString("git remote -v            # if there is an origin, it is the seed\n")
-	b.WriteString("git remote remove origin\n")
-	b.WriteString("```\n\n")
-	b.WriteString("Keep it only if you intend to pull manifest updates from the seed, and never " +
-		"push to it.\n\n")
+	b.WriteString("The default home is a small seed repository holding the manifest, overlay and README. " +
+		"Use `rig stack seed --publish acme/rigstack-app@main` to publish it and " +
+		"`rig stack setup acme/rigstack-app@main` in an empty directory to rebuild it. " +
+		"Pull and propose publish root-only commits through a separate clone; fused history never leaves. " +
+		"Setup disables plain pushes to origin. Keep that protection in place.\n\n")
 	b.WriteString("**Keep the tree clean before `init`, `pull` and `propose`.** They refuse a dirty " +
 		"tree on purpose: an import stages everything, and would swallow uncommitted edits.\n\n")
 

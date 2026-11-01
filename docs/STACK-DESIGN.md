@@ -700,3 +700,46 @@ base, not a rebase onto an existing commit. That is a separate piece of design a
 deliberately not a flag on `pull`, because a flag that is right only when a prefix has
 exactly one unmerged topic — and silently wrong otherwise — is worse than the manual
 step it replaces.
+
+
+### Manifest home (default)
+
+Keep one small seed repository as the manifest home: the committed
+rig.stack.jsonc, README and root overlay files, outside every member prefix.
+Publish with `rig stack seed --publish acme/rigstack-app@main`. The existing
+`rig stack seed <dir>` offline export remains available. In a fresh empty
+directory, use `rig stack setup acme/rigstack-app@main`; local development and
+CI pass exactly the same seed string. Setup without an argument still works
+in an existing clone. URLs, scp-style remotes and local paths are also accepted.
+The owner/repo shorthand means GitHub; its optional @ref names a branch or tag
+(including branch names with slashes). Tags are read-only homes.
+
+Setup remembers the remote, branch and unfused tip in local git config
+(`rig.stackHomeURL`, `rig.stackHomeBranch`, `rig.stackHomeBase`).
+It disables origin's push URL in the fused checkout. An unconfigured checkout
+keeps its existing behavior. Pull and propose publish the committed root files
+after recording their changes locally. A proposal made with an already-edited
+manifest defers publication until that file is committed. Publication refuses
+a dirty checkout so prefix exclusions always match the committed manifest. A retry is `rig stack seed` without
+arguments. Publication never imports objects from the fused checkout: a temporary
+independent clone receives only a git archive of HEAD outside member prefixes,
+then creates one ordinary commit parented on the seed tip. No-op exports create
+no commit. An existing home cannot be replaced on first publication: if its
+files differ, rig requires setup from that seed and reconciliation first. Every reachable seed commit is checked for member trees before and
+after writing; doctor also checks origin. Member destinations matching the
+manifest home are refused.
+
+If the seed tip differs from the remembered tip, publication refuses; there is
+no implicit merge or force push. Reconcile the competing manifest in a separate
+seed clone, then set up from that revision before publishing again. Permission
+failures and races fail clearly, retaining the local pull/proposal and its
+committed manifest. Retrying does not undo local work. No confirmation is needed:
+publication is an ordinary fast-forward push. There is deliberately no overwrite
+mode; destructive replacement would require interactive confirmation and refusal
+in noninteractive runs.
+
+A member can commit a UTF-8 `.rig-stack` file containing one seed reference,
+for example `acme/rigstack-app@main`, followed by a newline. Read it with
+`rig stack home [pointer-file]`; this prints the reference for tools to consume.
+Pointers are maintained by the member owner; setup never edits member sources.
+A member README pointer is optional prose and is not generated or parsed.
