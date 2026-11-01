@@ -323,6 +323,14 @@ build so the consumer compiles against source, sending and updating pull
 requests, and the rules that will otherwise catch you out. Manifest keys are in
 [Configuration](./configuration#stack).
 
+### Stackspace member CI
+
+`rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
+builds the committed checkout against sibling sources in a temporary stackspace.
+Keep this job alongside the plain-clone matrix. The self-contained composite is
+`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
+See [Stackspaces](./stack#testing-a-member-pr-in-its-stackspace) for a copyable workflow and other CI usage.
+
 ## Prefix matching
 
 Verbs prefix-match, so `rig cove` runs `coverage` and `rig w r` is `watch run`.
@@ -399,11 +407,3 @@ curate the set live:
 
 Exclusions are written to `.rig.json`'s [`exclude`](./configuration) globs and
 match against the project's full name, short name, and repo-relative path.
-
-## Stackspace member CI
-
-`rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
-builds the committed checkout against sibling sources in a temporary stackspace.
-Keep this job alongside the plain-clone matrix. The self-contained composite is
-`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
-See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.

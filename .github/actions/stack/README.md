@@ -41,3 +41,9 @@ Caching, verified checksums and other CI modes are deferred.
 No separate josh step is needed: stack init installs the manifest/default pinned
 josh on demand before imports. Fresh-runner installation was reasoned through
 the existing installer call path, not exercised against hosted downloads.
+
+Write structured test reports to an absolute path outside the temporary stack,
+for example under `$GITHUB_WORKSPACE/test-results`. Relative report files in
+the member directory are deleted with the temporary stack before later steps
+run. Configure your test runner's output path accordingly and use `if: always()`
+on the subsequent artifact upload step so failure reports are retained too.

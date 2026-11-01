@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,16 @@ type stackCIError struct {
 func (e *stackCIError) Error() string { return fmt.Sprintf("stack ci %s: %v", e.step, e.err) }
 func (e *stackCIError) Unwrap() error { return e.err }
 func (e *stackCIError) ExitCode() int { return e.code }
+
+// StackCIExitCode recognizes only the explicit stack CI phase status contract.
+// Other subprocess failures retain the CLI's default exit status.
+func StackCIExitCode(err error) (int, bool) {
+	var phase *stackCIError
+	if errors.As(err, &phase) {
+		return phase.ExitCode(), true
+	}
+	return 0, false
+}
 
 var stackCIExecutable = os.Executable
 
@@ -79,16 +90,13 @@ func newStackCICmd() *cobra.Command {
 		if e != nil {
 			return step("setup", 10, func() error { return e })
 		}
-		temp, e := os.MkdirTemp("", "rig-stack-ci-")
-		if e != nil {
-			return e
-		}
-		defer os.RemoveAll(temp)
-		root := filepath.Join(temp, "stack")
-		exe, e := stackCIExecutable()
-		if e != nil {
-			return e
-		}
+		var temp, root, exe string
+		defer func() {
+			if temp != "" {
+				_ = os.RemoveAll(temp)
+			}
+		}()
+
 		run := func(dir string, args ...string) error {
 			p := exec.CommandContext(cmd.Context(), exe, args...)
 			p.Dir = dir
@@ -98,6 +106,16 @@ func newStackCICmd() *cobra.Command {
 			return p.Run()
 		}
 		e = step("setup", 10, func() error {
+			temp, e = os.MkdirTemp("", "rig-stack-ci-")
+			if e != nil {
+				return e
+			}
+			root = filepath.Join(temp, "stack")
+			exe, e = stackCIExecutable()
+			if e != nil {
+				return e
+			}
+
 			if manifest == "" {
 				return fmt.Errorf("--manifest is required")
 			}
