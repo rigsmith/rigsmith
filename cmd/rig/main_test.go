@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,7 +16,8 @@ func TestRigExitStatusWrappedChild(t *testing.T) {
 	child := exec.Command(exe, "-test.run=^TestRigExitStatusChild$")
 	child.Env = append(os.Environ(), "RIG_EXIT_STATUS_CHILD=1")
 	err = child.Run()
-	if _, ok := err.(*exec.ExitError); !ok {
+	var childErr *exec.ExitError
+	if !errors.As(err, &childErr) {
 		t.Fatalf("want child exit error: %v", err)
 	}
 	if got := exitStatus(fmt.Errorf("another verb failed: %w", err)); got != 1 {
