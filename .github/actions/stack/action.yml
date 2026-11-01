@@ -32,7 +32,8 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Install pinned rig
+    - id: install
+      name: Install pinned rig
       shell: bash
       env:
         INPUT_RIG_VERSION: ${{ inputs.rig-version }}
@@ -53,7 +54,7 @@ runs:
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
         rig "${args[@]}"
     - name: Report topic dependencies
-      if: ${{ always() && inputs.dependencies == 'true' }}
+      if: ${{ always() && steps.install.outcome == 'success' && inputs.dependencies == 'true' }}
       shell: bash
       env:
         STACK_MANIFEST: ${{ inputs.manifest }}

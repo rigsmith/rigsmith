@@ -37,6 +37,8 @@ type stackDepsPR struct {
 	} `json:"head"`
 }
 
+var stackDepsAuthForURL = stackAuthForURL
+
 func stackDepsClient() stackDepsAPI {
 	base := os.Getenv("GITHUB_API_URL")
 	if base == "" {
@@ -57,8 +59,22 @@ func (a stackDepsAPI) request(ctx context.Context, method, path string, body, re
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("Content-Type", "application/json")
-	if a.token != "" {
-		req.Header.Set("Authorization", "Bearer "+a.token)
+	token := a.token
+	if token == "" {
+		// Reuse stack's gh-first, git-helper-second credential lookup, lazily:
+		// manifests without dependencies never consult credentials or the network.
+		if u, e := url.Parse(a.base); e == nil && u.Scheme == "https" {
+			host := u.Host
+			if host == "api.github.com" {
+				host = "github.com"
+			}
+			if auth := stackDepsAuthForURL(ctx, "https://"+host+"/"); auth != nil {
+				token = auth.Password
+			}
+		}
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	resp, err := a.client.Do(req)
 	if err != nil {
@@ -140,6 +156,20 @@ func (a stackDepsAPI) dependency(ctx context.Context, r *stackRepo, p stackPropo
 	return label + " (merged; included in cursor)", true
 }
 func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out io.Writer, publish bool) {
+	publishRepo := os.Getenv("GITHUB_REPOSITORY")
+	if publish {
+		matched := false
+		for _, r := range m.Repos {
+			_, slug, ok := strings.Cut(r.Upstream, "/")
+			if ok && publishRepo != "" && strings.EqualFold(slug, publishRepo) {
+				matched = true
+			}
+		}
+		if !matched {
+			fmt.Fprintln(out, "::warning::Refusing to publish stack dependencies: GITHUB_REPOSITORY must name a member upstream repository.")
+			publish = false
+		}
+	}
 	topics := map[string]bool{}
 	for _, ps := range m.Proposals {
 		for topic := range ps {
@@ -177,14 +207,12 @@ func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out 
 			}
 			description := strings.Join(lines, "; ")
 			fmt.Fprintf(out, "%s / %s: %s\n", topic, member, description)
-			if publish {
+			_, memberRepo, _ := strings.Cut(m.Repos[member].Upstream, "/")
+			if publish && strings.EqualFold(memberRepo, publishRepo) {
 				pr, err := a.proposal(ctx, m.Repos[member], target)
 				if err == nil && stackIsSHA(pr.Head.SHA) {
 					slug := strings.SplitN(m.Repos[member].Upstream, "/", 2)[1]
-					short := description
-					if len(short) > 140 {
-						short = short[:137] + "..."
-					}
+					short := stackDepsDescription(description)
 					err = a.request(ctx, "POST", "/repos/"+slug+"/statuses/"+pr.Head.SHA, map[string]string{"state": state, "context": "stack dependencies", "description": short}, nil)
 				} else if err == nil {
 					err = fmt.Errorf("missing PR head SHA")
@@ -197,10 +225,18 @@ func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out 
 		}
 	}
 }
+func stackDepsDescription(s string) string {
+	runes := []rune(s)
+	if len(runes) > 140 {
+		return string(runes[:137]) + "..."
+	}
+	return s
+}
+
 func newStackDepsCmd() *cobra.Command {
 	var manifest string
 	var publish bool
-	c := &cobra.Command{Use: "deps", Short: "Check topic PR dependencies against upstream cursors", Long: "Reads committed proposal records, resolves PRs through the GitHub API, and\nchecks API merge commits against upstream cursors. Uses GITHUB_TOKEN and\nGITHUB_API_URL. --publish posts to each PR head SHA; denied writes warn.\nPending and unavailable dependencies remain non-green. Rerun after merges\nand committed cursor bumps; no automatic sweep is installed.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "deps", Short: "Check topic PR dependencies against upstream cursors", Long: "Reads committed proposal records, resolves PRs through the GitHub API, and\nchecks API merge commits against upstream cursors. Uses GITHUB_TOKEN (or local gh/git credentials) and\nGITHUB_API_URL. --publish posts only to GITHUB_REPOSITORY PR head SHAs; denied writes warn.\nPending and unavailable dependencies remain non-green. Rerun after merges\nand committed cursor bumps; no automatic sweep is installed.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&manifest, "manifest", "rig.stack.jsonc", "Committed manifest path")
 	c.Flags().BoolVar(&publish, "publish", false, "Publish commit statuses (optional statuses: write permission)")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
