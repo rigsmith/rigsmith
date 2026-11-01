@@ -328,7 +328,9 @@ targets after `RigStackSourceSignals`, not in project evaluation conditions.
 Global `-p:UseStackSources=false` disables all signals and swaps; a value first
 set in the project body cannot undo early evaluation. Member imports are gated
 on a recognised ancestor overlay and upgraded when wired again; `stack doctor`
-previews the signals by project. See [the stack guide](stack.md) for naming and timing.
+previews the signals by project. Optional props issues (missing, stale, hand-owned
+root props or member shadowing) are advisory and do not block packing; targets
+issues remain blocking. See [the stack guide](stack.md) for naming and timing.
 
 ## Prefix matching
 

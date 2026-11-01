@@ -292,7 +292,7 @@ func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
 	}
 	// With a link, the .NET adapter reports the overlay as not yet written.
 	rep := dotnetReport(reports)
-	if rep == nil || len(rep.Links) != 1 || len(rep.Resp.Problems) != 2 || !strings.Contains(rep.Resp.Problems[0].Message, "not written") {
+	if rep == nil || len(rep.Links) != 1 || len(rep.Resp.Problems) != 1 || !strings.Contains(rep.Resp.Problems[0].Message, "not written") {
 		t.Fatalf("with a link: %+v, want one link and a not-written report", reports)
 	}
 
@@ -313,7 +313,7 @@ func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
 	}
 	staleReports, _, _, _ := stackCheckOverlay(ctx, root, owned("app", "lib"))
 	stale := dotnetReport(staleReports)
-	if stale == nil || len(stale.Resp.Problems) != 1 || stale.Resp.Problems[0].Path != "Directory.Build.props" || !strings.Contains(stale.Resp.Problems[0].Message, "out of date") {
+	if stale == nil || len(stale.Resp.Problems) != 0 || len(stale.Resp.Notes) != 1 || !strings.Contains(stale.Resp.Notes[0], "Directory.Build.props: out of date") {
 		t.Fatalf("stale props: %+v", stale)
 	}
 	csproj(t, root, "app/src/App", "Acme.App")
@@ -326,7 +326,7 @@ func TestStackCheckOverlay_ReportsAnOverlayLeftOver(t *testing.T) {
 	if rep == nil || len(rep.Links) != 0 {
 		t.Fatalf("nothing crossing: %+v, want the .NET adapter still asked, with no links", reports)
 	}
-	if len(rep.Resp.Problems) != 2 || !strings.Contains(rep.Resp.Problems[0].Message, "left over") {
+	if len(rep.Resp.Problems) != 1 || !strings.Contains(rep.Resp.Problems[0].Message, "left over") {
 		t.Fatalf("nothing crossing: %+v, want the overlay reported as left over", rep.Resp.Problems)
 	}
 }
@@ -405,5 +405,66 @@ func TestStackWireLegacyImportIsAdvisory(t *testing.T) {
 	rep := dotnetReport(reports)
 	if rep == nil || len(rep.Resp.Problems) != 0 || len(rep.Resp.Notes) != 1 {
 		t.Fatalf("doctor: %+v", rep)
+	}
+}
+
+func TestStackOptionalPropsCompatibility(t *testing.T) {
+	for _, rootProps := range []bool{false, true} {
+		t.Run(map[bool]string{false: "member props", true: "root props"}[rootProps], func(t *testing.T) {
+			root := t.TempDir()
+			csproj(t, root, "app", "Acme.App", "Acme.Core")
+			csproj(t, root, "lib", "Acme.Core")
+			const props = `<Project><PropertyGroup><OwnedByYou>true</OwnedByYou></PropertyGroup></Project>`
+			path := filepath.Join(root, "app/Directory.Build.props")
+			if rootProps {
+				path = filepath.Join(root, "Directory.Build.props")
+			}
+			if err := os.WriteFile(path, []byte(props), 0644); err != nil {
+				t.Fatal(err)
+			}
+			m := owned("app", "lib")
+			m.Repos["app"].Owned = false
+			var out strings.Builder
+			if _, err := stackWire(context.Background(), &out, m, &gitrepo.Repo{Dir: root}, "", true); err != nil {
+				t.Fatalf("wire: %v", err)
+			}
+			data, _ := os.ReadFile(path)
+			if string(data) != props {
+				t.Fatal("hand owned props changed")
+			}
+			reports, _, _, failed := stackCheckOverlay(context.Background(), root, m)
+			if len(failed) != 0 {
+				t.Fatal(failed)
+			}
+			rep := dotnetReport(reports)
+			if rep == nil || len(rep.Resp.Problems) != 0 || len(rep.Resp.Notes) == 0 {
+				t.Fatalf("doctor: %+v", rep)
+			}
+			if err := stackPackRequireOverlay(context.Background(), root, m); err != nil {
+				t.Fatalf("pack: %v", err)
+			}
+		})
+	}
+}
+
+func TestStackMissingPropsDoesNotBlockPack(t *testing.T) {
+	root := t.TempDir()
+	csproj(t, root, "app", "Acme.App", "Acme.Core")
+	csproj(t, root, "lib", "Acme.Core")
+	m := owned("app", "lib")
+	var out strings.Builder
+	if _, err := stackWire(context.Background(), &out, m, &gitrepo.Repo{Dir: root}, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "Directory.Build.props")); err != nil {
+		t.Fatal(err)
+	}
+	reports, _, _, _ := stackCheckOverlay(context.Background(), root, m)
+	rep := dotnetReport(reports)
+	if rep == nil || len(rep.Resp.Problems) != 0 || len(rep.Resp.Notes) != 1 || !strings.Contains(rep.Resp.Notes[0], "Directory.Build.props: not written") {
+		t.Fatalf("missing props: %+v", rep)
+	}
+	if err := stackPackRequireOverlay(context.Background(), root, m); err != nil {
+		t.Fatalf("pack: %v", err)
 	}
 }

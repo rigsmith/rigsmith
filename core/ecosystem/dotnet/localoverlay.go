@@ -34,7 +34,7 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	if err != nil {
 		return resp, err
 	}
-	props, err := a.localOverlayFile(ctx, req, "Directory.Build.props", renderStackProps(req.Redirects))
+	props, err := a.localPropsOverlay(ctx, req)
 	if resp.Files == nil {
 		resp.Files = map[string]string{}
 	}
@@ -50,6 +50,23 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		resp.Fixed = append(resp.Fixed, overlayFile)
 	}
 	resp.Skipped = resp.Skipped && props.Skipped
+	return resp, err
+}
+
+// Props add optional evaluation signals; redirects remain owned by targets.
+func (a *Adapter) localPropsOverlay(ctx context.Context, req plugin.LocalOverlayRequest) (plugin.LocalOverlayResponse, error) {
+	const file = "Directory.Build.props"
+	if len(req.Redirects) > 0 {
+		data, err := os.ReadFile(filepath.Join(req.Root, file))
+		if err == nil && !strings.Contains(string(data), overlayMarker) {
+			return plugin.LocalOverlayResponse{Notes: []string{file + ": hand-owned — early stack signals are not generated; add RigStackspace=true, RigStackspaceRoot (absolute root with trailing separator), and RigStackAvailable_<id>=true under UseStackSources != false yourself; see the stack guide's source signals section"}}, nil
+		}
+	}
+	resp, err := a.localOverlayFile(ctx, req, file, renderStackProps(req.Redirects))
+	for _, p := range resp.Problems {
+		resp.Notes = append(resp.Notes, p.Path+": "+p.Message)
+	}
+	resp.Problems = nil
 	return resp, err
 }
 
@@ -138,7 +155,7 @@ func (a *Adapter) localOverlayFile(ctx context.Context, req plugin.LocalOverlayR
 		case errors.Is(err, fs.ErrNotExist):
 			resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 				Path:    overlayFile,
-				Message: "not written — generated source signals or redirects are unavailable; run `rig stack wire`",
+				Message: missingOverlayMessage(overlayFile),
 				Fixable: true,
 			})
 		case err != nil:
@@ -228,9 +245,8 @@ func overlayProblemsFile(req plugin.LocalOverlayRequest, overlayFile string) ([]
 			return nil
 		}
 		out = append(out, plugin.OverlayProblem{
-			Path: rel,
-			Message: "ends MSBuild's search for " + overlayFile +
-				", so projects under it miss the generated signals or redirects — import the file above it",
+			Path:    rel,
+			Message: shadowedOverlayMessage(overlayFile),
 			Fixable: allowed,
 		})
 		return nil
@@ -316,7 +332,7 @@ func patchWalkUpFile(body, file string) (string, bool) {
   <Import Project="$(StackParentTargets)" Condition="'$(_RigStackParent)' == 'true'" />
   <!-- /rig:stack-import -->
 `
-	return body[:at] + strings.ReplaceAll(patch, "Directory.Build.targets", file) + body[at:], true
+	return body[:at] + strings.Replace(patch, "'Directory.Build.targets'", "'"+file+"'", 1) + body[at:], true
 }
 
 // continuesWalkUp reports whether a Directory.Build.targets imports the one
@@ -485,4 +501,18 @@ func renderStackProps(redirects []plugin.Redirect) string {
 	}
 	b.WriteString("  </PropertyGroup>\n</Project>\n")
 	return b.String()
+}
+
+func missingOverlayMessage(file string) string {
+	if file == overlayFile {
+		return "not written — every project here still resolves these packages from the registry; run `rig stack wire`"
+	}
+	return "not written — early stack signals are unavailable; run `rig stack wire` to generate them (redirects still work)"
+}
+
+func shadowedOverlayMessage(file string) string {
+	if file == overlayFile {
+		return "ends MSBuild's search for " + file + ", so projects under it keep resolving packages from the registry — import the file above it"
+	}
+	return "ends MSBuild's search for " + file + ", so projects under it miss early stack signals; redirects still work — import the file above it in a writable checkout to enable early signals"
 }

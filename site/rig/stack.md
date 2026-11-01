@@ -1044,6 +1044,31 @@ for staleness. When no cross-member references remain, generated root files and
 marked imports in writable members are removed together. Hand-owned files are
 preserved and must be maintained by you.
 
+Early props signals are optional. A hand-owned root `Directory.Build.props`
+is left unchanged: `wire` still generates the targets redirects and reports a
+note explaining how to add early signals yourself. Likewise, a member's props
+that hides the root import produces a note, including for non-writable members.
+Missing or stale generated props are notes too: existing wired stacks see one
+`Directory.Build.props: not written` note until `wire` generates it. These notes
+do not block `doctor` or `pack`. Missing or shadowed targets remain blocking
+problems because those builds silently resolve registry packages instead.
+
+To add early signals to a hand-owned root props file, use the same condition and
+naming rules (keep the literal root declaration so member imports recognise it):
+
+```xml
+<PropertyGroup Condition="'$(UseStackSources)' != 'false'">
+  <RigStackspace>true</RigStackspace>
+  <RigStackspaceRoot>$(MSBuildThisFileDirectory)</RigStackspaceRoot>
+  <RigStackAvailable_Acme_Core>true</RigStackAvailable_Acme_Core>
+</PropertyGroup>
+```
+
+Maintain the availability list when members or references change. Availability
+can be true for a project that does not reference that sibling: conditioning a
+PackageReference on it is fine, but it must not guard source-only API usage.
+Use `STACK_ACME_CORE` for that compile-time decision.
+
 `RigStackSource_*` remains available only in targets after
 `RigStackSourceSignals`; `STACK_*` still means this assembly compiles against
 that source. Conditional PackageReferences are resolved by MSBuild for the

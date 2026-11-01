@@ -4,4 +4,4 @@ scope: rig
 "github.com/rigsmith/rigsmith"
 ---
 
-Expose stack source availability during MSBuild project evaluation
+Expose optional stack source availability during MSBuild project evaluation, preserving hand-owned props and existing packing behavior
