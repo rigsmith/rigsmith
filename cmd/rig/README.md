@@ -38,6 +38,8 @@ rig stack push my-app --dry-run      # the target, branch and commits that would
 rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path outside enclosing repos
 ```
 
+`rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`, `seed`) refuse dry-run; `wire` and `doctor --fix` report without writing.
+
 `propose` proposes one squashed commit to a fork you contribute to; `push`
 fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
