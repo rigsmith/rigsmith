@@ -299,6 +299,16 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack pack [repo]` | Build a member's publishable packages from inside the stackspace, where the build overlay makes cross-member references resolve from source (every member with no argument); `--out` chooses the directory, default `dist/`; refuses while the overlay is missing, since without it the packages are the ones a bare checkout would produce |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
 
+Dry runs: `pull -n` reports each current cursor and upstream tip (including
+“nothing to pull”), without fetching objects, starting josh, or changing the
+stackspace. It retains the normal dirty-tree check; `--repin` resolves the pin
+again for the preview. Commit counts are omitted because upstream objects need
+not be present locally. Merge conflicts and replacement safety checks require a
+real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
+reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
+and `seed` refuse `--dry-run` before making changes. `status` and plain `doctor`
+are read-only; `propose`, `push`, and `pack` retain their existing previews.
+
 ```sh
 rig stack init                       # writes rig.stack.jsonc to fill in
 rig stack init                       # again: imports each repo it names
@@ -322,6 +332,17 @@ publication permissions, and the opt-in scheduled refresh workflow.
 build so the consumer compiles against source, sending and updating pull
 requests, and the rules that will otherwise catch you out. Manifest keys are in
 [Configuration](./configuration#stack).
+
+The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
+per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
+compile constants, plus `RIG_STACK`. Per-package properties are available inside
+targets after `RigStackSourceSignals`, not in project evaluation conditions.
+`UseStackSources=false` disables all signals and swaps. Member imports check the
+nearest parent `Directory.Build.targets` for rig's generated-overlay or
+member-import marker, or the literal `<RigStackspace>true</RigStackspace>`
+declaration. Retain that declaration when taking ownership of an overlay;
+an ancestor stack manifest alone does not trigger the import. Re-running `wire`
+upgrades rig-owned member imports; `stack doctor` previews the signals by project. See [the stack guide](stack.md) for naming and timing.
 
 ### Stackspace member CI
 
