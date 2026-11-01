@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -69,9 +70,10 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		return resp, nil
 	}
 
-	problems, fixed := overlayProblems(req)
+	problems, fixed, notes := overlayProblems(req)
 	resp.Problems = problems
 	resp.Fixed = fixed
+	resp.Notes = notes
 
 	body := renderOverlay(req.Redirects)
 	resp.Files = map[string]string{overlayFile: body}
@@ -122,9 +124,10 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 // overlayProblems reports what would keep the overlay from taking effect. It
 // reads files rather than running MSBuild: an evaluation is a better check but
 // needs the SDK, and the failures worth catching here are structural.
-func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, []string) {
+func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, []string, []string) {
 	var out []plugin.OverlayProblem
 	var fixed []string
+	var notes []string
 
 	// A build file between the root and any project ends MSBuild's search there,
 	// and every project beneath it keeps resolving packages from the registry.
@@ -144,7 +147,7 @@ func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, [
 		}
 		rel = filepath.ToSlash(rel)
 		data, err := os.ReadFile(path)
-		if err != nil || continuesWalkUp(string(data)) {
+		if err != nil || (continuesWalkUp(string(data)) && !legacyWalkUp(string(data))) {
 			return nil
 		}
 		// Patching this means editing a file inside somebody's project, which is
@@ -157,6 +160,16 @@ func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, [
 					return nil
 				}
 			}
+		}
+		if continuesWalkUp(string(data)) && legacyWalkUp(string(data)) {
+			message := rel + ": the legacy rig import still works, but is not gated on a stack manifest; a plain clone under an unrelated Directory.Build.targets could import it"
+			if allowed {
+				message += " — re-run `rig stack wire` to upgrade the import"
+			} else {
+				message += " — this member is not writable; upgrade its rig-owned import in a writable checkout"
+			}
+			notes = append(notes, message)
+			return nil
 		}
 		out = append(out, plugin.OverlayProblem{
 			Path: rel,
@@ -180,7 +193,8 @@ func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, [
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	sort.Strings(fixed)
-	return out, fixed
+	sort.Strings(notes)
+	return out, fixed, notes
 }
 
 // underAny reports whether rel sits inside one of the permitted directories.
@@ -194,6 +208,11 @@ func underAny(rel string, dirs []string) bool {
 	return false
 }
 
+// legacyWalkUp identifies the historical rig-owned, ungated member import.
+func legacyWalkUp(body string) bool {
+	return strings.Contains(body, "<!-- Added by rig.") && !strings.Contains(body, "<!-- rig:stack-import -->")
+}
+
 // patchWalkUp inserts the import that continues MSBuild's search, right after
 // the opening Project element. Reports false when there is no such element to
 // insert after, rather than writing something that will not parse.
@@ -202,6 +221,8 @@ func underAny(rel string, dirs []string) bool {
 // single-quoted, and the quotes this function needs around its arguments cannot
 // appear inside one (MSB4092).
 func patchWalkUp(body string) (string, bool) {
+	// Replace only the historical rig-owned block, preserving member content.
+	body = regexp.MustCompile(`(?s)<!-- Added by rig\..*?<Import Project="\$\(StackParentTargets\)"[^>]*?/?>`).ReplaceAllString(body, "")
 	open := strings.Index(body, "<Project")
 	if open < 0 {
 		return "", false
@@ -213,15 +234,13 @@ func patchWalkUp(body string) (string, bool) {
 	at := open + end + 1
 	const patch = `
 
-  <!-- Added by rig. MSBuild stops at the first Directory.Build.targets it finds
-       walking up, so without this every project below here would keep resolving
-       packages from the registry even inside a workspace that redirects them —
-       and the build would succeed, saying nothing. No-op outside one, where
-       there is nothing above. -->
+  <!-- rig:stack-import -->
   <PropertyGroup>
-    <StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets>
+    <StackManifest>$([MSBuild]::GetPathOfFileAbove('rig.stack.jsonc', '$(MSBuildThisFileDirectory)../'))</StackManifest>
+    <StackParentTargets Condition="'$(StackManifest)' != ''">$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets>
   </PropertyGroup>
-  <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+  <Import Project="$(StackParentTargets)" Condition="'$(StackManifest)' != '' And Exists('$(StackManifest)') And Exists('$(StackParentTargets)')" />
+  <!-- /rig:stack-import -->
 `
 	return body[:at] + patch + body[at:], true
 }
@@ -288,6 +307,26 @@ func renderOverlay(redirects []plugin.Redirect) string {
   </ItemGroup>
 
 `)
+	b.WriteString(`  <PropertyGroup Condition="'$(UseStackSources)' != 'false'">
+    <RigStackspace>true</RigStackspace>
+    <RigStackspaceRoot>$(MSBuildThisFileDirectory)</RigStackspaceRoot>
+  </PropertyGroup>
+  <!-- Items are available only after property evaluation. Publish per-project
+       signals at target execution, before build properties are consumed. -->
+  <Target Name="RigStackSourceSignals" BeforeTargets="PrepareForBuild;CoreCompile" Condition="'$(UseStackSources)' != 'false'">
+    <PropertyGroup>
+      <DefineConstants>$(DefineConstants);RIG_STACK</DefineConstants>
+    </PropertyGroup>
+`)
+	for _, r := range sorted {
+		name := StackSourceName(r.Package)
+		fmt.Fprintf(&b, `    <PropertyGroup Condition="@(_StackPresent->AnyHaveMetadataValue('Identity', '%s'))">
+      <RigStackSource_%s>true</RigStackSource_%s>
+      <DefineConstants>$(DefineConstants);STACK_%s</DefineConstants>
+    </PropertyGroup>
+`, r.Package, name, name, strings.ToUpper(name))
+	}
+	b.WriteString("  </Target>\n\n")
 	b.WriteString(overlayNoRefAssemblies)
 	b.WriteString("\n</Project>\n")
 	return b.String()
@@ -347,3 +386,15 @@ const overlayNoRefAssemblies = `  <!-- A project reference hands consumers a ref
 // crlfToLF normalises line endings for comparisons that must not mistake a
 // checkout's autocrlf conversion for a change.
 func crlfToLF(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
+
+// StackSourceName replaces every character outside ASCII letters and digits
+// with an underscore. Prefixes make leading digits safe; case is preserved for
+// properties and uppercased for compile constants. Colliding IDs share a signal.
+func StackSourceName(id string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, id)
+}

@@ -132,3 +132,10 @@ builds the committed checkout against sibling sources in a temporary stackspace.
 Keep this job alongside the plain-clone matrix. The self-contained composite is
 `.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
 See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
+The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
+per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
+compile constants, plus `RIG_STACK`. Per-package properties are available inside
+targets after `RigStackSourceSignals`, not in project evaluation conditions.
+`UseStackSources=false` disables all signals and swaps. Member imports are gated
+on an ancestor stack manifest and upgraded when wired again; `stack doctor`
+previews the signals by project. See [the stack guide](../../site/rig/stack.md) for naming and timing.
