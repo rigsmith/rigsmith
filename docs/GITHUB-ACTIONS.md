@@ -132,3 +132,9 @@ alone detect corruption or a tampered mirror, not replacement of the release.
 Member bundle reuse skips upstream fetch/filter work; only consumed hits count.
 Commit/filter provenance is uploaded as JSON. See the action README for cache
 keys, package caches, engine pinning, and the deliberate LFS refusal.
+
+Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
+should not trust restored filtered history. Cached bundles are not verified
+against upstream cursors; provenance records `source` and actual `filteredCommit`
+so a cached import is explicit. See the action README for the cache scope trust
+boundary and reproducibility limits.

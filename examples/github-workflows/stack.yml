@@ -18,6 +18,7 @@ jobs:
           rig-version: vX.Y.Z # Replace with a release containing stack ci.
           # Recommended: rig-sha256: <independently-trusted-platform-archive-sha256>
           allowed-hosts: github.com
+          cache-history: 'true' # Use 'false' when cached history is outside your trust boundary.
           manifest: stack/rig.stack.jsonc
           member: app
           test: rig test

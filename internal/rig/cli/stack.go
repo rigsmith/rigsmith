@@ -32,7 +32,7 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
-			"  rig stack ci                       build a member with siblings (--allowed-hosts github.com)\n" +
+			"  rig stack ci                        build and test a member checkout with sibling sources\n" +
 			"  rig stack setup                     set up a fresh clone: engine, members, overlay\n" +
 			"  rig stack init                      scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
@@ -945,14 +945,6 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 			msg += fmt.Sprintf(" (from %s:%s %s)", r.Fork, opts.fork.Branch, short(fetch))
 		}
 	}
-	// The engine fetches upstream with whatever credentials its own client
-	// presents, so reaching a private repo means forwarding ours to it. This is
-	// the same credential git would use fetching that host directly, scoped to
-	// the proxy's URL so a redirect cannot carry it anywhere else, and absent
-	// entirely when no helper has one. Whether the repo actually needs it is not
-	// knowable without asking the forge, so it rides along either way.
-	// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
-	// rather than under its branch name.
 	// Read before the merge: afterwards the newest import marker is the commit
 	// this pull is about to make, and the baseline would be the target itself.
 	preTree, _ := repo.RevParse(ctx, "HEAD:"+name)
@@ -973,6 +965,14 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 			return "", err
 		}
 		defer proxy.stop()
+		// The engine fetches upstream with whatever credentials its own client
+		// presents, so reaching a private repo means forwarding ours to it. This is
+		// the same credential git would use fetching that host directly, scoped to
+		// the proxy's URL so a redirect cannot carry it anywhere else, and absent
+		// entirely when no helper has one. Whether the repo actually needs it is not
+		// knowable without asking the forge, so it rides along either way.
+		// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
+		// rather than under its branch name.
 		auth, err := gitrepo.CredentialFor(ctx, stackRemoteURL(source))
 		if err != nil {
 			return "", err

@@ -1055,3 +1055,9 @@ reuses cursor-keyed member histories and reports consumed cache hits and member
 commit/filter provenance. Use `pull_request` with `permissions: {contents: read}`,
 no secrets and checkout `persist-credentials: false`. Pin external action uses
 by full commit SHA; `rigsmith/stack-action` is not published yet.
+
+Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
+should not trust restored filtered history. Cached bundles are not verified
+against upstream cursors; provenance records `source` and actual `filteredCommit`
+so a cached import is explicit. See the action README for the cache scope trust
+boundary and reproducibility limits.

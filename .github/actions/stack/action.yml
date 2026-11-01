@@ -13,6 +13,9 @@ inputs:
   rig-sha256:
     description: Expected archive SHA256 pinned in the calling workflow (recommended).
     default: ''
+  cache-history:
+    description: Trust restored member history bundles; disable for release-grade jobs.
+    default: 'true'
   allowed-hosts:
     description: Comma-separated allowed fork and upstream hosts.
     default: github.com
@@ -43,6 +46,7 @@ runs:
         RIG_REPO: rigsmith/rigsmith
       run: bash "$GITHUB_ACTION_PATH/install-rig.sh"
     - name: Restore josh binaries and object history
+      if: inputs.cache-history == 'true'
       id: history
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -77,6 +81,7 @@ runs:
         STACK_MEMBER: ${{ inputs.member }}
         STACK_BUILD: ${{ inputs.build }}
         STACK_TEST: ${{ inputs.test }}
+        STACK_CACHE_HISTORY: ${{ inputs.cache-history }}
         STACK_TIP: ${{ inputs.upstream-tip }}
         STACK_ALLOWED_HOSTS: ${{ inputs.allowed-hosts }}
         RIG_STACK_CI_VERIFIED: '1'
@@ -88,7 +93,11 @@ runs:
           true|false) ;;
           *) echo 'upstream-tip must be exactly true or false' >&2; exit 1 ;;
         esac
-        args=(stack ci --allowed-hosts "$STACK_ALLOWED_HOSTS" --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
+        case "$STACK_CACHE_HISTORY" in
+          true|false) ;;
+          *) echo 'cache-history must be exactly true or false' >&2; exit 1 ;;
+        esac
+        args=(stack ci --cache-history="$STACK_CACHE_HISTORY" --allowed-hosts "$STACK_ALLOWED_HOSTS" --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
         rm -f "$RIG_STACK_CACHE_REPORT" "$RIG_STACK_PROVENANCE"
@@ -97,20 +106,22 @@ runs:
       if: always()
       shell: bash
       run: |
-        python3 - <<'PYTHON'
-        import os
-        from pathlib import Path
-        p = Path(os.environ['RUNNER_TEMP']) / 'stack-cache-report'
-        rows = p.read_text().splitlines() if p.exists() else []
-        hits = rows.count('hit')
-        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-            out.write(f'\nFiltered member cache: {hits}/{len(rows)} consumed hits ({100*hits/len(rows) if rows else 0:.0f}%). Each hit skipped upstream fetch and filtering.\n')
-            out.write('Binary and package restore matches are not counted as work saved.\n')
-        PYTHON
+        hits=0; total=0
+        if [[ -f "$RUNNER_TEMP/stack-cache-report" ]]; then
+          while IFS=$'\t' read -r member source commit; do
+            [[ "$source" == cache || "$source" == fetched ]] || continue
+            total=$((total + 1))
+            if [[ "$source" == cache ]]; then hits=$((hits + 1)); fi
+          done < "$RUNNER_TEMP/stack-cache-report"
+        fi
+        rate=0
+        if (( total > 0 )); then rate=$((100 * hits / total)); fi
+        printf '\nFiltered member cache: %s/%s consumed hits (%s%%). Each hit skipped upstream fetch and filtering.\n' "$hits" "$total" "$rate" >> "$GITHUB_STEP_SUMMARY"
+        printf 'Cache hits trust restored history; they do not verify the upstream cursor. Binary and package matches are not counted as work saved.\n' >> "$GITHUB_STEP_SUMMARY"
     - name: Upload resolved member provenance
       if: always()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
-        name: stack-provenance-${{ github.job }}
+        name: stack-provenance-${{ github.job }}-${{ strategy.job-index }}-${{ github.run_attempt }}
         path: ${{ runner.temp }}/stack-provenance.json
         if-no-files-found: ignore

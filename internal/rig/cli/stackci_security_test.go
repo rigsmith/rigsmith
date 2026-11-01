@@ -55,6 +55,10 @@ func TestStackCIFilteredCache(t *testing.T) {
 }
 func TestStackCIInstallerTampered(t *testing.T) {
 	dir := t.TempDir()
+	runnerTemp := filepath.Join(dir, `back\slash`)
+	if err := os.Mkdir(runnerTemp, 0700); err != nil {
+		t.Fatal(err)
+	}
 	archive := filepath.Join(dir, "fixture.tar.gz")
 	f, err := os.Create(archive)
 	if err != nil {
@@ -84,20 +88,29 @@ while [[ $# -gt 0 ]]; do if [[ $1 == -o ]]; then dest=$2; shift; fi; shift; done
 if [[ $dest == *checksums.txt ]]; then printf '%s  rig_1.23.1_linux_amd64.tar.gz\n' "$FIXTURE_SUM" > "$dest"; else cp "$FIXTURE_ARCHIVE" "$dest"; fi
 `
 	os.WriteFile(filepath.Join(dir, "curl"), []byte(curl), 0755)
+	// macOS's native sha256sum does not escape names; exercise the GNU-style
+	// behavior using real shasum when it is available, rather than hide the bug.
+	if tool, err := exec.LookPath("shasum"); err == nil {
+		t.Setenv("REAL_SHASUM", tool)
+		if err = os.WriteFile(filepath.Join(dir, "sha256sum"), []byte("#!/bin/sh\nexec \"$REAL_SHASUM\" -a 256 \"$@\"\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	os.WriteFile(filepath.Join(dir, "uname"), []byte("#!/bin/sh\ncase $1 in -s) echo Linux;; *) echo x86_64;; esac\n"), 0755)
 	c := exec.Command("bash", "../../../.github/actions/stack/install-rig.sh")
-	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+dir, "GITHUB_PATH="+filepath.Join(dir, "path"))
+	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"))
 	out, err := c.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "checksum mismatch") {
 		t.Fatalf("tampered download must fail verification: %v %s", err, out)
 	}
 	c = exec.Command("bash", "../../../.github/actions/stack/install-rig.sh")
-	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+dir, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum)
+	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum)
 	if out, err = c.CombinedOutput(); err != nil {
 		t.Fatalf("valid fixture: %v %s", err, out)
 	}
 	c = exec.Command("bash", "../../../.github/actions/stack/install-rig.sh")
-	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+dir, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum, "INPUT_RIG_SHA256="+strings.Repeat("f", 64))
+	c.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "INPUT_RIG_VERSION=v1.23.1", "RUNNER_TEMP="+runnerTemp, "GITHUB_PATH="+filepath.Join(dir, "path"), "FIXTURE_SUM="+sum, "INPUT_RIG_SHA256="+strings.Repeat("f", 64))
 	if out, err = c.CombinedOutput(); err == nil || !strings.Contains(string(out), "pinned checksum mismatch") {
 		t.Fatalf("expected independent pin refusal: %v %s", err, out)
 	}
@@ -168,5 +181,37 @@ func TestStackCIPushGuard(t *testing.T) {
 func TestStackCICustomEngine(t *testing.T) {
 	if err := stackCIValidate(&stackManifest{Josh: "custom"}, "github.com"); err == nil {
 		t.Fatal("accepted unverified engine version")
+	}
+}
+
+// A bundle key is a lookup hint, not a signature over its relation to a cursor.
+func TestStackCISubstitutedBundleIsTrusted(t *testing.T) {
+	dir := t.TempDir()
+	mustGitStack(t, dir, "init", "-q")
+	mustGitStack(t, dir, "-c", "user.name=test", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "expected")
+	cursor := strings.TrimSpace(mustGitStack(t, dir, "rev-parse", "HEAD"))
+	cache := t.TempDir()
+	t.Setenv("RIG_STACK_CACHE", cache)
+	calls := 0
+	fetch := func() (string, error) { calls++; return cursor, nil }
+	if _, err := stackCIFilteredCache(context.Background(), dir, "github.com/acme/app", cursor, "app", stackJoshVersion, fetch); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, dir, "-c", "user.name=test", "-c", "user.email=t@t", "commit", "--allow-empty", "-qm", "substituted")
+	substituted := strings.TrimSpace(mustGitStack(t, dir, "rev-parse", "HEAD"))
+	paths, err := filepath.Glob(filepath.Join(cache, "*.bundle"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("bundle fixture: %v %v", paths, err)
+	}
+	mustGitStack(t, dir, "update-ref", "refs/rigsmith/cache", substituted)
+	mustGitStack(t, dir, "bundle", "create", paths[0], "refs/rigsmith/cache")
+	got, err := stackCIFilteredCache(context.Background(), dir, "github.com/acme/app", cursor, "app", stackJoshVersion, fetch)
+	if err != nil || got != substituted || calls != 1 {
+		t.Fatalf("expected trusted substituted history, got %s calls=%d err=%v", got, calls, err)
+	}
+	t.Setenv("RIG_STACK_CACHE", "")
+	got, err = stackCIFilteredCache(context.Background(), dir, "github.com/acme/app", cursor, "app", stackJoshVersion, fetch)
+	if err != nil || got != cursor || calls != 2 {
+		t.Fatalf("disabled cache did not fetch: %s calls=%d err=%v", got, calls, err)
 	}
 }

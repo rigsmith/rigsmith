@@ -42,7 +42,8 @@ var stackCIExecutable = os.Executable
 func newStackCICmd() *cobra.Command {
 	var manifest, member, build, test, allowedHosts string
 	var tip bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\nLFS members are refused. CI uses the built-in checksum-pinned josh engine.", Args: cobra.NoArgs}
+	var cacheHistory bool
+	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "Comma-separated allowed fork/upstream hosts")
 	_ = c.RegisterFlagCompletionFunc("allowed-hosts", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -51,6 +52,7 @@ func newStackCICmd() *cobra.Command {
 	c.Flags().StringVar(&member, "member", "", "Member prefix (default: match origin URL)")
 	c.Flags().StringVar(&build, "build", "rig build", "Build command, run from the member")
 	c.Flags().StringVar(&test, "test", "rig test", "Test command, run from the member")
+	c.Flags().BoolVar(&cacheHistory, "cache-history", true, "Trust and reuse cached member history (disable for release-grade runs)")
 	c.Flags().BoolVar(&tip, "upstream-tip", false, "Use upstream tips instead of manifest cursors")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		resolved := map[string]string{}
@@ -97,7 +99,7 @@ func newStackCICmd() *cobra.Command {
 		if e != nil {
 			return step("setup", 10, func() error { return e })
 		}
-		var temp, root, exe string
+		var temp, root, exe, reportPath string
 		defer func() {
 			if temp != "" {
 				_ = os.RemoveAll(temp)
@@ -109,7 +111,10 @@ func newStackCICmd() *cobra.Command {
 			p.Dir = dir
 			p.Stdout = cmd.OutOrStdout()
 			p.Stderr = cmd.ErrOrStderr()
-			p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost", "RIG_STACK_CI_VERIFIED=1")
+			p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost", "RIG_STACK_CI_VERIFIED=1", "RIG_STACK_CACHE_REPORT="+reportPath)
+			if !cacheHistory {
+				p.Env = append(p.Env, "RIG_STACK_CACHE=")
+			}
 			return p.Run()
 		}
 		e = step("setup", 10, func() error {
@@ -118,6 +123,13 @@ func newStackCICmd() *cobra.Command {
 				return e
 			}
 			root = filepath.Join(temp, "stack")
+			reportPath = os.Getenv("RIG_STACK_CACHE_REPORT")
+			if reportPath == "" {
+				reportPath = filepath.Join(temp, "history-report")
+			}
+			if e = os.WriteFile(reportPath, nil, 0600); e != nil {
+				return e
+			}
 			exe, e = stackCIExecutable()
 			if e != nil {
 				return e
@@ -241,16 +253,31 @@ func newStackCICmd() *cobra.Command {
 				return err
 			}
 			resolved[member] = sha
-			summary.WriteString("\n| Member | Resolved commit | Josh filter |\n| --- | --- | --- |\n")
+			sources := map[string]string{}
+			filtered := map[string]string{}
+			data, e = os.ReadFile(reportPath)
+			if e != nil {
+				return e
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				parts := strings.Split(line, "\t")
+				if len(parts) == 3 {
+					sources[parts[0]] = parts[1]
+					filtered[parts[0]] = parts[2]
+				}
+			}
+			sources[member] = "fetched"
+			summary.WriteString("\nSource is cache or fetched; the selected member is materialized from checkout HEAD. Cached filtered commits are not verified against their upstream cursors.\n")
+			summary.WriteString("\n| Member | Resolved commit | Josh filter | Source | Filtered import commit |\n| --- | --- | --- | --- | --- |\n")
 			for _, n := range m.names() {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", n, resolved[n])
-				fmt.Fprintf(&summary, "| %s | `%s` | `%s` |\n", n, resolved[n], stackPrefixFilter(n))
+				fmt.Fprintf(&summary, "| %s | `%s` | `%s` | %s | `%s` |\n", n, resolved[n], stackPrefixFilter(n), sources[n], filtered[n])
 			}
 			summary.WriteString("\n")
 			if p := os.Getenv("RIG_STACK_PROVENANCE"); p != "" {
 				records := map[string]map[string]string{}
 				for _, n := range m.names() {
-					records[n] = map[string]string{"commit": resolved[n], "filter": stackPrefixFilter(n)}
+					records[n] = map[string]string{"commit": resolved[n], "filter": stackPrefixFilter(n), "source": sources[n], "filteredCommit": filtered[n]}
 				}
 				b, err := json.MarshalIndent(records, "", "  ")
 				if err != nil {

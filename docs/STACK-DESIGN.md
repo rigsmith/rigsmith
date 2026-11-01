@@ -777,3 +777,46 @@ Local measurement (`BenchmarkStackCIMaterialize`, 100 committed seven-byte files
 three iterations, macOS arm64): batch 74.98 ms/op versus per-file 2351.51 ms/op,
 about 31× faster. The retained benchmark includes materialization and compares
 101 Git subprocesses with two; this is fixture evidence, not a hosted-runner SLA.
+
+### History cache trust
+
+A restored filtered bundle is trusted history. Git checks object integrity,
+but neither the bundle filename nor its Git object hashes prove that its
+filtered commit corresponds to the upstream cursor in the manifest. No local
+cursor-to-filtered-history verification is performed. The substituted-bundle
+unit fixture deliberately demonstrates that different valid history under the
+same cache key is accepted. An import record carried inside that same bundle
+would not provide an independent trust anchor.
+
+The trust boundary is GitHub's cache scoping: PR cache writes are scoped to that
+PR ref and cannot poison another ref's cache; poisoning a default-branch cache
+requires the ability to write caches in that branch's execution context. A
+compromised default-branch workflow or trusted cache writer can therefore
+substitute sibling sources. Cache keys and cursor provenance are not signatures.
+See [GitHub cache access restrictions](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#restrictions-for-accessing-a-cache).
+
+`cache-history: 'false'` disables restored member/host history and engine caches
+in the action and turns bundle consumption/writes off in the verb. Use it for
+release-grade runs that should not trust cached filtered history; the equivalent
+CLI flag is `--cache-history=false`. Existing host object caches on self-hosted
+runners remain josh's responsibility; use a clean runner for that trust boundary.
+Package download caching remains enabled and does not cache build outputs.
+
+The summary and JSON provenance record each member's `source` (`cache` or
+`fetched`) and the actual `filteredCommit` imported. The manifest `commit` is a
+requested upstream cursor, not an independently verified claim about cached
+content. The selected PR member always says `fetched` because its tree comes
+from checkout HEAD after import. Its `filteredCommit` describes the preceding
+import, not the replacement checkout commit. For cached siblings, retain the
+actual bundle/filtered history as well as the provenance to reproduce a build;
+the cursor alone is insufficient if the cache was substituted.
+
+Provenance artifact names include the job, matrix `strategy.job-index`, and
+`github.run_attempt`, avoiding collisions between matrix legs and reruns.
+GitHub documents strategy context access from job steps in its
+[contexts reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#strategy-context).
+The runner's [composite handler](https://github.com/actions/runner/blob/main/src/Runner.Worker/Handlers/CompositeActionHandler.cs)
+creates embedded children; [child-context creation](https://github.com/actions/runner/blob/main/src/Runner.Worker/ExecutionContext.cs)
+copies parent expression values. This source inspection supports strategy context
+availability inside the composite. Actual matrix uploads remain unverified on
+GitHub-hosted runners; local tests do not establish that integration.
