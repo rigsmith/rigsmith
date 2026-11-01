@@ -456,7 +456,7 @@ func newStackPullCmd() *cobra.Command {
 				moved = append(moved, name)
 			}
 			if len(moved) == 0 {
-				return nil
+				return stackPublishAfterPull(ctx, repo, m)
 			}
 			bin, err := stackEngine(ctx, m, cmd)
 			if err != nil {

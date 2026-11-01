@@ -770,3 +770,16 @@ use the caller's git credential helper directly. Seed clone and push have no
 josh transport and retain git's own credential, SSH and workflow token policy.
 A local gh login alone is insufficient unless git is configured to use it
 (for example with gh auth setup-git).
+
+
+Existing relative paths take precedence over GitHub shorthand and are resolved
+to absolute paths before storing the home. Use an explicit ./ prefix for a
+local path that does not yet exist. Local setup can clone a non-bare seed, but
+publication targets must be bare repositories or branches that are not checked
+out; rig never changes another working tree or weakens Git's receive protection.
+A seed directory argument and --publish are mutually exclusive.
+
+Pull also publishes committed root updates when every member is already current,
+so it can retry publication without creating another local merge.
+A .rig-stack pointer contains exactly one reference, optionally followed by one
+LF or CRLF newline; embedded whitespace and control characters are rejected.

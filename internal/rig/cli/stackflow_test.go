@@ -208,6 +208,28 @@ func TestStackFlow(t *testing.T) {
 	if got := strings.TrimSpace(mustGitStack(t, srv.path("org/libfoo"), "rev-parse", "main")); pulled.cursor("libfoo") != got {
 		t.Fatal("publication failure lost the new cursor")
 	}
+	// A no-op pull retries the failed publication, then publishes root-only edits.
+	if err := os.Remove(filepath.Join(rejectedHome, "hooks", "pre-receive")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err != nil {
+		t.Fatalf("no-op publication retry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "root-note.txt"), []byte("root-only update\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "root-only update")
+	localTip := mustGitStack(t, ws, "rev-parse", "HEAD")
+	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err != nil {
+		t.Fatalf("no-op root publication: %v", err)
+	}
+	if got := mustGitStack(t, rejectedHome, "show", "HEAD:root-note.txt"); got != "root-only update\n" {
+		t.Fatalf("root update not published: %q", got)
+	}
+	if got := mustGitStack(t, ws, "rev-parse", "HEAD"); got != localTip {
+		t.Fatal("no-op pull changed local history")
+	}
 	for _, key := range []string{"URL", "Branch", "Base"} {
 		mustGitStack(t, ws, "config", "--local", "--unset", "rig.stackHome"+key)
 	}

@@ -38,7 +38,9 @@ func newStackSeedCmd() *cobra.Command {
 		Use:   "seed [dir]",
 		Short: "Export the root files as a small repo that `rig stack init` rebuilds the stackspace from",
 		Long: "Default: publish a manifest home with --publish owner/repo@branch.\n" +
-			"Without a directory, retry publication to the configured home.\n\n" +
+			"Without a directory, retry publication to the configured home.\n" +
+			"Local publication targets must be bare repositories or branches not checked out.\n" +
+			"A directory argument cannot be combined with --publish.\n\n" +
 			"Writes everything at the stackspace root that is not a member — the\n" +
 			"manifest with its cursors, build overlays, packaging, the files kept out of\n" +
 			"every prefix on purpose — into <dir> as a fresh git repository with one\n" +
@@ -60,6 +62,9 @@ func newStackSeedCmd() *cobra.Command {
 			"  git -C ../rigstack-acme remote add origin <url> && git -C ../rigstack-acme push -u origin main",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if publish != "" && len(args) > 0 {
+				return fmt.Errorf("a seed directory cannot be combined with --publish")
+			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			m, _, repo, err := stackspace(ctx)

@@ -9,9 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +24,12 @@ func stackSeedReference(s string) (remote, ref string, err error) {
 	s = strings.TrimSpace(s)
 	if s == "" || strings.HasPrefix(s, "-") {
 		return "", "", fmt.Errorf("empty or invalid seed reference")
+	}
+	if !strings.Contains(s, ":") {
+		if _, err := os.Stat(s); err == nil {
+			remote, err = filepath.Abs(s)
+			return remote, "", err
+		}
 	}
 	if !strings.Contains(s, ":") && !strings.HasPrefix(s, ".") && !filepath.IsAbs(s) && strings.Count(strings.SplitN(s, "@", 2)[0], "/") == 1 {
 		remote, ref, _ = strings.Cut(s, "@")
@@ -36,9 +45,15 @@ func stackHomeGit(ctx context.Context, dir string, args ...string) (string, erro
 	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	b, err := c.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(b)))
+		return "", fmt.Errorf("git %s: %w: %s", args[0], err, stackSafeHomeOutput(strings.TrimSpace(string(b))))
 	}
 	return strings.TrimSpace(string(b)), nil
+}
+
+var stackHomeURLPattern = regexp.MustCompile("[a-zA-Z][a-zA-Z0-9+.-]*://[^\\s'\"]+")
+
+func stackSafeHomeOutput(s string) string {
+	return stackHomeURLPattern.ReplaceAllStringFunc(s, ghrepo.SafeRemote)
 }
 
 func stackHomeConfig(ctx context.Context, dir, key string) string {
@@ -112,7 +127,7 @@ func stackPublishHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest)
 	base := stackHomeConfig(ctx, repo.Dir, "Base")
 	err := stackPublishHomeTo(ctx, repo, m, remote, branch, base)
 	if err != nil {
-		return fmt.Errorf("local stack changes are retained; manifest home was not updated: %w; retry with `rig stack seed --publish %q` after reconciling seed updates", err, remote)
+		return fmt.Errorf("local stack changes are retained; manifest home was not updated: %w; retry with `rig stack seed --publish %q` after reconciling seed updates", err, ghrepo.SafeRemote(remote))
 	}
 	return nil
 }
@@ -141,6 +156,8 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 			if _, err := stackHomeGit(ctx, dir, "checkout", "-B", branch, "refs/remotes/origin/"+branch); err != nil {
 				return err
 			}
+		} else if _, err := stackHomeGit(ctx, dir, "show-ref", "--verify", "refs/tags/"+branch); err == nil {
+			return fmt.Errorf("seed ref %q is a tag; publication requires a branch", branch)
 		} else if tip, _ := stackHomeGit(ctx, dir, "rev-parse", "--verify", "HEAD"); tip == "" {
 			if _, err := stackHomeGit(ctx, dir, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
 				return err
@@ -211,6 +228,9 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 		return err
 	}
 	if _, err := stackHomeGit(ctx, dir, "push", "origin", "HEAD:refs/heads/"+branch); err != nil {
+		if strings.Contains(err.Error(), "refusing to update checked out branch") {
+			return fmt.Errorf("%w; publish to a bare seed repository or a branch that is not checked out", err)
+		}
 		return err
 	}
 	tip, err = stackHomeGit(ctx, dir, "rev-parse", "HEAD")
@@ -230,7 +250,10 @@ func newStackHomeCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		s := strings.TrimSpace(string(b))
+		s := strings.TrimSuffix(strings.TrimSuffix(string(b), "\r\n"), "\n")
+		if strings.ContainsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return fmt.Errorf(".rig-stack must contain exactly one seed reference without whitespace or control characters")
+		}
 		if _, _, err := stackSeedReference(s); err != nil {
 			return err
 		}

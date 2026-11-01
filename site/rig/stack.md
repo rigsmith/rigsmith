@@ -34,7 +34,7 @@ returns non-zero and says the pull succeeded locally but the home was not
 updated. Reconcile competing seed changes separately; use `rig stack seed`
 to retry publication. No force-push mode is provided.
 
-Doctor checks seed origin only when a home is configured. An inaccessible remote
+Doctor checks the configured manifest home. An inaccessible remote
 is reported as “could not be checked”; a member tree is reported as a failure.
 Only members currently in the manifest are recognised by that scan.
 
@@ -46,6 +46,18 @@ A member may commit a UTF-8 `.rig-stack` file containing
 `acme/rigstack-app@main` and a newline. `rig stack home [pointer-file]` reads
 that reference for tools. README pointers are optional prose, not generated or
 parsed.
+
+Existing relative paths take precedence over GitHub shorthand and are resolved
+to absolute paths before storing the home. Use an explicit ./ prefix for a
+local path that does not yet exist. Local setup can clone a non-bare seed, but
+publication targets must be bare repositories or branches that are not checked
+out; rig never changes another working tree or weakens Git's receive protection.
+A seed directory argument and --publish are mutually exclusive.
+
+Pull also publishes committed root updates when every member is already current,
+so it can retry publication without creating another local merge.
+A .rig-stack pointer contains exactly one reference, optionally followed by one
+LF or CRLF newline; embedded whitespace and control characters are rejected.
 
 ## The two halves
 

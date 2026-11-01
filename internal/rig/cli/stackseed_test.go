@@ -401,3 +401,16 @@ func TestSeedDirForEscapesEnclosingRepositories(t *testing.T) {
 		t.Fatalf("suggestion still inside %s", top)
 	}
 }
+
+func TestStackSeedRejectsDirectoryWithPublish(t *testing.T) {
+	cmd := newStackSeedCmd()
+	cmd.SetContext(context.Background())
+	if err := cmd.Flags().Set("publish", "/unused/home.git"); err != nil {
+		t.Fatal(err)
+	}
+	// Must reject before stack discovery or any remote operation.
+	err := cmd.RunE(cmd, []string{"./snapshot"})
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("mixed seed modes: %v", err)
+	}
+}
