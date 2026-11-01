@@ -40,6 +40,7 @@ func newStackSeedCmd() *cobra.Command {
 		Long: "Default: publish a manifest home with --publish owner/repo@branch.\n" +
 			"Without a directory, retry publication to the configured home.\n" +
 			"Local manifest homes must be bare repositories for publication.\n" +
+			"Publication refuses unsent member work; --force overrides only this reconstruction check.\n" +
 			"A directory argument cannot be combined with --publish.\n\n" +
 			"Writes everything at the stackspace root that is not a member — the\n" +
 			"manifest with its cursors, build overlays, packaging, the files kept out of\n" +
@@ -83,13 +84,13 @@ func newStackSeedCmd() *cobra.Command {
 						ref = stackHomeConfig(ctx, repo.Dir, "Branch")
 					}
 				}
-				return stackPublishHomeTo(ctx, repo, m, remote, ref, base, out)
+				return stackPublishHomeToWithPolicy(ctx, repo, m, remote, ref, base, stackHomePublishPolicy{force: force}, out)
 			}
 			if len(args) == 0 {
 				if stackHomeConfig(ctx, repo.Dir, "URL") == "" {
 					return fmt.Errorf("no manifest home configured — pass a directory or --publish <seed>")
 				}
-				return stackPublishHome(ctx, repo, m, out)
+				return stackPublishConfiguredHome(ctx, repo, m, stackHomePublishPolicy{force: force}, out)
 			}
 			dest := args[0]
 			written, err := stackSeed(ctx, repo, m, dest, force)
@@ -276,6 +277,11 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 
 // stackCheckSeedRebuild refuses a seed that would omit committed member work.
 func stackCheckSeedRebuild(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) error {
+	return errors.Join(stackSeedRebuildProblems(ctx, repo, m)...)
+}
+
+func stackSeedRebuildProblems(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) []error {
+	var problems []error
 	for _, name := range m.names() {
 		if !stackPrefixPresent(ctx, repo, name) {
 			continue
@@ -283,18 +289,18 @@ func stackCheckSeedRebuild(ctx context.Context, repo *gitrepo.Repo, m *stackMani
 		u := stackUnsentWork(ctx, repo, name, nil)
 		switch {
 		case u.Commits:
-			return fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first", name, name)
+			problems = append(problems, fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first", name, name))
 		case !u.Known:
-			return fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`", name, name)
+			problems = append(problems, fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`", name, name))
 		case u.Proposed:
 			// A rebuild imports the proposed branch from the fork, so it
 			// had better still be there as pushed.
 			if err := stackProposedOnFork(ctx, repo, m, name); err != nil {
-				return err
+				problems = append(problems, err)
 			}
 		}
 	}
-	return nil
+	return problems
 }
 
 // stackEnclosingRepo reports the git work tree that would swallow a

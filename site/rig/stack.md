@@ -24,14 +24,24 @@ URLs, SSH remotes and local paths also work. Tags are read-only homes.
 An explicit setup seed opts into automatic home publication after pull and
 propose. Running setup without a seed leaves remotes and home configuration
 unchanged, so existing stackspaces retain their behavior. After a manual clone,
-use `rig stack seed --publish acme/rigstack-app@main` to opt in. A configured
-setup can be rerun without an argument.
+use `rig stack seed --publish acme/rigstack-app@main` to opt in only when the
+committed root files match the seed. If they differ (including README or overlay
+changes made by setup), initial adoption refuses. Run `rig stack setup <seed>`
+in a fresh empty directory, reconcile your desired root edits there and commit,
+then publish from that configured checkout. A configured setup can be rerun
+without an argument.
 
 Publication creates an unsigned root-only commit in an independent seed clone.
-It never imports fused objects. Publication refuses unsent member work or an
-unknown import baseline and validates recorded proposals on the fork, so the
-seed can reconstruct every member. Propose outstanding work before retrying.
-A moved seed is refused rather than overwritten.
+It never imports fused objects. Explicit seed publication refuses unsent member
+work or an unknown import baseline and validates recorded proposals on the fork.
+Use --force to override only that reconstruction check when publishing explicitly.
+Automatic publication after pull/propose warns on stdout naming each affected
+member and continues: the seed contains recorded cursors/proposals and omits
+unpublished local work. If other files are dirty, automatic publication defers
+successfully instead; commit or stash them, then use `rig stack seed` to retry.
+Pull itself still refuses an initially dirty tree.
+A moved seed is refused rather than overwritten, and --force never bypasses that
+check or the differing-root-files refusal on initial adoption.
 If publication fails, the local pull and cursor commit remain intact; the command
 returns non-zero and says the pull succeeded locally but the home was not
 updated. Reconcile competing seed changes separately; use `rig stack seed`

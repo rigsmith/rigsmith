@@ -499,3 +499,114 @@ func TestStackGuardMemberHome(t *testing.T) {
 		})
 	}
 }
+
+func TestStackHomeAutomaticWarnsForEveryUnsentMember(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	for _, name := range []string{"pty-core", "term-core"} {
+		if err := os.WriteFile(filepath.Join(root, name, "src", "local.cs"), []byte("// local work"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustGitStack(t, root, "add", "-A")
+	mustGitStack(t, root, "commit", "-qm", "unsent work in both members")
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+	if err := stackConfigureHome(ctx, root, remote, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := stackPublishHome(ctx, repo, m, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pty-core", "term-core"} {
+		if !strings.Contains(out.String(), name+" has commits") {
+			t.Fatalf("warning omitted %s: %s", name, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "warning:") {
+		t.Fatalf("missing warning: %s", out.String())
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got == "" {
+		t.Fatal("automatic warning blocked publication")
+	}
+	if err := stackCheckHome(ctx, remote, m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStackHomeAutomaticDefersDirtyTree(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "missing.git")
+	if err := stackConfigureHome(ctx, root, remote, "main", "unchanged"); err != nil {
+		t.Fatal(err)
+	}
+	note := filepath.Join(root, "untracked-notes")
+	if err := os.WriteFile(note, []byte("keep me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := stackPublishAfterPull(ctx, repo, m, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "publication deferred") {
+		t.Fatalf("missing deferral: %s", out.String())
+	}
+	if stackHomeConfig(ctx, root, "Base") != "unchanged" {
+		t.Fatal("deferral changed home")
+	}
+	if b, err := os.ReadFile(note); err != nil || string(b) != "keep me" {
+		t.Fatal("deferral lost untracked file")
+	}
+}
+
+func TestStackHomeInitialAdoptionRejectsDifferentRoots(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := filepath.Join(t.TempDir(), "seed")
+	if _, err := stackSeed(ctx, repo, m, seed, false); err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "clone", "--bare", seed, remote)
+	before := mustGitStack(t, remote, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(root, "new-root-file"), []byte("local root edit"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "add", "-A")
+	mustGitStack(t, root, "commit", "-qm", "root differs")
+	for _, force := range []bool{false, true} {
+		err := stackPublishHomeToWithPolicy(ctx, repo, m, remote, "main", "", stackHomePublishPolicy{force: force})
+		if err == nil || !strings.Contains(err.Error(), "existing seed differs") {
+			t.Fatalf("force=%t root mismatch: %v", force, err)
+		}
+	}
+	if got := mustGitStack(t, remote, "rev-parse", "HEAD"); got != before {
+		t.Fatal("initial adoption overwrote home")
+	}
+}

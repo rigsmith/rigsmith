@@ -445,3 +445,37 @@ func TestStackSeedPublishDryRun(t *testing.T) {
 		t.Fatal("dry run configured home")
 	}
 }
+
+func TestStackSeedPublishForceOverridesUnsentWork(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "local.cs"), []byte("// unsent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "add", "-A")
+	mustGitStack(t, root, "commit", "-qm", "unsent member work")
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+	cmd := newStackSeedCmd()
+	cmd.SetContext(context.Background())
+	if err := cmd.Flags().Set("publish", remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err == nil || !strings.Contains(err.Error(), "has commits") {
+		t.Fatalf("explicit publish accepted unsent work: %v", err)
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got != "" {
+		t.Fatal("refused publish moved remote")
+	}
+	if err := cmd.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("forced publication: %v", err)
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got == "" {
+		t.Fatal("force did not publish")
+	}
+	if _, err := stackHomeGit(context.Background(), remote, "rev-parse", "HEAD:pty-core"); err == nil {
+		t.Fatal("force published a member tree")
+	}
+}

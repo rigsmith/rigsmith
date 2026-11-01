@@ -43,6 +43,8 @@ fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
 
 The default manifest home is a small seed repo shared by local setup and CI.
+First publication to an existing seed requires matching root files. If they
+differ, set up from that seed in a fresh directory and reconcile the root edits.
 See [Stackspaces](../../site/rig/stack.md) for publishing, setup and member pointers.
 
 ## Verbs

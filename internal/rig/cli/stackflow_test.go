@@ -330,6 +330,32 @@ func TestStackFlow(t *testing.T) {
 	if out, err := runVerbOut(ctx, newStackSendCmd(), "libfoo", "after-pull"); err != nil || !strings.Contains(out, "nothing to send") {
 		t.Fatalf("propose after rebuild should be a no-op against the same branch: %v\n%s", err, out)
 	}
+	// An unrelated untracked file must not turn a successful proposal into
+	// an error: defer only home publication and preserve the user's file.
+	beforeDeferredHome := mustGitStack(t, seedRemote, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(rebuilt, "libfoo", "src", "libfoo.txt"), []byte("libfoo unrelated-dirty\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, rebuilt, "commit", "-qm", "member change", "--", "libfoo")
+	strayNote := filepath.Join(rebuilt, "untracked-notes")
+	if err := os.WriteFile(strayNote, []byte("keep me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runVerbOut(ctx, newStackSendCmd(), "libfoo", "unrelated-dirty"); err != nil || !strings.Contains(out, "publication deferred") {
+		t.Fatalf("proposal with unrelated file: %v\n%s", err, out)
+	}
+	if !refExists(t, fork, "refs/heads/stack/unrelated-dirty") {
+		t.Fatal("proposal was not pushed")
+	}
+	if got := mustGitStack(t, seedRemote, "rev-parse", "HEAD"); got != beforeDeferredHome {
+		t.Fatal("dirty proposal published home")
+	}
+	if b, err := os.ReadFile(strayNote); err != nil || string(b) != "keep me" {
+		t.Fatal("proposal lost untracked file")
+	}
+	if err := os.Remove(strayNote); err != nil {
+		t.Fatal(err)
+	}
 	// ---- propose must not commit a manifest edit of the user's own -------
 	//
 	// Last, because it deliberately leaves the manifest dirty. Against the

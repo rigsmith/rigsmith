@@ -141,14 +141,20 @@ func stackConfigureHome(ctx context.Context, dir, remote, branch, base string) e
 
 // Publication has no object connection to the fused repository. Only an archive
 // crosses the boundary; the parent is always the separately cloned seed tip.
+type stackHomePublishPolicy struct{ automatic, force bool }
+
 func stackPublishHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, out ...io.Writer) error {
+	return stackPublishConfiguredHome(ctx, repo, m, stackHomePublishPolicy{automatic: true}, out...)
+}
+
+func stackPublishConfiguredHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, policy stackHomePublishPolicy, out ...io.Writer) error {
 	remote := stackHomeConfig(ctx, repo.Dir, "URL")
 	if remote == "" {
 		return nil
 	}
 	branch := stackHomeConfig(ctx, repo.Dir, "Branch")
 	base := stackHomeConfig(ctx, repo.Dir, "Base")
-	err := stackPublishHomeTo(ctx, repo, m, remote, branch, base, out...)
+	err := stackPublishHomeToWithPolicy(ctx, repo, m, remote, branch, base, policy, out...)
 	if err != nil {
 		return fmt.Errorf("local stack changes are retained; manifest home was not updated: %w; retry with `rig stack seed --publish %q` after reconciling seed updates", err, ghrepo.SafeRemote(remote))
 	}
@@ -156,6 +162,10 @@ func stackPublishHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest,
 }
 
 func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, remote, branch, base string, out ...io.Writer) error {
+	return stackPublishHomeToWithPolicy(ctx, repo, m, remote, branch, base, stackHomePublishPolicy{}, out...)
+}
+
+func stackPublishHomeToWithPolicy(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, remote, branch, base string, policy stackHomePublishPolicy, out ...io.Writer) error {
 	if err := stackValidateHomeRemote(remote); err != nil {
 		return err
 	}
@@ -168,10 +178,24 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 	if dirty, err := repo.Dirty(ctx); err != nil {
 		return err
 	} else if dirty {
+		if policy.automatic {
+			if len(out) > 0 {
+				fmt.Fprintln(out[0], "manifest home publication deferred — commit or stash other changes, then run rig stack seed")
+			}
+			return nil
+		}
 		return fmt.Errorf("commit stack changes before publishing the manifest home")
 	}
-	if err := stackCheckSeedRebuild(ctx, repo, m); err != nil {
-		return err
+	if !policy.force {
+		problems := stackSeedRebuildProblems(ctx, repo, m)
+		if !policy.automatic && len(problems) > 0 {
+			return errors.Join(problems...)
+		}
+		for _, problem := range problems {
+			if len(out) > 0 {
+				fmt.Fprintf(out[0], "warning: manifest home cannot reconstruct all local member work: %v; publishing recorded cursors and proposals only\n", problem)
+			}
+		}
 	}
 	if branch == "READ_ONLY" {
 		return fmt.Errorf("seed is pinned to a tag; publication requires a branch")

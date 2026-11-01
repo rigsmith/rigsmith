@@ -117,7 +117,8 @@ func renderStackReadme(root string, m *stackManifest) string {
 		"Use `rig stack seed --publish acme/rigstack-app@main` to publish it and " +
 		"`rig stack setup acme/rigstack-app@main` in an empty directory to rebuild it. " +
 		"Pull and propose publish root-only commits through a separate clone; fused history never leaves. " +
-		"Setup with an explicit seed disables plain pushes to origin. No-argument setup leaves remotes unchanged; after a manual clone, opt in with `rig stack seed --publish <seed>`.\n\n")
+		"Setup with an explicit seed disables plain pushes to origin. No-argument setup leaves remotes unchanged; after a manual clone, opt in with `rig stack seed --publish <seed>` only if committed root files match the seed. " +
+		"If they differ, use `rig stack setup <seed>` in a fresh empty directory, reconcile the root edits there and commit, then publish.\n\n")
 	b.WriteString("**Keep the tree clean before `init`, `pull` and `propose`.** They refuse a dirty " +
 		"tree on purpose: an import stages everything, and would swallow uncommitted edits.\n\n")
 

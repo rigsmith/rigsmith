@@ -716,21 +716,26 @@ The owner/repo shorthand means GitHub; its optional @ref names a branch or tag
 
 Only an explicit seed argument opts into a manifest home. No-argument setup
 leaves the home configuration and origin unchanged, including on older fused
-stacks. After a manual clone, opt in with rig stack seed --publish <seed>.
+stacks. After a manual clone, opt in with `rig stack seed --publish <seed>`
+only when the committed root files match the existing seed. If setup or local
+edits changed them, initial adoption refuses: use `rig stack setup <seed>` in
+a fresh empty directory, reconcile the desired root edits there, commit, then
+publish from that configured checkout. --force does not bypass this refusal.
 
 Explicit setup remembers the remote, branch and unfused tip in local git config
 (`rig.stackHomeURL`, `rig.stackHomeBranch`, `rig.stackHomeBase`).
 It disables origin's push URL in the fused checkout. An unconfigured checkout
 keeps its existing behavior. Pull and propose publish the committed root files
 after recording their changes locally. A proposal made with an already-edited
-manifest defers publication until that file is committed. Publication refuses
-a dirty checkout so prefix exclusions always match the committed manifest. A retry is `rig stack seed` without
+manifest defers publication until that file is committed. Other dirty files
+also defer automatic publication successfully; explicit publication refuses a
+dirty checkout so prefix exclusions match the committed manifest. A retry is `rig stack seed` without
 arguments. Publication never imports objects from the fused checkout: a temporary
 independent clone receives only a git archive of HEAD outside member prefixes,
 then creates one ordinary commit parented on the seed tip. No-op exports create
 no commit. An existing home cannot be replaced on first publication: if its
 files differ, rig requires setup from that seed and reconciliation first. Every reachable seed commit is checked for member trees before and
-after writing. Doctor clones origin only for a configured home; ordinary
+after writing. Doctor clones the configured home URL; ordinary
 unconfigured stacks incur no seed network request. A remote that cannot be
 checked produces a neutral access warning; a detected member tree is a failure
 finding. The scan recognises only members currently in the manifest: an old
@@ -756,12 +761,20 @@ Pointers are maintained by the member owner; setup never edits member sources.
 A member README pointer is optional prose and is not generated or parsed.
 
 
-Both offline seed export and shared home publication validate that every
-present member is reconstructible: unsent work or an unknown import baseline
-refuses publication, and a proposed tree is checked against its recorded fork
-branch. Automatic publication uses the same safeguard; local pull/proposal work
-remains committed on refusal. Propose outstanding work before retrying the home.
-Only offline directory export offers --force.
+Explicit seed export/publication validates that every present member is
+reconstructible: unsent work or an unknown import baseline refuses publication,
+and a proposed tree is checked against its recorded fork branch. --force
+overrides this reconstruction safeguard for directory export, seed --publish,
+or an explicit configured-home retry. It never overrides dirty-tree refusal,
+fused-history checks, a moved seed, or differing root files on first adoption.
+
+Automatic publication after pull/propose treats local member work as normal:
+it prints a warning on stdout for each member it cannot reconstruct, then
+publishes the recorded cursors and proposals. Such a seed reproduces those
+recorded revisions, not unpublished local edits. A dirty tree instead defers
+automatic publication with a stdout message and success status; commit or stash
+the unrelated changes, then retry with rig stack seed. Pull still requires a
+clean tree before its local operation; only the publication phase defers.
 
 Home publication commits are unsigned internal snapshots: rig overrides
 commit.gpgsign=false in the temporary clone, even when the user's global
