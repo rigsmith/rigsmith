@@ -233,23 +233,8 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 	// exists nowhere else, and a seed that looks complete and is not would
 	// be found out only on the other machine.
 	if !force {
-		for _, name := range m.names() {
-			if !stackPrefixPresent(ctx, repo, name) {
-				continue
-			}
-			u := stackUnsentWork(ctx, repo, name, nil)
-			switch {
-			case u.Commits:
-				return 0, fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first, or --force", name, name)
-			case !u.Known:
-				return 0, fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`, then --force", name, name)
-			case u.Proposed:
-				// A rebuild imports the proposed branch from the fork, so it
-				// had better still be there as pushed.
-				if err := stackProposedOnFork(ctx, repo, m, name); err != nil {
-					return 0, err
-				}
-			}
+		if err := stackCheckSeedRebuild(ctx, repo, m); err != nil {
+			return 0, fmt.Errorf("%w; --force overrides this offline seed check", err)
 		}
 	}
 	names, err := repo.TopLevelNames(ctx, "HEAD")
@@ -287,6 +272,29 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 		return 0, err
 	}
 	return len(keep), nil
+}
+
+// stackCheckSeedRebuild refuses a seed that would omit committed member work.
+func stackCheckSeedRebuild(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) error {
+	for _, name := range m.names() {
+		if !stackPrefixPresent(ctx, repo, name) {
+			continue
+		}
+		u := stackUnsentWork(ctx, repo, name, nil)
+		switch {
+		case u.Commits:
+			return fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first", name, name)
+		case !u.Known:
+			return fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`", name, name)
+		case u.Proposed:
+			// A rebuild imports the proposed branch from the fork, so it
+			// had better still be there as pushed.
+			if err := stackProposedOnFork(ctx, repo, m, name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // stackEnclosingRepo reports the git work tree that would swallow a

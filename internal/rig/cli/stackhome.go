@@ -51,6 +51,10 @@ func stackHomeGit(ctx context.Context, dir string, args ...string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, stackSafeHomeOutput(strings.TrimSpace(string(b))))
 	}
+	// NUL-delimited output contains pathnames whose whitespace is significant.
+	if bytes.IndexByte(b, 0) >= 0 {
+		return string(b), nil
+	}
 	return strings.TrimSpace(string(b)), nil
 }
 
@@ -73,11 +77,11 @@ func stackCheckHome(ctx context.Context, dir string, m *stackManifest) error {
 		return err
 	}
 	for _, sha := range strings.Fields(commits) {
-		names, err := stackHomeGit(ctx, dir, "ls-tree", "--name-only", sha)
+		names, err := stackHomeGit(ctx, dir, "ls-tree", "--name-only", "-z", sha)
 		if err != nil {
 			return err
 		}
-		for _, name := range strings.Split(names, "\n") {
+		for _, name := range strings.Split(names, "\x00") {
 			if m.Repos[name] != nil {
 				return &stackHomeTreeError{Name: name, Commit: sha}
 			}
@@ -166,6 +170,9 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 	} else if dirty {
 		return fmt.Errorf("commit stack changes before publishing the manifest home")
 	}
+	if err := stackCheckSeedRebuild(ctx, repo, m); err != nil {
+		return err
+	}
 	if branch == "READ_ONLY" {
 		return fmt.Errorf("seed is pinned to a tag; publication requires a branch")
 	}
@@ -177,6 +184,13 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 	args := []string{"clone", "--no-local"}
 	args = append(args, "--", remote, dir)
 	if _, err := stackHomeGit(ctx, repo.Dir, args...); err != nil {
+		return err
+	}
+	emptyHooks := filepath.Join(dir, ".git", "rig-publication-hooks")
+	if err := os.MkdirAll(emptyHooks, 0755); err != nil {
+		return err
+	}
+	if _, err := stackHomeGit(ctx, dir, "config", "--local", "core.hooksPath", emptyHooks); err != nil {
 		return err
 	}
 	if branch != "" {

@@ -28,7 +28,10 @@ use `rig stack seed --publish acme/rigstack-app@main` to opt in. A configured
 setup can be rerun without an argument.
 
 Publication creates an unsigned root-only commit in an independent seed clone.
-It never imports fused objects. A moved seed is refused rather than overwritten.
+It never imports fused objects. Publication refuses unsent member work or an
+unknown import baseline and validates recorded proposals on the fork, so the
+seed can reconstruct every member. Propose outstanding work before retrying.
+A moved seed is refused rather than overwritten.
 If publication fails, the local pull and cursor commit remain intact; the command
 returns non-zero and says the pull succeeded locally but the home was not
 updated. Reconcile competing seed changes separately; use `rig stack seed`
@@ -40,7 +43,10 @@ Only members currently in the manifest are recognised by that scan.
 
 Private seed access uses git's credential configuration. CI workflows must
 configure a token for HTTPS seeds; a gh login alone is insufficient unless git
-uses its helper. No member credentials are copied into the seed.
+uses its helper. Git credential helpers and their stored credentials are not
+copied into the seed. Committed root files outside member prefixes are published
+as-is, without content filtering: review files such as a root .npmrc for secrets
+before publishing.
 
 A member may commit a UTF-8 `.rig-stack` file containing
 `acme/rigstack-app@main` and a newline. `rig stack home [pointer-file]` reads

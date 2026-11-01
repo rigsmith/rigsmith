@@ -208,6 +208,11 @@ func TestStackFlow(t *testing.T) {
 	if got := strings.TrimSpace(mustGitStack(t, srv.path("org/libfoo"), "rev-parse", "main")); pulled.cursor("libfoo") != got {
 		t.Fatal("publication failure lost the new cursor")
 	}
+	// The pulled tree includes local divergence: get it onto the fork before a
+	// seed can reconstruct it. The rejecting home still makes publication fail.
+	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "after-pull"); err == nil || !strings.Contains(err.Error(), "manifest home was not updated") {
+		t.Fatalf("proposal before seed retry: %v", err)
+	}
 	// A no-op pull retries the failed publication, then publishes root-only edits.
 	if err := os.Remove(filepath.Join(rejectedHome, "hooks", "pre-receive")); err != nil {
 		t.Fatal(err)
@@ -391,6 +396,11 @@ func TestStackFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustGitStack(t, rebuilt, "commit", "-qam", "stack: manifest")
+
+	// The remaining conflict-resolution cases deliberately retain unsent local
+	// work. Exercise the unconfigured local-pull contract from here onward;
+	// publication's reconstruction refusal and retry are covered above.
+	mustGitStack(t, rebuilt, "config", "--local", "--unset", "rig.stackHomeURL")
 
 	// ---- a conflicted pull, resolved by hand, is recorded on the re-run --
 	//
@@ -1302,5 +1312,33 @@ func TestStackProposalsRecordedAndShown(t *testing.T) {
 	}
 	if !strings.Contains(out, "branch has moved since") {
 		t.Fatalf("status does not say the pull request is behind the branch:\n%s", out)
+	}
+}
+
+func TestStackMemberHomeGuardFlow(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") == "" {
+		t.Skip("set RIG_STACK_E2E=1 to run the member-home guard flow")
+	}
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	remote := srv.bare(t, "acme/app")
+	root := rmStackspace(t, fmt.Sprintf(`{"repos":{"app":{"upstream":%q,"fork":%q,"owned":true}}}`, srv.spec("acme/app"), srv.spec("acme/app")))
+	ctx := context.Background()
+	if err := stackConfigureHome(ctx, root, stackRemoteURL(srv.spec("acme/app")), "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	before := mustGitStack(t, remote, "for-each-ref")
+	for _, build := range []func() *cobra.Command{newStackSendCmd, newStackPushCmd} {
+		cmd := build()
+		args := []string{"app"}
+		if cmd.Name() == "propose" {
+			args = append(args, "fix")
+		}
+		if err := runVerb(ctx, cmd, args...); err == nil || !strings.Contains(err.Error(), "member destination is the manifest home") {
+			t.Fatalf("%s accepted home destination: %v", cmd.Name(), err)
+		}
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got != before {
+		t.Fatal("member command moved manifest home")
 	}
 }

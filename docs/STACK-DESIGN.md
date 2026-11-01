@@ -756,10 +756,20 @@ Pointers are maintained by the member owner; setup never edits member sources.
 A member README pointer is optional prose and is not generated or parsed.
 
 
+Both offline seed export and shared home publication validate that every
+present member is reconstructible: unsent work or an unknown import baseline
+refuses publication, and a proposed tree is checked against its recorded fork
+branch. Automatic publication uses the same safeguard; local pull/proposal work
+remains committed on refusal. Propose outstanding work before retrying the home.
+Only offline directory export offers --force.
+
 Home publication commits are unsigned internal snapshots: rig overrides
 commit.gpgsign=false in the temporary clone, even when the user's global
 configuration requests signing. This avoids signing prompts and unavailable
 keys under the temporary rig identity; member commits retain their own policy.
+The independent clone also uses an empty local hook directory for generated
+commit and push operations, so global client hooks cannot rewrite or block a
+snapshot. The remote's receive hooks and branch protections still apply.
 
 Seed operations use plain git credentials for HTTPS and SSH. The owner/repo
 shorthand resolves to a GitHub HTTPS remote, so private seeds in CI need a token

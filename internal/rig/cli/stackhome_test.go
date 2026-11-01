@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -362,5 +364,138 @@ func TestStackHomePublicationDryRun(t *testing.T) {
 	}
 	if _, err := os.Stat(missing); !os.IsNotExist(err) {
 		t.Fatal("preview touched remote")
+	}
+}
+
+func TestStackHomeChecksQuotedMemberNames(t *testing.T) {
+	for _, name := range []string{"café", "lib\"one", "\nleading", "trailing\n"} {
+		t.Run(name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && strings.ContainsAny(name, "\"\n") {
+				t.Skip("name is not supported by the Windows filesystem")
+			}
+			root := rmStackspace(t, rmManifest)
+			if err := os.MkdirAll(filepath.Join(root, name), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, name, "file"), []byte("member"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			mustGitStack(t, root, "add", "-A")
+			mustGitStack(t, root, "commit", "-qm", "quoted member")
+			m := &stackManifest{Repos: map[string]*stackRepo{name: {}}}
+			var tree *stackHomeTreeError
+			err := stackCheckHome(context.Background(), root, m)
+			if !errors.As(err, &tree) || tree.Name != name {
+				t.Fatalf("member %q was not detected: %v", name, err)
+			}
+		})
+	}
+}
+
+func TestStackHomeRefusesUnrebuildableMembers(t *testing.T) {
+	for _, unknown := range []bool{false, true} {
+		t.Run(fmt.Sprintf("unknown=%t", unknown), func(t *testing.T) {
+			root := rmStackspaceWith(t, rmManifest, !unknown)
+			if !unknown {
+				if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "local.cs"), []byte("// local only"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				mustGitStack(t, root, "add", "-A")
+				mustGitStack(t, root, "commit", "-qm", "unsent member")
+			}
+			ctx := context.Background()
+			repo, err := gitrepo.Open(ctx, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, _, err := loadStackManifest(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			remote := filepath.Join(t.TempDir(), "home.git")
+			mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+			before := mustGitStack(t, remote, "for-each-ref")
+			if err := stackPublishHomeTo(ctx, repo, m, remote, "main", ""); err == nil || !strings.Contains(err.Error(), "commits") {
+				t.Fatalf("unrebuildable member accepted: %v", err)
+			}
+			if got := mustGitStack(t, remote, "for-each-ref"); got != before {
+				t.Fatal("refusal moved home")
+			}
+		})
+	}
+}
+
+func TestStackHomePublicationIgnoresGlobalHooks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test hooks use a POSIX shell")
+	}
+	root := rmStackspace(t, rmManifest)
+	ctx := context.Background()
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+	hooks := filepath.Join(t.TempDir(), "hooks")
+	if err := os.MkdirAll(hooks, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pre-commit", "prepare-commit-msg", "commit-msg", "pre-push"} {
+		if err := os.WriteFile(filepath.Join(hooks, name), []byte("#!/bin/sh\nexit 97\n"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(config, []byte(fmt.Sprintf("[core]\n hooksPath = %q\n", hooks)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	if err := stackPublishHomeTo(ctx, repo, m, remote, "main", ""); err != nil {
+		t.Fatalf("generated publication ran a global hook: %v", err)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, remote, "log", "-1", "--format=%s")); got != "stack: update manifest home" {
+		t.Fatalf("snapshot message changed: %s", got)
+	}
+}
+
+func TestStackGuardMemberHome(t *testing.T) {
+	for _, tc := range []struct {
+		name, home, origin, remote string
+		refuse                     bool
+	}{
+		{"https", "https://github.com/acme/seed.git", "", "github.com/acme/seed", true},
+		{"scp", "git@github.com:acme/seed.git", "", "https://github.com/acme/seed", true},
+		{"git suffix", "github.com/acme/seed.git", "", "github.com/acme/seed", true},
+		{"origin fallback", "", "git@github.com:acme/seed.git", "github.com/acme/seed", true},
+		{"different home", "https://github.com/acme/seed.git", "", "github.com/acme/member", false},
+		{"configured home wins", "https://github.com/acme/seed.git", "https://github.com/acme/member.git", "github.com/acme/member", false},
+		{"unconfigured", "", "", "github.com/acme/member", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			mustGitStack(t, root, "init", "-q")
+			ctx := context.Background()
+			repo, err := gitrepo.Open(ctx, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.home != "" {
+				if err := stackConfigureHome(ctx, root, tc.home, "main", ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.origin != "" {
+				mustGitStack(t, root, "remote", "add", "origin", tc.origin)
+			}
+			err = stackGuardMemberHome(ctx, repo, tc.remote)
+			if (err != nil) != tc.refuse {
+				t.Fatalf("guard refusal=%t, want %t: %v", err != nil, tc.refuse, err)
+			}
+		})
 	}
 }
