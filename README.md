@@ -16,6 +16,8 @@ and the shared engine under `core/`:
 | [`cmd/codexrig/`](cmd/codexrig/) | `codexrig` | The same idea for the Codex CLI: sync `config.toml`, `AGENTS.md`, skills, prompts and rules across machines via a private git repo, with cross-OS path correction (including the absolute paths Codex writes as TOML table KEYS), TOML-aware field-level redaction, and several Codex logins side by side, each in its own `CODEX_HOME`. Session rollouts are opt-in and are never rewritten. See [docs/CODEXRIG-DESIGN.md](docs/CODEXRIG-DESIGN.md). |
 | [`cmd/brewrig/`](cmd/brewrig/) | `brewrig` | Keep several machines on the same Homebrew software — and the same versions of it. Each machine publishes what it deliberately installed (`installed_on_request`, not the dependency closure) to a private git repo; the union is installed everywhere. It never uninstalls to make machines match: the one exception is a package you deliberately removed elsewhere, offered one prompt at a time. darwin/linux only — Homebrew has no Windows. See [docs/BREWRIG-DESIGN.md](docs/BREWRIG-DESIGN.md). |
 
+`rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`, `seed`) refuse dry-run; `wire` and `doctor --fix` report without writing.
+
 These binaries are single, statically-linked Go executables — the north-star
 property: no .NET runtime, no Node, installable via `curl | sh` / Homebrew /
 winget / Scoop on any machine John roams onto. Every release builds the tools
@@ -86,6 +88,8 @@ ecosystems (`examples/demo` is a ready-made polyglot repo to try it on).
 JSON contract external plugins speak; `examples/plugins/changeset-changelog-changelogen`
 is a Node reference plugin producing changelogen-style output. Set
 `"changelog": "<plugin>"` in config to swap it in.
+
+See [Stackspaces](site/rig/stack.md) for source build signals, member imports, and evaluation timing.
 
 ## Design
 
