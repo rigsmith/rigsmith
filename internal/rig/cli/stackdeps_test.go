@@ -166,7 +166,7 @@ func TestStackDepsProposalDirection(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"lib", "app", "lib"} {
-		if err := stackRememberProposal(src, m, name, "topic", "stack/topic", strings.Repeat("a", 40)); err != nil {
+		if err := stackRememberProposal(src, m, name, "topic", "stack/topic", strings.Repeat("a", 40), io.Discard); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -482,6 +482,94 @@ func TestStackDepsProposalCycles(t *testing.T) {
 			m.Proposals["lib"]["other"] = stackProposal{Branch: "stack/other", DependsOn: []string{"app"}}
 			if err := m.validate(); err != nil {
 				t.Fatalf("independent topics: %v", err)
+			}
+		})
+	}
+}
+
+func TestStackDepsRememberProposalSkipsCyclicEdges(t *testing.T) {
+	for _, transitive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("transitive=%v", transitive), func(t *testing.T) {
+			root := t.TempDir()
+			m := &stackManifest{Repos: map[string]*stackRepo{}, Proposals: map[string]map[string]stackProposal{}}
+			for _, member := range []string{"app", "core", "lib", "util"} {
+				m.Repos[member] = &stackRepo{Upstream: "github.com/acme/" + member, Fork: "github.com/you/" + member}
+			}
+			m.Proposals["app"] = map[string]stackProposal{"topic": {Branch: "stack/topic", DependsOn: []string{"lib"}}}
+			m.Proposals["util"] = map[string]stackProposal{"topic": {Branch: "stack/topic"}}
+			if transitive {
+				m.Proposals["app"]["topic"] = stackProposal{Branch: "stack/topic", DependsOn: []string{"core"}}
+				m.Proposals["core"] = map[string]stackProposal{"topic": {Branch: "stack/topic", DependsOn: []string{"lib"}}}
+			}
+			data, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeStackManifest(t, root, string(data))
+			m, src, err := loadStackManifest(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var notice bytes.Buffer
+			if err = stackRememberProposal(src, m, "lib", "topic", "stack/topic", strings.Repeat("a", 40), &notice); err != nil {
+				t.Fatalf("recording an already-pushed proposal should succeed: %v", err)
+			}
+			lines := strings.Split(strings.TrimSpace(notice.String()), "\n")
+			wantLines := 1
+			if transitive {
+				wantLines = 2
+			}
+			if len(lines) != wantLines {
+				t.Fatalf("expected one line per skipped edge: %q", notice.String())
+			}
+			for _, line := range lines {
+				if !strings.Contains(line, "skipped inferred dependsOn") || !strings.Contains(line, "would create a dependency cycle") {
+					t.Fatal(line)
+				}
+			}
+			m, _, err = loadStackManifest(root)
+			if err != nil {
+				t.Fatalf("proposal left an unusable manifest: %v", err)
+			}
+			proposal := m.Proposals["lib"]["topic"]
+			if proposal.Branch != "stack/topic" || len(proposal.DependsOn) != 1 || proposal.DependsOn[0] != "util" {
+				t.Fatalf("must retain proposal and safe inferred edge: %+v", proposal)
+			}
+		})
+	}
+}
+
+func TestStackDepsExistingCycleErrorNamesFileChainAndRepair(t *testing.T) {
+	root := t.TempDir()
+	mustGitStack(t, root, "init", "-q")
+	t.Chdir(root)
+	m := &stackManifest{Repos: map[string]*stackRepo{"app": {Upstream: "github.com/acme/app", Fork: "github.com/you/app"}, "lib": {Upstream: "github.com/acme/lib", Fork: "github.com/you/lib"}}, Proposals: map[string]map[string]stackProposal{"app": {"topic": {Branch: "stack/topic", DependsOn: []string{"lib"}}}, "lib": {"topic": {Branch: "stack/topic", DependsOn: []string{"app"}}}}}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeStackManifest(t, root, string(data))
+	for _, verb := range []string{"status", "pull", "propose"} {
+		t.Run(verb, func(t *testing.T) {
+			c := newStackStatusCmd()
+			switch verb {
+			case "pull":
+				c = newStackPullCmd()
+			case "propose":
+				c = newStackSendCmd()
+				c.SetArgs([]string{"app", "topic"})
+			}
+			var out bytes.Buffer
+			c.SetOut(&out)
+			c.SetErr(&out)
+			err := c.Execute()
+			if err == nil {
+				t.Fatal("accepted an already-cyclic manifest")
+			}
+			for _, want := range []string{filepath.Join(root, "rig.stack.jsonc"), `topic "topic"`, "app -> lib -> app", "edit proposals[member][topic].dependsOn", "remove or reverse an edge", "retry"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("missing %q in %v", want, err)
+				}
 			}
 		})
 	}
