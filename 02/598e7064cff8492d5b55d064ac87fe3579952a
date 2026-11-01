@@ -1,0 +1,31 @@
+internal/rig/cli/stackciguard.go
+  s_305a3d2195b124::t_64acf330f33f9b 18,275-276,278
+  s_305a3d2195b124::t_0c3282d502dc84 27-30,34,83-88,104,106,112,118,184,193-196,205,277,279,289,310
+internal/rig/cli/stackciguard_test.go
+  s_305a3d2195b124::t_64acf330f33f9b 429-439
+  s_305a3d2195b124::t_6ec73826c87902 349-394,399-427,495-496
+  s_305a3d2195b124::t_e62afba5830da8 10,395-398,428,440-494
+.changeset/witty-geckos-march.md
+  s_305a3d2195b124::t_64acf330f33f9b 1-7
+docs/STACK-DESIGN.md
+  s_305a3d2195b124::t_c29b0ec47a20b1 864-865
+  s_305a3d2195b124::t_64acf330f33f9b 908-922
+internal/rig/cli/stackciguardprocess.go
+  s_305a3d2195b124::t_0c3282d502dc84 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "02598e7064cff8492d5b55d064ac87fe3579952a",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
