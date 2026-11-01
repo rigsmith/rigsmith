@@ -212,15 +212,16 @@ This part has nothing to do with git, and what it looks like depends on your
 ecosystem. The goal is the same everywhere: make every project compile against
 the sources next door instead of a published package.
 
-On .NET that is a single `Directory.Build.targets` at the stackspace root. MSBuild
+On .NET the redirects live in `Directory.Build.targets` at the stackspace root,
+with early availability signals in `Directory.Build.props`. MSBuild
 imports it from the nearest ancestor directory of every project underneath, and
 in a stackspace that is all of them.
 
-`rig stack wire` writes this file for you, from what the ecosystem adapters
+`rig stack wire` writes these files for you, from what the ecosystem adapters
 already know about the projects in the stackspace — which package each one
 produces, and which of them are referenced across a member boundary. Those are
 the ones that would otherwise come from a registry, and they are exactly the
-ones it redirects. Re-run it after adding a member. It rewrites its own file and
+ones it redirects. Re-run it after adding a member or reference. It rewrites its own files and
 refuses to touch one you wrote yourself.
 
 What it writes, and what to write by hand if you would rather — each swap
@@ -1032,18 +1033,35 @@ for the property suffix and uppercase for the constant suffix. For example,
 make leading digits safe. IDs that sanitise to the same name share a signal;
 choose distinct IDs if you need to distinguish them.
 
-MSBuild evaluates properties before items. The per-package properties are
-therefore **not available in evaluation-time conditions**, including the project
-body and `Directory.Build.targets` property/item groups. Use them inside a
-member target with `AfterTargets="RigStackSourceSignals"` (or a later build
-target), where property and item conditions can read them. `RigStackspace` and
-`RigStackspaceRoot` are evaluation properties, but the overlay is imported after
-the project body, so earlier project-body property assignments cannot read them
-either. Compile guards such as `#if STACK_ACME_CORE` work without member switches.
+The generated root `Directory.Build.props` exposes `RigStackspace`,
+`RigStackspaceRoot`, and `RigStackAvailable_Acme_Core=true` before the project
+body. Availability means the overlay offers that package's source stack-wide;
+it does not mean this project references it. The same ID sanitising rule applies.
+Project-body property and item conditions, and member props after the marked
+import, can use these early signals. `wire` patches writable member props using
+the same marked, gated import as targets; `doctor` checks both generated files
+for staleness. When no cross-member references remain, generated root files and
+marked imports in writable members are removed together. Hand-owned files are
+preserved and must be maintained by you.
+
+`RigStackSource_*` remains available only in targets after
+`RigStackSourceSignals`; `STACK_*` still means this assembly compiles against
+that source. Conditional PackageReferences are resolved by MSBuild for the
+selected configuration/TFM: availability can be true while no swap or constant
+is produced. Use availability to condition a PackageReference, but use the
+compile constant to guard source-only APIs. No static per-project facts are
+promised. Re-run `wire` after changing members or references.
+
+A command-line/global `UseStackSources=false` disables early signals too.
+A value first assigned in the project body is too late to undo props evaluation:
+earlier properties/items may already have been selected, even though the later
+swap and constants are disabled. Set the opt-out globally or before the marked
+props import. Early availability and later source signals have distinct names;
+the later overlay reasserts the root signals when enabled.
 
 `-p:UseStackSources=false` disables the swap, properties and constants together.
-Rig-owned member imports check the nearest parent `Directory.Build.targets`
-for rig's generated-overlay or member-import marker, or the literal declaration
+Rig-owned member imports check the nearest parent `Directory.Build.props` or
+`Directory.Build.targets`, respectively, for rig's generated-overlay or member-import marker, or the literal declaration
 `<RigStackspace>true</RigStackspace>`, before importing it. The declaration
 keeps an overlay discoverable after you drop the ownership marker to maintain
 it by hand; retain that declaration in a hand-owned overlay. A custom overlay
@@ -1051,7 +1069,7 @@ written from scratch should include it too. This
 supports `rig.stack.jsonc`, `rig.stack.json`, and inline `.rig.json` stacks
 without treating an unrelated `.rig.json` as a stack. Re-running `wire` upgrades the old
 rig-owned ungated block in writable members, preserving their other content.
-A plain clone's import does nothing even beneath unrelated build targets.
+A plain clone's imports do nothing even beneath unrelated build props or targets.
 Legacy ungated imports still resolve sources correctly and are reported as
 informational notes, not blocking problems; non-writable members are left alone.
 `doctor` previews the properties/constants by project from static discovery;

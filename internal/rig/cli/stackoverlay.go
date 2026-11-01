@@ -451,6 +451,9 @@ func stackReportSourceSignals(out io.Writer, root string, links []stackLink, pac
 	for _, l := range links {
 		ids[l.Package] = true
 	}
+	for _, l := range links {
+		fmt.Fprintf(out, "    RigStackAvailable_%s=true (stack-wide availability during props evaluation; not an actual project swap)\n", dotnet.StackSourceName(l.Package))
+	}
 	for _, p := range packages {
 		fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", filepath.ToSlash(p.ManifestPath), filepath.ToSlash(root))
 		for _, d := range p.Dependencies {

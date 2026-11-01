@@ -38,6 +38,7 @@ func TestLocalOverlay(t *testing.T) {
 		// A directory where the file should be: present, unreadable, and no
 		// use to MSBuild either. Silence here would call it in effect.
 		root := newRoot(t)
+		writeFile(t, filepath.Join(root, "Directory.Build.props"), renderStackProps(redirects))
 		if err := os.MkdirAll(filepath.Join(root, overlayFile), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -554,10 +555,10 @@ func TestStackSourceSignalsE2E(t *testing.T) {
  <PropertyGroup><TargetSawSource Condition="'$(RigStackSource_Acme_Core)' == 'true'">true</TargetSawSource></PropertyGroup>
  <Error Condition="'$(TargetSawSource)' != 'true'" Text="target property condition failed" />
  </Target>
- <Target Name="CheckDisabledSignals" BeforeTargets="CoreCompile" Condition="'$(UseStackSources)' == 'false' Or '$(_RigStackParent)' != 'true'">
+ <Target Name="CheckDisabledSignals" BeforeTargets="CoreCompile" Condition="('$(UseStackSources)' == 'false' Or '$(_RigStackParent)' != 'true') And '$(LateOptOut)' != 'true'">
  <Error Condition="'$(RigStackspace)' != '' Or '$(RigStackspaceRoot)' != '' Or '$(RigStackSource_Acme_Core)' != ''" Text="disabled properties leaked" />
  </Target></Project>`)
-	for _, mode := range []string{"stack", "stack-json", "stack-inline", "hand-owned", "optout", "plain", "plain-config"} {
+	for _, mode := range []string{"stack", "stack-json", "stack-inline", "hand-owned", "optout", "late-optout", "plain", "plain-config"} {
 		dir := "app"
 		if strings.HasPrefix(mode, "plain") {
 			dir = "plain/app"
@@ -569,7 +570,7 @@ func TestStackSourceSignalsE2E(t *testing.T) {
 			}
 		}
 		switch mode {
-		case "stack", "hand-owned", "optout":
+		case "stack", "hand-owned", "optout", "late-optout":
 			writeFile(t, filepath.Join(root, "rig.stack.jsonc"), `{}`)
 		case "stack-json":
 			writeFile(t, filepath.Join(root, "rig.stack.json"), `{}`)
@@ -586,7 +587,48 @@ func TestStackSourceSignalsE2E(t *testing.T) {
 		writeFile(t, filepath.Join(root, overlayFile), body)
 		t.Logf("building mode %s", mode)
 		writeFile(t, filepath.Join(root, dir, overlayFile), member)
-		writeFile(t, filepath.Join(root, dir, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0" /></ItemGroup></Project>`)
+		writeFile(t, filepath.Join(root, dir, "Directory.Build.props"), `<Project><PropertyGroup><MemberSawStack>$(RigStackspace)</MemberSawStack></PropertyGroup></Project>`)
+		if !strings.HasPrefix(mode, "plain") {
+			writeFile(t, filepath.Join(root, overlayFile), overlay)
+			writeFile(t, filepath.Join(root, "Directory.Build.props"), renderStackProps([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}, {Package: "Acme.Unused", Path: "unused/Unused.csproj"}}))
+			_, err := New().LocalOverlay(context.Background(), plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}, {Package: "Acme.Unused", Path: "unused/Unused.csproj"}}, Write: true, Writable: []string{dir}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "hand-owned" {
+				for _, file := range []string{overlayFile, "Directory.Build.props"} {
+					data, err := os.ReadFile(filepath.Join(root, file))
+					if err != nil {
+						t.Fatal(err)
+					}
+					writeFile(t, filepath.Join(root, file), strings.Replace(string(data), overlayMarker, "", 1))
+				}
+			}
+		} else {
+			patched, _ := patchWalkUpFile(`<Project></Project>`, "Directory.Build.props")
+			writeFile(t, filepath.Join(root, dir, "Directory.Build.props"), patched)
+			writeFile(t, filepath.Join(root, "plain/Directory.Build.props"), `<Project><PropertyGroup><RigStackspace>unrelated</RigStackspace></PropertyGroup></Project>`)
+		}
+		writeFile(t, filepath.Join(root, dir, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup>
+<PropertyGroup Condition="'$(RigStackspace)' == 'true'"><BodySawStack>true</BodySawStack></PropertyGroup>
+<ItemGroup Condition="'$(RigStackAvailable_Acme_Core)' == 'true'"><EarlySource Include="Acme.Core" /></ItemGroup>
+<ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0" /><PackageReference Include="Acme.Unused" Version="1.0.0" Condition="'$(Configuration)' == 'Release'" /></ItemGroup>
+<Target Name="CheckEarly" BeforeTargets="CoreCompile">
+<Error Condition="'$(RigStackspace)' == 'true' And ('$(BodySawStack)' != 'true' Or '@(EarlySource)' != 'Acme.Core' Or '$(MemberSawStack)' != 'true')" Text="early conditions failed" />
+<Error Condition="'$(RigStackspace)' != 'true' And ('$(BodySawStack)' != '' Or '@(EarlySource)' != '' Or '$(RigStackAvailable_Acme_Core)' != '')" Text="early signals leaked" />
+</Target></Project>`)
+		if mode == "late-optout" {
+			path := filepath.Join(root, dir, "App.csproj")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := strings.Replace(string(data), "<Target Name=\"CheckEarly\"", `<PropertyGroup><UseStackSources>false</UseStackSources><LateOptOut>true</LateOptOut></PropertyGroup>
+<Target Name="CheckLate" BeforeTargets="CoreCompile"><Error Condition="'$(RigStackAvailable_Acme_Core)' != 'true' Or '$(RigStackSource_Acme_Core)' != ''" Text="late optout semantics failed" /></Target>
+<Target Name="CheckEarly"`, 1)
+			writeFile(t, path, body)
+		}
 		writeFile(t, filepath.Join(root, dir, "App.cs"), `#if STACK_ACME_UNUSED
 #error unused sibling constant
 #endif
@@ -630,6 +672,7 @@ func TestLocalOverlayLegacyImport(t *testing.T) {
 			path := filepath.Join(root, "app", overlayFile)
 			writeFile(t, path, legacy)
 			writeFile(t, filepath.Join(root, overlayFile), renderOverlay(redirects))
+			writeFile(t, filepath.Join(root, "Directory.Build.props"), renderStackProps(redirects))
 			req := plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: tc.write}
 			if tc.writable {
 				req.Writable = []string{"app"}
@@ -736,5 +779,119 @@ func TestLocalOverlayUpgradesManifestGate(t *testing.T) {
 	}
 	if len(got.Fixed) != 0 {
 		t.Fatal(got)
+	}
+}
+
+func TestLocalOverlayPropsLifecycle(t *testing.T) {
+	root := t.TempDir()
+	req := plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}, Write: true, Writable: []string{"app"}}
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), "<Project/>")
+	for _, file := range []string{overlayFile, "Directory.Build.props"} {
+		writeFile(t, filepath.Join(root, "app", file), "<Project><!-- member --></Project>")
+		writeFile(t, filepath.Join(root, "readonly", file), "<Project><!-- member --></Project>")
+	}
+	a := New()
+	got, err := a.LocalOverlay(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fixed) != 2 {
+		t.Fatalf("patches: %+v", got)
+	}
+	for _, file := range []string{overlayFile, "Directory.Build.props"} {
+		data, _ := os.ReadFile(filepath.Join(root, "app", file))
+		if strings.Count(string(data), "<!-- rig:stack-import -->") != 1 || !strings.Contains(string(data), "<!-- member -->") {
+			t.Fatalf("bad patch: %s", data)
+		}
+		data, _ = os.ReadFile(filepath.Join(root, "readonly", file))
+		if strings.Contains(string(data), "rig:stack-import") {
+			t.Fatal("patched readonly member")
+		}
+	}
+	got, err = a.LocalOverlay(context.Background(), req)
+	if err != nil || len(got.Fixed) != 0 {
+		t.Fatalf("not idempotent: %+v %v", got, err)
+	}
+	writeFile(t, filepath.Join(root, "Directory.Build.props"), renderStackProps(nil))
+	req.Write = false
+	got, err = a.LocalOverlay(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := false
+	for _, p := range got.Problems {
+		if p.Path == "Directory.Build.props" && strings.Contains(p.Message, "out of date") {
+			stale = true
+		}
+	}
+	if !stale {
+		t.Fatalf("stale props not reported: %+v", got)
+	}
+	req.Write = true
+	if _, err = a.LocalOverlay(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	req.Redirects = nil
+	got, err = a.LocalOverlay(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Removed) != 2 || len(got.Fixed) != 2 {
+		t.Fatalf("cleanup: %+v", got)
+	}
+	for _, file := range []string{overlayFile, "Directory.Build.props"} {
+		if _, err := os.Stat(filepath.Join(root, file)); !os.IsNotExist(err) {
+			t.Fatalf("root file remains: %s", file)
+		}
+		data, _ := os.ReadFile(filepath.Join(root, "app", file))
+		if strings.Contains(string(data), "rig:stack-import") || !strings.Contains(string(data), "<!-- member -->") {
+			t.Fatalf("cleanup member: %s", data)
+		}
+		writeFile(t, filepath.Join(root, file), "<Project><!-- hand owned --></Project>")
+	}
+	got, err = a.LocalOverlay(context.Background(), req)
+	if err != nil || len(got.Removed) != 0 {
+		t.Fatalf("hand owned removed: %+v %v", got, err)
+	}
+}
+
+func TestStackSourcePropsText(t *testing.T) {
+	body := renderStackProps([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}})
+	for _, want := range []string{overlayMarker, "<RigStackspace>true</RigStackspace>", "<RigStackspaceRoot>$(MSBuildThisFileDirectory)</RigStackspaceRoot>", "<RigStackAvailable_Acme_Core>true</RigStackAvailable_Acme_Core>", "'$(UseStackSources)' != 'false'"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q: %s", want, body)
+		}
+	}
+	for _, bad := range []string{"<RigStackSource_", "<ItemGroup", "<Target ", "DefineConstants"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("late signal leaked: %s", body)
+		}
+	}
+	old := `<Project><!-- rig:stack-import --><Import Project="old" /><!-- /rig:stack-import --><!-- member --></Project>`
+	patched, ok := patchWalkUpFile(old, "Directory.Build.props")
+	if !ok || strings.Contains(patched, `Project="old"`) || !strings.Contains(patched, "ReadAllText") || !strings.Contains(patched, "Directory.Build.props") || !strings.Contains(patched, "<!-- member -->") {
+		t.Fatal(patched)
+	}
+	again, ok := patchWalkUpFile(patched, "Directory.Build.props")
+	if !ok || strings.Count(again, "<!-- rig:stack-import -->") != 1 {
+		t.Fatal(again)
+	}
+}
+
+func TestLocalOverlayPropsFailureReportsEarlierWrite(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), "<Project/>")
+	const handOwned = "<Project><!-- maintained by you --></Project>"
+	writeFile(t, filepath.Join(root, "Directory.Build.props"), handOwned)
+	got, err := New().LocalOverlay(context.Background(), plugin.LocalOverlayRequest{Root: root, Write: true, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}})
+	if err == nil || !strings.Contains(err.Error(), "Directory.Build.props") {
+		t.Fatalf("expected ownership refusal: %v", err)
+	}
+	if len(got.Fixed) != 1 || got.Fixed[0] != overlayFile {
+		t.Fatalf("earlier write missing from rollback paths: %+v", got)
+	}
+	data, _ := os.ReadFile(filepath.Join(root, "Directory.Build.props"))
+	if string(data) != handOwned {
+		t.Fatal("hand-owned props changed")
 	}
 }
