@@ -200,6 +200,8 @@ func TestStackCIActionBoolean(t *testing.T) {
 			} `yaml:"steps"`
 		} `yaml:"runs"`
 	}
+	// Exercise Windows checkout line endings regardless of the host OS.
+	data = []byte(strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n", "\r\n"))
 	if err = yaml.Unmarshal(data, &action); err != nil {
 		t.Fatal(err)
 	}
@@ -287,5 +289,36 @@ func TestStackCIMaterializeSymlinks(t *testing.T) {
 				t.Fatalf("link %q: %v", link, err)
 			}
 		})
+	}
+}
+
+func TestStackCIMaterializePathEscape(t *testing.T) {
+	checkout := t.TempDir()
+	dest := t.TempDir()
+	outside := t.TempDir()
+	mustGitStack(t, checkout, "init", "-q")
+	mustGitStack(t, checkout, "config", "user.name", "test")
+	mustGitStack(t, checkout, "config", "user.email", "t@t")
+	if err := os.Mkdir(filepath.Join(checkout, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "src", "file"), []byte("source"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, checkout, "add", ".")
+	mustGitStack(t, checkout, "commit", "-qm", "nested tree")
+	if err := os.Symlink(outside, filepath.Join(dest, "src")); err != nil {
+		t.Fatal(err)
+	}
+	err := stackCIMaterialize(context.Background(), checkout, dest)
+	if err == nil || !strings.Contains(err.Error(), "path escapes prefix") {
+		t.Fatalf("want path escape refusal: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(outside, "file")); !os.IsNotExist(err) {
+		t.Fatalf("outside file was touched: %v", err)
+	}
+	// Keep '..' unresolved until insideRoot walks existing symlinks.
+	if insideRoot(dest, dest+string(filepath.Separator)+"src/../outside") {
+		t.Fatal("insideRoot accepted traversal through an escaping symlink")
 	}
 }
