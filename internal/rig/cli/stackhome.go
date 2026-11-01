@@ -40,6 +40,18 @@ func stackSeedReference(s string) (remote, ref string, err error) {
 		if strings.Contains(s, "@") && ref == "" {
 			return "", "", fmt.Errorf("seed reference needs a ref after @")
 		}
+		owner, repo, _ := strings.Cut(remote, "/")
+		if owner == "" || repo == "" {
+			return "", "", fmt.Errorf("seed shorthand needs owner/repo")
+		}
+		if ref != "" {
+			if strings.HasPrefix(ref, "-") {
+				return "", "", fmt.Errorf("invalid seed ref")
+			}
+			if err := exec.Command("git", "check-ref-format", "refs/heads/"+ref).Run(); err != nil {
+				return "", "", fmt.Errorf("invalid seed ref")
+			}
+		}
 		return "https://github.com/" + strings.TrimSuffix(remote, ".git") + ".git", ref, nil
 	}
 	return s, "", nil
@@ -118,6 +130,9 @@ func stackPublishAfterPull(ctx context.Context, repo *gitrepo.Repo, m *stackMani
 // Credentials belong in Git's credential helper, never persisted in the home URL.
 func stackValidateHomeRemote(remote string) error {
 	u, err := url.Parse(remote)
+	if strings.Contains(remote, "://") && (err != nil || u.Scheme == "" || (u.Host == "" && u.Scheme != "file") || (u.Scheme == "file" && u.Path == "")) {
+		return fmt.Errorf("invalid seed URL")
+	}
 	if err == nil && u.User != nil {
 		_, password := u.User.Password()
 		if u.Scheme == "http" || u.Scheme == "https" || password {
@@ -128,20 +143,29 @@ func stackValidateHomeRemote(remote string) error {
 }
 
 func stackConfigureHome(ctx context.Context, dir, remote, branch, base string) error {
+	return stackConfigureHomeState(ctx, dir, remote, branch, base, false)
+}
+
+func stackConfigureHomeState(ctx context.Context, dir, remote, branch, base string, pinned bool) error {
 	if err := stackValidateHomeRemote(remote); err != nil {
 		return err
 	}
-	for _, pair := range [][2]string{{"URL", remote}, {"Branch", branch}, {"Base", base}} {
+	for _, pair := range [][2]string{{"URL", remote}, {"Branch", branch}, {"Base", base}, {"Pinned", fmt.Sprint(pinned)}} {
 		if _, err := stackHomeGit(ctx, dir, "config", "--local", "rig.stackHome"+pair[0], pair[1]); err != nil {
 			return err
 		}
+	}
+	origin, _ := stackHomeGit(ctx, dir, "config", "--local", "--get", "remote.origin.url")
+	if origin != "" && stackSameHomeRepo(origin, remote) {
+		_, err := stackHomeGit(ctx, dir, "remote", "set-url", "--push", "origin", "disabled://fused-stackspace")
+		return err
 	}
 	return nil
 }
 
 // Publication has no object connection to the fused repository. Only an archive
 // crosses the boundary; the parent is always the separately cloned seed tip.
-type stackHomePublishPolicy struct{ automatic, force bool }
+type stackHomePublishPolicy struct{ automatic, force, pinned bool }
 
 func stackPublishHome(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, out ...io.Writer) error {
 	return stackPublishConfiguredHome(ctx, repo, m, stackHomePublishPolicy{automatic: true}, out...)
@@ -154,6 +178,7 @@ func stackPublishConfiguredHome(ctx context.Context, repo *gitrepo.Repo, m *stac
 	}
 	branch := stackHomeConfig(ctx, repo.Dir, "Branch")
 	base := stackHomeConfig(ctx, repo.Dir, "Base")
+	policy.pinned = stackHomeConfig(ctx, repo.Dir, "Pinned") == "true"
 	err := stackPublishHomeToWithPolicy(ctx, repo, m, remote, branch, base, policy, out...)
 	if err != nil {
 		return fmt.Errorf("local stack changes are retained; manifest home was not updated: %w; retry with `rig stack seed --publish %q` after reconciling seed updates", err, ghrepo.SafeRemote(remote))
@@ -168,6 +193,15 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 func stackPublishHomeToWithPolicy(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, remote, branch, base string, policy stackHomePublishPolicy, out ...io.Writer) error {
 	if err := stackValidateHomeRemote(remote); err != nil {
 		return err
+	}
+	if policy.pinned {
+		if policy.automatic {
+			if len(out) > 0 {
+				fmt.Fprintln(out[0], "manifest home is pinned — publication skipped")
+			}
+			return nil
+		}
+		return fmt.Errorf("seed is pinned; publication requires a branch")
 	}
 	if dryRun {
 		if len(out) > 0 {
@@ -196,9 +230,6 @@ func stackPublishHomeToWithPolicy(ctx context.Context, repo *gitrepo.Repo, m *st
 				fmt.Fprintf(out[0], "warning: manifest home cannot reconstruct all local member work: %v; publishing recorded cursors and proposals only\n", problem)
 			}
 		}
-	}
-	if branch == "READ_ONLY" {
-		return fmt.Errorf("seed is pinned to a tag; publication requires a branch")
 	}
 	dir, err := os.MkdirTemp("", "rig-stack-home-")
 	if err != nil {
@@ -303,6 +334,9 @@ func stackPublishHomeToWithPolicy(ctx context.Context, repo *gitrepo.Repo, m *st
 	if err != nil {
 		return err
 	}
+	if stackHomeConfig(ctx, repo.Dir, "URL") == remote && stackHomeConfig(ctx, repo.Dir, "Branch") != branch {
+		return nil
+	}
 	return stackConfigureHome(ctx, repo.Dir, remote, branch, tip)
 }
 
@@ -342,9 +376,9 @@ func stackDoctorHome(ctx context.Context, root string, m *stackManifest) error {
 		return err
 	}
 	branch := stackHomeConfig(ctx, root, "Branch")
-	if branch != "" {
+	if branch != "" || stackHomeConfig(ctx, root, "Pinned") == "true" {
 		target := "refs/remotes/origin/" + branch
-		if branch == "READ_ONLY" {
+		if stackHomeConfig(ctx, root, "Pinned") == "true" {
 			target = stackHomeConfig(ctx, root, "Base")
 		}
 		commit, err := stackHomeGit(ctx, dir, "rev-parse", "--verify", target+"^{commit}")
@@ -369,7 +403,7 @@ func stackGuardMemberHome(ctx context.Context, repo *gitrepo.Repo, remote string
 	refuse := func() error {
 		return fmt.Errorf("member destination is the manifest home; refusing to push member history")
 	}
-	if stackNormalizeSpec(home) == stackNormalizeSpec(remote) {
+	if stackSameHomeRepo(home, remote) {
 		return refuse()
 	}
 	memberDestination, err := stackEffectivePushURL(ctx, repo.Dir, remote)
@@ -380,11 +414,21 @@ func stackGuardMemberHome(ctx context.Context, repo *gitrepo.Repo, remote string
 	if err != nil {
 		return err
 	}
-	if stackNormalizeSpec(memberDestination) == stackNormalizeSpec(homeDestination) ||
-		stackNormalizeSpec(memberDestination) == stackNormalizeSpec(home) {
+	if stackSameHomeRepo(memberDestination, homeDestination) ||
+		stackSameHomeRepo(memberDestination, home) {
 		return refuse()
 	}
 	return nil
+}
+
+func stackSameHomeRepo(a, b string) bool {
+	a, b = stackNormalizeSpec(a), stackNormalizeSpec(b)
+	hostA, _, _ := strings.Cut(a, "/")
+	hostB, _, _ := strings.Cut(b, "/")
+	if strings.EqualFold(hostA, "github.com") && strings.EqualFold(hostB, "github.com") {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // Git chooses the longest matching prefix, with pushInsteadOf preferred for

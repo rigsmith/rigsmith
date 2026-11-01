@@ -350,8 +350,18 @@ func TestStackFlow(t *testing.T) {
 	if out, err := runVerbOut(ctx, newStackPullCmd(), "libfoo"); err != nil || !strings.Contains(out, "nothing to pull") {
 		t.Fatalf("pull after rebuild: %v\n%s", err, out)
 	}
-	if out, err := runVerbOut(ctx, newStackSendCmd(), "libfoo", "after-pull"); err != nil || !strings.Contains(out, "nothing to send") {
-		t.Fatalf("propose after rebuild should be a no-op against the same branch: %v\n%s", err, out)
+	for _, tc := range []struct{ name, branch, content string }{{"libbar", "noop", "upstream no-op"}, {"libfoo", "after-pull", "fork no-op"}} {
+		if err := os.WriteFile(filepath.Join(rebuilt, "noop-root-note"), []byte(tc.content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, rebuilt, "add", "noop-root-note")
+		mustGitStack(t, rebuilt, "commit", "-qm", "root-only proposal update")
+		if out, err := runVerbOut(ctx, newStackSendCmd(), tc.name, tc.branch); err != nil || !strings.Contains(out, "nothing to send") {
+			t.Fatalf("no-op propose publication: %v\n%s", err, out)
+		}
+		if got := mustGitStack(t, seedRemote, "show", "HEAD:noop-root-note"); got != tc.content {
+			t.Fatal("no-op propose omitted root publication")
+		}
 	}
 	// An unrelated untracked file must not turn a successful proposal into
 	// an error: defer only home publication and preserve the user's file.

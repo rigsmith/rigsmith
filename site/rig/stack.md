@@ -19,7 +19,9 @@ root build overlays. It holds no member directories or fused history. Publish
 with `rig stack seed --publish acme/rigstack-app@main`, then use
 `rig stack setup acme/rigstack-app@main` in an empty directory on a fresh
 machine or CI runner. The shorthand means GitHub; @ref names a branch or tag.
-URLs, SSH remotes and local paths also work. Tags are read-only homes.
+URLs, SSH remotes and local paths also work. Tags are read-only homes:
+automatic publication prints one skip line and succeeds; explicit publication
+or a configured-home retry refuses until a writable branch is selected.
 
 An explicit setup seed opts into automatic home publication after pull and
 propose. Running setup without a seed leaves remotes and home configuration
@@ -29,12 +31,15 @@ committed root files match the seed. If they differ (including README or overlay
 changes made by setup), initial adoption refuses. Run `rig stack setup <seed>`
 in a fresh empty directory, reconcile your desired root edits there and commit,
 then publish from that configured checkout. A configured setup can be rerun
-without an argument.
+without an argument. Every home adoption disables origin's push URL when origin
+names that home; unrelated origins and their push URLs are left unchanged.
 
 Publication creates an unsigned root-only commit in an independent seed clone.
-It never imports fused objects. Explicit seed publication refuses unsent member
-work or an unknown import baseline and validates recorded proposals on the fork.
-Use --force to override only that reconstruction check when publishing explicitly.
+It never imports fused objects. Explicit seed publication and the no-argument
+`rig stack seed` retry both refuse unsent member work or an unknown import
+baseline and validate recorded proposals on the fork.
+Use --force with either explicit publish or the configured-home retry to
+override only that reconstruction check.
 Automatic publication after pull/propose warns on stdout naming each affected
 member and continues: the seed contains recorded cursors/proposals and omits
 unpublished local work. If other files are dirty, automatic publication defers
@@ -54,7 +59,9 @@ Only members currently in the manifest are recognised by that scan.
 
 Private seed access uses git's credential configuration. CI workflows must
 configure a token for HTTPS seeds; a gh login alone is insufficient unless git
-uses its helper. Git credential helpers and their stored credentials are not
+uses its helper. The stored home URL is origin's literal URL, before credential
+rewrites, so transient CI tokens are not stored in local home metadata.
+Git credential helpers and their stored credentials are not
 copied into the seed. Committed root files outside member prefixes are published
 as-is, without content filtering: review files such as a root .npmrc for secrets
 before publishing.

@@ -712,7 +712,9 @@ directory, use `rig stack setup acme/rigstack-app@main`; local development and
 CI pass exactly the same seed string. Setup without an argument still works
 in an existing clone. URLs, scp-style remotes and local paths are also accepted.
 The owner/repo shorthand means GitHub; its optional @ref names a branch or tag
-(including branch names with slashes). Tags are read-only homes.
+(including branch names with slashes). Tags are read-only homes: automatic
+publication prints one skip line and succeeds before reconstruction checks;
+explicit publication to the pinned home errors. Doctor uses the pinned commit.
 
 Only an explicit seed argument opts into a manifest home. No-argument setup
 leaves the home configuration and origin unchanged, including on older fused
@@ -723,8 +725,12 @@ a fresh empty directory, reconcile the desired root edits there, commit, then
 publish from that configured checkout. --force does not bypass this refusal.
 
 Explicit setup remembers the remote, branch and unfused tip in local git config
-(`rig.stackHomeURL`, `rig.stackHomeBranch`, `rig.stackHomeBase`).
-It disables origin's push URL in the fused checkout. An unconfigured checkout
+(`rig.stackHomeURL`, `rig.stackHomeBranch`, `rig.stackHomeBase`,
+`rig.stackHomePinned`). Pinned state is a separate boolean, never a reserved
+branch name. Setup stores the raw origin URL, before insteadOf expansion, so
+CI credential rewrites cannot be copied into this metadata. All adoption paths
+disable origin's push URL when its repository identity matches the home; an
+unrelated origin is left unchanged. An unconfigured checkout
 keeps its existing behavior. Pull and propose publish the committed root files
 after recording their changes locally. A proposal made with an already-edited
 manifest defers publication until that file is committed. Other dirty files
@@ -742,6 +748,10 @@ finding. The scan recognises only members currently in the manifest: an old
 tree belonging to a removed member is not detected. Member destinations matching the
 manifest home are refused. Git URL rewrite rules (including pushInsteadOf)
 are applied before comparing member push destinations to the home.
+
+The remembered base is scoped to both home URL and branch. Explicit publication
+to another branch of the same URL does not inherit that base or retarget the
+configured home state.
 
 If the seed tip differs from the remembered tip, publication refuses; there is
 no implicit merge or force push. Reconcile the competing manifest in a separate

@@ -484,6 +484,8 @@ func TestStackGuardMemberHome(t *testing.T) {
 		{"different home", "https://github.com/acme/seed.git", "", "github.com/acme/member", false},
 		{"configured home wins", "https://github.com/acme/seed.git", "https://github.com/acme/member.git", "github.com/acme/member", false},
 		{"unconfigured", "", "", "github.com/acme/member", false},
+		{"GitHub case", "https://GITHUB.COM/acme/seed.git", "", "git@github.com:Acme/Seed.git", true},
+		{"local case", "/tmp/CaseSeed", "", "/tmp/caseseed", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -694,7 +696,12 @@ func TestStackHomeDoctorUsesConfiguredRevision(t *testing.T) {
 	}{
 		{"main", "", false}, {"READ_ONLY", safe, false}, {"READ_ONLY", unsafe, true},
 	} {
-		if err := stackConfigureHome(ctx, root, remote, tc.branch, tc.base); err != nil {
+		branch := tc.branch
+		pinned := branch == "READ_ONLY"
+		if pinned {
+			branch = ""
+		}
+		if err := stackConfigureHomeState(ctx, root, remote, branch, tc.base, pinned); err != nil {
 			t.Fatal(err)
 		}
 		err := stackDoctorHome(ctx, root, m)
@@ -754,6 +761,139 @@ func TestStackEffectivePushURLMatchesGit(t *testing.T) {
 		got, err := stackEffectivePushURL(context.Background(), root, remote)
 		if err != nil || got != want {
 			t.Fatalf("effective destination %q, want Git's %q: %v", got, want, err)
+		}
+	}
+}
+
+func TestStackHomePinnedPublicationPolicy(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "missing.git")
+	if err := stackConfigureHomeState(ctx, root, remote, "", "pinned-commit", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dirty"), []byte("local"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := stackPublishAfterPull(ctx, repo, m, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != "manifest home is pinned — publication skipped\n" {
+		t.Fatalf("pinned automatic output: %q", out.String())
+	}
+	cmd := newStackSeedCmd()
+	cmd.SetContext(ctx)
+	if err := cmd.RunE(cmd, nil); err == nil || !strings.Contains(err.Error(), "pinned") {
+		t.Fatalf("explicit pinned retry: %v", err)
+	}
+	if err := cmd.Flags().Set("publish", remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err == nil || !strings.Contains(err.Error(), "pinned") {
+		t.Fatalf("explicit pinned publish: %v", err)
+	}
+	if _, err := os.Stat(remote); !os.IsNotExist(err) {
+		t.Fatal("pinned publication touched remote")
+	}
+}
+
+func TestStackHomeReadOnlyBranchIsWritable(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=READ_ONLY", remote)
+	if err := stackPublishHomeTo(ctx, repo, m, remote, "READ_ONLY", ""); err != nil {
+		t.Fatal(err)
+	}
+	if stackHomeConfig(ctx, root, "Pinned") != "false" {
+		t.Fatal("branch was marked pinned")
+	}
+	if err := os.WriteFile(filepath.Join(root, "root-note"), []byte("new root"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "add", "-A")
+	mustGitStack(t, root, "commit", "-qm", "root")
+	if err := stackPublishHome(ctx, repo, m); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustGitStack(t, remote, "show", "refs/heads/READ_ONLY:root-note"); got != "new root" {
+		t.Fatal("READ_ONLY branch did not update")
+	}
+	if err := stackDoctorHome(ctx, root, m); err != nil {
+		t.Fatalf("doctor misread branch sentinel: %v", err)
+	}
+}
+
+func TestStackHomeAdoptionProtectsOnlyMatchingOrigin(t *testing.T) {
+	for _, matching := range []bool{false, true} {
+		t.Run(fmt.Sprint(matching), func(t *testing.T) {
+			ctx := context.Background()
+			root := rmStackspace(t, rmManifest)
+			remote := filepath.Join(t.TempDir(), "home.git")
+			mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+			origin := remote
+			if !matching {
+				origin = filepath.Join(t.TempDir(), "other.git")
+			}
+			mustGitStack(t, root, "remote", "add", "origin", origin)
+			mustGitStack(t, root, "remote", "set-url", "--push", "origin", "custom://preserve")
+			cmd := newStackSeedCmd()
+			cmd.SetContext(ctx)
+			if err := cmd.Flags().Set("publish", remote); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.RunE(cmd, nil); err != nil {
+				t.Fatal(err)
+			}
+			got := strings.TrimSpace(mustGitStack(t, root, "config", "--local", "--get", "remote.origin.pushurl"))
+			if !matching {
+				if got != "custom://preserve" {
+					t.Fatal("unrelated origin push URL changed")
+				}
+				return
+			}
+			if got != "disabled://fused-stackspace" {
+				t.Fatal("adoption left seed origin pushable")
+			}
+			before := mustGitStack(t, remote, "for-each-ref")
+			if _, err := stackHomeGit(ctx, root, "push", "origin", "HEAD:refs/heads/leak"); err == nil {
+				t.Fatal("plain push reached home")
+			}
+			if after := mustGitStack(t, remote, "for-each-ref"); after != before {
+				t.Fatal("plain push moved home")
+			}
+		})
+	}
+}
+
+func TestStackHomeRejectsMalformedPointers(t *testing.T) {
+	for _, s := range []string{"acme/seed@bad..ref", "acme/seed@bad@{ref", "acme/seed@-bad", "acme/seed@trailing/", "https://", "https://[bad/seed", "https://example.invalid:bad/seed", "https://example.invalid/%zz"} {
+		path := filepath.Join(t.TempDir(), ".rig-stack")
+		if err := os.WriteFile(path, []byte(s+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := newStackHomeCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		if err := cmd.RunE(cmd, []string{path}); err == nil || out.Len() != 0 {
+			t.Fatalf("invalid pointer accepted: %q, %v", s, err)
 		}
 	}
 }

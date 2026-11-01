@@ -397,9 +397,9 @@ lists the conflict rather than guessing.
 
 
 Stack manifest homes use local git metadata, not a manifest or .rig.json key.
-Setup and seed publication record `rig.stackHomeURL`, `rig.stackHomeBranch`
-and `rig.stackHomeBase` in the checkout's .git/config. These record the
-remote, writable branch (or read-only tag marker) and last successfully
-published seed tip. They are machine-local and do not belong in the JSON schema.
+Setup and seed publication record `rig.stackHomeURL`, `rig.stackHomeBranch`,
+`rig.stackHomeBase` and the boolean `rig.stackHomePinned` in the checkout's
+.git/config. These record the remote, writable branch, last successfully
+published seed tip and separate pinned state. They are machine-local and do not belong in the JSON schema.
 Use `rig stack setup acme/rigstack-app@main` or
 `rig stack seed --publish acme/rigstack-app@main` to configure them.

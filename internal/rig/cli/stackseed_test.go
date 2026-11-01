@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -477,5 +478,51 @@ func TestStackSeedPublishForceOverridesUnsentWork(t *testing.T) {
 	}
 	if _, err := stackHomeGit(context.Background(), remote, "rev-parse", "HEAD:pty-core"); err == nil {
 		t.Fatal("force published a member tree")
+	}
+}
+
+func TestStackSeedAlternateBranchPreservesHome(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := filepath.Join(t.TempDir(), "seed")
+	if _, err := stackSeed(ctx, repo, m, seed, false); err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "clone", "--bare", seed, remote)
+	base := strings.TrimSpace(mustGitStack(t, seed, "rev-parse", "HEAD"))
+	mustGitStack(t, seed, "config", "user.name", "t")
+	mustGitStack(t, seed, "config", "user.email", "t@t")
+	mustGitStack(t, seed, "commit", "--allow-empty", "-m", "alternate history")
+	mustGitStack(t, seed, "push", remote, "HEAD:refs/heads/alternate")
+	url := "https://github.com/acme/seed.git"
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(config, []byte(fmt.Sprintf("[url %q]\n insteadOf = %s\n", remote, url)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	t.Setenv("GIT_TERMINAL_PROMPT", "0")
+	if err := stackConfigureHome(ctx, root, url, "main", base); err != nil {
+		t.Fatal(err)
+	}
+	before := mustGitStack(t, root, "config", "--local", "--list")
+	cmd := newStackSeedCmd()
+	cmd.SetContext(ctx)
+	if err := cmd.Flags().Set("publish", "acme/seed@alternate"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("alternate branch inherited main's base: %v", err)
+	}
+	if after := mustGitStack(t, root, "config", "--local", "--list"); after != before {
+		t.Fatal("alternate publication retargeted configured home")
 	}
 }

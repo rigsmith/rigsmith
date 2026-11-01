@@ -84,7 +84,7 @@ func newStackSetupCmd() *cobra.Command {
 			}
 			// Remember the unfused seed before init adds member ancestors.
 			if len(args) == 1 && stackHomeConfig(ctx, root, "URL") == "" {
-				remote, _ := stackHomeGit(ctx, root, "remote", "get-url", "origin")
+				remote, _ := stackHomeGit(ctx, root, "config", "--local", "--get", "remote.origin.url")
 				if remote != "" {
 					if err := stackCheckHome(ctx, root, m); err != nil {
 						return err
@@ -97,16 +97,10 @@ func newStackSetupCmd() *cobra.Command {
 					if err != nil {
 						branch = ""
 					} // pinned tags are read-only
-					if branch == "" {
-						branch = "READ_ONLY"
-					}
-					if err := stackConfigureHome(ctx, root, remote, branch, base); err != nil {
+					if err := stackConfigureHomeState(ctx, root, remote, branch, base, branch == ""); err != nil {
 						return err
 					}
-					// Disable accidental plain git pushes without affecting rig's isolated clone.
-					if _, err := stackHomeGit(ctx, root, "remote", "set-url", "--push", "origin", "disabled://fused-stackspace"); err != nil {
-						return err
-					}
+
 				}
 			}
 			// What is already dirty is the user's, and stays theirs. Everything

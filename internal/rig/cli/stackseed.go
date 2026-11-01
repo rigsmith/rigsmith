@@ -82,13 +82,18 @@ func newStackSeedCmd() *cobra.Command {
 					return err
 				}
 				base := ""
+				policy := stackHomePublishPolicy{force: force}
 				if stackHomeConfig(ctx, repo.Dir, "URL") == remote {
-					base = stackHomeConfig(ctx, repo.Dir, "Base")
+					configured := stackHomeConfig(ctx, repo.Dir, "Branch")
 					if ref == "" {
-						ref = stackHomeConfig(ctx, repo.Dir, "Branch")
+						ref = configured
+						policy.pinned = stackHomeConfig(ctx, repo.Dir, "Pinned") == "true"
+					}
+					if ref == configured {
+						base = stackHomeConfig(ctx, repo.Dir, "Base")
 					}
 				}
-				return stackPublishHomeToWithPolicy(ctx, repo, m, remote, ref, base, stackHomePublishPolicy{force: force}, out)
+				return stackPublishHomeToWithPolicy(ctx, repo, m, remote, ref, base, policy, out)
 			}
 			if len(args) == 0 {
 				if stackHomeConfig(ctx, repo.Dir, "URL") == "" {

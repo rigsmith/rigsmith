@@ -1541,7 +1541,7 @@ func newStackSendCmd() *cobra.Command {
 			}
 			if tipTree == tree {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)
-				return nil
+				return stackPublishHome(ctx, repo, m, cmd.OutOrStdout())
 			}
 			// Already on the fork, unchanged, on the branch being asked for.
 			// Differing from upstream is the normal state of a member whose work
@@ -1559,7 +1559,7 @@ func newStackSendCmd() *cobra.Command {
 				stackTreeOf(ctx, repo, sentCommit) == tree &&
 				stackBranchHolds(ctx, repo, r.Fork, branch, sentCommit) {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — %s:%s already holds it\n", name, r.Fork, branch)
-				return nil
+				return stackPublishHome(ctx, repo, m, cmd.OutOrStdout())
 			}
 
 			// What this member gets from the stackspace rather than from a feed.
