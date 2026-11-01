@@ -729,7 +729,11 @@ either. Compile guards such as `#if STACK_ACME_CORE` work without member switche
 
 `-p:UseStackSources=false` disables the swap, properties and constants together.
 Rig-owned member imports check the nearest parent `Directory.Build.targets`
-for rig's generated-overlay or member-import marker before importing it. This
+for rig's generated-overlay or member-import marker, or the literal declaration
+`<RigStackspace>true</RigStackspace>`, before importing it. The declaration
+keeps an overlay discoverable after you drop the ownership marker to maintain
+it by hand; retain that declaration in a hand-owned overlay. A custom overlay
+written from scratch should include it too. This
 supports `rig.stack.jsonc`, `rig.stack.json`, and inline `.rig.json` stacks
 without treating an unrelated `.rig.json` as a stack. Re-running `wire` upgrades the old
 rig-owned ungated block in writable members, preserving their other content.

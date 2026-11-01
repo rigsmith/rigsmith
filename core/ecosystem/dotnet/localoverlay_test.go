@@ -557,9 +557,9 @@ func TestStackSourceSignalsE2E(t *testing.T) {
  <Target Name="CheckDisabledSignals" BeforeTargets="CoreCompile" Condition="'$(UseStackSources)' == 'false' Or '$(_RigStackParent)' != 'true'">
  <Error Condition="'$(RigStackspace)' != '' Or '$(RigStackspaceRoot)' != '' Or '$(RigStackSource_Acme_Core)' != ''" Text="disabled properties leaked" />
  </Target></Project>`)
-	for _, mode := range []string{"stack", "stack-json", "stack-inline", "optout", "plain"} {
+	for _, mode := range []string{"stack", "stack-json", "stack-inline", "hand-owned", "optout", "plain", "plain-config"} {
 		dir := "app"
-		if mode == "plain" {
+		if strings.HasPrefix(mode, "plain") {
 			dir = "plain/app"
 			writeFile(t, filepath.Join(root, "plain", overlayFile), `<Project><Target Name="Unrelated" BeforeTargets="Build"><Error Text="unrelated ancestor imported" /></Target></Project>`)
 		}
@@ -569,16 +569,22 @@ func TestStackSourceSignalsE2E(t *testing.T) {
 			}
 		}
 		switch mode {
-		case "stack", "optout":
+		case "stack", "hand-owned", "optout":
 			writeFile(t, filepath.Join(root, "rig.stack.jsonc"), `{}`)
 		case "stack-json":
 			writeFile(t, filepath.Join(root, "rig.stack.json"), `{}`)
 		case "stack-inline":
 			writeFile(t, filepath.Join(root, ".rig.json"), `{"stack":{"repos":{}}}`)
-		case "plain":
+		case "plain-config":
 			writeFile(t, filepath.Join(root, "plain/.rig.json"), `{"primary":"dotnet"}`)
 		}
 
+		body := overlay
+		if mode == "hand-owned" {
+			body = strings.Replace(body, overlayMarker, "", 1)
+		}
+		writeFile(t, filepath.Join(root, overlayFile), body)
+		t.Logf("building mode %s", mode)
 		writeFile(t, filepath.Join(root, dir, overlayFile), member)
 		writeFile(t, filepath.Join(root, dir, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0" /></ItemGroup></Project>`)
 		writeFile(t, filepath.Join(root, dir, "App.cs"), `#if STACK_ACME_UNUSED
