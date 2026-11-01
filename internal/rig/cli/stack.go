@@ -953,16 +953,6 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 		}
 		tip = base
 	}
-	host, path := stackSplitHost(source)
-	// Two scopes of the same credential, because two different processes
-	// authenticate with it. This one is for the engine's own fetch of upstream,
-	// so it is scoped to the forge; the one below is for our fetch from the
-	// engine, scoped to the loopback proxy.
-	proxy, err := startJoshProxy(ctx, bin, host, stackAuthFor(ctx, source))
-	if err != nil {
-		return err
-	}
-	defer proxy.stop()
 	verb := "pulled"
 	msg := fmt.Sprintf("stack: pull %s @ %s", name, short(tip))
 	if initial {
@@ -975,21 +965,6 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 			msg += fmt.Sprintf(" (from %s:%s %s)", r.Fork, opts.fork.Branch, short(fetch))
 		}
 	}
-	// The engine fetches upstream with whatever credentials its own client
-	// presents, so reaching a private repo means forwarding ours to it. This is
-	// the same credential git would use fetching that host directly, scoped to
-	// the proxy's URL so a redirect cannot carry it anywhere else, and absent
-	// entirely when no helper has one. Whether the repo actually needs it is not
-	// knowable without asking the forge, so it rides along either way.
-	auth, err := gitrepo.CredentialFor(ctx, stackRemoteURL(source))
-	if err != nil {
-		return err
-	}
-	if auth != nil {
-		auth.URLPrefix = proxy.base()
-	}
-	// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
-	// rather than under its branch name.
 	// Read before the merge: afterwards the newest import marker is the commit
 	// this pull is about to make, and the baseline would be the target itself.
 	preTree, _ := repo.RevParse(ctx, "HEAD:"+name)
@@ -999,11 +974,43 @@ func stackPullOne(ctx context.Context, out io.Writer, repo *gitrepo.Repo, bin st
 	// replace guard.
 	preHead, preHeadErr := repo.Head(ctx)
 
-	fetched, err := repo.FetchRef(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", auth)
-	if err != nil {
-		if tail := proxy.tail(15); tail != "" {
-			return fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
+	fetched, err := stackCIFilteredCache(ctx, repo.Dir, source, fetch, name, m.joshVersion(), func() (string, error) {
+		host, path := stackSplitHost(source)
+		// Two scopes of the same credential, because two different processes
+		// authenticate with it. This one is for the engine's own fetch of upstream,
+		// so it is scoped to the forge; the one below is for our fetch from the
+		// engine, scoped to the loopback proxy.
+		proxy, err := startJoshProxy(ctx, bin, host, stackAuthFor(ctx, source))
+		if err != nil {
+			return "", err
 		}
+		defer proxy.stop()
+		// The engine fetches upstream with whatever credentials its own client
+		// presents, so reaching a private repo means forwarding ours to it. This is
+		// the same credential git would use fetching that host directly, scoped to
+		// the proxy's URL so a redirect cannot carry it anywhere else, and absent
+		// entirely when no helper has one. Whether the repo actually needs it is not
+		// knowable without asking the forge, so it rides along either way.
+		// The URL pins the upstream commit, and josh serves a pinned commit as HEAD
+		// rather than under its branch name.
+		auth, err := gitrepo.CredentialFor(ctx, stackRemoteURL(source))
+		if err != nil {
+			return "", err
+		}
+		if auth != nil {
+			auth.URLPrefix = proxy.base()
+		}
+		var fetched string
+		fetched, err = repo.FetchRef(ctx, proxy.url(path, fetch, stackPrefixFilter(name)), "HEAD", auth)
+		if err != nil {
+			if tail := proxy.tail(15); tail != "" {
+				return "", fmt.Errorf("%w\n--- josh-proxy log:\n%s", err, tail)
+			}
+			return "", err
+		}
+		return fetched, nil
+	})
+	if err != nil {
 		return err
 	}
 

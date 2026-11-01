@@ -1118,6 +1118,8 @@ stackspace job to test sibling source changes. Copy the self-contained
 
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  with:
+    persist-credentials: false
 - uses: ./.github/actions/stack
   with:
     rig-version: vX.Y.Z # exact release containing stack ci; required
@@ -1126,7 +1128,7 @@ stackspace job to test sibling source changes. Copy the self-contained
     test: rig test
 ```
 
-`rigsmith/stack-action@v1` is the intended name but is not published yet.
+`rigsmith/stack-action` is the intended name but is not published yet.
 No separate josh step is needed. Install your project's language SDK as usual.
 The committed manifest supplies sibling cursors; `upstream-tip: 'true'` selects
 upstream tips instead. Commands run from the selected member prefix in a
@@ -1142,9 +1144,34 @@ The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
 wire (11), build (12), and test (13). Seed support follows in a later change.
 
+Stack CI defaults to `--allowed-hosts github.com`; explicitly list other trusted
+fork/upstream hosts with `--allowed-hosts` (the action input is `allowed-hosts`).
+It rejects custom josh versions, LFS members and fused push destinations. The
+composite verifies rig release checksums, supports a workflow-pinned `rig-sha256`,
+reuses cursor-keyed member histories and reports consumed cache hits and member
+commit/filter provenance. Use `pull_request` with `permissions: {contents: read}`,
+no secrets and checkout `persist-credentials: false`. Pin external action uses
+by full commit SHA; `rigsmith/stack-action` is not published yet.
+
+Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
+should not trust restored filtered history. Cached bundles are not verified
+against upstream cursors; provenance records `source` and actual `filteredCommit`
+so a cached import is explicit. See the action README for the cache scope trust
+boundary and reproducibility limits.
+
 Committed symlinks must stay within the member prefix. Rooted targets and
 links escaping that prefix are rejected, including Windows rooted paths. If
 the runner cannot create a contained symlink, setup fails (exit 10) naming the
 file and target; it does not replace the link with a regular file. Windows
 runners may need Developer Mode or symlink-creation privileges for members
 that commit symlinks. Members without symlinks need no such privilege.
+
+Fork PRs (head repository differs from the workflow repository) skip both shared
+cache restore/save steps and disable member-bundle creation. Their summary
+reports that caches were skipped. For eligible jobs, `cache-history` and
+`cache-packages` independently default to `'true'`; set both to `'false'` to turn
+off this action's shared caches. Push/schedule events retain caching, while
+same-repository PRs can still read base-branch caches by GitHub's design. These
+action guards do not change GitHub's cache access policy or erase existing
+self-hosted runner files. Real hosted fork behavior is unverified locally; see
+the action README for the confidentiality and trust limits.
