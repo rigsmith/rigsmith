@@ -285,11 +285,12 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 
 | Verb | What |
 |------|------|
-| `stack setup` | Set up a freshly cloned stackspace: install the fusion engine, import the members, write the build overlay, print the status. The one command a new clone needs; safe to run again |
+| `stack setup [seed]` | Clone an explicit seed into an empty directory and configure its manifest home; without a seed, preserve remotes and home configuration. Set up the stackspace: install the fusion engine, import the members, write the build overlay, print the status. The one command a new clone needs; safe to run again |
 | `stack init` | Write the manifest, or import the repos it names into this history (and a generated `README.md`, unless one is there that rig does not own); a private upstream is reached with your `gh` login, and an import whose fetch brought nothing back is refused rather than recorded |
 | `stack add [upstream]` | Add a repo to this stackspace and import it; asks when not given |
 | `stack rm <repo>` | Remove a repo — manifest entry, directory and overlay redirects; refuses while it holds unsent or uncommitted work, or files git ignores (`--force` overrides); `--keep-tree` keeps the directory, and needs a clean one even with `--force` |
-| `stack seed <dir>` | Export the root files as a small repo (conventionally `rigstack-<name>`, suggested outside enclosing repositories); `stack init` on a clone of it rebuilds every member at its recorded cursor, or from the fork branch it was last proposed to while that branch still exists; refuses while a member holds unsent commits (`--force`) |
+| `stack seed [dir] [--publish <seed>]` | With --publish, publish root-only commits to a manifest home; with no arguments, retry the configured home. Unsent member work is refused unless --force overrides the reconstruction check. A directory and --publish cannot be combined. Local publication requires a bare home. With a directory, export the root files as a small repo (conventionally `rigstack-<name>`, suggested outside enclosing repositories); `stack init` on a clone of it rebuilds every member at its recorded cursor, or from the fork branch it was last proposed to while that branch still exists; refuses while a member holds unsent commits (`--force`) |
+| `stack home [pointer-file]` | Read a member’s single-reference .rig-stack pointer (default .rig-stack) |
 | `stack status` | Each repo's cursor against its upstream, whether it holds work that has not left — all of which `propose` would send — and, listed under it, each `stack-pr-*` topic in flight with the fork branch its pull request is on, `not proposed yet`, whether the branch has moved since, and whether a pull left it behind |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default); private upstreams through your `gh` login, as with `init` |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch — **all** of them, the prefix's whole divergence from upstream; `--from <branch>` sends only what a topic branch of the stackspace adds (a bare name resolves to the conventional `stack-pr-<name>`), so a second fix can be its own pull request (needs `trackBranch`, which it then keeps current); `--dry-run` shows the commit and branch that would go and touches no remote; both report any package the branch references that this stackspace provides from source rather than a feed, since a plain checkout of the branch cannot restore those |
@@ -305,7 +306,8 @@ again for the preview. Commit counts are omitted because upstream objects need
 not be present locally. Merge conflicts and replacement safety checks require a
 real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
 reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
-and `seed` refuse `--dry-run` before making changes. `status` and plain `doctor`
+and offline seed directory exports refuse `--dry-run` before making changes.
+Seed publication supports a dry-run preview without cloning or pushing. `status` and plain `doctor`
 are read-only; `propose`, `push`, and `pack` retain their existing previews.
 
 ```sh
@@ -322,6 +324,18 @@ history-filtering proxy; `propose` uses no engine at all, since the directory's
 tree is already what upstream wants. rig fetches a verified `josh-proxy` on
 first use where one is published for your platform and pinned version, and
 builds it from source otherwise.
+
+The default stack manifest home is a small seed repo containing the manifest,
+README and root overlays. Publish with `rig stack seed --publish acme/rigstack-app@main`;
+rebuild in an empty directory with `rig stack setup acme/rigstack-app@main`.
+Pull and propose publish root-only updates without sending fused history.
+Use `rig stack seed` to retry a failed publication; local work is retained.
+A member's `.rig-stack` contains that same seed reference; `rig stack home` reads it.
+
+Only setup with an explicit seed opts into a manifest home; no-argument setup
+leaves origin and home configuration unchanged. After a manual clone, opt in
+with `rig stack seed --publish <seed>`. A publication failure after pull
+returns non-zero while retaining the successful local pull and cursor.
 
 **[Stackspaces](./stack)** is the full guide: setting one up, wiring the
 build so the consumer compiles against source, sending and updating pull

@@ -5,12 +5,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/spf13/cobra"
 )
 
 func TestStackSeed(t *testing.T) {
@@ -399,5 +401,128 @@ func TestSeedDirForEscapesEnclosingRepositories(t *testing.T) {
 	}
 	if top, inside := stackEnclosingRepo(t.Context(), abs); inside {
 		t.Fatalf("suggestion still inside %s", top)
+	}
+}
+
+func TestStackSeedRejectsDirectoryWithPublish(t *testing.T) {
+	cmd := newStackSeedCmd()
+	cmd.SetContext(context.Background())
+	if err := cmd.Flags().Set("publish", "/unused/home.git"); err != nil {
+		t.Fatal(err)
+	}
+	// Must reject before stack discovery or any remote operation.
+	err := cmd.RunE(cmd, []string{"./snapshot"})
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("mixed seed modes: %v", err)
+	}
+}
+
+func TestStackSeedPublishDryRun(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+	before := mustGitStack(t, remote, "for-each-ref")
+	cmd := newStackSeedCmd()
+	// Use Cobra's persistent flag path, matching the real global -n flag.
+	previous := dryRun
+	t.Cleanup(func() { dryRun = previous })
+	parent := &cobra.Command{Use: "rig", SilenceUsage: true}
+	parent.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "preview")
+	parent.AddCommand(cmd)
+	var out bytes.Buffer
+	parent.SetOut(&out)
+	parent.SetErr(&out)
+	parent.SetArgs([]string{"seed", "--publish", remote, "-n"})
+	if err := parent.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("seed --publish -n: %v", err)
+	}
+	if !strings.Contains(out.String(), "would publish") {
+		t.Fatalf("missing preview: %s", out.String())
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got != before {
+		t.Fatal("dry run moved remote")
+	}
+	if stackHomeConfig(context.Background(), root, "URL") != "" {
+		t.Fatal("dry run configured home")
+	}
+}
+
+func TestStackSeedPublishForceOverridesUnsentWork(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	if err := os.WriteFile(filepath.Join(root, "pty-core", "src", "local.cs"), []byte("// unsent"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "add", "-A")
+	mustGitStack(t, root, "commit", "-qm", "unsent member work")
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+	cmd := newStackSeedCmd()
+	cmd.SetContext(context.Background())
+	if err := cmd.Flags().Set("publish", remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err == nil || !strings.Contains(err.Error(), "has commits") {
+		t.Fatalf("explicit publish accepted unsent work: %v", err)
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got != "" {
+		t.Fatal("refused publish moved remote")
+	}
+	if err := cmd.Flags().Set("force", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("forced publication: %v", err)
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got == "" {
+		t.Fatal("force did not publish")
+	}
+	if _, err := stackHomeGit(context.Background(), remote, "rev-parse", "HEAD:pty-core"); err == nil {
+		t.Fatal("force published a member tree")
+	}
+}
+
+func TestStackSeedAlternateBranchPreservesHome(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := filepath.Join(t.TempDir(), "seed")
+	if _, err := stackSeed(ctx, repo, m, seed, false); err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "clone", "--bare", seed, remote)
+	base := strings.TrimSpace(mustGitStack(t, seed, "rev-parse", "HEAD"))
+	mustGitStack(t, seed, "config", "user.name", "t")
+	mustGitStack(t, seed, "config", "user.email", "t@t")
+	mustGitStack(t, seed, "commit", "--allow-empty", "-m", "alternate history")
+	mustGitStack(t, seed, "push", remote, "HEAD:refs/heads/alternate")
+	url := "https://github.com/acme/seed.git"
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(config, []byte(fmt.Sprintf("[url %q]\n insteadOf = %s\n", remote, url)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	t.Setenv("GIT_TERMINAL_PROMPT", "0")
+	if err := stackConfigureHome(ctx, root, url, "main", base); err != nil {
+		t.Fatal(err)
+	}
+	before := mustGitStack(t, root, "config", "--local", "--list")
+	cmd := newStackSeedCmd()
+	cmd.SetContext(ctx)
+	if err := cmd.Flags().Set("publish", "acme/seed@alternate"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, nil); err != nil {
+		t.Fatalf("alternate branch inherited main's base: %v", err)
+	}
+	if after := mustGitStack(t, root, "config", "--local", "--list"); after != before {
+		t.Fatal("alternate publication retargeted configured home")
 	}
 }

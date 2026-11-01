@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -23,20 +24,41 @@ import (
 // than a required setup step.
 func newStackSetupCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "setup",
+		Use:   "setup [seed]",
 		Short: "Set up a freshly cloned stackspace: engine, members, build overlay",
 		Long: "--dry-run is not supported; this command refuses it before making changes.\n\n" +
 			"Runs the steps a new clone needs, in an order where each can see what it\n" +
 			"is judging: installs the fusion engine, reconstitutes the member\n" +
 			"directories, writes the build overlay if it is missing, commits what it\n" +
 			"generated, and prints the status.\n\n" +
-			"Safe to run again — every step is a no-op once it has been done.",
-		Args: cobra.NoArgs,
+			"Safe to run again — every step is a no-op once it has been done.\n" +
+			"An optional seed (owner/repo@ref, URL or local path) is cloned into the current empty directory.\n" +
+			"Only an explicit seed opts into home publication; no-argument setup leaves remotes and home configuration unchanged.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRun {
 				return fmt.Errorf("--dry-run is not supported for stack setup")
 			}
 			ctx, out := cmd.Context(), cmd.OutOrStdout()
+			if len(args) == 1 {
+				remote, ref, err := stackSeedReference(args[0])
+				if err != nil {
+					return err
+				}
+				cwd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				clone := []string{"clone"}
+				if ref != "" {
+					clone = append(clone, "--branch", ref)
+				}
+				clone = append(clone, "--", remote, ".")
+				if _, err := stackHomeGit(ctx, cwd, clone...); err != nil {
+					return err
+				}
+			}
+
 			root, err := stackRoot(ctx)
 			if err != nil {
 				return err
@@ -59,6 +81,27 @@ func newStackSetupCmd() *cobra.Command {
 			repo, err := gitrepo.Open(ctx, root)
 			if err != nil {
 				return err
+			}
+			// Remember the unfused seed before init adds member ancestors.
+			if len(args) == 1 && stackHomeConfig(ctx, root, "URL") == "" {
+				remote, _ := stackHomeGit(ctx, root, "config", "--local", "--get", "remote.origin.url")
+				if remote != "" {
+					if err := stackCheckHome(ctx, root, m); err != nil {
+						return err
+					}
+					base, err := stackHomeGit(ctx, root, "rev-parse", "HEAD")
+					if err != nil {
+						return err
+					}
+					branch, err := stackHomeGit(ctx, root, "symbolic-ref", "--short", "HEAD")
+					if err != nil {
+						branch = ""
+					} // pinned tags are read-only
+					if err := stackConfigureHomeState(ctx, root, remote, branch, base, branch == ""); err != nil {
+						return err
+					}
+
+				}
 			}
 			// What is already dirty is the user's, and stays theirs. Everything
 			// setup goes on to produce is the difference against this.

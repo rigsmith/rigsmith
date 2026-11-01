@@ -701,6 +701,133 @@ deliberately not a flag on `pull`, because a flag that is right only when a pref
 exactly one unmerged topic — and silently wrong otherwise — is worse than the manual
 step it replaces.
 
+
+### Manifest home (default)
+
+Keep one small seed repository as the manifest home: the committed
+rig.stack.jsonc, README and root overlay files, outside every member prefix.
+Publish with `rig stack seed --publish acme/rigstack-app@main`. The existing
+`rig stack seed <dir>` offline export remains available. In a fresh empty
+directory, use `rig stack setup acme/rigstack-app@main`; local development and
+CI pass exactly the same seed string. Setup without an argument still works
+in an existing clone. URLs, scp-style remotes and local paths are also accepted.
+The owner/repo shorthand means GitHub; its optional @ref names a branch or tag
+(including branch names with slashes). Tags are read-only homes: automatic
+publication prints one skip line and succeeds before reconstruction checks;
+explicit publication to the pinned home errors. Doctor uses the pinned commit.
+
+Only an explicit seed argument opts into a manifest home. No-argument setup
+leaves the home configuration and origin unchanged, including on older fused
+stacks. After a manual clone, opt in with `rig stack seed --publish <seed>`
+only when the committed root files match the existing seed. If setup or local
+edits changed them, initial adoption refuses: use `rig stack setup <seed>` in
+a fresh empty directory, reconcile the desired root edits there, commit, then
+publish from that configured checkout. --force does not bypass this refusal.
+
+Explicit setup remembers the remote, branch and unfused tip in local git config
+(`rig.stackHomeURL`, `rig.stackHomeBranch`, `rig.stackHomeBase`,
+`rig.stackHomePinned`). Pinned state is a separate boolean, never a reserved
+branch name. Setup stores the raw origin URL, before insteadOf expansion, so
+CI credential rewrites cannot be copied into this metadata. All adoption paths
+disable origin's push URL when its repository identity matches the home; an
+unrelated origin is left unchanged. An unconfigured checkout
+keeps its existing behavior. Pull and propose publish the committed root files
+after recording their changes locally. A proposal made with an already-edited
+manifest defers publication until that file is committed. Other dirty files
+also defer automatic publication successfully; explicit publication refuses a
+dirty checkout so prefix exclusions match the committed manifest. A retry is `rig stack seed` without
+arguments. Publication never imports objects from the fused checkout: a temporary
+independent clone receives only a git archive of HEAD outside member prefixes,
+then creates one ordinary commit parented on the seed tip. No-op exports create
+no commit. An existing home cannot be replaced on first publication: if its
+files differ, rig requires setup from that seed and reconciliation first. Every reachable seed commit is checked for member trees before and
+after writing. Doctor clones the configured home URL and checks the configured branch (or pinned seed revision); ordinary
+unconfigured stacks incur no seed network request. A remote that cannot be
+checked produces a neutral access warning; a detected member tree is a failure
+finding. The scan recognises only members currently in the manifest: an old
+tree belonging to a removed member is not detected. Member destinations matching the
+manifest home are refused. Git URL rewrite rules (including pushInsteadOf)
+are applied before comparing member push destinations to the home.
+
+The remembered base is scoped to both home URL and branch. Explicit publication
+to another branch of the same URL does not inherit that base or retarget the
+configured home state.
+
+If the seed tip differs from the remembered tip, publication refuses; there is
+no implicit merge or force push. Reconcile the competing manifest in a separate
+seed clone, then set up from that revision before publishing again. Permission
+failures and races fail clearly, retaining the local pull/proposal and its
+committed manifest. A home publication failure returns non-zero even though
+the pull succeeded locally: the error explicitly says the pull succeeded and
+the home was not updated. Scripts must treat this as a publication failure,
+not retry or roll back the member merge. Retrying does not undo local work. No confirmation is needed:
+publication is an ordinary fast-forward push. There is deliberately no overwrite
+mode; destructive replacement would require interactive confirmation and refusal
+in noninteractive runs.
+
+A member can commit a UTF-8 `.rig-stack` file containing one seed reference,
+for example `acme/rigstack-app@main`, followed by a newline. Read it with
+`rig stack home [pointer-file]`; this prints the reference for tools to consume.
+Pointers are maintained by the member owner; setup never edits member sources.
+A member README pointer is optional prose and is not generated or parsed.
+
+
+Explicit seed export/publication validates that every present member is
+reconstructible: unsent work or an unknown import baseline refuses publication,
+and a proposed tree is checked against its recorded fork branch. --force
+overrides this reconstruction safeguard for directory export, seed --publish,
+or an explicit configured-home retry. It never overrides dirty-tree refusal,
+fused-history checks, a moved seed, or differing root files on first adoption.
+
+Automatic publication after pull/propose treats local member work as normal:
+it prints a warning on stdout for each member it cannot reconstruct, then
+publishes the recorded cursors and proposals. Such a seed reproduces those
+recorded revisions, not unpublished local edits. A dirty tree instead defers
+automatic publication with a stdout message and success status; commit or stash
+the unrelated changes, then retry with rig stack seed. Pull still requires a
+clean tree before its local operation; only the publication phase defers.
+
+Home publication commits are unsigned internal snapshots: rig overrides
+commit.gpgsign=false in the temporary clone, even when the user's global
+configuration requests signing. This avoids signing prompts and unavailable
+keys under the temporary rig identity; member commits retain their own policy.
+The independent clone also uses an empty local hook directory for generated
+commit and push operations, so global client hooks cannot rewrite or block a
+snapshot. The remote's receive hooks and branch protections still apply.
+
+Seed operations use plain git credentials for HTTPS and SSH. The owner/repo
+shorthand resolves to a GitHub HTTPS remote, so private seeds in CI need a token
+configured by the workflow (for example through a git credential helper).
+This differs deliberately from private upstream imports: those pass the gh-first
+CredentialFor/stackAuthForURL result through the josh HTTP transport, which cannot
+use the caller's git credential helper directly. Seed clone and push have no
+josh transport and retain git's own credential, SSH and workflow token policy.
+A local gh login alone is insufficient unless git is configured to use it
+(for example with gh auth setup-git).
+
+
+Existing relative paths take precedence over GitHub shorthand and are resolved
+to absolute paths before storing the home. Use an explicit ./ prefix for a
+local path that does not yet exist. Local setup can clone a non-bare seed, but
+local manifest homes must be bare repositories for publication. Rig never
+changes another working tree or weakens Git's receive protection.
+A seed directory argument and --publish are mutually exclusive.
+
+Publication under -n/--dry-run prints the destination and root files it would
+publish, then stops before any seed clone, commit, push or home configuration.
+This applies to explicit seed publication and the publication steps after
+pull/propose; pull's own preview behavior is a separate concern.
+
+HTTPS seed URLs with userinfo are rejected before clone or home configuration:
+keep tokens in Git credential helpers rather than rig.stackHomeURL or origin.
+Error rendering redacts userinfo even for legacy configured URLs and captured
+Git diagnostics.
+
+Pull also publishes committed root updates when every member is already current,
+so it can retry publication without creating another local merge.
+A .rig-stack pointer contains exactly one reference, optionally followed by one
+LF or CRLF newline; embedded whitespace and control characters are rejected.
+
 ### Source signals from the .NET overlay
 
 With `UseStackSources` other than `false`, the overlay sets

@@ -92,3 +92,10 @@ func TestStackReadmeLinksOnlyWhatResolves(t *testing.T) {
 		}
 	}
 }
+
+func TestStackReadmeSeedPlaceholderIsCode(t *testing.T) {
+	text := renderStackReadme(t.TempDir(), &stackManifest{})
+	if !strings.Contains(text, "`rig stack seed --publish <seed>`") {
+		t.Fatal("seed placeholder is not rendered as code")
+	}
+}

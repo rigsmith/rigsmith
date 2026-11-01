@@ -8,7 +8,9 @@ description: >
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code
   setup, finding or reopening a past Claude Code session, or working across several
-  forked repos fused into one history (`rig stack`) — even if the user names a raw
+  forked repos fused into one history (`rig stack`), publishing a manifest home,
+  setting up a seed locally or in CI, or reading a member's .rig-stack pointer —
+  even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
 ---
@@ -118,6 +120,10 @@ still leaves as an ordinary PR to its own upstream. `rig.stack.jsonc` at the
 workspace root names the repos.
 
 ```sh
+rig stack setup [seed]                  # explicit seed opts into a manifest home; no arg preserves config
+rig stack seed [dir]                    # export root files, or retry configured home publication with no dir
+rig stack seed --publish acme/rigstack-app@main   # opt in and publish root-only commits
+rig stack home [pointer-file]           # read a member's .rig-stack reference
 rig stack status                       # each repo's cursor vs its upstream tip
 rig stack pull [repo]                  # take upstream's new commits (all repos by default)
 rig stack send <repo> <new-branch>     # ALL that repo's changes → a branch on the fork
@@ -126,6 +132,20 @@ rig stack init                         # scaffold the manifest; run again to imp
 rig stack pack <repo>                  # build that member's packages HERE (overlay in effect)
 rig stack doctor --fix                 # install the josh engine if missing
 ```
+
+A manifest home is a small seed repo holding the manifest, README and root
+overlays. Use the same seed reference for local setup and CI: owner/repo@ref
+means GitHub, while URLs and existing local paths are also accepted. For local
+publication use a bare repo or a branch that is not checked out. Do not combine
+a seed directory with --publish. Private seed access needs Git credentials
+(a workflow-configured token in CI).
+
+Pull publishes committed root updates even when no member moved; propose
+publishes after recording its branch, or defers if the manifest was already
+dirty. Publication uses an independent clone, never fused objects. If the seed
+moved, reconcile separately; if access or publication fails, local work is kept.
+A post-pull publication failure returns non-zero and explicitly says the local
+pull succeeded. Retry with rig stack seed once the problem is fixed.
 
 **You are usually working inside one.** Detect it: a `rig.stack.jsonc` at the
 git top level, or directories that match its `repos` keys. If so:
@@ -137,7 +157,7 @@ git top level, or directories that match its `repos` keys. If so:
   of a proposed branch.** Cross-member references resolve through the build
   overlay, which only exists here; a bare checkout's restore fails, sometimes
   with no message at all. Use `rig stack pack <repo>`.
-- **Never `git push` from the workspace**, and never add a remote to it. It
+- **Never `git push` from the workspace.** Let rig manage the seed home; it
   holds several rewritten upstream histories fused together. Work leaves through
   `rig stack propose` (a fork you contribute to) or `rig stack push` (a repo of
   your own, marked `owned`) — never through git directly.
