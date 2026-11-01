@@ -1,0 +1,22 @@
+internal/rig/cli/stackci_test.go
+  s_305a3d2195b124::t_252e4c66ccf13c 12,241,262-280,282-292,295-296,298-309,564
+  s_305a3d2195b124::t_583b42106afe6c 10,281,293-294,297
+internal/rig/cli/stackdeps_action_test.go
+  s_305a3d2195b124::t_252e4c66ccf13c 33,62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "adf1e3a092b5d5067eec89fb45898b611da8cb63",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
