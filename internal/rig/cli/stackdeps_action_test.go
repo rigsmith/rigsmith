@@ -59,7 +59,7 @@ func TestStackDepsAction(t *testing.T) {
 	for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
 		t.Run(fmt.Sprintf("dependencies=%q", value), func(t *testing.T) {
 			p := exec.Command("bash", "-e", "-c", "rig() { echo build-ran; };\n"+run)
-			p.Env = append(os.Environ(), "STACK_DEPENDENCIES="+value, "STACK_TIP=false", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+			p.Env = append(os.Environ(), "STACK_DEPENDENCIES="+value, "STACK_TIP=false", "STACK_CACHE_HISTORY=false", "STACK_CACHE_PACKAGES=false", "STACK_FORK_PR=false", "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
 			out, err := p.CombinedOutput()
 			valid := value == "true" || value == "false"
 			if valid {

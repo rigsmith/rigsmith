@@ -12,6 +12,87 @@ leaves as itself: a pull request to a fork you contribute to, or a
 fast-forward of a repository you own. Nobody downstream learns the stackspace
 exists.
 
+## One manifest home
+
+The default is a small seed repository holding rig.stack.jsonc, the README and
+root build overlays. It holds no member directories or fused history. Publish
+with `rig stack seed --publish acme/rigstack-app@main`, then use
+`rig stack setup acme/rigstack-app@main` in an empty directory on a fresh
+machine or CI runner. The shorthand means GitHub; @ref names a branch or tag.
+URLs, SSH remotes and local paths also work. Tags are read-only homes:
+automatic publication prints one skip line and succeeds; explicit publication
+or a configured-home retry refuses until a writable branch is selected.
+
+An explicit setup seed opts into automatic home publication after pull and
+propose. Running setup without a seed leaves remotes and home configuration
+unchanged, so existing stackspaces retain their behavior. After a manual clone,
+use `rig stack seed --publish acme/rigstack-app@main` to opt in only when the
+committed root files match the seed. If they differ (including README or overlay
+changes made by setup), initial adoption refuses. Run `rig stack setup <seed>`
+in a fresh empty directory, reconcile your desired root edits there and commit,
+then publish from that configured checkout. A configured setup can be rerun
+without an argument. Every home adoption disables origin's push URL when origin
+names that home; unrelated origins and their push URLs are left unchanged.
+
+Publication creates an unsigned root-only commit in an independent seed clone.
+It never imports fused objects. Explicit seed publication and the no-argument
+`rig stack seed` retry both refuse unsent member work or an unknown import
+baseline and validate recorded proposals on the fork.
+Use --force with either explicit publish or the configured-home retry to
+override only that reconstruction check.
+Automatic publication after pull/propose warns on stdout naming each affected
+member and continues: the seed contains recorded cursors/proposals and omits
+unpublished local work. If other files are dirty, automatic publication defers
+successfully instead; commit or stash them, then use `rig stack seed` to retry.
+Pull itself still refuses an initially dirty tree.
+A moved seed is refused rather than overwritten, and --force never bypasses that
+check or the differing-root-files refusal on initial adoption.
+If publication fails, the local pull and cursor commit remain intact; the command
+returns non-zero and says the pull succeeded locally but the home was not
+updated. Reconcile competing seed changes separately; use `rig stack seed`
+to retry publication. No force-push mode is provided.
+
+Doctor checks the configured manifest home branch or pinned seed revision,
+rather than the remote’s default branch. An inaccessible remote
+is reported as “could not be checked”; a member tree is reported as a failure.
+Only members currently in the manifest are recognised by that scan.
+
+Private seed access uses git's credential configuration. CI workflows must
+configure a token for HTTPS seeds; a gh login alone is insufficient unless git
+uses its helper. The stored home URL is origin's literal URL, before credential
+rewrites, so transient CI tokens are not stored in local home metadata.
+Git credential helpers and their stored credentials are not
+copied into the seed. Committed root files outside member prefixes are published
+as-is, without content filtering: review files such as a root .npmrc for secrets
+before publishing.
+
+A member may commit a UTF-8 `.rig-stack` file containing
+`acme/rigstack-app@main` and a newline. `rig stack home [pointer-file]` reads
+that reference for tools. README pointers are optional prose, not generated or
+parsed.
+
+Existing relative paths take precedence over GitHub shorthand and are resolved
+to absolute paths before storing the home. Use an explicit ./ prefix for a
+local path that does not yet exist. Local setup can clone a non-bare seed, but
+local manifest homes must be bare repositories for publication. Rig never
+changes another working tree or weakens Git's receive protection.
+A seed directory argument and --publish are mutually exclusive.
+
+Publication under -n/--dry-run prints the destination and root files it would
+publish, then stops before any seed clone, commit, push or home configuration.
+This applies to explicit seed publication and the publication steps after
+pull/propose; pull's own preview behavior is a separate concern.
+
+HTTPS seed URLs with userinfo are rejected before clone or home configuration:
+keep tokens in Git credential helpers rather than rig.stackHomeURL or origin.
+Error rendering redacts userinfo even for legacy configured URLs and captured
+Git diagnostics.
+
+Pull also publishes committed root updates when every member is already current,
+so it can retry publication without creating another local merge.
+A .rig-stack pointer contains exactly one reference, optionally followed by one
+LF or CRLF newline; embedded whitespace and control characters are rejected.
+
 ## The two halves
 
 Two independent problems, two independent solutions. You need both, and they
@@ -685,7 +766,8 @@ again for the preview. Commit counts are omitted because upstream objects need
 not be present locally. Merge conflicts and replacement safety checks require a
 real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
 reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
-and `seed` refuse `--dry-run` before making changes. `status` and plain `doctor`
+and offline seed directory exports refuse `--dry-run` before making changes.
+Seed publication supports a dry-run preview without cloning or pushing. `status` and plain `doctor`
 are read-only; `propose`, `push`, and `pack` retain their existing previews.
 
 A [pinned](./configuration#stack) project has nothing to take: its tag was
@@ -1118,6 +1200,8 @@ stackspace job to test sibling source changes. Copy the self-contained
 
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  with:
+    persist-credentials: false
 - uses: ./.github/actions/stack
   with:
     rig-version: vX.Y.Z # exact release containing stack ci; required
@@ -1126,7 +1210,7 @@ stackspace job to test sibling source changes. Copy the self-contained
     test: rig test
 ```
 
-`rigsmith/stack-action@v1` is the intended name but is not published yet.
+`rigsmith/stack-action` is the intended name but is not published yet.
 No separate josh step is needed. Install your project's language SDK as usual.
 The committed manifest supplies sibling cursors; `upstream-tip: 'true'` selects
 upstream tips instead. Commands run from the selected member prefix in a
@@ -1142,12 +1226,37 @@ The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
 wire (11), build (12), and test (13). Seed support follows in a later change.
 
+Stack CI defaults to `--allowed-hosts github.com`; explicitly list other trusted
+fork/upstream hosts with `--allowed-hosts` (the action input is `allowed-hosts`).
+It rejects custom josh versions, LFS members and fused push destinations. The
+composite verifies rig release checksums, supports a workflow-pinned `rig-sha256`,
+reuses cursor-keyed member histories and reports consumed cache hits and member
+commit/filter provenance. Use `pull_request` with `permissions: {contents: read}`,
+no secrets and checkout `persist-credentials: false`. Pin external action uses
+by full commit SHA; `rigsmith/stack-action` is not published yet.
+
+Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
+should not trust restored filtered history. Cached bundles are not verified
+against upstream cursors; provenance records `source` and actual `filteredCommit`
+so a cached import is explicit. See the action README for the cache scope trust
+boundary and reproducibility limits.
+
 Committed symlinks must stay within the member prefix. Rooted targets and
 links escaping that prefix are rejected, including Windows rooted paths. If
 the runner cannot create a contained symlink, setup fails (exit 10) naming the
 file and target; it does not replace the link with a regular file. Windows
 runners may need Developer Mode or symlink-creation privileges for members
 that commit symlinks. Members without symlinks need no such privilege.
+
+Fork PRs (head repository differs from the workflow repository) skip both shared
+cache restore/save steps and disable member-bundle creation. Their summary
+reports that caches were skipped. For eligible jobs, `cache-history` and
+`cache-packages` independently default to `'true'`; set both to `'false'` to turn
+off this action's shared caches. Push/schedule events retain caching, while
+same-repository PRs can still read base-branch caches by GitHub's design. These
+action guards do not change GitHub's cache access policy or erase existing
+self-hosted runner files. Real hosted fork behavior is unverified locally; see
+the action README for the confidentiality and trust limits.
 
 ### Stack topic dependencies
 

@@ -208,9 +208,60 @@ func TestStackFlow(t *testing.T) {
 
 	// ---- pull takes the movement, and then send works again --------------
 
-	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err != nil {
-		t.Fatalf("pull: %v", err)
+	// Reject only the home publication: the member pull must remain committed.
+	rejectedHome := filepath.Join(work, "rejected-home.git")
+	mustGitStack(t, work, "init", "--bare", "--initial-branch=main", rejectedHome)
+	if err := os.WriteFile(filepath.Join(rejectedHome, "hooks", "pre-receive"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
 	}
+	if err := stackConfigureHome(ctx, ws, rejectedHome, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	beforePull := mustGitStack(t, ws, "rev-parse", "HEAD")
+	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err == nil || !strings.Contains(err.Error(), "pull succeeded locally, but the manifest home was not updated") {
+		t.Fatalf("post-pull publication failure: %v", err)
+	}
+	if got := mustGitStack(t, ws, "rev-parse", "HEAD"); got == beforePull {
+		t.Fatal("successful pull was not committed")
+	}
+	pulled, _, err := loadStackManifest(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, srv.path("org/libfoo"), "rev-parse", "main")); pulled.cursor("libfoo") != got {
+		t.Fatal("publication failure lost the new cursor")
+	}
+	// The pulled tree includes local divergence: get it onto the fork before a
+	// seed can reconstruct it. The rejecting home still makes publication fail.
+	if err := runVerb(ctx, newStackSendCmd(), "libfoo", "after-pull"); err == nil || !strings.Contains(err.Error(), "manifest home was not updated") {
+		t.Fatalf("proposal before seed retry: %v", err)
+	}
+	// A no-op pull retries the failed publication, then publishes root-only edits.
+	if err := os.Remove(filepath.Join(rejectedHome, "hooks", "pre-receive")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err != nil {
+		t.Fatalf("no-op publication retry: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "root-note.txt"), []byte("root-only update\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "root-only update")
+	localTip := mustGitStack(t, ws, "rev-parse", "HEAD")
+	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err != nil {
+		t.Fatalf("no-op root publication: %v", err)
+	}
+	if got := mustGitStack(t, rejectedHome, "show", "HEAD:root-note.txt"); got != "root-only update\n" {
+		t.Fatalf("root update not published: %q", got)
+	}
+	if got := mustGitStack(t, ws, "rev-parse", "HEAD"); got != localTip {
+		t.Fatal("no-op pull changed local history")
+	}
+	for _, key := range []string{"URL", "Branch", "Base"} {
+		mustGitStack(t, ws, "config", "--local", "--unset", "rig.stackHome"+key)
+	}
+
 	if _, err := os.Stat(filepath.Join(ws, "libfoo", "src", "extra.txt")); err != nil {
 		t.Fatalf("pull did not bring upstream's new file in: %v", err)
 	}
@@ -245,14 +296,31 @@ func TestStackFlow(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(seed, "libfoo")); !os.IsNotExist(err) {
 		t.Fatal("seed carries a member directory")
 	}
+	seedRemote := filepath.Join(work, "seed.git")
+	mustGitStack(t, work, "clone", "--bare", seed, seedRemote)
 	rebuilt := filepath.Join(work, "rebuilt")
-	mustGitStack(t, work, "clone", "-q", seed, rebuilt)
-	mustGitStack(t, rebuilt, "config", "user.email", "t@t")
-	mustGitStack(t, rebuilt, "config", "user.name", "t")
+	if err := os.MkdirAll(rebuilt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_AUTHOR_NAME", "t")
+	t.Setenv("GIT_AUTHOR_EMAIL", "t@t")
+	t.Setenv("GIT_COMMITTER_NAME", "t")
+	t.Setenv("GIT_COMMITTER_EMAIL", "t@t")
 	chdir(t, rebuilt)
-	out, err = runVerbOut(ctx, newStackInitCmd())
+	out, err = runVerbOut(ctx, newStackSetupCmd(), seedRemote)
 	if err != nil {
 		t.Fatalf("init on the seed: %v\n%s", err, out)
+	}
+	configuredHead := mustGitStack(t, rebuilt, "rev-parse", "HEAD")
+	configuredConfig := mustGitStack(t, rebuilt, "config", "--local", "--list")
+	if err := runVerb(ctx, newStackSetupCmd()); err != nil {
+		t.Fatalf("configured setup rerun: %v", err)
+	}
+	if got := mustGitStack(t, rebuilt, "rev-parse", "HEAD"); got != configuredHead {
+		t.Fatal("configured rerun changed HEAD")
+	}
+	if got := mustGitStack(t, rebuilt, "config", "--local", "--list"); got != configuredConfig {
+		t.Fatal("configured rerun changed home or remote configuration")
 	}
 	if !strings.Contains(out, "libfoo: reconstituted from") || !strings.Contains(out, "stack/after-pull") {
 		t.Fatalf("libfoo was not rebuilt from its proposed branch:\n%s", out)
@@ -282,8 +350,44 @@ func TestStackFlow(t *testing.T) {
 	if out, err := runVerbOut(ctx, newStackPullCmd(), "libfoo"); err != nil || !strings.Contains(out, "nothing to pull") {
 		t.Fatalf("pull after rebuild: %v\n%s", err, out)
 	}
-	if out, err := runVerbOut(ctx, newStackSendCmd(), "libfoo", "after-pull"); err != nil || !strings.Contains(out, "nothing to send") {
-		t.Fatalf("propose after rebuild should be a no-op against the same branch: %v\n%s", err, out)
+	for _, tc := range []struct{ name, branch, content string }{{"libbar", "noop", "upstream no-op"}, {"libfoo", "after-pull", "fork no-op"}} {
+		if err := os.WriteFile(filepath.Join(rebuilt, "noop-root-note"), []byte(tc.content), 0644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, rebuilt, "add", "noop-root-note")
+		mustGitStack(t, rebuilt, "commit", "-qm", "root-only proposal update")
+		if out, err := runVerbOut(ctx, newStackSendCmd(), tc.name, tc.branch); err != nil || !strings.Contains(out, "nothing to send") {
+			t.Fatalf("no-op propose publication: %v\n%s", err, out)
+		}
+		if got := mustGitStack(t, seedRemote, "show", "HEAD:noop-root-note"); got != tc.content {
+			t.Fatal("no-op propose omitted root publication")
+		}
+	}
+	// An unrelated untracked file must not turn a successful proposal into
+	// an error: defer only home publication and preserve the user's file.
+	beforeDeferredHome := mustGitStack(t, seedRemote, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(rebuilt, "libfoo", "src", "libfoo.txt"), []byte("libfoo unrelated-dirty\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, rebuilt, "commit", "-qm", "member change", "--", "libfoo")
+	strayNote := filepath.Join(rebuilt, "untracked-notes")
+	if err := os.WriteFile(strayNote, []byte("keep me"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runVerbOut(ctx, newStackSendCmd(), "libfoo", "unrelated-dirty"); err != nil || !strings.Contains(out, "publication deferred") {
+		t.Fatalf("proposal with unrelated file: %v\n%s", err, out)
+	}
+	if !refExists(t, fork, "refs/heads/stack/unrelated-dirty") {
+		t.Fatal("proposal was not pushed")
+	}
+	if got := mustGitStack(t, seedRemote, "rev-parse", "HEAD"); got != beforeDeferredHome {
+		t.Fatal("dirty proposal published home")
+	}
+	if b, err := os.ReadFile(strayNote); err != nil || string(b) != "keep me" {
+		t.Fatal("proposal lost untracked file")
+	}
+	if err := os.Remove(strayNote); err != nil {
+		t.Fatal(err)
 	}
 	// ---- propose must not commit a manifest edit of the user's own -------
 	//
@@ -351,6 +455,11 @@ func TestStackFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustGitStack(t, rebuilt, "commit", "-qam", "stack: manifest")
+
+	// The remaining conflict-resolution cases deliberately retain unsent local
+	// work. Exercise the unconfigured local-pull contract from here onward;
+	// publication's reconstruction refusal and retry are covered above.
+	mustGitStack(t, rebuilt, "config", "--local", "--unset", "rig.stackHomeURL")
 
 	// ---- a conflicted pull, resolved by hand, is recorded on the re-run --
 	//
@@ -783,6 +892,10 @@ func TestStackProposeDryRun(t *testing.T) {
 
 	chdir(t, ws)
 	stackDryRun(t)
+	missingHome := filepath.Join(work, "missing-home.git")
+	if err := stackConfigureHome(context.Background(), ws, missingHome, "main", "unchanged"); err != nil {
+		t.Fatal(err)
+	}
 	manifestBefore, err := os.ReadFile(filepath.Join(ws, "rig.stack.jsonc"))
 	if err != nil {
 		t.Fatal(err)
@@ -795,6 +908,12 @@ func TestStackProposeDryRun(t *testing.T) {
 
 	if !strings.Contains(out, "would push ") || !strings.Contains(out, " to "+srv.spec("you/lib")+":stack/fix (proposing to "+srv.spec("acme/lib")+")") {
 		t.Fatalf("dry run did not say what it would push and where:\n%s", out)
+	}
+	if !strings.Contains(out, "would publish") || !strings.Contains(out, missingHome) {
+		t.Fatalf("missing home preview: %s", out)
+	}
+	if _, err := os.Stat(missingHome); !os.IsNotExist(err) {
+		t.Fatal("propose preview touched home")
 	}
 	if strings.Contains(out, "proposed ") || strings.Contains(out, "pushed ") {
 		t.Fatalf("dry run claims to have proposed:\n%s", out)
@@ -1255,6 +1374,59 @@ func TestStackProposalsRecordedAndShown(t *testing.T) {
 	}
 }
 
+func TestStackMemberHomeGuardFlow(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") == "" {
+		t.Skip("set RIG_STACK_E2E=1 to run the member-home guard flow")
+	}
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	remote := srv.bare(t, "acme/app")
+	root := rmStackspace(t, fmt.Sprintf(`{"repos":{"app":{"upstream":%q,"fork":%q,"owned":true}}}`, srv.spec("acme/app"), srv.spec("acme/app")))
+	ctx := context.Background()
+	if err := stackConfigureHome(ctx, root, stackRemoteURL(srv.spec("acme/app")), "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	before := mustGitStack(t, remote, "for-each-ref")
+	for _, build := range []func() *cobra.Command{newStackSendCmd, newStackPushCmd} {
+		cmd := build()
+		args := []string{"app"}
+		if cmd.Name() == "propose" {
+			args = append(args, "fix")
+		}
+		if err := runVerb(ctx, cmd, args...); err == nil || !strings.Contains(err.Error(), "member destination is the manifest home") {
+			t.Fatalf("%s accepted home destination: %v", cmd.Name(), err)
+		}
+	}
+	if got := mustGitStack(t, remote, "for-each-ref"); got != before {
+		t.Fatal("member command moved manifest home")
+	}
+	// The configured URL looks different, but Git's rewrite makes it the seed.
+	rewrittenHome := filepath.Join(work, "rewritten-home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", rewrittenHome)
+	if err := stackConfigureHome(ctx, root, rewrittenHome, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	memberURL := stackRemoteURL(srv.spec("acme/app"))
+	for _, rule := range []string{"insteadOf", "pushInsteadOf"} {
+		mustGitStack(t, root, "config", "--local", "url."+rewrittenHome+"."+rule, memberURL)
+		for _, build := range []func() *cobra.Command{newStackSendCmd, newStackPushCmd} {
+			cmd := build()
+			args := []string{"app"}
+			if cmd.Name() == "propose" {
+				args = append(args, "fix")
+			}
+			if err := runVerb(ctx, cmd, args...); err == nil || !strings.Contains(err.Error(), "member destination is the manifest home") {
+				t.Fatalf("%s %s rewrite accepted: %v", cmd.Name(), rule, err)
+			}
+		}
+		mustGitStack(t, root, "config", "--local", "--unset", "url."+rewrittenHome+"."+rule)
+	}
+	if got := mustGitStack(t, rewrittenHome, "for-each-ref"); got != "" {
+		t.Fatal("rewritten destination received member history")
+	}
+
+}
+
 // The preview needs only remote refs, even when no engine is installed.
 func TestStackPullDryRunPreview(t *testing.T) {
 	work := t.TempDir()
@@ -1326,7 +1498,7 @@ func TestStackPullDryRunPreview(t *testing.T) {
 
 func TestStackDryRunUnsupportedWriters(t *testing.T) {
 	stackDryRun(t)
-	for _, makeCmd := range []func() *cobra.Command{newStackInitCmd, newStackAddCmd, newStackRemoveCmd, newStackSetupCmd, newStackSeedCmd} {
+	for _, makeCmd := range []func() *cobra.Command{newStackInitCmd, newStackAddCmd, newStackRemoveCmd, newStackSetupCmd} {
 		cmd := makeCmd()
 		t.Run(cmd.Name(), func(t *testing.T) {
 			_, err := runVerbOut(context.Background(), cmd)
@@ -1334,6 +1506,14 @@ func TestStackDryRunUnsupportedWriters(t *testing.T) {
 				t.Fatalf("expected refusal before discovery or writes: %v", err)
 			}
 		})
+	}
+}
+
+func TestStackSeedDirectoryDryRunUnsupported(t *testing.T) {
+	stackDryRun(t)
+	_, err := runVerbOut(context.Background(), newStackSeedCmd(), "../seed")
+	if err == nil || !strings.Contains(err.Error(), "--dry-run is not supported") {
+		t.Fatalf("expected refusal before discovery or writes: %v", err)
 	}
 }
 

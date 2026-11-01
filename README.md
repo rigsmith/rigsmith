@@ -9,14 +9,14 @@ and the shared engine under `core/`:
 | Path | Binary | What it is |
 |---|---|---|
 | [`core/`](core/) | — | `github.com/rigsmith/rigsmith/core` — the shared engine: semver, changeset parsing, the release planner (cascade + grouping), the plugin contract, the built-in ecosystem adapters (.NET, Node, Go, Rust), and `pathmap` (cross-OS path resolution). No external dependencies. |
-| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust), plus parallel worktrees and **stackspaces** (`rig stack`) — your app and the repos you have forked, fused into one history. Export a portable seed with `rig stack seed ../rigstack-acme`. Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
+| [`cmd/rig/`](cmd/rig/) | `rig` | The convention-first dev launcher (run/build/test/format across .NET, Node, Go, Rust), plus parallel worktrees and **stackspaces** (`rig stack`) — your app and the repos you have forked, fused into one history. Keep one seed repo as the manifest home for local setup and CI; initial adoption of an existing seed requires matching root files. If they differ, set up from that seed in a fresh directory and reconcile; see [Stackspaces](site/rig/stack.md). Successor to the .NET/Node [`rig`](https://github.com/JohnCampionJr/rig). |
 | [`cmd/changerig/`](cmd/changerig/) | `changerig` | The lean changeset tool: the lifecycle (init → add → status → version) isolated from release orchestration. Its `commands` package (under `internal/changerig`) is reused by shiprig. Aliased `changeset`. |
 | [`cmd/shiprig/`](cmd/shiprig/) | `shiprig` | The release front door: everything changeRig does, plus publish/tag/pre orchestration. Successor to [net-changesets](../net-changesets). |
 | [`cmd/clauderig/`](cmd/clauderig/) | `clauderig` | Sync your Claude Code setup (config, skills, session history) across machines via a private git repo, with cross-OS path correction, complete staged-text secret scanning, Git byte preservation, and transcript chunking (on for new configurations). Restore checks that recreated memory links resolve inside the selected folder and skips links pointing outside it. See [docs/CLAUDERIG-DESIGN.md](docs/CLAUDERIG-DESIGN.md). |
 | [`cmd/codexrig/`](cmd/codexrig/) | `codexrig` | The same idea for the Codex CLI: sync `config.toml`, `AGENTS.md`, skills, prompts and rules across machines via a private git repo, with cross-OS path correction (including the absolute paths Codex writes as TOML table KEYS), TOML-aware field-level redaction, and several Codex logins side by side, each in its own `CODEX_HOME`. Session rollouts are opt-in and are never rewritten. See [docs/CODEXRIG-DESIGN.md](docs/CODEXRIG-DESIGN.md). |
 | [`cmd/brewrig/`](cmd/brewrig/) | `brewrig` | Keep several machines on the same Homebrew software — and the same versions of it. Each machine publishes what it deliberately installed (`installed_on_request`, not the dependency closure) to a private git repo; the union is installed everywhere. It never uninstalls to make machines match: the one exception is a package you deliberately removed elsewhere, offered one prompt at a time. darwin/linux only — Homebrew has no Windows. See [docs/BREWRIG-DESIGN.md](docs/BREWRIG-DESIGN.md). |
 
-`rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`, `seed`) refuse dry-run; `wire` and `doctor --fix` report without writing.
+`rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`) and offline seed directory exports refuse dry-run; seed publication previews without cloning or pushing; `wire` and `doctor --fix` report without writing.
 
 These binaries are single, statically-linked Go executables — the north-star
 property: no .NET runtime, no Node, installable via `curl | sh` / Homebrew /
@@ -71,9 +71,12 @@ rig stack propose some-lib read-timeout --dry-run   # what would go to your fork
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```
 
-`rig stack ci` tests a member checkout against sibling sources alongside its
-plain-clone CI matrix. See [Stackspaces](site/rig/stack.md#testing-a-member-pr-in-its-stackspace)
-for the composite action and workflow.
+
+`rig stack ci` builds a member checkout with sibling sources in a temporary
+stackspace. Its action verifies release downloads and reports trusted history
+cache reuse and commit/filter provenance; `cache-history: 'false'` disables
+bundle reuse. See [stack CI](site/rig/stack.md#testing-a-member-pr-in-its-stackspace) for the read-only,
+no-secret fork PR setup and cache trust limits.
 
 `rig stack deps` checks topic PR dependencies against upstream merge states and
 manifest cursors; `rig stack status` shows the same chain. See the

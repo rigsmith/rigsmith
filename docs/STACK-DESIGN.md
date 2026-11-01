@@ -701,6 +701,133 @@ deliberately not a flag on `pull`, because a flag that is right only when a pref
 exactly one unmerged topic — and silently wrong otherwise — is worse than the manual
 step it replaces.
 
+
+### Manifest home (default)
+
+Keep one small seed repository as the manifest home: the committed
+rig.stack.jsonc, README and root overlay files, outside every member prefix.
+Publish with `rig stack seed --publish acme/rigstack-app@main`. The existing
+`rig stack seed <dir>` offline export remains available. In a fresh empty
+directory, use `rig stack setup acme/rigstack-app@main`; local development and
+CI pass exactly the same seed string. Setup without an argument still works
+in an existing clone. URLs, scp-style remotes and local paths are also accepted.
+The owner/repo shorthand means GitHub; its optional @ref names a branch or tag
+(including branch names with slashes). Tags are read-only homes: automatic
+publication prints one skip line and succeeds before reconstruction checks;
+explicit publication to the pinned home errors. Doctor uses the pinned commit.
+
+Only an explicit seed argument opts into a manifest home. No-argument setup
+leaves the home configuration and origin unchanged, including on older fused
+stacks. After a manual clone, opt in with `rig stack seed --publish <seed>`
+only when the committed root files match the existing seed. If setup or local
+edits changed them, initial adoption refuses: use `rig stack setup <seed>` in
+a fresh empty directory, reconcile the desired root edits there, commit, then
+publish from that configured checkout. --force does not bypass this refusal.
+
+Explicit setup remembers the remote, branch and unfused tip in local git config
+(`rig.stackHomeURL`, `rig.stackHomeBranch`, `rig.stackHomeBase`,
+`rig.stackHomePinned`). Pinned state is a separate boolean, never a reserved
+branch name. Setup stores the raw origin URL, before insteadOf expansion, so
+CI credential rewrites cannot be copied into this metadata. All adoption paths
+disable origin's push URL when its repository identity matches the home; an
+unrelated origin is left unchanged. An unconfigured checkout
+keeps its existing behavior. Pull and propose publish the committed root files
+after recording their changes locally. A proposal made with an already-edited
+manifest defers publication until that file is committed. Other dirty files
+also defer automatic publication successfully; explicit publication refuses a
+dirty checkout so prefix exclusions match the committed manifest. A retry is `rig stack seed` without
+arguments. Publication never imports objects from the fused checkout: a temporary
+independent clone receives only a git archive of HEAD outside member prefixes,
+then creates one ordinary commit parented on the seed tip. No-op exports create
+no commit. An existing home cannot be replaced on first publication: if its
+files differ, rig requires setup from that seed and reconciliation first. Every reachable seed commit is checked for member trees before and
+after writing. Doctor clones the configured home URL and checks the configured branch (or pinned seed revision); ordinary
+unconfigured stacks incur no seed network request. A remote that cannot be
+checked produces a neutral access warning; a detected member tree is a failure
+finding. The scan recognises only members currently in the manifest: an old
+tree belonging to a removed member is not detected. Member destinations matching the
+manifest home are refused. Git URL rewrite rules (including pushInsteadOf)
+are applied before comparing member push destinations to the home.
+
+The remembered base is scoped to both home URL and branch. Explicit publication
+to another branch of the same URL does not inherit that base or retarget the
+configured home state.
+
+If the seed tip differs from the remembered tip, publication refuses; there is
+no implicit merge or force push. Reconcile the competing manifest in a separate
+seed clone, then set up from that revision before publishing again. Permission
+failures and races fail clearly, retaining the local pull/proposal and its
+committed manifest. A home publication failure returns non-zero even though
+the pull succeeded locally: the error explicitly says the pull succeeded and
+the home was not updated. Scripts must treat this as a publication failure,
+not retry or roll back the member merge. Retrying does not undo local work. No confirmation is needed:
+publication is an ordinary fast-forward push. There is deliberately no overwrite
+mode; destructive replacement would require interactive confirmation and refusal
+in noninteractive runs.
+
+A member can commit a UTF-8 `.rig-stack` file containing one seed reference,
+for example `acme/rigstack-app@main`, followed by a newline. Read it with
+`rig stack home [pointer-file]`; this prints the reference for tools to consume.
+Pointers are maintained by the member owner; setup never edits member sources.
+A member README pointer is optional prose and is not generated or parsed.
+
+
+Explicit seed export/publication validates that every present member is
+reconstructible: unsent work or an unknown import baseline refuses publication,
+and a proposed tree is checked against its recorded fork branch. --force
+overrides this reconstruction safeguard for directory export, seed --publish,
+or an explicit configured-home retry. It never overrides dirty-tree refusal,
+fused-history checks, a moved seed, or differing root files on first adoption.
+
+Automatic publication after pull/propose treats local member work as normal:
+it prints a warning on stdout for each member it cannot reconstruct, then
+publishes the recorded cursors and proposals. Such a seed reproduces those
+recorded revisions, not unpublished local edits. A dirty tree instead defers
+automatic publication with a stdout message and success status; commit or stash
+the unrelated changes, then retry with rig stack seed. Pull still requires a
+clean tree before its local operation; only the publication phase defers.
+
+Home publication commits are unsigned internal snapshots: rig overrides
+commit.gpgsign=false in the temporary clone, even when the user's global
+configuration requests signing. This avoids signing prompts and unavailable
+keys under the temporary rig identity; member commits retain their own policy.
+The independent clone also uses an empty local hook directory for generated
+commit and push operations, so global client hooks cannot rewrite or block a
+snapshot. The remote's receive hooks and branch protections still apply.
+
+Seed operations use plain git credentials for HTTPS and SSH. The owner/repo
+shorthand resolves to a GitHub HTTPS remote, so private seeds in CI need a token
+configured by the workflow (for example through a git credential helper).
+This differs deliberately from private upstream imports: those pass the gh-first
+CredentialFor/stackAuthForURL result through the josh HTTP transport, which cannot
+use the caller's git credential helper directly. Seed clone and push have no
+josh transport and retain git's own credential, SSH and workflow token policy.
+A local gh login alone is insufficient unless git is configured to use it
+(for example with gh auth setup-git).
+
+
+Existing relative paths take precedence over GitHub shorthand and are resolved
+to absolute paths before storing the home. Use an explicit ./ prefix for a
+local path that does not yet exist. Local setup can clone a non-bare seed, but
+local manifest homes must be bare repositories for publication. Rig never
+changes another working tree or weakens Git's receive protection.
+A seed directory argument and --publish are mutually exclusive.
+
+Publication under -n/--dry-run prints the destination and root files it would
+publish, then stops before any seed clone, commit, push or home configuration.
+This applies to explicit seed publication and the publication steps after
+pull/propose; pull's own preview behavior is a separate concern.
+
+HTTPS seed URLs with userinfo are rejected before clone or home configuration:
+keep tokens in Git credential helpers rather than rig.stackHomeURL or origin.
+Error rendering redacts userinfo even for legacy configured URLs and captured
+Git diagnostics.
+
+Pull also publishes committed root updates when every member is already current,
+so it can retry publication without creating another local merge.
+A .rig-stack pointer contains exactly one reference, optionally followed by one
+LF or CRLF newline; embedded whitespace and control characters are rejected.
+
 ### Source signals from the .NET overlay
 
 With `UseStackSources` other than `false`, the overlay sets
@@ -795,7 +922,7 @@ Seed support is deferred until the separate setup seed work merges. This verb
 requires `--manifest` and exposes no seed input.
 
 The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
-`git cat-file blob` bytes under the manifest prefix. This bypasses archive
+`git cat-file --batch` bytes under the manifest prefix. This bypasses archive
 export-ignore/export-subst and checkout smudge/EOL filters, including the
 checkout's local config; replacement objects are disabled. It needs no PR
 ancestry or complete history. File modes and contained symlinks are preserved.
@@ -811,7 +938,7 @@ outside GitHub. Commands run from the selected member and test results stream
 to stdout. See [the member CI guide](guides/testing-a-member-pr-in-its-stackspace.md).
 
 The action's final home is the separate `rigsmith/stack-action` repository,
-following the shiprig-action model. `rigsmith/stack-action@v1` is intended but
+following the shiprig-action model. `rigsmith/stack-action` is intended but
 not published yet. Until that later publication, ship the fully self-contained
 `.github/actions/stack/` directory with no references outside it; workflow
 examples use its in-repo path. This change does not create the new repository.
@@ -827,6 +954,118 @@ the runner cannot create a contained symlink, setup fails (exit 10) naming the
 file and target; it does not replace the link with a regular file. Windows
 runners may need Developer Mode or symlink-creation privileges for members
 that commit symlinks. Members without symlinks need no such privilege.
+
+### CI cache and trust boundaries
+
+`init` previously reused only josh's host-level object/filter cache, still
+requesting each filtered cursor through a proxy. With `RIG_STACK_CACHE`, the
+import path first consumes a bundle containing only that filtered upstream
+history. Its key hashes source URL, exact cursor, prefix filter and engine
+version. A hit fetches locally into the fresh fused repository and skips proxy
+startup, upstream fetch and filtering. It never saves fused commits. Outer
+Actions cache restore prefixes retain unchanged member bundles across manifest
+changes and seed josh's host caches for changed members. Package download keys
+include the entire manifest's immutable sibling cursors (which identify all
+lockfiles/pins transitively) plus checkout lockfiles. No build outputs are cached.
+Only consumed member hits enter the reported hit rate.
+
+CI rejects custom josh pins and verifies restored binaries against the existing
+source-pinned platform hashes for `r26.07.19` / release `r26.07.19-win.3`.
+The rig installer is release-only: missing assets, network errors and checksum
+mismatches all fail, with no Go fallback. `checksums.txt` from the release covers
+corruption/mirror tampering, not a compromised release; workflow `rig-sha256`
+pins an independently trusted expected archive digest.
+
+The verb defaults to exact host allowlist `github.com`, matching its GitHub
+Actions purpose while refusing arbitrary manifest-controlled destinations.
+Enterprise hosts require explicit opt-in. Fused history has no remotes and a
+rejecting pre-push hook; configured destinations are refused. This is accidental
+push prevention, not a sandbox for build scripts. Read-only tokens, no persisted
+checkout credentials and no secrets remain the fork-PR boundary. Never execute
+PR code in a privileged `pull_request_target` workflow. A separate privileged
+metadata handler must neither check out PR code nor execute its artifacts.
+
+Raw-blob materialization now uses one `cat-file --batch` subprocess rather than
+one per file. LFS is deliberately refused, checking `.gitattributes` across all
+members for `filter=lfs`, so pointer-only builds cannot pass silently. Commits
+and prefix filters are written to summary and a JSON provenance artifact. Pin
+external actions by full reviewed SHA; `rigsmith/stack-action` remains unpublished.
+
+Local measurement (`BenchmarkStackCIMaterialize`, 100 committed seven-byte files,
+three iterations, macOS arm64): batch 74.98 ms/op versus per-file 2351.51 ms/op,
+about 31× faster. The retained benchmark includes materialization and compares
+101 Git subprocesses with two; this is fixture evidence, not a hosted-runner SLA.
+
+### History cache trust
+
+A restored filtered bundle is trusted history. Git checks object integrity,
+but neither the bundle filename nor its Git object hashes prove that its
+filtered commit corresponds to the upstream cursor in the manifest. No local
+cursor-to-filtered-history verification is performed. The substituted-bundle
+unit fixture deliberately demonstrates that different valid history under the
+same cache key is accepted. An import record carried inside that same bundle
+would not provide an independent trust anchor.
+
+The trust boundary is GitHub's cache scoping: PR cache writes are scoped to that
+PR ref and cannot poison another ref's cache; poisoning a default-branch cache
+requires the ability to write caches in that branch's execution context. A
+compromised default-branch workflow or trusted cache writer can therefore
+substitute sibling sources. Cache keys and cursor provenance are not signatures.
+See [GitHub cache access restrictions](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#restrictions-for-accessing-a-cache).
+
+`cache-history: 'false'` disables restored member/host history and engine caches
+in the action and turns bundle consumption/writes off in the verb. Use it for
+release-grade runs that should not trust cached filtered history; the equivalent
+CLI flag is `--cache-history=false`. Existing host object caches on self-hosted
+runners remain josh's responsibility; use a clean runner for that trust boundary.
+`cache-packages` independently controls package-download cache restore/save and
+defaults to `'true'`, like `cache-history`. Set both inputs to `'false'` for a
+job that must not use this action's shared caches. Package caches contain only
+downloads, not build outputs. Fork PRs override both defaults as described below.
+
+The summary and JSON provenance record each member's `source` (`cache` or
+`fetched`) and the actual `filteredCommit` imported. The manifest `commit` is a
+requested upstream cursor, not an independently verified claim about cached
+content. The selected PR member always says `fetched` because its tree comes
+from checkout HEAD after import. Its `filteredCommit` describes the preceding
+import, not the replacement checkout commit. For cached siblings, retain the
+actual bundle/filtered history as well as the provenance to reproduce a build;
+the cursor alone is insufficient if the cache was substituted.
+
+Provenance artifact names include the job, matrix `strategy.job-index`, and
+`github.run_attempt`, avoiding collisions between matrix legs and reruns.
+GitHub documents strategy context access from job steps in its
+[contexts reference](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#strategy-context).
+The runner's [composite handler](https://github.com/actions/runner/blob/main/src/Runner.Worker/Handlers/CompositeActionHandler.cs)
+creates embedded children; [child-context creation](https://github.com/actions/runner/blob/main/src/Runner.Worker/ExecutionContext.cs)
+copies parent expression values. This source inspection supports strategy context
+availability inside the composite. Actual matrix uploads remain unverified on
+GitHub-hosted runners; local tests do not establish that integration.
+
+### Fork PR cache policy
+
+When a pull request's `github.event.pull_request.head.repo.full_name` differs
+from `github.repository`, this action skips both combined `actions/cache` steps:
+it neither restores nor saves history/engine caches or package caches. It also
+leaves `RIG_STACK_CACHE` empty, unsets it before invoking rig, and passes
+`--cache-history=false`, so the verb cannot write new filtered bundles. The
+summary says both caches were skipped because this is a fork PR, rather than
+presenting a hit rate. Push, schedule and other events without a pull-request
+payload retain input-controlled caching. `cache-history` and `cache-packages`
+each accept exactly `'true'` or `'false'` and default to `'true'` for eligible jobs.
+
+Same-repository PRs still read base-branch caches, by GitHub's design. Cache
+write scoping protects refs from some poisoning scenarios; it does not provide
+confidentiality. These guards control this action's cache operations, not the
+GitHub cache service's access policy: other steps or untrusted code that explicitly
+request accessible caches are outside this guard. Do not treat a cache as secret
+storage. Keep private workflows/material in a separate trust boundary when
+untrusted code could request those caches. Use clean runners: disabling these
+steps does not erase pre-existing files on self-hosted runners.
+
+The action conditions and shell behavior are covered by local YAML-parsing and
+fork/non-fork script tests. Actual GitHub fork-PR restore/save behavior remains
+unverified locally; validate it on hosted runners before relying on that setup.
 
 ## Cross-member topic completion
 
