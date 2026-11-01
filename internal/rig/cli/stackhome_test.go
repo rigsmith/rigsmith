@@ -19,6 +19,8 @@ func TestStackHomeReference(t *testing.T) {
 		{"acme/rigstack-app@topic/fix", "https://github.com/acme/rigstack-app.git", "topic/fix"},
 		{"git@example.com:acme/seed.git", "git@example.com:acme/seed.git", ""},
 		{"/tmp/seed.git", "/tmp/seed.git", ""},
+		{"C:/work/rigstack-app.git", "C:/work/rigstack-app.git", ""},
+		{`C:\work\rigstack-app.git`, `C:\work\rigstack-app.git`, ""},
 	} {
 		remote, ref, err := stackSeedReference(tc.in)
 		if err != nil || remote != tc.remote || ref != tc.ref {
