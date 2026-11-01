@@ -513,7 +513,7 @@ func TestStackImportUpgrade(t *testing.T) {
 		t.Fatal("old block not detected")
 	}
 	got, ok := patchWalkUp(old)
-	if !ok || legacyWalkUp(got) || strings.Count(got, "<Import ") != 1 || !strings.Contains(got, "Exists('$(StackManifest)')") || !strings.Contains(got, "member content") {
+	if !ok || legacyWalkUp(got) || strings.Count(got, "<Import ") != 1 || !strings.Contains(got, "'$(_RigStackParent)' == 'true'") || !strings.Contains(got, "member content") {
 		t.Fatal(got)
 	}
 }
@@ -554,21 +554,37 @@ func TestStackSourceSignalsE2E(t *testing.T) {
  <PropertyGroup><TargetSawSource Condition="'$(RigStackSource_Acme_Core)' == 'true'">true</TargetSawSource></PropertyGroup>
  <Error Condition="'$(TargetSawSource)' != 'true'" Text="target property condition failed" />
  </Target>
- <Target Name="CheckDisabledSignals" BeforeTargets="CoreCompile" Condition="'$(UseStackSources)' == 'false' Or '$(StackManifest)' == ''">
+ <Target Name="CheckDisabledSignals" BeforeTargets="CoreCompile" Condition="'$(UseStackSources)' == 'false' Or '$(_RigStackParent)' != 'true'">
  <Error Condition="'$(RigStackspace)' != '' Or '$(RigStackspaceRoot)' != '' Or '$(RigStackSource_Acme_Core)' != ''" Text="disabled properties leaked" />
  </Target></Project>`)
-	for _, mode := range []string{"stack", "optout", "plain"} {
+	for _, mode := range []string{"stack", "stack-json", "stack-inline", "hand-owned", "optout", "plain", "plain-config"} {
 		dir := "app"
-		if mode == "plain" {
+		if strings.HasPrefix(mode, "plain") {
 			dir = "plain/app"
 			writeFile(t, filepath.Join(root, "plain", overlayFile), `<Project><Target Name="Unrelated" BeforeTargets="Build"><Error Text="unrelated ancestor imported" /></Target></Project>`)
 		}
-		// A plain clone has the rig-owned import, but no stack manifest above it.
-		if mode == "plain" {
-			if err := os.Remove(filepath.Join(root, "rig.stack.jsonc")); err != nil {
+		for _, name := range []string{"rig.stack.jsonc", "rig.stack.json", ".rig.json"} {
+			if err := os.Remove(filepath.Join(root, name)); err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
 		}
+		switch mode {
+		case "stack", "hand-owned", "optout":
+			writeFile(t, filepath.Join(root, "rig.stack.jsonc"), `{}`)
+		case "stack-json":
+			writeFile(t, filepath.Join(root, "rig.stack.json"), `{}`)
+		case "stack-inline":
+			writeFile(t, filepath.Join(root, ".rig.json"), `{"stack":{"repos":{}}}`)
+		case "plain-config":
+			writeFile(t, filepath.Join(root, "plain/.rig.json"), `{"primary":"dotnet"}`)
+		}
+
+		body := overlay
+		if mode == "hand-owned" {
+			body = strings.Replace(body, overlayMarker, "", 1)
+		}
+		writeFile(t, filepath.Join(root, overlayFile), body)
+		t.Logf("building mode %s", mode)
 		writeFile(t, filepath.Join(root, dir, overlayFile), member)
 		writeFile(t, filepath.Join(root, dir, "App.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0" /></ItemGroup></Project>`)
 		writeFile(t, filepath.Join(root, dir, "App.cs"), `#if STACK_ACME_UNUSED
@@ -630,7 +646,7 @@ func TestLocalOverlayLegacyImport(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.write && tc.writable {
-				if len(got.Fixed) != 1 || len(got.Notes) != 0 || legacyWalkUp(string(after)) || !strings.Contains(string(after), "Exists('$(StackManifest)')") || !strings.Contains(string(after), "member content") {
+				if len(got.Fixed) != 1 || len(got.Notes) != 0 || legacyWalkUp(string(after)) || !strings.Contains(string(after), "'$(_RigStackParent)' == 'true'") || !strings.Contains(string(after), "member content") {
 					t.Fatalf("upgrade: %+v\n%s", got, after)
 				}
 				again, err := New().LocalOverlay(context.Background(), req)
@@ -662,6 +678,64 @@ func TestLocalOverlayLegacyImport(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestLocalOverlayUnrecognizedLegacyImport(t *testing.T) {
+	root := t.TempDir()
+	// The original block has been reformatted: it works, but rig cannot safely
+	// recognize its exact boundaries for replacement.
+	legacy := `<Project><!-- Added by rig. historical explanation -->
+ <PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Condition="'$(StackParentTargets)' != ''" Project="$(StackParentTargets)" />
+ </Project>`
+	path := filepath.Join(root, "app", overlayFile)
+	writeFile(t, path, legacy)
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project/>`)
+	req := plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}, Write: true, Writable: []string{"app"}}
+	for i := 0; i < 2; i++ {
+		got, err := New().LocalOverlay(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != legacy || len(got.Fixed) != 0 || len(got.Notes) != 1 || len(got.Problems) != 0 {
+			t.Fatalf("unsafe upgrade: %+v\n%s", got, after)
+		}
+	}
+}
+
+func TestLocalOverlayUpgradesManifestGate(t *testing.T) {
+	root := t.TempDir()
+	old := `<Project><!-- rig:stack-import -->
+ <PropertyGroup><StackManifest>$([MSBuild]::GetPathOfFileAbove('rig.stack.jsonc', '$(MSBuildThisFileDirectory)../'))</StackManifest>
+ <StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Project="$(StackParentTargets)" Condition="Exists('$(StackManifest)')" />
+ <!-- /rig:stack-import --><!-- mine --></Project>`
+	path := filepath.Join(root, "app", overlayFile)
+	writeFile(t, path, old)
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project/>`)
+	req := plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}, Write: true, Writable: []string{"app"}}
+	got, err := New().LocalOverlay(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fixed) != 1 || len(got.Problems) != 0 || strings.Contains(string(after), "<StackManifest>") || strings.Count(string(after), "<Import ") != 1 || !strings.Contains(string(after), "<!-- mine -->") {
+		t.Fatalf("upgrade failed: %+v\n%s", got, after)
+	}
+	got, err = New().LocalOverlay(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fixed) != 0 {
+		t.Fatal(got)
 	}
 }
 

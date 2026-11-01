@@ -69,10 +69,6 @@ rig stack propose some-lib read-timeout --dry-run   # what would go to your fork
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```
 
-`rig stack ci` tests a member checkout against sibling sources alongside its
-plain-clone CI matrix. See [Stackspaces](site/rig/stack.md#testing-a-member-pr-in-its-stackspace)
-for the composite action and workflow.
-
 The release engine — changeset parsing, the dependency **cascade** (a dependent
 is patch-bumped when its dependency releases), **linked/fixed/lockstep**
 grouping, version bumping, and changelog rendering — is a faithful port of
@@ -83,6 +79,8 @@ ecosystems (`examples/demo` is a ready-made polyglot repo to try it on).
 JSON contract external plugins speak; `examples/plugins/changeset-changelog-changelogen`
 is a Node reference plugin producing changelogen-style output. Set
 `"changelog": "<plugin>"` in config to swap it in.
+
+See [Stackspaces](site/rig/stack.md) for source build signals, member imports, and evaluation timing.
 
 ## Design
 
@@ -171,29 +169,3 @@ theirs:
 
 Independently: the release engine is a faithful port of **net-changesets**, which
 is itself a .NET port of [changesets](https://github.com/changesets/changesets).
-
-## Stackspace member CI
-
-`rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
-builds the committed checkout against sibling sources in a temporary stackspace.
-Keep this job alongside the plain-clone matrix. The self-contained composite is
-`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
-See [the guide](docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
-The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
-per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
-compile constants, plus `RIG_STACK`. Per-package properties are available inside
-targets after `RigStackSourceSignals`, not in project evaluation conditions.
-`UseStackSources=false` disables all signals and swaps. Member imports are gated
-on an ancestor stack manifest and upgraded when wired again; `stack doctor`
-previews the signals by project. See [the stack guide](site/rig/stack.md) for naming and timing.
-
-`rig stack ci-guard app/App.csproj` builds one .NET project with
-`TreatWarningsAsErrors=true` and reports observed stack-only diagnostics in
-`GITHUB_STEP_SUMMARY`. In a plain clone, declare eligible compiler diagnostics
-with `<StackOnlyWarning Include="ACME0001" />` in the project. In a stackspace,
-only NU1603/NU1608/NU1605 events matched to a rewired package identity in NuGet's
-assets log are eligible. Other warnings fail; MSB3277 stays an error because
-exact assembly scoping is not established. `--strict` disables holding warnings
-back. The composite stack action accepts `guard-project: app/App.csproj` (relative
-to the member, replacing its build command) and `strict: 'true'`; the equivalent
-runner flag is `rig stack ci --guard-project app/App.csproj`.

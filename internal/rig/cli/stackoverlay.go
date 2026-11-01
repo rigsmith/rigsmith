@@ -37,6 +37,10 @@ import (
 // ecosystems whose scan errored — for those, "no links" is not an answer, and
 // nothing that acts on an empty answer (removing an overlay, say) may do so.
 func stackRedirects(ctx context.Context, root string, members []string, publishing map[string]stackPublishing) (map[string][]stackLink, []stackOrphan, []string, map[string]error) {
+	return stackRedirectsFromScan(stackScan(ctx, root, stackScanOptions{Registry: true}), members, publishing)
+}
+
+func stackRedirectsFromScan(scans []stackScanResult, members []string, publishing map[string]stackPublishing) (map[string][]stackLink, []stackOrphan, []string, map[string]error) {
 	member := func(rel string) string {
 		rel = filepath.ToSlash(rel)
 		for _, m := range members {
@@ -59,7 +63,7 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 	aliasUsed := map[string]map[string]bool{}
 	// Overlay adapters are left out: one re-emits the base language's project
 	// rather than owning it, so asking both would count the same project twice.
-	for _, scan := range stackScan(ctx, root, stackScanOptions{Registry: true}) {
+	for _, scan := range scans {
 		eco := scan.Eco
 		if scan.Err != nil {
 			failed[eco.Info().ID] = scan.Err
@@ -352,9 +356,10 @@ func redirectsOf(links []stackLink) []plugin.Redirect {
 
 // stackOverlayReport is one ecosystem's answer about the build wiring.
 type stackOverlayReport struct {
-	Eco   string
-	Links []stackLink
-	Resp  plugin.LocalOverlayResponse
+	Eco      string
+	Packages []plugin.Package
+	Links    []stackLink
+	Resp     plugin.LocalOverlayResponse
 }
 
 // stackCheckOverlay asks each ecosystem whether the redirects it needs are in
@@ -385,7 +390,12 @@ func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]st
 			fmt.Sprintf("%s not imported yet, so nothing can be said about the build overlay — run `rig stack setup`",
 				strings.Join(missing, ", "))}, nil
 	}
-	byEco, orphans, notes, failed := stackRedirects(ctx, root, members, m.publishing())
+	scans := stackScan(ctx, root, stackScanOptions{Registry: true})
+	byEco, orphans, notes, failed := stackRedirectsFromScan(scans, members, m.publishing())
+	packages := map[string][]plugin.Package{}
+	for _, scan := range scans {
+		packages[scan.Eco.Info().ID] = scan.Packages
+	}
 	for _, eco := range ecosystem.Default().All() {
 		// A scan that errored found no links, which is not the same as there
 		// being none: the overlay it would have needed is still needed, and
@@ -403,7 +413,7 @@ func stackCheckOverlay(ctx context.Context, root string, m *stackManifest) ([]st
 		if err != nil || resp.Skipped {
 			continue
 		}
-		out = append(out, stackOverlayReport{Eco: eco.Info().ID, Links: links, Resp: resp})
+		out = append(out, stackOverlayReport{Eco: eco.Info().ID, Packages: packages[eco.Info().ID], Links: links, Resp: resp})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Eco < out[j].Eco })
 	return out, orphans, notes, failed
@@ -436,24 +446,19 @@ func localOverlayRequest(root string, links []stackLink, writable []string) plug
 
 // stackReportSourceSignals is a static preview; MSBuild decides conditional
 // PackageReferences for the selected configuration at build time.
-func stackReportSourceSignals(ctx context.Context, out io.Writer, root string, links []stackLink) {
+func stackReportSourceSignals(out io.Writer, root string, links []stackLink, packages []plugin.Package) {
 	ids := map[string]bool{}
 	for _, l := range links {
 		ids[l.Package] = true
 	}
-	for _, scan := range stackScan(ctx, root, stackScanOptions{Registry: true}) {
-		if scan.Eco.Info().ID != "dotnet" || scan.Err != nil {
-			continue
-		}
-		for _, p := range scan.Packages {
-			fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", p.ManifestPath, root)
-			for _, d := range p.Dependencies {
-				if !d.ViaRegistry || !ids[d.Name] {
-					continue
-				}
-				name := dotnet.StackSourceName(d.Name)
-				fmt.Fprintf(out, "      RigStackSource_%s=true; STACK_%s (when PackageReference is active; available in targets after RigStackSourceSignals)\n", name, strings.ToUpper(name))
+	for _, p := range packages {
+		fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", filepath.ToSlash(p.ManifestPath), filepath.ToSlash(root))
+		for _, d := range p.Dependencies {
+			if !d.ViaRegistry || !ids[d.Name] {
+				continue
 			}
+			name := dotnet.StackSourceName(d.Name)
+			fmt.Fprintf(out, "      RigStackSource_%s=true; STACK_%s (when PackageReference is active; available in targets after RigStackSourceSignals)\n", name, strings.ToUpper(name))
 		}
 	}
 }
