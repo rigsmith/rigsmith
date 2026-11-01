@@ -1,0 +1,73 @@
+internal/rig/cli/stackoverlay_test.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 471-522
+internal/rig/cli/stackseed.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 36,38,40-45,65,67-71,79-103,114,246-247,287-312
+internal/rig/cli/stackreadme_test.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 95-101
+.github/actions/stack/install-rig.sh
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 2,17-29,31
+.changeset/happy-pandas-wander.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 1-7
+site/rig/verbs.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 288,292-293,303-309,317-318,336-347,376-392
+internal/rig/cli/stackmanifest.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 697-699
+site/rig/configuration.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 397-405
+internal/rig/cli/stackhome.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 1-486
+internal/rig/cli/stackflow_test.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 211-251,253,255-264,299-300,302-308,310,314-324,353-390,459-463,895-898,912-917,1377-1429,1501,1512-1516
+core/plugin/protocol.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 530-533
+.changeset/happy-otters-jump.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 1-7
+.github/actions/stack/README.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 3,9-10,21-27,45-82,88-146,159-183
+internal/rig/cli/stackci_security_test.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 1-405
+examples/github-workflows/stack.yml
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 11-14,19-22,26-28
+internal/rig/cli/stackjosh.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 244-262
+internal/rig/cli/stackcicache.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 1-68
+internal/rig/cli/stackreadme.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 116-121
+internal/rig/cli/stackseed_test.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 8,15,406-526
+internal/rig/cli/stackoverlay.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 222-261,498,504-516
+docs/guides/testing-a-member-pr-in-its-stackspace.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 8,15-16,51,59-79,92-101
+internal/rig/cli/stacksetup_test.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 6-11,69-233
+.changeset/fuzzy-moose-race.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 1-7
+internal/rig/cli/stacksetup.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 6,27,34-37,43-61,85-104
+core/ecosystem/dotnet/localoverlay.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 11,240-242,289-290,293-295,315,421-427,431
+skills/rigsmith-tools/SKILL.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 11-13,123-126,136-149,160
+README.md
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 12,19-24,79-84
+internal/rig/cli/stackhome_test.go
+  s_3ca2df27ba04aa::t_2061537a6bd1dc 1-902
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "88e9dc69202dcdf3d92b83184bb995743bd3879a",
+  "prompts": {},
+  "sessions": {
+    "s_3ca2df27ba04aa": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19858-d7ae-7ba1-8d4d-db5fabc475c4",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
