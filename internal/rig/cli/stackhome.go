@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,9 +60,34 @@ func stackCheckHome(ctx context.Context, dir string, m *stackManifest) error {
 		}
 		for _, name := range strings.Split(names, "\n") {
 			if m.Repos[name] != nil {
-				return fmt.Errorf("seed contains member tree %s in %s; refusing fused history", name, sha)
+				return &stackHomeTreeError{Name: name, Commit: sha}
 			}
 		}
+	}
+	return nil
+}
+
+type stackHomeTreeError struct{ Name, Commit string }
+
+func (e *stackHomeTreeError) Error() string {
+	return fmt.Sprintf("seed contains member tree %s in %s; refusing fused history", e.Name, e.Commit)
+}
+
+func stackReportHomeDoctor(out io.Writer, err error) {
+	if err == nil {
+		return
+	}
+	var tree *stackHomeTreeError
+	if errors.As(err, &tree) {
+		fmt.Fprintf(out, "✗ seed origin: %v\n", err)
+	} else {
+		fmt.Fprintf(out, "· seed origin could not be checked: %v\n", err)
+	}
+}
+
+func stackPublishAfterPull(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) error {
+	if err := stackPublishHome(ctx, repo, m); err != nil {
+		return fmt.Errorf("pull succeeded locally, but the manifest home was not updated: %w", err)
 	}
 	return nil
 }
@@ -176,7 +203,7 @@ func stackPublishHomeTo(ctx context.Context, repo *gitrepo.Repo, m *stackManifes
 		return fmt.Errorf("existing seed differs from this stack; set up from the seed and reconcile before publishing")
 	}
 	if diff != "" {
-		if _, err := stackHomeGit(ctx, dir, "-c", "user.name=rig", "-c", "user.email=rig@localhost", "commit", "-m", "stack: update manifest home"); err != nil {
+		if _, err := stackHomeGit(ctx, dir, "-c", "user.name=rig", "-c", "user.email=rig@localhost", "-c", "commit.gpgsign=false", "commit", "-m", "stack: update manifest home"); err != nil {
 			return err
 		}
 	}
@@ -213,6 +240,10 @@ func newStackHomeCmd() *cobra.Command {
 }
 
 func stackDoctorHome(ctx context.Context, root string, m *stackManifest) error {
+	if stackHomeConfig(ctx, root, "URL") == "" {
+		return nil
+	}
+
 	remote, err := stackHomeGit(ctx, root, "remote", "get-url", "origin")
 	if err != nil {
 		return nil

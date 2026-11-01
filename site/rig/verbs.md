@@ -402,3 +402,9 @@ rebuild in an empty directory with `rig stack setup acme/rigstack-app@main`.
 Pull and propose publish root-only updates without sending fused history.
 Use `rig stack seed` to retry a failed publication; local work is retained.
 A member's `.rig-stack` contains that same seed reference; `rig stack home` reads it.
+
+
+Only setup with an explicit seed opts into a manifest home; no-argument setup
+leaves origin and home configuration unchanged. After a manual clone, opt in
+with `rig stack seed --publish <seed>`. A publication failure after pull
+returns non-zero while retaining the successful local pull and cursor.

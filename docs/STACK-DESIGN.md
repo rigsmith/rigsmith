@@ -714,7 +714,11 @@ in an existing clone. URLs, scp-style remotes and local paths are also accepted.
 The owner/repo shorthand means GitHub; its optional @ref names a branch or tag
 (including branch names with slashes). Tags are read-only homes.
 
-Setup remembers the remote, branch and unfused tip in local git config
+Only an explicit seed argument opts into a manifest home. No-argument setup
+leaves the home configuration and origin unchanged, including on older fused
+stacks. After a manual clone, opt in with rig stack seed --publish <seed>.
+
+Explicit setup remembers the remote, branch and unfused tip in local git config
 (`rig.stackHomeURL`, `rig.stackHomeBranch`, `rig.stackHomeBase`).
 It disables origin's push URL in the fused checkout. An unconfigured checkout
 keeps its existing behavior. Pull and propose publish the committed root files
@@ -726,14 +730,21 @@ independent clone receives only a git archive of HEAD outside member prefixes,
 then creates one ordinary commit parented on the seed tip. No-op exports create
 no commit. An existing home cannot be replaced on first publication: if its
 files differ, rig requires setup from that seed and reconciliation first. Every reachable seed commit is checked for member trees before and
-after writing; doctor also checks origin. Member destinations matching the
+after writing. Doctor clones origin only for a configured home; ordinary
+unconfigured stacks incur no seed network request. A remote that cannot be
+checked produces a neutral access warning; a detected member tree is a failure
+finding. The scan recognises only members currently in the manifest: an old
+tree belonging to a removed member is not detected. Member destinations matching the
 manifest home are refused.
 
 If the seed tip differs from the remembered tip, publication refuses; there is
 no implicit merge or force push. Reconcile the competing manifest in a separate
 seed clone, then set up from that revision before publishing again. Permission
 failures and races fail clearly, retaining the local pull/proposal and its
-committed manifest. Retrying does not undo local work. No confirmation is needed:
+committed manifest. A home publication failure returns non-zero even though
+the pull succeeded locally: the error explicitly says the pull succeeded and
+the home was not updated. Scripts must treat this as a publication failure,
+not retry or roll back the member merge. Retrying does not undo local work. No confirmation is needed:
 publication is an ordinary fast-forward push. There is deliberately no overwrite
 mode; destructive replacement would require interactive confirmation and refusal
 in noninteractive runs.
@@ -743,3 +754,19 @@ for example `acme/rigstack-app@main`, followed by a newline. Read it with
 `rig stack home [pointer-file]`; this prints the reference for tools to consume.
 Pointers are maintained by the member owner; setup never edits member sources.
 A member README pointer is optional prose and is not generated or parsed.
+
+
+Home publication commits are unsigned internal snapshots: rig overrides
+commit.gpgsign=false in the temporary clone, even when the user's global
+configuration requests signing. This avoids signing prompts and unavailable
+keys under the temporary rig identity; member commits retain their own policy.
+
+Seed operations use plain git credentials for HTTPS and SSH. The owner/repo
+shorthand resolves to a GitHub HTTPS remote, so private seeds in CI need a token
+configured by the workflow (for example through a git credential helper).
+This differs deliberately from private upstream imports: those pass the gh-first
+CredentialFor/stackAuthForURL result through the josh HTTP transport, which cannot
+use the caller's git credential helper directly. Seed clone and push have no
+josh transport and retain git's own credential, SSH and workflow token policy.
+A local gh login alone is insufficient unless git is configured to use it
+(for example with gh auth setup-git).

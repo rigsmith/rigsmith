@@ -494,7 +494,7 @@ func newStackPullCmd() *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  branch again from the new import and replay the fix; proposing as-is would revert what upstream landed.\n")
 			}
-			return stackPublishHome(ctx, repo, m)
+			return stackPublishAfterPull(ctx, repo, m)
 		},
 	}
 	cmd.Flags().BoolVar(&repin, "repin", false, "resolve a tag pin again, taking it where upstream has moved it")
@@ -2041,9 +2041,7 @@ func newStackDoctorCmd() *cobra.Command {
 				fmt.Fprintln(out, "· no stack manifest here (fine outside a stackspace)")
 			default:
 				fmt.Fprintf(out, "✓ manifest: %d repo(s)\n", len(m.Repos))
-				if err := stackDoctorHome(ctx, root, m); err != nil {
-					fmt.Fprintf(out, "✗ seed origin: %v\n", err)
-				}
+				stackReportHomeDoctor(out, stackDoctorHome(ctx, root, m))
 
 			}
 			bin, binErr := stackJoshProxyBin(version)

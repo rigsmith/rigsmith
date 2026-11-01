@@ -31,7 +31,8 @@ func newStackSetupCmd() *cobra.Command {
 			"directories, writes the build overlay if it is missing, commits what it\n" +
 			"generated, and prints the status.\n\n" +
 			"Safe to run again — every step is a no-op once it has been done.\n" +
-			"An optional seed (owner/repo@ref, URL or local path) is cloned into the current empty directory.",
+			"An optional seed (owner/repo@ref, URL or local path) is cloned into the current empty directory.\n" +
+			"Only an explicit seed opts into home publication; no-argument setup leaves remotes and home configuration unchanged.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, out := cmd.Context(), cmd.OutOrStdout()
@@ -78,7 +79,7 @@ func newStackSetupCmd() *cobra.Command {
 				return err
 			}
 			// Remember the unfused seed before init adds member ancestors.
-			if stackHomeConfig(ctx, root, "URL") == "" {
+			if len(args) == 1 && stackHomeConfig(ctx, root, "URL") == "" {
 				remote, _ := stackHomeGit(ctx, root, "remote", "get-url", "origin")
 				if remote != "" {
 					if err := stackCheckHome(ctx, root, m); err != nil {

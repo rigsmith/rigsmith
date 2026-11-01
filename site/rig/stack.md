@@ -12,6 +12,41 @@ leaves as itself: a pull request to a fork you contribute to, or a
 fast-forward of a repository you own. Nobody downstream learns the stackspace
 exists.
 
+## One manifest home
+
+The default is a small seed repository holding rig.stack.jsonc, the README and
+root build overlays. It holds no member directories or fused history. Publish
+with `rig stack seed --publish acme/rigstack-app@main`, then use
+`rig stack setup acme/rigstack-app@main` in an empty directory on a fresh
+machine or CI runner. The shorthand means GitHub; @ref names a branch or tag.
+URLs, SSH remotes and local paths also work. Tags are read-only homes.
+
+An explicit setup seed opts into automatic home publication after pull and
+propose. Running setup without a seed leaves remotes and home configuration
+unchanged, so existing stackspaces retain their behavior. After a manual clone,
+use `rig stack seed --publish acme/rigstack-app@main` to opt in. A configured
+setup can be rerun without an argument.
+
+Publication creates an unsigned root-only commit in an independent seed clone.
+It never imports fused objects. A moved seed is refused rather than overwritten.
+If publication fails, the local pull and cursor commit remain intact; the command
+returns non-zero and says the pull succeeded locally but the home was not
+updated. Reconcile competing seed changes separately; use `rig stack seed`
+to retry publication. No force-push mode is provided.
+
+Doctor checks seed origin only when a home is configured. An inaccessible remote
+is reported as “could not be checked”; a member tree is reported as a failure.
+Only members currently in the manifest are recognised by that scan.
+
+Private seed access uses git's credential configuration. CI workflows must
+configure a token for HTTPS seeds; a gh login alone is insufficient unless git
+uses its helper. No member credentials are copied into the seed.
+
+A member may commit a UTF-8 `.rig-stack` file containing
+`acme/rigstack-app@main` and a newline. `rig stack home [pointer-file]` reads
+that reference for tools. README pointers are optional prose, not generated or
+parsed.
+
 ## The two halves
 
 Two independent problems, two independent solutions. You need both, and they

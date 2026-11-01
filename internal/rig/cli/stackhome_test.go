@@ -37,9 +37,16 @@ func TestStackHomePublication(t *testing.T) {
 	}
 	remote := filepath.Join(t.TempDir(), "home.git")
 	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
-	if err := stackPublishHomeTo(ctx, repo, m, remote, "main", ""); err != nil {
-		t.Fatal(err)
-	}
+	t.Run("publication ignores global commit signing", func(t *testing.T) {
+		signing := filepath.Join(t.TempDir(), "gitconfig")
+		if err := os.WriteFile(signing, []byte("[commit]\n gpgsign = true\n[gpg]\n program = /missing-rig-test-signing-program\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GIT_CONFIG_GLOBAL", signing)
+		if err := stackPublishHomeTo(ctx, repo, m, remote, "main", ""); err != nil {
+			t.Fatal(err)
+		}
+	})
 	base := stackHomeConfig(ctx, root, "Base")
 	if base == "" {
 		t.Fatal("missing seed base")
@@ -87,7 +94,7 @@ func TestStackHomePublication(t *testing.T) {
 	}
 	mustGitStack(t, root, "add", "-A")
 	mustGitStack(t, root, "commit", "-qm", "retained")
-	if err := stackPublishHome(ctx, repo, m); err == nil || !strings.Contains(err.Error(), "retained") {
+	if err := stackPublishAfterPull(ctx, repo, m); err == nil || !strings.Contains(err.Error(), "pull succeeded locally") || !strings.Contains(err.Error(), "retained") {
 		t.Fatalf("push refusal: %v", err)
 	}
 	if got := mustGitStack(t, remote, "rev-parse", "HEAD"); got != tip {
@@ -114,5 +121,51 @@ func TestStackHomePointer(t *testing.T) {
 	}
 	if out.String() != "acme/rigstack-app@main\n" {
 		t.Fatalf("pointer: %q", out.String())
+	}
+}
+
+func TestStackHomeDoctor(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing.git")
+	mustGitStack(t, root, "remote", "add", "origin", missing)
+	// An unconfigured stack incurs no remote check, even with a missing origin.
+	if err := stackDoctorHome(ctx, root, m); err != nil {
+		t.Fatalf("unconfigured doctor: %v", err)
+	}
+	if err := stackConfigureHome(ctx, root, missing, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	stackReportHomeDoctor(&out, stackDoctorHome(ctx, root, m))
+	if !strings.Contains(out.String(), "· seed origin could not be checked:") || strings.Contains(out.String(), "✗") {
+		t.Fatalf("unavailable: %s", out.String())
+	}
+	// A local bare origin carrying fused trees is a real finding.
+	bad := filepath.Join(t.TempDir(), "bad.git")
+	mustGitStack(t, root, "clone", "--bare", root, bad)
+	mustGitStack(t, root, "remote", "set-url", "origin", bad)
+	out.Reset()
+	stackReportHomeDoctor(&out, stackDoctorHome(ctx, root, m))
+	if !strings.Contains(out.String(), "✗ seed origin: seed contains member tree") {
+		t.Fatalf("unsafe: %s", out.String())
+	}
+	// A safe configured seed reports neither a finding nor an access warning.
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := filepath.Join(t.TempDir(), "good.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", good)
+	if err := stackPublishHomeTo(ctx, repo, m, good, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "remote", "set-url", "origin", good)
+	if err := stackDoctorHome(ctx, root, m); err != nil {
+		t.Fatalf("safe seed: %v", err)
 	}
 }

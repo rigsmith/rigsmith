@@ -185,9 +185,33 @@ func TestStackFlow(t *testing.T) {
 
 	// ---- pull takes the movement, and then send works again --------------
 
-	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err != nil {
-		t.Fatalf("pull: %v", err)
+	// Reject only the home publication: the member pull must remain committed.
+	rejectedHome := filepath.Join(work, "rejected-home.git")
+	mustGitStack(t, work, "init", "--bare", "--initial-branch=main", rejectedHome)
+	if err := os.WriteFile(filepath.Join(rejectedHome, "hooks", "pre-receive"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
 	}
+	if err := stackConfigureHome(ctx, ws, rejectedHome, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	beforePull := mustGitStack(t, ws, "rev-parse", "HEAD")
+	if err := runVerb(ctx, newStackPullCmd(), "libfoo"); err == nil || !strings.Contains(err.Error(), "pull succeeded locally, but the manifest home was not updated") {
+		t.Fatalf("post-pull publication failure: %v", err)
+	}
+	if got := mustGitStack(t, ws, "rev-parse", "HEAD"); got == beforePull {
+		t.Fatal("successful pull was not committed")
+	}
+	pulled, _, err := loadStackManifest(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(mustGitStack(t, srv.path("org/libfoo"), "rev-parse", "main")); pulled.cursor("libfoo") != got {
+		t.Fatal("publication failure lost the new cursor")
+	}
+	for _, key := range []string{"URL", "Branch", "Base"} {
+		mustGitStack(t, ws, "config", "--local", "--unset", "rig.stackHome"+key)
+	}
+
 	if _, err := os.Stat(filepath.Join(ws, "libfoo", "src", "extra.txt")); err != nil {
 		t.Fatalf("pull did not bring upstream's new file in: %v", err)
 	}
@@ -236,6 +260,17 @@ func TestStackFlow(t *testing.T) {
 	out, err = runVerbOut(ctx, newStackSetupCmd(), seedRemote)
 	if err != nil {
 		t.Fatalf("init on the seed: %v\n%s", err, out)
+	}
+	configuredHead := mustGitStack(t, rebuilt, "rev-parse", "HEAD")
+	configuredConfig := mustGitStack(t, rebuilt, "config", "--local", "--list")
+	if err := runVerb(ctx, newStackSetupCmd()); err != nil {
+		t.Fatalf("configured setup rerun: %v", err)
+	}
+	if got := mustGitStack(t, rebuilt, "rev-parse", "HEAD"); got != configuredHead {
+		t.Fatal("configured rerun changed HEAD")
+	}
+	if got := mustGitStack(t, rebuilt, "config", "--local", "--list"); got != configuredConfig {
+		t.Fatal("configured rerun changed home or remote configuration")
 	}
 	if !strings.Contains(out, "libfoo: reconstituted from") || !strings.Contains(out, "stack/after-pull") {
 		t.Fatalf("libfoo was not rebuilt from its proposed branch:\n%s", out)
