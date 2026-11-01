@@ -1333,3 +1333,19 @@ public class App { int value = Lib.Source; }
 		invoke(false, "msbuild", path, "-t:RigStackGetSourceSignals", "-p:SkipResolvePackageAssets=true", "-p:SimulateSdkItemRename=true")
 	}
 }
+
+func TestLocalOverlayCIGuard(t *testing.T) {
+	props := renderStackProps([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}})
+	if strings.Contains(props, "RigStackCI") || strings.Contains(props, "WarningsNotAsErrors") {
+		t.Fatal("guard policy belongs in targets, not evaluation props")
+	}
+	body := renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}})
+	for _, want := range []string{"BeforeTargets=\"_GenerateRestoreProjectSpec;CoreCompile\"", "'$(RigStackCIGuard)' == 'true' And '@(_StackPresent)' != ''", "<WarningsNotAsErrors>$(WarningsNotAsErrors);NU1603;NU1608;NU1605</WarningsNotAsErrors>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	if strings.Contains(body, "<NoWarn>") || strings.Contains(body, "MSB3277") {
+		t.Fatal("broad suppression emitted")
+	}
+}

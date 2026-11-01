@@ -31,6 +31,27 @@ in CI. Restored josh binaries are hashed again before execution.
 instead of committed sibling cursors. `build` and `test` default to `rig build`
 and `rig test` and run from the member prefix with bash; empty skips a command.
 
+`guard-project` replaces the build command with `rig stack ci-guard` for that
+member-relative .NET project. New warnings in member code fail except for
+explicit stack-only declarations and existing warning tolerances. In a stack,
+sibling warnings, including SDK warnings such as `NETSDK1138`, remain visible,
+counted and non-fatal unless `strict: 'true'` is set. NU/MSB infrastructure
+warnings without exact swap attribution fail closed; `MSB3277` remains fatal.
+
+The guard covers **only the build step**. The subsequent test command runs
+independently, so any build it starts uses its own warning policy and may fail
+on sibling warnings. To reuse the guarded test build, configure:
+
+```yaml
+guard-project: tests/Acme.Tests.csproj
+test: dotnet test tests/Acme.Tests.csproj --no-build
+```
+
+Guard the same test project, configuration and target frameworks that will run;
+the guarded build must produce its test outputs first. `--no-build` cannot run
+outputs that were never built. No guard policy is added to the test phase.
+
+
 Outputs: `commits` is a JSON object mapping prefixes to resolved commits;
 `test-result` is the test phase result, empty if it was not reached. Console
 output carries test results. Use your test runner's report options and artifact

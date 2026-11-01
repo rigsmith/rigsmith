@@ -187,3 +187,26 @@ still evaluates old cursors. Local publication also requires explicit
 `GITHUB_REPOSITORY=acme/app` scope.
 A caller must treat pending statuses as a merge gate if desired; the reporting
 command itself succeeds when dependencies are pending or unavailable.
+
+`rig stack ci-guard app/App.csproj` guards one .NET build and records observed
+holdback in `GITHUB_STEP_SUMMARY`. Plain clones opt in with
+`<StackOnlyWarning Include="ACME0001" />`. Stack fusion exemptions require an
+observed NU1603/NU1608/NU1605 event matched to a rewired package identity.
+New member-code warnings fail except for explicit stack-only declarations and
+existing member warning tolerances. In a stack, sibling warnings, including SDK
+warnings such as `NETSDK1138`, remain visible, counted and non-fatal unless
+`strict: 'true'` is set. NU/MSB warnings without exact swap attribution fail
+closed; `MSB3277` remains fatal.
+
+Action `guard-project` (CLI `stack ci --guard-project`) replaces only the build
+step. The test command runs independently; any build it starts uses its own
+warning policy. Guard the test project, then use
+`test: dotnet test tests/Acme.Tests.csproj --no-build` to reuse its outputs for
+the same configuration and target frameworks. A test command building another
+graph is outside the guard's policy.
+
+Stack-mode fusion holdback is not yet proven against a real stack: .NET 10
+accepted the tested swapped project regardless of its package constraint and
+emitted no NU16xx in that fixture. Runtime log-message warning patterns are not
+implemented. See [Stackspaces](../site/rig/stack.md#ci-warning-guard) for the
+verified scope and remaining limits.
