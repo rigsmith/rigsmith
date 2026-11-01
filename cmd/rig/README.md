@@ -41,9 +41,10 @@ rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path o
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`, `seed`) refuse dry-run; `wire` and `doctor --fix` report without writing.
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
-static transitive PackageReference closure, keeping unreachable siblings absent.
-See [source signals](../../site/rig/stack.md#source-signals-from-the-net-overlay) for conditional-reference
-and ProjectReference limitations.
+transitive PackageReference closure, propagated through evaluated ProjectReferences,
+keeping unreachable siblings absent.
+See [source signals](../../site/rig/stack.md#source-signals-from-the-net-overlay) for static package-condition
+and preview limitations.
 
 `rig stack ci` builds a member checkout with sibling sources in a temporary
 stackspace. Its action verifies release downloads and reports trusted history

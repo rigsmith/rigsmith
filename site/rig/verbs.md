@@ -300,8 +300,10 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
 
 On .NET, `wire` source constants and target-time properties include the static
-PackageReference closure of each swapped sibling. Unreachable siblings stay
-absent; deeper conditional edges are conservatively included. See
+PackageReference closure of each swapped sibling, propagated through evaluated
+ProjectReferences before compile, including incremental builds. Unreachable
+siblings stay absent; deeper package conditions remain conservative. Doctor
+follows literal ProjectReference paths in its static preview. See
 [Source signals](stack.md#source-signals-from-the-net-overlay) for limitations.
 Hand-owned imports that continue the parent search are preserved; historical
 rig-owned ungated imports get a legacy advisory, with a manual remedy for customized blocks that wire cannot safely upgrade.

@@ -19,9 +19,10 @@ and the shared engine under `core/`:
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`) and offline seed directory exports refuse dry-run; seed publication previews without cloning or pushing; `wire` and `doctor --fix` report without writing.
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
-static transitive PackageReference closure, keeping unreachable siblings absent.
-See [source signals](site/rig/stack.md#source-signals-from-the-net-overlay) for conditional-reference
-and ProjectReference limitations.
+transitive PackageReference closure, propagated through evaluated ProjectReferences,
+keeping unreachable siblings absent.
+See [source signals](site/rig/stack.md#source-signals-from-the-net-overlay) for static package-condition
+and preview limitations.
 
 These binaries are single, statically-linked Go executables — the north-star
 property: no .NET runtime, no Node, installable via `curl | sh` / Homebrew /

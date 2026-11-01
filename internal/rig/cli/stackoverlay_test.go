@@ -520,3 +520,37 @@ func TestStackReachableSourceSignals(t *testing.T) {
 		t.Fatalf("changed closure was not stale: %+v", rep.Resp)
 	}
 }
+
+func TestStackDoctorProjectReferenceSignals(t *testing.T) {
+	root := t.TempDir()
+	csproj(t, root, "app", "Acme.App", "Acme.Control")
+	csproj(t, root, "control", "Acme.Control", "Acme.Core")
+	csproj(t, root, "core", "Acme.Core")
+	csproj(t, root, "empty", "Acme.Empty")
+	csproj(t, root, "tests", "Acme.Tests")
+	// Backslashes occur in project files on every host; the path, rather than
+	// the producer's package ID or filename alone, identifies the actual project.
+	path := filepath.Join(root, "tests/tests.csproj")
+	data, _ := os.ReadFile(path)
+	data = []byte(strings.Replace(string(data), "</Project>", `<ItemGroup><ProjectReference Include="..\app\app.csproj"/></ItemGroup></Project>`, 1))
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reports, _, _, failed := stackCheckOverlay(context.Background(), root, owned("app", "control", "core", "empty", "tests"))
+	if len(failed) > 0 {
+		t.Fatal(failed)
+	}
+	rep := dotnetReport(reports)
+	var out strings.Builder
+	stackReportSourceSignals(&out, root, rep.Links, rep.Packages)
+	tests := strings.Split(out.String(), "tests/tests.csproj:")[1]
+	for _, id := range []string{"STACK_ACME_CONTROL", "STACK_ACME_CORE"} {
+		if !strings.Contains(tests, id) {
+			t.Fatal(tests)
+		}
+	}
+	empty := strings.Split(strings.Split(out.String(), "empty/empty.csproj:")[1], "\n    tests/")[0]
+	if strings.Contains(empty, "STACK_ACME_") {
+		t.Fatal(empty)
+	}
+}

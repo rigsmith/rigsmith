@@ -82,6 +82,9 @@ type Dependency struct {
 	// cascade deliberately ignores these; whether a registry-referenced sibling
 	// should cascade is a real question and not one this field decides.
 	ViaRegistry bool `json:"viaRegistry,omitempty"`
+	// ProjectPath is a ProjectReference include, relative to the consuming
+	// manifest directory. Optional additive protocol-v1 field for graph previews.
+	ProjectPath string `json:"projectPath,omitempty"`
 }
 
 // HasRange reports whether the dependency carries a comparable version range.

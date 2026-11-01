@@ -494,27 +494,55 @@ func stackReportSourceSignals(out io.Writer, root string, links []stackLink, pac
 	for _, l := range links {
 		fmt.Fprintf(out, "    RigStackAvailable_%s=true (stack-wide availability during props evaluation; not an actual project swap)\n", dotnet.StackSourceName(l.Package))
 	}
+	byPath := map[string]plugin.Package{}
 	for _, p := range packages {
-		reported := map[string]bool{}
+		byPath[filepath.Clean(filepath.FromSlash(p.ManifestPath))] = p
+	}
+	for _, p := range packages {
 		fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", filepath.ToSlash(p.ManifestPath), filepath.ToSlash(root))
-		for _, d := range p.Dependencies {
-			if !d.ViaRegistry || !ids[d.Name] {
-				continue
+		signals := map[string]bool{}
+		visited := map[string]bool{}
+		var visit func(plugin.Package)
+		visit = func(q plugin.Package) {
+			if visited[q.ManifestPath] {
+				return
 			}
-			names := []string{d.Name}
-			for _, l := range links {
-				if l.Package == d.Name {
-					names = append(names, l.Reachable...)
+			visited[q.ManifestPath] = true
+			for _, d := range q.Dependencies {
+				if d.ProjectPath != "" {
+					path := filepath.Clean(filepath.Join(filepath.Dir(q.ManifestPath), filepath.FromSlash(d.ProjectPath)))
+					for _, l := range links {
+						if path == filepath.Clean(filepath.FromSlash(l.Path)) {
+							signals[l.Package] = true
+						}
+					}
+					if next, ok := byPath[path]; ok {
+						visit(next)
+					}
+				} else if d.ViaRegistry && ids[d.Name] {
+					signals[d.Name] = true
+					for _, l := range links {
+						if l.Package == d.Name {
+							for _, id := range l.Reachable {
+								signals[id] = true
+							}
+							if next, ok := byPath[filepath.Clean(filepath.FromSlash(l.Path))]; ok {
+								visit(next)
+							}
+						}
+					}
 				}
 			}
-			for _, id := range names {
-				if reported[id] {
-					continue
-				}
-				reported[id] = true
-				name := dotnet.StackSourceName(id)
-				fmt.Fprintf(out, "      RigStackSource_%s=true; STACK_%s (when PackageReference is active; available in targets after RigStackSourceSignals; includes static transitive reachability)\n", name, strings.ToUpper(name))
-			}
+		}
+		visit(p)
+		names := make([]string, 0, len(signals))
+		for id := range signals {
+			names = append(names, id)
+		}
+		sort.Strings(names)
+		for _, id := range names {
+			name := dotnet.StackSourceName(id)
+			fmt.Fprintf(out, "      RigStackSource_%s=true; STACK_%s (when PackageReference is active; static preview through ProjectReferences and swaps; MSBuild evaluates conditions and frameworks; available in targets after RigStackSourceSignals)\n", name, strings.ToUpper(name))
 		}
 	}
 }

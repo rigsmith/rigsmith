@@ -845,16 +845,41 @@ swaps its root PackageReference in the consuming project. Unreachable members
 remain absent. `doctor` previews the same closure; its full generated-file
 comparison detects stale links, so re-run `wire` after reference changes.
 
-Conditional references in the consuming project are evaluated by MSBuild.
-Deeper conditions in sibling projects are not evaluated by this static scan:
-the closure includes every scanned edge, even if inactive for this configuration
-or TFM. This deliberately prefers a visible compile error from an overly broad
-true signal to silently losing guarded code from a false signal. ProjectReference
-edges inside a member are not traversed by this closure; siblings reached only
-through those edges are currently omitted. The scanner records those edges by
-filename rather than an unambiguous resolved project path. References introduced
-by imported targets are likewise outside the static scan. Use direct package
-references when source-only guards require signals along those paths.
+ProjectReferences propagate signals too: `Tests -> App -> Acme.Control ->
+Acme.Core` gives Tests both sibling signals. `RigStackGetSourceSignals` queries
+referenced projects' effective sets recursively at target time. SDK projects use
+the SDK's configuration, platform and nearest-target-framework reference metadata;
+an outer multi-target query combines its inner builds. Direct ProjectReferences
+to an offered source producer also count. No sibling signal is added merely
+because an unrelated ProjectReference exists, or for a producer referring only
+to itself. Both properties and constants are published before compile, including
+on incremental builds.
+
+The query invokes only signal and SDK reference-preparation targets, never Build
+or Restore. SDK preparation reads existing restore assets, as a normal build
+does after restore. An ancestry list of full project paths, compared without
+case sensitivity, terminates cycles. Diamonds can query a project under several
+ancestries, but each package's constant is emitted once. MSBuild caches target
+execution within each project/global-property instance. The cost is additional
+project evaluations and reference queries proportional to reachable paths; large,
+heavily shared graphs can cost more than a simple chain. There is no extra
+compilation or restore. Queries require the referenced project to import the
+overlay; projects hiding it cannot return their effective sets.
+
+The static PackageReference closure remains as a conservative fallback for
+package edges inside swapped siblings. Direct conditional PackageReferences and
+ProjectReferences are evaluated by MSBuild, including the selected SDK framework.
+Deeper package conditions in the static closure can still report a source signal
+for an inactive edge. This prefers a visible compile error from an overly broad
+true signal to silently losing guarded code from a false signal. References
+introduced after the overlay's evaluation or only by targets are not guaranteed.
+
+`doctor` follows scanned ProjectReference paths relative to each consuming
+manifest, including across members, instead of guessing from project filenames.
+Its output is explicitly a static preview: conditions, framework selection,
+property-expanded paths and imported references are resolved by MSBuild during
+the real build, so the preview can overstate conditional edges or omit dynamic
+ones. The preview agrees with unconditional, literal-path graphs.
 
 `UseStackSources=false` disables swaps, source properties and constants together.
 Hand-owned gated parent imports are preserved without a legacy advisory.

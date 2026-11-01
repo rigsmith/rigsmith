@@ -86,7 +86,7 @@ func TestDiscover(t *testing.T) {
 	if app.Version != "9.9.9" {
 		t.Errorf("App version = %q, want 9.9.9", app.Version)
 	}
-	if len(app.Dependencies) != 1 || app.Dependencies[0].Name != "Lib" || app.Dependencies[0].Range != "" {
+	if len(app.Dependencies) != 1 || app.Dependencies[0].Name != "Lib" || app.Dependencies[0].Range != "" || app.Dependencies[0].ProjectPath != "../Lib/Lib.csproj" {
 		t.Errorf("App deps = %+v, want [{Lib normal ''}]", app.Dependencies)
 	}
 
