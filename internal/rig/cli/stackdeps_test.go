@@ -288,7 +288,7 @@ func TestStackDepsScheduleWithoutPRContext(t *testing.T) {
 	mustGitStack(t, root, "init", "-q")
 	mustGitStack(t, root, "config", "user.name", "you")
 	mustGitStack(t, root, "config", "user.email", "you@example.com")
-	m := &stackManifest{Repos: map[string]*stackRepo{"app": {Upstream: "github.com/acme/app", Fork: "github.com/you/app"}, "lib": {Upstream: "github.com/acme/lib", Fork: "github.com/you/lib"}}, LastSync: map[string]string{"lib": sha}, Proposals: map[string]map[string]stackProposal{"app": {"topic": {Branch: "stack/topic", DependsOn: []string{"lib"}}}, "lib": {"topic": {Branch: "stack/topic", DependsOn: []string{"app"}}}}}
+	m := &stackManifest{Repos: map[string]*stackRepo{"app": {Upstream: "github.com/acme/app", Fork: "github.com/you/app"}, "lib": {Upstream: "github.com/acme/lib", Fork: "github.com/you/lib"}}, LastSync: map[string]string{"lib": sha}, Proposals: map[string]map[string]stackProposal{"app": {"topic": {Branch: "stack/topic", DependsOn: []string{"lib"}}}, "lib": {"topic": {Branch: "stack/topic"}, "other": {Branch: "stack/other", DependsOn: []string{"app"}}}}}
 	data, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
@@ -410,7 +410,7 @@ func TestStackDepsStatusLocalFirstAndBounded(t *testing.T) {
 }
 
 func TestStackDepsInvalidMemberRejectedBeforePublication(t *testing.T) {
-	for _, dep := range []string{"", " ", "missing"} {
+	for _, dep := range []string{"", " ", "missing", "app"} {
 		t.Run(fmt.Sprintf("dependency=%q", dep), func(t *testing.T) {
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -446,6 +446,42 @@ func TestStackDepsInvalidMemberRejectedBeforePublication(t *testing.T) {
 			err = c.Execute()
 			if err == nil || !strings.Contains(err.Error(), "dependsOn entry") || calls != 0 {
 				t.Fatalf("error %v; API calls %d", err, calls)
+			}
+		})
+	}
+}
+
+func TestStackDepsProposalCycles(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		edges map[string][]string
+		cycle string
+	}{
+		{"two members", map[string][]string{"app": {"lib"}, "lib": {"app"}}, "app -> lib -> app"},
+		{"three members", map[string][]string{"app": {"lib"}, "lib": {"core"}, "core": {"app"}}, "app -> lib -> core -> app"},
+		{"shared prerequisite", map[string][]string{"app": {"lib", "core"}, "lib": {"core"}}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &stackManifest{Repos: map[string]*stackRepo{}, Proposals: map[string]map[string]stackProposal{}}
+			for _, member := range []string{"app", "lib", "core"} {
+				m.Repos[member] = &stackRepo{Upstream: "github.com/acme/" + member, Fork: "github.com/you/" + member}
+				m.Proposals[member] = map[string]stackProposal{"topic": {Branch: "stack/topic", DependsOn: tc.edges[member]}}
+			}
+			err := m.validate()
+			if tc.cycle != "" {
+				if err == nil || !strings.Contains(err.Error(), "dependsOn cycle") || !strings.Contains(err.Error(), tc.cycle) {
+					t.Fatalf("expected cycle %q: %v", tc.cycle, err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			// A reverse edge in another topic must not turn an acyclic topic into a cycle.
+			m.Proposals["app"]["topic"] = stackProposal{Branch: "stack/topic", DependsOn: []string{"lib"}}
+			m.Proposals["lib"]["topic"] = stackProposal{Branch: "stack/topic"}
+			m.Proposals["core"]["topic"] = stackProposal{Branch: "stack/topic"}
+			m.Proposals["lib"]["other"] = stackProposal{Branch: "stack/other", DependsOn: []string{"app"}}
+			if err := m.validate(); err != nil {
+				t.Fatalf("independent topics: %v", err)
 			}
 		})
 	}

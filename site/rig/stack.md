@@ -1164,8 +1164,9 @@ member prefixes). Re-proposing preserves these edges; edit the array to change
 direction or backfill older proposals. Each dependency must merge upstream and
 its `lastSync` cursor must include the API-reported merge commit. `rig stack status` displays the same chain
 from the local manifest. Older records without `dependsOn` have no dependencies.
-Blank or unknown member names in `dependsOn` are rejected when loading the
-manifest, before any status can be published.
+Blank or unknown member names, self-dependencies, and dependency cycles within
+a topic are rejected when loading the manifest, before any status can be
+published. Cycle errors name the topic and the member chain to correct.
 
 `rig stack deps --publish` posts the `stack dependencies` commit status to
 current PR **head** SHAs only in `GITHUB_REPOSITORY`, which must match a
