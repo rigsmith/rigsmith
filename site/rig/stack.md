@@ -1046,6 +1046,14 @@ For other CI, install pinned rig and run
 The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
 wire (11), build (12), and test (13). Seed support follows in a later change.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.
+
 ### Source signals from the .NET overlay
 
 With `UseStackSources` other than `false`, the overlay sets
@@ -1111,3 +1119,4 @@ not proof that a fusion warning was held back. This remains unconfirmed against
 a real stack or the reference member's platform matrix. Runtime warning
 log-message patterns are not implemented; eligibility uses MSBuild diagnostic
 codes and observed NuGet events only.
+

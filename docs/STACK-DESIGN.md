@@ -736,6 +736,14 @@ Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
 `ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
 The local E2E uses preinstalled josh to stay offline; fresh hosted downloads
 were verified by code-path inspection only.
+
+Committed symlinks must stay within the member prefix. Rooted targets and
+links escaping that prefix are rejected, including Windows rooted paths. If
+the runner cannot create a contained symlink, setup fails (exit 10) naming the
+file and target; it does not replace the link with a regular file. Windows
+runners may need Developer Mode or symlink-creation privileges for members
+that commit symlinks. Members without symlinks need no such privilege.
+
 ### Source signals from the .NET overlay
 
 With `UseStackSources` other than `false`, the overlay sets
@@ -843,3 +851,4 @@ the swapped project whatever the tested package minimum/exact constraint, so
 the predicted warnings may not occur in that form. The sibling and member-policy
 regression fixtures were run red against the preceding implementation, then
 green after the fix; they also check strict and new member-code failures.
+

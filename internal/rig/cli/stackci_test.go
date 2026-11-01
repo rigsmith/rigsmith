@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -200,6 +202,8 @@ func TestStackCIActionBoolean(t *testing.T) {
 			} `yaml:"steps"`
 		} `yaml:"runs"`
 	}
+	// Exercise Windows checkout line endings regardless of the host OS.
+	data = []byte(strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n", "\r\n"))
 	if err = yaml.Unmarshal(data, &action); err != nil {
 		t.Fatal(err)
 	}
@@ -262,7 +266,7 @@ func TestStackCIExitCode(t *testing.T) {
 }
 
 func TestStackCIMaterializeSymlinks(t *testing.T) {
-	for _, target := range []string{"/outside", "../../outside", "kept"} {
+	for _, target := range []string{"/outside", `\outside`, "../../outside", "kept"} {
 		t.Run(target, func(t *testing.T) {
 			checkout := t.TempDir()
 			dest := t.TempDir()
@@ -272,15 +276,22 @@ func TestStackCIMaterializeSymlinks(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(checkout, "kept"), []byte("source"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Symlink(target, filepath.Join(checkout, "link")); err != nil {
-				t.Fatal(err)
-			}
+
 			mustGitStack(t, checkout, "add", ".")
+			stackCITestSymlinkEntry(t, checkout, "link", target)
+
 			mustGitStack(t, checkout, "commit", "-qm", "symlink tree")
 			err := stackCIMaterialize(context.Background(), checkout, dest)
 			if target != "kept" {
 				if err == nil || !strings.Contains(err.Error(), "escapes prefix") {
 					t.Fatalf("want escape refusal: %v", err)
+				}
+				return
+			}
+
+			if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+				if !strings.Contains(err.Error(), `cannot create member symlink "link"`) {
+					t.Fatalf("missing file diagnostic: %v", err)
 				}
 				return
 			}
@@ -292,5 +303,70 @@ func TestStackCIMaterializeSymlinks(t *testing.T) {
 				t.Fatalf("link %q: %v", link, err)
 			}
 		})
+	}
+}
+
+func TestStackCIMaterializePathEscape(t *testing.T) {
+	checkout := t.TempDir()
+	dest := t.TempDir()
+	outside := t.TempDir()
+	mustGitStack(t, checkout, "init", "-q")
+	mustGitStack(t, checkout, "config", "user.name", "test")
+	mustGitStack(t, checkout, "config", "user.email", "t@t")
+	if err := os.Mkdir(filepath.Join(checkout, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, "src", "file"), []byte("source"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, checkout, "add", ".")
+	mustGitStack(t, checkout, "commit", "-qm", "nested tree")
+	if err := os.Symlink(outside, filepath.Join(dest, "src")); err != nil {
+		t.Fatal(err)
+	}
+	err := stackCIMaterialize(context.Background(), checkout, dest)
+	if err == nil || !strings.Contains(err.Error(), "path escapes prefix") {
+		t.Fatalf("want path escape refusal: %v", err)
+	}
+	if _, err = os.Stat(filepath.Join(outside, "file")); !os.IsNotExist(err) {
+		t.Fatalf("outside file was touched: %v", err)
+	}
+	// Keep '..' unresolved until insideRoot walks existing symlinks.
+	if insideRoot(dest, dest+string(filepath.Separator)+"src/../outside") {
+		t.Fatal("insideRoot accepted traversal through an escaping symlink")
+	}
+}
+
+// Create a committed link independently of Windows checkout/symlink privileges.
+func stackCITestSymlinkEntry(t *testing.T, checkout, path, target string) {
+	t.Helper()
+	blob := filepath.Join(t.TempDir(), "link-blob")
+	if err := os.WriteFile(blob, []byte(target), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := stackCIGit(context.Background(), checkout, "hash-object", "-w", blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, checkout, "update-index", "--add", "--cacheinfo", "120000,"+strings.TrimSpace(string(sha))+","+path)
+}
+
+func TestStackCIMaterializeSymlinkPermission(t *testing.T) {
+	checkout := t.TempDir()
+	dest := t.TempDir()
+	mustGitStack(t, checkout, "init", "-q")
+	mustGitStack(t, checkout, "config", "user.name", "test")
+	mustGitStack(t, checkout, "config", "user.email", "t@t")
+	stackCITestSymlinkEntry(t, checkout, "link", "kept")
+	mustGitStack(t, checkout, "commit", "-qm", "committed symlink")
+	old := stackCISymlink
+	stackCISymlink = func(string, string) error { return os.ErrPermission }
+	t.Cleanup(func() { stackCISymlink = old })
+	err := stackCIMaterialize(context.Background(), checkout, dest)
+	if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), `cannot create member symlink "link" -> "kept"`) {
+		t.Fatalf("want named permission error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Windows") {
+		t.Fatalf("missing runner guidance: %v", err)
 	}
 }
