@@ -593,3 +593,74 @@ public class App { int value = Core.Released; }
 		run(args...)
 	}
 }
+
+func TestLocalOverlayLegacyImport(t *testing.T) {
+	const legacy = `<Project><!-- Added by rig. historical explanation -->
+ <PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+ <!-- member content --></Project>`
+	for _, tc := range []struct {
+		name            string
+		write, writable bool
+	}{
+		{"wire upgrades writable member", true, true},
+		{"wire leaves non-writable member working", true, false},
+		{"doctor advises without editing", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			redirects := []plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}
+			writeFile(t, filepath.Join(root, "lib/Lib.csproj"), "<Project/>")
+			path := filepath.Join(root, "app", overlayFile)
+			writeFile(t, path, legacy)
+			writeFile(t, filepath.Join(root, overlayFile), renderOverlay(redirects))
+			req := plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: tc.write}
+			if tc.writable {
+				req.Writable = []string{"app"}
+			}
+			got, err := New().LocalOverlay(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Problems) != 0 {
+				t.Fatalf("working import reported as blocking: %+v", got.Problems)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.write && tc.writable {
+				if len(got.Fixed) != 1 || len(got.Notes) != 0 || legacyWalkUp(string(after)) || !strings.Contains(string(after), "Exists('$(StackManifest)')") || !strings.Contains(string(after), "member content") {
+					t.Fatalf("upgrade: %+v\n%s", got, after)
+				}
+				again, err := New().LocalOverlay(context.Background(), req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				twice, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(again.Fixed) != 0 || len(again.Problems) != 0 || len(again.Notes) != 0 || string(after) != string(twice) {
+					t.Fatalf("second wire changed the import: %+v", again)
+				}
+			} else {
+				if len(got.Fixed) != 0 || string(after) != legacy || len(got.Notes) != 1 {
+					t.Fatalf("advisory changed member: %+v\n%s", got, after)
+				}
+				for _, want := range []string{"app/Directory.Build.targets", "still works", "not gated", "plain clone", "unrelated Directory.Build.targets"} {
+					if !strings.Contains(got.Notes[0], want) {
+						t.Errorf("missing %q: %s", want, got.Notes[0])
+					}
+				}
+				advice := "not writable"
+				if tc.writable {
+					advice = "re-run `rig stack wire`"
+				}
+				if !strings.Contains(got.Notes[0], advice) {
+					t.Fatal(got.Notes)
+				}
+			}
+		})
+	}
+}

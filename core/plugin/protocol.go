@@ -577,6 +577,8 @@ type LocalOverlayResponse struct {
 	// both Files and Problems: the overlay may be correct and still be shadowed
 	// by something the adapter cannot rewrite.
 	Problems []OverlayProblem `json:"problems,omitempty"`
+	// Notes are informational findings that do not prevent source resolution.
+	Notes []string `json:"notes,omitempty"`
 	// Fixed lists files the adapter changed to clear a problem, beyond writing
 	// its own overlay. Reported separately because these are edits inside
 	// somebody's project, which the caller may want to say out loud.

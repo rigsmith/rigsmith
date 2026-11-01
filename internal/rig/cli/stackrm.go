@@ -475,6 +475,9 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 		for _, f := range resp.Fixed {
 			fmt.Fprintf(out, "%s✓ %s — patched to stop hiding the overlay from what is under it\n", indent, f)
 		}
+		for _, note := range resp.Notes {
+			fmt.Fprintf(out, "%s· %s\n", indent, note)
+		}
 		// Problems the overlay cannot fix by existing. Reported here as well
 		// as in doctor, because a wire that looks like it worked and silently
 		// did not is the thing this whole path exists to stop.

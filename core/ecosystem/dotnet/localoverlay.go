@@ -70,9 +70,10 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 		return resp, nil
 	}
 
-	problems, fixed := overlayProblems(req)
+	problems, fixed, notes := overlayProblems(req)
 	resp.Problems = problems
 	resp.Fixed = fixed
+	resp.Notes = notes
 
 	body := renderOverlay(req.Redirects)
 	resp.Files = map[string]string{overlayFile: body}
@@ -123,9 +124,10 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 // overlayProblems reports what would keep the overlay from taking effect. It
 // reads files rather than running MSBuild: an evaluation is a better check but
 // needs the SDK, and the failures worth catching here are structural.
-func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, []string) {
+func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, []string, []string) {
 	var out []plugin.OverlayProblem
 	var fixed []string
+	var notes []string
 
 	// A build file between the root and any project ends MSBuild's search there,
 	// and every project beneath it keeps resolving packages from the registry.
@@ -159,6 +161,16 @@ func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, [
 				}
 			}
 		}
+		if continuesWalkUp(string(data)) && legacyWalkUp(string(data)) {
+			message := rel + ": the legacy rig import still works, but is not gated on a stack manifest; a plain clone under an unrelated Directory.Build.targets could import it"
+			if allowed {
+				message += " — re-run `rig stack wire` to upgrade the import"
+			} else {
+				message += " — this member is not writable; upgrade its rig-owned import in a writable checkout"
+			}
+			notes = append(notes, message)
+			return nil
+		}
 		out = append(out, plugin.OverlayProblem{
 			Path: rel,
 			Message: "ends MSBuild's search for " + overlayFile +
@@ -181,7 +193,8 @@ func overlayProblems(req plugin.LocalOverlayRequest) ([]plugin.OverlayProblem, [
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	sort.Strings(fixed)
-	return out, fixed
+	sort.Strings(notes)
+	return out, fixed, notes
 }
 
 // underAny reports whether rel sits inside one of the permitted directories.
@@ -195,6 +208,11 @@ func underAny(rel string, dirs []string) bool {
 	return false
 }
 
+// legacyWalkUp identifies the historical rig-owned, ungated member import.
+func legacyWalkUp(body string) bool {
+	return strings.Contains(body, "<!-- Added by rig.") && !strings.Contains(body, "<!-- rig:stack-import -->")
+}
+
 // patchWalkUp inserts the import that continues MSBuild's search, right after
 // the opening Project element. Reports false when there is no such element to
 // insert after, rather than writing something that will not parse.
@@ -202,10 +220,6 @@ func underAny(rel string, dirs []string) bool {
 // The path is resolved into a property first: a Condition is itself
 // single-quoted, and the quotes this function needs around its arguments cannot
 // appear inside one (MSB4092).
-func legacyWalkUp(body string) bool {
-	return strings.Contains(body, "<!-- Added by rig.") && !strings.Contains(body, "<!-- rig:stack-import -->")
-}
-
 func patchWalkUp(body string) (string, bool) {
 	// Replace only the historical rig-owned block, preserving member content.
 	body = regexp.MustCompile(`(?s)<!-- Added by rig\..*?<Import Project="\$\(StackParentTargets\)"[^>]*?/?>`).ReplaceAllString(body, "")

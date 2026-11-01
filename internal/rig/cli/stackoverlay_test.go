@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
@@ -348,5 +349,36 @@ func TestStackSourceDoctorReport(t *testing.T) {
 	}
 	if strings.Count(out.String(), "RigStackSource_Acme_Core=true") != 1 {
 		t.Fatal(out.String())
+	}
+}
+
+func TestStackWireLegacyImportIsAdvisory(t *testing.T) {
+	root := t.TempDir()
+	csproj(t, root, "app", "Acme.App", "Acme.Core")
+	csproj(t, root, "lib", "Acme.Core")
+	legacy := `<Project><!-- Added by rig. historical explanation -->
+ <PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+ <Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+ </Project>`
+	if err := os.WriteFile(filepath.Join(root, "app/Directory.Build.targets"), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := owned("app", "lib")
+	m.Repos["app"].Owned = false
+	var out strings.Builder
+	// Strict mode must also accept the advisory; this member is not writable.
+	if _, err := stackWire(context.Background(), &out, m, &gitrepo.Repo{Dir: root}, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "legacy rig import still works") || strings.Contains(out.String(), "ends MSBuild's search") {
+		t.Fatal(out.String())
+	}
+	reports, _, _, failed := stackCheckOverlay(context.Background(), root, m)
+	if len(failed) > 0 {
+		t.Fatal(failed)
+	}
+	rep := dotnetReport(reports)
+	if rep == nil || len(rep.Resp.Problems) != 0 || len(rep.Resp.Notes) != 1 {
+		t.Fatalf("doctor: %+v", rep)
 	}
 }

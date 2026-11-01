@@ -732,5 +732,7 @@ Rig-owned member imports check for an ancestor `rig.stack.jsonc` before importin
 the nearest parent `Directory.Build.targets`. Re-running `wire` upgrades the old
 rig-owned ungated block in writable members, preserving their other content.
 A plain clone's import does nothing even beneath unrelated build targets.
+Legacy ungated imports still resolve sources correctly and are reported as
+informational notes, not blocking problems; non-writable members are left alone.
 `doctor` previews the properties/constants by project from static discovery;
 conditional references still depend on the configuration MSBuild builds.
