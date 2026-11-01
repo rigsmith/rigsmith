@@ -8,11 +8,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      # Intended: rigsmith/stack-action@v1 (not published yet).
+        with:
+          persist-credentials: false
+      # After publication use rigsmith/stack-action pinned by full reviewed SHA.
+      # It is not published yet; copy from a reviewed rigsmith commit.
       # Copy .github/actions/stack from rigsmith into this repository first.
       - uses: ./.github/actions/stack
         with:
           rig-version: vX.Y.Z # Replace with a release containing stack ci.
+          # Recommended: rig-sha256: <independently-trusted-platform-archive-sha256>
+          allowed-hosts: github.com
+          cache-history: 'true' # Fork PRs skip both caches regardless of inputs.
+          cache-packages: 'true' # Set both cache inputs to 'false' for no shared caches.
           manifest: stack/rig.stack.jsonc
           member: app
           test: rig test
+
+# Never pass secrets to fork PR builds or execute them under pull_request_target.
+# Privileged metadata handling belongs in a separate workflow with no PR checkout.

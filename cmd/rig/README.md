@@ -40,15 +40,20 @@ rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path o
 
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`, `seed`) refuse dry-run; `wire` and `doctor --fix` report without writing.
 
-`rig stack ci` tests a member checkout against sibling sources alongside its
-plain-clone CI matrix. See [Stackspaces](../../site/rig/stack.md#testing-a-member-pr-in-its-stackspace)
-for the composite action and workflow.
+`rig stack ci` builds a member checkout with sibling sources in a temporary
+stackspace. Its action verifies release downloads and reports trusted history
+cache reuse and commit/filter provenance; `cache-history: 'false'` disables
+bundle reuse. See [stack CI](../../site/rig/stack.md#testing-a-member-pr-in-its-stackspace) for the read-only,
+no-secret fork PR setup and cache trust limits.
 
 `propose` proposes one squashed commit to a fork you contribute to; `push`
 fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
 
-See [Stackspaces](../../site/rig/stack.md) for early `RigStackAvailable_<id>` availability properties, source build signals, member imports, evaluation timing, and the observed CI warning guard (`rig stack ci-guard <project>`).
+The default manifest home is a small seed repo shared by local setup and CI.
+First publication to an existing seed requires matching root files. If they
+differ, set up from that seed in a fresh directory and reconcile the root edits.
+See [Stackspaces](../../site/rig/stack.md) for publishing, setup, member pointers, early `RigStackAvailable_<id>` availability properties, source build signals, evaluation timing, and the observed CI warning guard (`rig stack ci-guard <project>`).
 
 ## Verbs
 

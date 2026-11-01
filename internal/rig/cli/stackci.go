@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -38,16 +41,22 @@ var stackCIExecutable = os.Executable
 var stackCISymlink = os.Symlink
 
 func newStackCICmd() *cobra.Command {
-	var manifest, member, build, test, guardProject string
+	var manifest, member, build, test, allowedHosts, guardProject string
 	var strict bool
 	var tip bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified.\nUse --guard-project for the observed .NET warning guard; --strict keeps all\nwarnings as errors.", Args: cobra.NoArgs}
+	var cacheHistory bool
+	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the observed .NET warning guard; --strict keeps all\nwarnings as errors.", Args: cobra.NoArgs}
+	c.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "Comma-separated allowed fork/upstream hosts")
+	_ = c.RegisterFlagCompletionFunc("allowed-hosts", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	})
 	c.Flags().StringVar(&manifest, "manifest", "", "Path to a committed rig.stack.jsonc")
 	c.Flags().StringVar(&member, "member", "", "Member prefix (default: match origin URL)")
 	c.Flags().StringVar(&build, "build", "rig build", "Build command, run from the member")
 	c.Flags().StringVar(&test, "test", "rig test", "Test command, run from the member")
 	c.Flags().StringVar(&guardProject, "guard-project", "", "Build this member .NET project through ci-guard")
 	c.Flags().BoolVar(&strict, "strict", false, "Keep all guarded warnings as errors")
+	c.Flags().BoolVar(&cacheHistory, "cache-history", true, "Trust and reuse cached member history (disable for release-grade runs)")
 	c.Flags().BoolVar(&tip, "upstream-tip", false, "Use upstream tips instead of manifest cursors")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		resolved := map[string]string{}
@@ -94,7 +103,7 @@ func newStackCICmd() *cobra.Command {
 		if e != nil {
 			return step("setup", 10, func() error { return e })
 		}
-		var temp, root, exe string
+		var temp, root, exe, reportPath string
 		defer func() {
 			if temp != "" {
 				_ = os.RemoveAll(temp)
@@ -106,7 +115,10 @@ func newStackCICmd() *cobra.Command {
 			p.Dir = dir
 			p.Stdout = cmd.OutOrStdout()
 			p.Stderr = cmd.ErrOrStderr()
-			p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost")
+			p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost", "RIG_STACK_CI_VERIFIED=1", "RIG_STACK_CACHE_REPORT="+reportPath)
+			if !cacheHistory {
+				p.Env = append(p.Env, "RIG_STACK_CACHE=")
+			}
 			return p.Run()
 		}
 		e = step("setup", 10, func() error {
@@ -115,6 +127,13 @@ func newStackCICmd() *cobra.Command {
 				return e
 			}
 			root = filepath.Join(temp, "stack")
+			reportPath = os.Getenv("RIG_STACK_CACHE_REPORT")
+			if reportPath == "" {
+				reportPath = filepath.Join(temp, "history-report")
+			}
+			if e = os.WriteFile(reportPath, nil, 0600); e != nil {
+				return e
+			}
 			exe, e = stackCIExecutable()
 			if e != nil {
 				return e
@@ -151,6 +170,9 @@ func newStackCICmd() *cobra.Command {
 			}
 			if m == nil {
 				return fmt.Errorf("no stack manifest")
+			}
+			if e := stackCIValidate(m, allowedHosts); e != nil {
+				return e
 			}
 			if member == "" {
 				b, e := stackCIGit(cmd.Context(), checkout, "remote", "get-url", "origin")
@@ -204,6 +226,9 @@ func newStackCICmd() *cobra.Command {
 			if e != nil {
 				return e
 			}
+			if err := stackCIGuardPush(cmd.Context(), root); err != nil {
+				return err
+			}
 			for _, n := range m.names() {
 				resolved[n] = m.cursor(n)
 			}
@@ -211,13 +236,61 @@ func newStackCICmd() *cobra.Command {
 			if e != nil {
 				return e
 			}
+			if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if d.IsDir() && d.Name() == ".git" {
+					return filepath.SkipDir
+				}
+				if !d.IsDir() && d.Name() == ".gitattributes" {
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					if bytes.Contains(data, []byte("filter=lfs")) {
+						return fmt.Errorf("member uses Git LFS (%s); stack ci does not fetch LFS objects", path)
+					}
+				}
+				return nil
+			}); err != nil {
+				return err
+			}
 			resolved[member] = sha
-			summary.WriteString("\n| Member | Resolved commit |\n| --- | --- |\n")
+			sources := map[string]string{}
+			filtered := map[string]string{}
+			data, e = os.ReadFile(reportPath)
+			if e != nil {
+				return e
+			}
+			for _, line := range strings.Split(string(data), "\n") {
+				parts := strings.Split(line, "\t")
+				if len(parts) == 3 {
+					sources[parts[0]] = parts[1]
+					filtered[parts[0]] = parts[2]
+				}
+			}
+			sources[member] = "fetched"
+			summary.WriteString("\nSource is cache or fetched; the selected member is materialized from checkout HEAD. Cached filtered commits are not verified against their upstream cursors.\n")
+			summary.WriteString("\n| Member | Resolved commit | Josh filter | Source | Filtered import commit |\n| --- | --- | --- | --- | --- |\n")
 			for _, n := range m.names() {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", n, resolved[n])
-				fmt.Fprintf(&summary, "| %s | `%s` |\n", n, resolved[n])
+				fmt.Fprintf(&summary, "| %s | `%s` | `%s` | %s | `%s` |\n", n, resolved[n], stackPrefixFilter(n), sources[n], filtered[n])
 			}
 			summary.WriteString("\n")
+			if p := os.Getenv("RIG_STACK_PROVENANCE"); p != "" {
+				records := map[string]map[string]string{}
+				for _, n := range m.names() {
+					records[n] = map[string]string{"commit": resolved[n], "filter": stackPrefixFilter(n), "source": sources[n], "filteredCommit": filtered[n]}
+				}
+				b, err := json.MarshalIndent(records, "", "  ")
+				if err != nil {
+					return err
+				}
+				if err = os.WriteFile(p, b, 0600); err != nil {
+					return err
+				}
+			}
 			return nil
 		})
 		if e != nil {
@@ -276,6 +349,21 @@ func stackCIMaterialize(ctx context.Context, checkout, dest string) error {
 	if err != nil {
 		return err
 	}
+	batch := exec.CommandContext(ctx, "git", "--no-replace-objects", "cat-file", "--batch")
+	batch.Dir = checkout
+	input, err := batch.StdinPipe()
+	if err != nil {
+		return err
+	}
+	output, err := batch.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err = batch.Start(); err != nil {
+		return err
+	}
+	defer func() { input.Close(); batch.Process.Kill(); batch.Wait() }()
+	reader := bufio.NewReader(output)
 	for _, entry := range bytes.Split(entries, []byte{0}) {
 		if len(entry) == 0 {
 			continue
@@ -295,9 +383,30 @@ func stackCIMaterialize(ctx context.Context, checkout, dest string) error {
 		if err = os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
-		data, err := stackCIGit(ctx, checkout, "cat-file", "blob", fields[2])
+		if _, err = fmt.Fprintln(input, fields[2]); err != nil {
+			return err
+		}
+		header, err := reader.ReadString('\n')
 		if err != nil {
 			return err
+		}
+		parts := strings.Fields(header)
+		if len(parts) != 3 || parts[1] != "blob" {
+			return fmt.Errorf("invalid cat-file response: %s", header)
+		}
+		size, err := strconv.Atoi(parts[2])
+		if err != nil || size < 0 {
+			return fmt.Errorf("invalid blob size")
+		}
+		data := make([]byte, size)
+		if _, err = io.ReadFull(reader, data); err != nil {
+			return err
+		}
+		if _, err = reader.ReadByte(); err != nil {
+			return err
+		}
+		if filepath.Base(path) == ".gitattributes" && bytes.Contains(data, []byte("filter=lfs")) {
+			return fmt.Errorf("member uses Git LFS (%s); stack ci does not fetch LFS objects", path)
 		}
 		switch fields[0] {
 		case "120000":
@@ -346,4 +455,47 @@ func stackCIReplace(ctx context.Context, checkout, root, member string) (string,
 	}
 	_, e = stackCIGit(ctx, root, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "stack ci: checkout "+strings.TrimSpace(string(sha)))
 	return strings.TrimSpace(string(sha)), e
+}
+
+func stackCIValidate(m *stackManifest, allowed string) error {
+	if m.joshVersion() != stackJoshVersion {
+		return fmt.Errorf("stack ci requires checksum-pinned josh %s", stackJoshVersion)
+	}
+	hosts := map[string]bool{}
+	for _, h := range strings.Split(allowed, ",") {
+		hosts[strings.TrimSpace(h)] = true
+	}
+	for n, r := range m.Repos {
+		for _, spec := range []string{r.Fork, r.Upstream} {
+			if spec == "" {
+				continue
+			}
+			host, _ := stackSplitHost(spec)
+			if !hosts[host] {
+				return fmt.Errorf("member %s host %s is not in --allowed-hosts", n, host)
+			}
+		}
+	}
+	return nil
+}
+
+func stackCIGuardPush(ctx context.Context, root string) error {
+	remotes, err := stackCIGit(ctx, root, "remote")
+	if err != nil {
+		return err
+	}
+	if len(bytes.TrimSpace(remotes)) != 0 {
+		return fmt.Errorf("refusing fused history with configured push destinations")
+	}
+	if _, err = stackCIGit(ctx, root, "config", "push.default", "nothing"); err != nil {
+		return err
+	}
+	hooks := filepath.Join(root, ".git", "hooks")
+	if err = os.MkdirAll(hooks, 0700); err != nil {
+		return err
+	}
+	if _, err = stackCIGit(ctx, root, "config", "core.hooksPath", hooks); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(hooks, "pre-push"), []byte("#!/bin/sh\necho 'Fused history must never be pushed' >&2\nexit 1\n"), 0700)
 }

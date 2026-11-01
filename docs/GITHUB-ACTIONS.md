@@ -113,8 +113,41 @@ release makes no `ui/` tag, so only the CLI build runs. The composite
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.
 Keep this job alongside the plain-clone matrix. The self-contained composite is
-`.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
+`.github/actions/stack/`; `rigsmith/stack-action` is the intended name but is not published yet.
 See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
+
+For stack builds use ordinary `pull_request`, no secrets, `contents: read`, and
+checkout `persist-credentials: false`. Do not use `pull_request_target` to execute
+PR code: its base-repository privileges expose tokens and secrets. If privileged
+metadata handling is necessary, isolate it in a metadata-only workflow that
+never checks out PR code or executes untrusted artifacts. This restriction is
+stronger than the separate changeset-comment workflow described above.
+
+Pin all external actions by full reviewed commit SHA. `rigsmith/stack-action`
+is not published yet; copy the local directory from a reviewed commit meanwhile.
+The action verifies rig's release `checksums.txt`; pin `rig-sha256` in the workflow
+for protection if the release itself is compromised. Release-provided checksums
+alone detect corruption or a tampered mirror, not replacement of the release.
+`allowed-hosts` defaults to `github.com`; explicitly list trusted enterprise hosts.
+Member bundle reuse skips upstream fetch/filter work; only consumed hits count.
+Commit/filter provenance is uploaded as JSON. See the action README for cache
+keys, package caches, engine pinning, and the deliberate LFS refusal.
+
+Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
+should not trust restored filtered history. Cached bundles are not verified
+against upstream cursors; provenance records `source` and actual `filteredCommit`
+so a cached import is explicit. See the action README for the cache scope trust
+boundary and reproducibility limits.
+
+Fork PRs (head repository differs from the workflow repository) skip both shared
+cache restore/save steps and disable member-bundle creation. Their summary
+reports that caches were skipped. For eligible jobs, `cache-history` and
+`cache-packages` independently default to `'true'`; set both to `'false'` to turn
+off this action's shared caches. Push/schedule events retain caching, while
+same-repository PRs can still read base-branch caches by GitHub's design. These
+action guards do not change GitHub's cache access policy or erase existing
+self-hosted runner files. Real hosted fork behavior is unverified locally; see
+the action README for the confidentiality and trust limits.
 
 `rig stack ci-guard app/App.csproj` builds one .NET project with
 `TreatWarningsAsErrors=true` and reports observed stack-only diagnostics in

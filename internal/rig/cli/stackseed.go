@@ -33,10 +33,16 @@ const seedPrefix = "rigstack-"
 // nothing: the manifest already records which commit each prefix held.
 func newStackSeedCmd() *cobra.Command {
 	var force bool
+	var publish string
 	cmd := &cobra.Command{
-		Use:   "seed <dir>",
+		Use:   "seed [dir]",
 		Short: "Export the root files as a small repo that `rig stack init` rebuilds the stackspace from",
-		Long: "--dry-run is not supported; this command refuses it before making changes.\n\n" +
+		Long: "--dry-run previews publication; offline directory export refuses it.\n\n" +
+			"Default: publish a manifest home with --publish owner/repo@branch.\n" +
+			"Without a directory, retry publication to the configured home.\n" +
+			"Local manifest homes must be bare repositories for publication.\n" +
+			"Publication refuses unsent member work; --force overrides only this reconstruction check.\n" +
+			"A directory argument cannot be combined with --publish.\n\n" +
 			"Writes everything at the stackspace root that is not a member — the\n" +
 			"manifest with its cursors, build overlays, packaging, the files kept out of\n" +
 			"every prefix on purpose — into <dir> as a fresh git repository with one\n" +
@@ -56,16 +62,44 @@ func newStackSeedCmd() *cobra.Command {
 			"and the prefix says so at a glance in a list of repositories.\n\n" +
 			"  rig stack seed ../rigstack-acme\n" +
 			"  git -C ../rigstack-acme remote add origin <url> && git -C ../rigstack-acme push -u origin main",
-		Args: cobra.ExactArgs(1),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if dryRun {
-				return fmt.Errorf("--dry-run is not supported for stack seed")
+			if publish != "" && len(args) > 0 {
+				return fmt.Errorf("a seed directory cannot be combined with --publish")
+			}
+			if dryRun && len(args) > 0 {
+				return fmt.Errorf("--dry-run is not supported for stack seed directory export")
 			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			m, _, repo, err := stackspace(ctx)
 			if err != nil {
 				return err
+			}
+			if publish != "" {
+				remote, ref, err := stackSeedReference(publish)
+				if err != nil {
+					return err
+				}
+				base := ""
+				policy := stackHomePublishPolicy{force: force}
+				if stackHomeConfig(ctx, repo.Dir, "URL") == remote {
+					configured := stackHomeConfig(ctx, repo.Dir, "Branch")
+					if ref == "" {
+						ref = configured
+						policy.pinned = stackHomeConfig(ctx, repo.Dir, "Pinned") == "true"
+					}
+					if ref == configured {
+						base = stackHomeConfig(ctx, repo.Dir, "Base")
+					}
+				}
+				return stackPublishHomeToWithPolicy(ctx, repo, m, remote, ref, base, policy, out)
+			}
+			if len(args) == 0 {
+				if stackHomeConfig(ctx, repo.Dir, "URL") == "" {
+					return fmt.Errorf("no manifest home configured — pass a directory or --publish <seed>")
+				}
+				return stackPublishConfiguredHome(ctx, repo, m, stackHomePublishPolicy{force: force}, out)
 			}
 			dest := args[0]
 			written, err := stackSeed(ctx, repo, m, dest, force)
@@ -77,6 +111,7 @@ func newStackSeedCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&publish, "publish", "", "publish root files safely to a manifest home (owner/repo@branch, URL or local path)")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "seed even where a member holds commits that have not left the stackspace")
 	return cmd
 }
@@ -208,23 +243,8 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 	// exists nowhere else, and a seed that looks complete and is not would
 	// be found out only on the other machine.
 	if !force {
-		for _, name := range m.names() {
-			if !stackPrefixPresent(ctx, repo, name) {
-				continue
-			}
-			u := stackUnsentWork(ctx, repo, name, nil)
-			switch {
-			case u.Commits:
-				return 0, fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first, or --force", name, name)
-			case !u.Known:
-				return 0, fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`, then --force", name, name)
-			case u.Proposed:
-				// A rebuild imports the proposed branch from the fork, so it
-				// had better still be there as pushed.
-				if err := stackProposedOnFork(ctx, repo, m, name); err != nil {
-					return 0, err
-				}
-			}
+		if err := stackCheckSeedRebuild(ctx, repo, m); err != nil {
+			return 0, fmt.Errorf("%w; --force overrides this offline seed check", err)
 		}
 	}
 	names, err := repo.TopLevelNames(ctx, "HEAD")
@@ -262,6 +282,34 @@ func stackSeed(ctx context.Context, repo *gitrepo.Repo, m *stackManifest, dest s
 		return 0, err
 	}
 	return len(keep), nil
+}
+
+// stackCheckSeedRebuild refuses a seed that would omit committed member work.
+func stackCheckSeedRebuild(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) error {
+	return errors.Join(stackSeedRebuildProblems(ctx, repo, m)...)
+}
+
+func stackSeedRebuildProblems(ctx context.Context, repo *gitrepo.Repo, m *stackManifest) []error {
+	var problems []error
+	for _, name := range m.names() {
+		if !stackPrefixPresent(ctx, repo, name) {
+			continue
+		}
+		u := stackUnsentWork(ctx, repo, name, nil)
+		switch {
+		case u.Commits:
+			problems = append(problems, fmt.Errorf("%s has commits that have not left the stackspace — a rebuilt member holds its cursor or proposed branch, not these; `rig stack propose %s <branch>` first", name, name))
+		case !u.Known:
+			problems = append(problems, fmt.Errorf("cannot tell whether %s holds unsent commits (no import commit in this history) — check with `git log -- %s/`", name, name))
+		case u.Proposed:
+			// A rebuild imports the proposed branch from the fork, so it
+			// had better still be there as pushed.
+			if err := stackProposedOnFork(ctx, repo, m, name); err != nil {
+				problems = append(problems, err)
+			}
+		}
+	}
+	return problems
 }
 
 // stackEnclosingRepo reports the git work tree that would swallow a
