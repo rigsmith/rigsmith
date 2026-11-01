@@ -40,19 +40,15 @@ rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path o
 
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`, `seed`) refuse dry-run; `wire` and `doctor --fix` report without writing.
 
-`rig stack ci` tests a member checkout against sibling sources alongside its
-plain-clone CI matrix. See [Stackspaces](../../site/rig/stack.md#testing-a-member-pr-in-its-stackspace)
-for the composite action and workflow.
-
-`propose` proposes one squashed commit to a fork you contribute to; `push`
-fast-forwards a project you own with every commit that touched it. Mark a
-project `"owned": true` in the manifest to enable the second.
-
 `rig stack ci` builds a member checkout with sibling sources in a temporary
 stackspace. Its action verifies release downloads and reports trusted history
 cache reuse and commit/filter provenance; `cache-history: 'false'` disables
 bundle reuse. See [stack CI](../../site/rig/stack.md#testing-a-member-pr-in-its-stackspace) for the read-only,
 no-secret fork PR setup and cache trust limits.
+
+`propose` proposes one squashed commit to a fork you contribute to; `push`
+fast-forwards a project you own with every commit that touched it. Mark a
+project `"owned": true` in the manifest to enable the second.
 
 See [Stackspaces](../../site/rig/stack.md) for source build signals, member imports, and evaluation timing.
 
