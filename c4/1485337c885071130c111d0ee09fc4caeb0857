@@ -1,0 +1,48 @@
+.changeset/mighty-lions-march.md
+  s_305a3d2195b124::t_26668e264e43a6 1-7
+cmd/rig/README.md
+  s_305a3d2195b124::t_2d1bdb270475c8 45
+docs/GITHUB-ACTIONS.md
+  s_305a3d2195b124::t_2d1bdb270475c8 124-126,131-136
+core/ecosystem/dotnet/localoverlay.go
+  s_305a3d2195b124::t_68f7804a055dfe 432-437
+  s_305a3d2195b124::t_4017c2f9215c52 424-426
+  s_305a3d2195b124::t_992e0ff402c822 421-423,427-430,444-445
+  s_305a3d2195b124::t_66e6cb0aa7dfe1 431,438-443
+internal/rig/cli/stackci_test.go
+  s_305a3d2195b124::t_4017c2f9215c52 221-223,228-243,245-246
+internal/rig/cli/stackciguard.go
+  s_305a3d2195b124::t_b75fa8847abfe8 19
+  s_305a3d2195b124::t_992e0ff402c822 33,40-46,74-76,78,89,128,136-147,163-164,262-286,288,294-308
+  s_305a3d2195b124::t_4017c2f9215c52 95-119,173-176,287,289-293
+internal/rig/cli/stack.go
+  s_305a3d2195b124::t_b75fa8847abfe8 35
+.github/actions/stack/action.yml
+  s_305a3d2195b124::t_4017c2f9215c52 60-63
+docs/STACK-DESIGN.md
+  s_305a3d2195b124::t_2d1bdb270475c8 809-820,837,839-845
+site/rig/stack.md
+  s_305a3d2195b124::t_2d1bdb270475c8 1091-1092,1098-1101,1106-1113
+internal/rig/cli/stackciguard_test.go
+  s_305a3d2195b124::t_b75fa8847abfe8 276-344
+README.md
+  s_305a3d2195b124::t_2d1bdb270475c8 83
+site/rig/verbs.md
+  s_305a3d2195b124::t_2d1bdb270475c8 297
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c41485337c885071130c111d0ee09fc4caeb0857",
+  "prompts": {},
+  "sessions": {
+    "s_305a3d2195b124": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a197ea-da80-75f2-8702-bce0b2525bd3",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
