@@ -47,7 +47,8 @@ returns non-zero and says the pull succeeded locally but the home was not
 updated. Reconcile competing seed changes separately; use `rig stack seed`
 to retry publication. No force-push mode is provided.
 
-Doctor checks the configured manifest home. An inaccessible remote
+Doctor checks the configured manifest home branch or pinned seed revision,
+rather than the remote’s default branch. An inaccessible remote
 is reported as “could not be checked”; a member tree is reported as a failure.
 Only members currently in the manifest are recognised by that scan.
 

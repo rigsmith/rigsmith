@@ -1367,4 +1367,29 @@ func TestStackMemberHomeGuardFlow(t *testing.T) {
 	if got := mustGitStack(t, remote, "for-each-ref"); got != before {
 		t.Fatal("member command moved manifest home")
 	}
+	// The configured URL looks different, but Git's rewrite makes it the seed.
+	rewrittenHome := filepath.Join(work, "rewritten-home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", rewrittenHome)
+	if err := stackConfigureHome(ctx, root, rewrittenHome, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	memberURL := stackRemoteURL(srv.spec("acme/app"))
+	for _, rule := range []string{"insteadOf", "pushInsteadOf"} {
+		mustGitStack(t, root, "config", "--local", "url."+rewrittenHome+"."+rule, memberURL)
+		for _, build := range []func() *cobra.Command{newStackSendCmd, newStackPushCmd} {
+			cmd := build()
+			args := []string{"app"}
+			if cmd.Name() == "propose" {
+				args = append(args, "fix")
+			}
+			if err := runVerb(ctx, cmd, args...); err == nil || !strings.Contains(err.Error(), "member destination is the manifest home") {
+				t.Fatalf("%s %s rewrite accepted: %v", cmd.Name(), rule, err)
+			}
+		}
+		mustGitStack(t, root, "config", "--local", "--unset", "url."+rewrittenHome+"."+rule)
+	}
+	if got := mustGitStack(t, rewrittenHome, "for-each-ref"); got != "" {
+		t.Fatal("rewritten destination received member history")
+	}
+
 }

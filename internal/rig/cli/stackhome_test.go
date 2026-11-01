@@ -201,12 +201,19 @@ func TestStackHomeRelativeReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote, ref, err := stackSeedReference("work/rigstack-app")
-	resolvedLocal, resolveErr := filepath.EvalSymlinks(local)
-	if resolveErr != nil {
-		t.Fatal(resolveErr)
-	}
-	if err != nil || remote != resolvedLocal || ref != "" {
+	if err != nil || !filepath.IsAbs(remote) || ref != "" {
 		t.Fatalf("local reference became %q@%q: %v", remote, ref, err)
+	}
+	expected, err := os.Stat(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.Stat(remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(expected, actual) {
+		t.Fatalf("local reference %q does not identify %q", remote, local)
 	}
 }
 
@@ -608,5 +615,143 @@ func TestStackHomeInitialAdoptionRejectsDifferentRoots(t *testing.T) {
 	}
 	if got := mustGitStack(t, remote, "rev-parse", "HEAD"); got != before {
 		t.Fatal("initial adoption overwrote home")
+	}
+}
+
+func TestStackHomePublishesIgnoredCommittedRoots(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("*.keep\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "root.keep"), []byte("committed despite ignore\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "add", "--force", ".gitignore", "root.keep")
+	mustGitStack(t, root, "commit", "-qm", "tracked ignored root")
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "init", "--bare", "--initial-branch=main", remote)
+	if err := stackPublishHomeTo(ctx, repo, m, remote, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustGitStack(t, remote, "show", "HEAD:root.keep"); got != "committed despite ignore\n" {
+		t.Fatalf("ignored committed root omitted: %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(root, "new.keep"), []byte("new tracked root\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "add", "--force", "new.keep")
+	mustGitStack(t, root, "commit", "-qm", "another tracked ignored root")
+	if err := stackPublishHome(ctx, repo, m); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustGitStack(t, remote, "show", "HEAD:new.keep"); got != "new tracked root\n" {
+		t.Fatalf("new ignored root omitted: %q", got)
+	}
+}
+
+func TestStackHomeDoctorUsesConfiguredRevision(t *testing.T) {
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := filepath.Join(t.TempDir(), "seed")
+	if _, err := stackSeed(ctx, repo, m, seed, false); err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, root, "clone", "--bare", seed, remote)
+	safe := strings.TrimSpace(mustGitStack(t, remote, "rev-parse", "main"))
+	unsafe := strings.TrimSpace(mustGitStack(t, root, "rev-parse", "HEAD"))
+	mustGitStack(t, root, "push", remote, "HEAD:refs/heads/unsafe")
+	if err := stackConfigureHome(ctx, root, remote, "unsafe", ""); err != nil {
+		t.Fatal(err)
+	}
+	var tree *stackHomeTreeError
+	if err := stackDoctorHome(ctx, root, m); !errors.As(err, &tree) {
+		t.Fatalf("configured unsafe branch missed: %v", err)
+	}
+	mustGitStack(t, remote, "symbolic-ref", "HEAD", "refs/heads/unsafe")
+	for _, tc := range []struct {
+		branch, base string
+		bad          bool
+	}{
+		{"main", "", false}, {"READ_ONLY", safe, false}, {"READ_ONLY", unsafe, true},
+	} {
+		if err := stackConfigureHome(ctx, root, remote, tc.branch, tc.base); err != nil {
+			t.Fatal(err)
+		}
+		err := stackDoctorHome(ctx, root, m)
+		tree = nil
+		if tc.bad {
+			if !errors.As(err, &tree) {
+				t.Fatalf("unsafe pinned revision missed: %v", err)
+			}
+		} else if err != nil {
+			t.Fatalf("safe configured revision checked wrong branch: %v", err)
+		}
+	}
+}
+
+func TestStackGuardMemberHomeURLRewrites(t *testing.T) {
+	for _, rule := range []string{"insteadOf", "pushInsteadOf"} {
+		t.Run(rule, func(t *testing.T) {
+			root := t.TempDir()
+			mustGitStack(t, root, "init", "-q")
+			ctx := context.Background()
+			repo, err := gitrepo.Open(ctx, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			home := filepath.Join(t.TempDir(), "home.git")
+			if err := stackConfigureHome(ctx, root, home, "main", ""); err != nil {
+				t.Fatal(err)
+			}
+			member := "https://example.invalid/member.git"
+			mustGitStack(t, root, "config", "--local", "url."+home+"."+rule, member)
+			before := mustGitStack(t, root, "config", "--local", "--list")
+			if err := stackGuardMemberHome(ctx, repo, member); err == nil || !strings.Contains(err.Error(), "member destination is the manifest home") {
+				t.Fatalf("rewrite to home accepted: %v", err)
+			}
+			if after := mustGitStack(t, root, "config", "--local", "--list"); after != before {
+				t.Fatal("URL resolution saved a temporary remote")
+			}
+			if err := stackGuardMemberHome(ctx, repo, "https://example.invalid/other.git"); err != nil {
+				t.Fatalf("unrelated member blocked: %v", err)
+			}
+		})
+	}
+}
+
+func TestStackEffectivePushURLMatchesGit(t *testing.T) {
+	root := t.TempDir()
+	mustGitStack(t, root, "init", "-q")
+	remote := "https://example.invalid/member/lib.git"
+	mustGitStack(t, root, "remote", "add", "rewrite-check", remote)
+	for _, rule := range []struct{ key, value string }{
+		{"url.https://example.invalid/broad/.insteadOf", "https://example.invalid/"},
+		{"url.https://example.invalid/specific/.insteadOf", "https://example.invalid/member/"},
+		{"url." + filepath.ToSlash(filepath.Join(t.TempDir(), "seed")) + "/.pushInsteadOf", "https://example.invalid/"},
+	} {
+		mustGitStack(t, root, "config", "--local", "--add", rule.key, rule.value)
+		want := strings.TrimSpace(mustGitStack(t, root, "remote", "get-url", "--push", "rewrite-check"))
+		got, err := stackEffectivePushURL(context.Background(), root, remote)
+		if err != nil || got != want {
+			t.Fatalf("effective destination %q, want Git's %q: %v", got, want, err)
+		}
 	}
 }

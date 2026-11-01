@@ -735,12 +735,13 @@ independent clone receives only a git archive of HEAD outside member prefixes,
 then creates one ordinary commit parented on the seed tip. No-op exports create
 no commit. An existing home cannot be replaced on first publication: if its
 files differ, rig requires setup from that seed and reconciliation first. Every reachable seed commit is checked for member trees before and
-after writing. Doctor clones the configured home URL; ordinary
+after writing. Doctor clones the configured home URL and checks the configured branch (or pinned seed revision); ordinary
 unconfigured stacks incur no seed network request. A remote that cannot be
 checked produces a neutral access warning; a detected member tree is a failure
 finding. The scan recognises only members currently in the manifest: an old
 tree belonging to a removed member is not detected. Member destinations matching the
-manifest home are refused.
+manifest home are refused. Git URL rewrite rules (including pushInsteadOf)
+are applied before comparing member push destinations to the home.
 
 If the seed tip differs from the remembered tip, publication refuses; there is
 no implicit merge or force push. Reconcile the competing manifest in a separate

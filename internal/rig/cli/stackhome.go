@@ -275,7 +275,7 @@ func stackPublishHomeToWithPolicy(ctx context.Context, repo *gitrepo.Repo, m *st
 	if err := untar(bytes.NewReader(data), dir); err != nil {
 		return err
 	}
-	if _, err := stackHomeGit(ctx, dir, "add", "-A"); err != nil {
+	if _, err := stackHomeGit(ctx, dir, "add", "-A", "--force", "--", "."); err != nil {
 		return err
 	}
 	diff, err := stackHomeGit(ctx, dir, "diff", "--cached", "--name-only")
@@ -341,6 +341,20 @@ func stackDoctorHome(ctx context.Context, root string, m *stackManifest) error {
 	if _, err := stackHomeGit(ctx, root, "clone", "--no-local", "--", remote, dir); err != nil {
 		return err
 	}
+	branch := stackHomeConfig(ctx, root, "Branch")
+	if branch != "" {
+		target := "refs/remotes/origin/" + branch
+		if branch == "READ_ONLY" {
+			target = stackHomeConfig(ctx, root, "Base")
+		}
+		commit, err := stackHomeGit(ctx, dir, "rev-parse", "--verify", target+"^{commit}")
+		if err != nil {
+			return err
+		}
+		if _, err := stackHomeGit(ctx, dir, "checkout", "--detach", commit); err != nil {
+			return err
+		}
+	}
 	return stackCheckHome(ctx, dir, m)
 }
 
@@ -349,8 +363,71 @@ func stackGuardMemberHome(ctx context.Context, repo *gitrepo.Repo, remote string
 	if home == "" {
 		home, _ = stackHomeGit(ctx, repo.Dir, "remote", "get-url", "origin")
 	}
-	if home != "" && stackNormalizeSpec(home) == stackNormalizeSpec(remote) {
+	if home == "" {
+		return nil
+	}
+	refuse := func() error {
 		return fmt.Errorf("member destination is the manifest home; refusing to push member history")
 	}
+	if stackNormalizeSpec(home) == stackNormalizeSpec(remote) {
+		return refuse()
+	}
+	memberDestination, err := stackEffectivePushURL(ctx, repo.Dir, remote)
+	if err != nil {
+		return err
+	}
+	homeDestination, err := stackEffectivePushURL(ctx, repo.Dir, home)
+	if err != nil {
+		return err
+	}
+	if stackNormalizeSpec(memberDestination) == stackNormalizeSpec(homeDestination) ||
+		stackNormalizeSpec(memberDestination) == stackNormalizeSpec(home) {
+		return refuse()
+	}
 	return nil
+}
+
+// Git chooses the longest matching prefix, with pushInsteadOf preferred for
+// pushes. Reading through git config includes system/global/local and -c rules.
+func stackEffectivePushURL(ctx context.Context, dir, remote string) (string, error) {
+	rules, err := stackHomeGit(ctx, dir, "config", "--null", "--get-regexp", "^url\\..*\\.(insteadof|pushinsteadof)$")
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return remote, nil
+		}
+		return "", err
+	}
+	type rewrite struct{ base, prefix string }
+	var fetch, push []rewrite
+	for _, record := range strings.Split(rules, "\x00") {
+		key, value, ok := strings.Cut(record, "\n")
+		if !ok {
+			continue
+		}
+		base := strings.TrimPrefix(key, "url.")
+		if strings.HasSuffix(base, ".pushinsteadof") {
+			push = append(push, rewrite{strings.TrimSuffix(base, ".pushinsteadof"), value})
+		} else {
+			fetch = append(fetch, rewrite{strings.TrimSuffix(base, ".insteadof"), value})
+		}
+	}
+	apply := func(rules []rewrite) (string, bool) {
+		best := -1
+		target := ""
+		for _, rule := range rules {
+			if strings.HasPrefix(remote, rule.prefix) && len(rule.prefix) > best {
+				best = len(rule.prefix)
+				target = rule.base + strings.TrimPrefix(remote, rule.prefix)
+			}
+		}
+		return target, best >= 0
+	}
+	if target, ok := apply(push); ok {
+		return target, nil
+	}
+	if target, ok := apply(fetch); ok {
+		return target, nil
+	}
+	return remote, nil
 }
