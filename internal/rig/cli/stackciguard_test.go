@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
 	"github.com/rigsmith/rigsmith/core/plugin"
@@ -343,5 +344,153 @@ func TestStackCIGuardReviewE2E(t *testing.T) {
 			write("app/App.cs", `public class App { void M() { int unused; } }`)
 			invoke(false, false)
 		})
+	}
+}
+
+func TestStackCIGuardCRLFAndCodes(t *testing.T) {
+	project := filepath.Join(t.TempDir(), "App.csproj")
+	for _, code := range []string{"ACME0001", "xUnit1004", "Acme2Rule100"} {
+		t.Run(code, func(t *testing.T) {
+			if !stackGuardCode.MatchString(code) {
+				t.Fatalf("valid diagnostic id rejected: %s", code)
+			}
+			var meta stackGuardMetadata
+			meta.Items.StackOnlyWarning = []stackGuardItem{{Identity: code}}
+			line := fmt.Sprintf("a.cs(1,1): warning %s: source only [%s]", code, project)
+			output := line + "\r\n" + fmt.Sprintf("a.cs(2,1): warning CS0168: real warning [%s]\r\n", project)
+			held, visible := stackGuardOutput(output, project, meta, false)
+			if len(held) != 1 || held[0] != line || len(visible) != 1 || strings.Contains(visible[0], "\r") {
+				t.Fatalf("held=%q visible=%q", held, visible)
+			}
+			meta.Properties.WarningsNotAsErrors = code
+			_, tolerated, fatal := stackGuardVisiblePolicy([]string{line + "\r"}, project, meta, false)
+			if fatal || len(tolerated) != 1 {
+				t.Fatal("mixed-case or CRLF tolerance not attributed")
+			}
+		})
+	}
+	for _, code := range []string{"CS*", "CS1;CS2", "CS", "1CS", "xUnit-1004"} {
+		if stackGuardCode.MatchString(code) {
+			t.Fatalf("invalid diagnostic id accepted: %q", code)
+		}
+	}
+}
+
+func TestStackCIGuardPlainReferencesE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("set RIG_STACK_E2E=1 for plain reference policy builds")
+	}
+	root := t.TempDir()
+	write := func(path, body string) {
+		t.Helper()
+		path = filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("NuGet.Config", `<configuration><packageSources><clear/></packageSources></configuration>`)
+	write("app/App.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><CustomAfterMicrosoftCommonTargets>$(MSBuildThisFileDirectory)entry.targets</CustomAfterMicrosoftCommonTargets><WarningsAsErrors>CS1030</WarningsAsErrors><WarningsNotAsErrors>CS0219</WarningsNotAsErrors></PropertyGroup><ItemGroup><StackOnlyWarning Include="CS1030"/><ProjectReference Include="../lib/Lib.csproj"/></ItemGroup><Target Name="RequireEntryHook" BeforeTargets="CoreCompile"><Error Condition="'$(EntryHookPresent)' != 'true'" Text="entry hook lost"/></Target></Project>`)
+	write("lib/Lib.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><WarningsNotAsErrors>CS0168</WarningsNotAsErrors><CustomAfterMicrosoftCommonTargets>$(MSBuildThisFileDirectory)reference.targets</CustomAfterMicrosoftCommonTargets></PropertyGroup><Target Name="RequireReferenceHook" BeforeTargets="CoreCompile"><Error Condition="'$(ReferenceHookPresent)' != 'true'" Text="reference hook lost"/></Target></Project>`)
+	write("app/entry.targets", `<Project><PropertyGroup><EntryHookPresent>true</EntryHookPresent></PropertyGroup></Project>`)
+	write("lib/reference.targets", `<Project><PropertyGroup><ReferenceHookPresent>true</ReferenceHookPresent></PropertyGroup></Project>`)
+	write("app/App.cs", "#warning package build only\npublic class App { void M() { int assigned = 1; } }")
+	write("lib/Lib.cs", `public class Lib { void M() { int unused; } }`)
+	invoke := func(want bool) string {
+		t.Helper()
+		c := newStackCIGuardCmd()
+		var output bytes.Buffer
+		c.SetOut(&output)
+		c.SetErr(&output)
+		c.SetArgs([]string{filepath.Join(root, "app/App.csproj")})
+		err := c.Execute()
+		if (err == nil) != want {
+			t.Fatalf("success=%v: %v\n%s", want, err, output.String())
+		}
+		return output.String()
+	}
+	out := invoke(true)
+	if !strings.Contains(out, "CS0168") || !strings.Contains(out, "1 stack-only warnings held back") {
+		t.Fatalf("reference policy or entry declaration lost:\n%s", out)
+	}
+	write("lib/Lib.cs", `public class Lib { void M() { int unused; int assigned = 1; } }`)
+	out = invoke(false)
+	if !strings.Contains(out, ": error CS0219:") {
+		t.Fatalf("root tolerance reached reference:\n%s", out)
+	}
+	write("lib/Lib.cs", `#warning not declared for this project
+public class Lib {}`)
+	out = invoke(false)
+	if !strings.Contains(out, ": error CS1030:") {
+		t.Fatalf("root stack-only declaration reached reference:\n%s", out)
+	}
+	reference, err := os.ReadFile(filepath.Join(root, "lib/Lib.csproj"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("lib/Lib.csproj", strings.Replace(string(reference), "<WarningsNotAsErrors>CS0168</WarningsNotAsErrors>", "<WarningsAsErrors>CS0168</WarningsAsErrors><WarningsNotAsErrors>CS0168</WarningsNotAsErrors>", 1))
+	write("lib/Lib.cs", `public class Lib { void M() { int unused; } }`)
+	out = invoke(false)
+	if !strings.Contains(out, ": error CS0168:") {
+		t.Fatalf("reference's explicit WarningsAsErrors was overwritten:\n%s", out)
+	}
+
+}
+
+func TestStackCIGuardMetadataStreams(t *testing.T) {
+	if mode := os.Getenv("RIG_STACK_GUARD_METADATA_HELPER"); mode != "" {
+		if os.Getenv("DOTNET_NOLOGO") != "1" {
+			os.Exit(8)
+		}
+		fmt.Fprintln(os.Stderr, "fixture evaluation diagnostic")
+		fmt.Fprint(os.Stdout, `{"Properties":{"WarningsNotAsErrors":"xUnit1004"}}`)
+		if mode == "error" {
+			os.Exit(7)
+		}
+		os.Exit(0)
+	}
+	invoke := func(mode string) ([]byte, error) {
+		command := stackGuardCommand(context.Background())
+		command.Path = os.Args[0]
+		command.Args = []string{os.Args[0], "-test.run=^TestStackCIGuardMetadataStreams$"}
+		command.Env = append(command.Env, "RIG_STACK_GUARD_METADATA_HELPER="+mode)
+		return stackGuardEvaluate(command)
+	}
+	output, err := invoke("success")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta stackGuardMetadata
+	if err := json.Unmarshal(output, &meta); err != nil || meta.Properties.WarningsNotAsErrors != "xUnit1004" {
+		t.Fatalf("JSON polluted by stderr: %v %s", err, output)
+	}
+	output, err = invoke("error")
+	if err == nil || !strings.Contains(err.Error(), "fixture evaluation diagnostic") || !json.Valid(output) {
+		t.Fatalf("evaluation errors lost diagnostics: %v %s", err, output)
+	}
+}
+
+func TestStackCIGuardSiblingAnalyzerCRLF(t *testing.T) {
+	root, member, sibling := stackGuardPathFixture(t)
+	var meta stackGuardMetadata
+	meta.Properties.RigStackspaceRoot = root
+	meta.MemberRoot = filepath.Dir(member)
+	for _, code := range []string{"xUnit1004", "Acme2Rule100"} {
+		output := fmt.Sprintf("a.cs(1,1): warning %s: analyzer [%s]\r\nBuild succeeded.\r\n", code, sibling)
+		_, visible := stackGuardOutput(output, member, meta, false)
+		siblings, _, fatal := stackGuardVisiblePolicy(visible, member, meta, false)
+		if fatal || len(siblings) != 1 {
+			t.Fatalf("analyzer not attributed: %s %v %v", code, siblings, fatal)
+		}
+		_, _, fatal = stackGuardVisiblePolicy(visible, member, meta, true)
+		if !fatal {
+			t.Fatal("strict analyzer warning was ignored")
+		}
+	}
+	_, _, fatal := stackGuardVisiblePolicy([]string{fmt.Sprintf("a.cs: warning MSB3277: assembly conflict [%s]\r", sibling)}, member, meta, false)
+	if !fatal {
+		t.Fatal("unattributed assembly conflict exempted")
 	}
 }

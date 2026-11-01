@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,7 +15,7 @@ import (
 // the final decision; a warning whose package cannot be established fails closed.
 func newStackCIGuardCmd() *cobra.Command {
 	var strict bool
-	c := &cobra.Command{Use: "ci-guard <project.csproj>", Short: "Build a .NET project with an observed stack warning guard", Long: "Builds a .NET project with TreatWarningsAsErrors. In plain clones only\nStackOnlyWarning items are held back. In stacks only observed NU1603, NU1608\nand NU1605 diagnostics for rewired package identities are eligible. Sibling\ncompiler warnings remain visible and counted; --strict makes them fatal.\nMember WarningsNotAsErrors entries are retained. Other warnings fail the\nguard. MSB3277 remains an error because assembly scope cannot\nbe proven. Writes observed diagnostics to GITHUB_STEP_SUMMARY. Use --strict\nto disable the guard. Requires the dotnet SDK; accepts one project, not a solution.", Args: cobra.ExactArgs(1)}
+	c := &cobra.Command{Use: "ci-guard <project.csproj>", Short: "Build a .NET project with an observed stack warning guard", Long: "Builds a .NET project with TreatWarningsAsErrors. In plain clones only\nStackOnlyWarning items are held back. In stacks only observed NU1603, NU1608\nand NU1605 diagnostics for rewired package identities are eligible. Sibling\ncompiler/analyzer warnings remain visible and counted; --strict makes them fatal.\nMember WarningsNotAsErrors entries are retained. Other warnings fail the\nguard. MSB3277 remains an error because assembly scope cannot\nbe proven. Writes observed diagnostics to GITHUB_STEP_SUMMARY. Use --strict\nto disable the guard. Requires the dotnet SDK; accepts one project, not a solution.", Args: cobra.ExactArgs(1)}
 	_ = c.MarkZshCompPositionalArgumentFile(1, "*.csproj")
 	c.Flags().BoolVar(&strict, "strict", false, "Keep all warnings as errors")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -25,13 +24,14 @@ func newStackCIGuardCmd() *cobra.Command {
 			return e
 		}
 		run := func(args ...string) ([]byte, error) {
-			p := exec.CommandContext(cmd.Context(), "dotnet", args...)
-			p.Env = append(os.Environ(), "DOTNET_CLI_UI_LANGUAGE=en-US", "VSLANG=1033")
-			return p.CombinedOutput()
+			return stackGuardCommand(cmd.Context(), args...).CombinedOutput()
+		}
+		evaluate := func(args ...string) ([]byte, error) {
+			return stackGuardEvaluate(stackGuardCommand(cmd.Context(), args...))
 		}
 		project = stackGuardPath(project)
 		var meta stackGuardMetadata
-		out, e := run("msbuild", project, "-nologo", "-p:TreatWarningsAsErrors=true", "-getItem:StackOnlyWarning,_StackPresent", "-getProperty:RigStackspace,RigStackspaceRoot,ProjectAssetsFile,WarningsAsErrors,WarningsNotAsErrors")
+		out, e := evaluate("msbuild", project, "-nologo", "-noconsolelogger", "-p:TreatWarningsAsErrors=true", "-getItem:StackOnlyWarning,_StackPresent", "-getProperty:RigStackspace,RigStackspaceRoot,ProjectAssetsFile,WarningsAsErrors,WarningsNotAsErrors,CustomAfterMicrosoftCommonTargets,MSBuildToolsPath")
 		if e != nil {
 			return fmt.Errorf("evaluate guard: %w\n%s", e, out)
 		}
@@ -80,6 +80,12 @@ func newStackCIGuardCmd() *cobra.Command {
 				buildArgs = append(buildArgs, "-p:WarningsNotAsErrors="+strings.Join(append(strings.Split(meta.Properties.WarningsNotAsErrors, ";"), "NU1603", "NU1608", "NU1605"), "%3B"))
 			}
 			if meta.Properties.RigStackspace != "true" {
+				targets, cleanup, err := stackGuardPlainTargets(meta.Properties.CustomAfterMicrosoftCommonTargets, meta.Properties.MSBuildToolsPath)
+				if err != nil {
+					return err
+				}
+				defer cleanup()
+				buildArgs = append(buildArgs, "-p:CustomAfterMicrosoftCommonTargets="+targets)
 				var ids []string
 				for _, item := range meta.Items.StackOnlyWarning {
 					if !stackGuardCode.MatchString(item.Identity) {
@@ -95,20 +101,21 @@ func newStackCIGuardCmd() *cobra.Command {
 		out, buildErr := run(buildArgs...)
 		held, unexpected := stackGuardOutput(string(out), project, meta, strict)
 		meta.MemberTolerances = map[string]string{project: meta.Properties.WarningsNotAsErrors}
-		if !strict && meta.MemberRoot != "" {
+		if !strict {
 			for _, line := range unexpected {
+				line = strings.TrimSuffix(line, "\r")
 				m := stackGuardDiagnostic.FindStringSubmatch(line)
 				if len(m) == 0 {
 					continue
 				}
 				origin := stackGuardPath(strings.Split(m[4], "::")[0])
-				if !stackGuardWithin(meta.MemberRoot, origin) {
+				if origin == "" || (meta.Properties.RigStackspace == "true" && !stackGuardWithin(meta.MemberRoot, origin)) {
 					continue
 				}
 				if _, ok := meta.MemberTolerances[origin]; ok {
 					continue
 				}
-				data, err := run("msbuild", origin, "-nologo", "-p:TreatWarningsAsErrors=true", "-getProperty:WarningsNotAsErrors,WarningsAsErrors")
+				data, err := evaluate("msbuild", origin, "-nologo", "-noconsolelogger", "-p:TreatWarningsAsErrors=true", "-getProperty:WarningsNotAsErrors,WarningsAsErrors")
 				if err != nil {
 					return fmt.Errorf("evaluate member warning policy: %w\n%s", err, data)
 				}
@@ -174,7 +181,7 @@ type stackGuardItem struct{ Identity string }
 type stackGuardMetadata struct {
 	MemberRoot       string
 	MemberTolerances map[string]string
-	Properties       struct{ RigStackspace, RigStackspaceRoot, ProjectAssetsFile, WarningsAsErrors, WarningsNotAsErrors string }
+	Properties       struct{ RigStackspace, RigStackspaceRoot, ProjectAssetsFile, WarningsAsErrors, WarningsNotAsErrors, CustomAfterMicrosoftCommonTargets, MSBuildToolsPath string }
 	Items            struct {
 		StackOnlyWarning []stackGuardItem
 		Present          []stackGuardItem `json:"_StackPresent"`
@@ -183,8 +190,10 @@ type stackGuardMetadata struct {
 
 var stackGuardWarningTotal = regexp.MustCompile(`^\s*[0-9]+ Warning\(s\)\s*$`)
 
-var stackGuardCode = regexp.MustCompile(`^[A-Z][A-Z0-9]*[0-9]$`)
-var stackGuardDiagnostic = regexp.MustCompile(`^(.*): warning ([A-Z]+[0-9]+): (.*?)(?: \[([^\]]+)\])?$`)
+const stackGuardCodePattern = `[A-Za-z][A-Za-z0-9]*[0-9]`
+
+var stackGuardCode = regexp.MustCompile(`^` + stackGuardCodePattern + `$`)
+var stackGuardDiagnostic = regexp.MustCompile(`^(.*): warning (` + stackGuardCodePattern + `): (.*?)(?: \[([^\]]+)\])?$`)
 
 func stackGuardOutput(output, project string, meta stackGuardMetadata, strict bool) (held, visible []string) {
 	type diagnostic struct {
@@ -193,6 +202,7 @@ func stackGuardOutput(output, project string, meta stackGuardMetadata, strict bo
 	}
 	var records []diagnostic
 	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		m := stackGuardDiagnostic.FindStringSubmatch(line)
 		if len(m) == 0 {
 			records = append(records, diagnostic{lines: []string{line}})
@@ -262,7 +272,11 @@ func stackGuardNuGet(meta stackGuardMetadata, code, message string) bool {
 	return false
 }
 
-var stackGuardCompilerCode = regexp.MustCompile(`^(CS|FS|BC)[0-9]+$`)
+var stackGuardInfrastructureCode = regexp.MustCompile(`(?i)^(NU|MSB)[0-9]+$`)
+
+func stackGuardSourceCode(code string) bool {
+	return !stackGuardInfrastructureCode.MatchString(code)
+}
 
 // Sibling compiler warnings remain in the output. Assembly/restore warnings
 // still require attribution; an unrelated MSB3277 must never become harmless.
@@ -272,6 +286,7 @@ func stackGuardVisiblePolicy(lines []string, project string, meta stackGuardMeta
 		if !strings.Contains(line, ": warning ") {
 			continue
 		}
+		line = strings.TrimSuffix(line, "\r")
 		m := stackGuardDiagnostic.FindStringSubmatch(line)
 		if strict || len(m) == 0 {
 			fatal = true
@@ -292,7 +307,7 @@ func stackGuardVisiblePolicy(lines []string, project string, meta stackGuardMeta
 			policy = meta.Properties.WarningsNotAsErrors
 			known = true
 		}
-		if !known && stackGuardCompilerCode.MatchString(m[2]) && meta.MemberRoot != "" && stackGuardWithin(meta.Properties.RigStackspaceRoot, origin) && !stackGuardWithin(meta.MemberRoot, origin) {
+		if !known && stackGuardSourceCode(m[2]) && meta.MemberRoot != "" && stackGuardWithin(meta.Properties.RigStackspaceRoot, origin) && !stackGuardWithin(meta.MemberRoot, origin) {
 			if !seen[line] {
 				siblings = append(siblings, line)
 				seen[line] = true

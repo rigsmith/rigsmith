@@ -861,8 +861,8 @@ warning lists before entering referenced projects. References outside the member
 also remove global `TreatWarningsAsErrors`; a guard-only target disables compiler
 promotion there. The member is the first prefix directory below the overlay
 root, matching the manifest's single-directory member names. This applies even
-when a sibling normally sets `TreatWarningsAsErrors=true`. Sibling compiler
-warnings (CS/FS/BC) remain visible and are separately counted, while member
+when a sibling normally sets `TreatWarningsAsErrors=true`. Sibling compiler/analyzer
+warnings remain visible and are separately counted, while member
 warnings still fail unless held by an explicit declaration or tolerated by that
 project's own `WarningsNotAsErrors` policy. Warning lists are merged for the
 entry project and evaluated separately for other member projects; its original
@@ -905,3 +905,18 @@ Windows case/drive/available 8.3 aliases through the diagnostic classifiers.
 The normal Windows test job does not set `RIG_STACK_E2E`, so real SDK guard
 builds remain gated there; these path tests require neither that switch nor
 an installed SDK. The 8.3 subtest skips if the volume has no short-name aliases.
+
+Plain-clone entry-project warning lists are scoped with a temporary
+`CustomAfterMicrosoftCommonTargets` hook. It imports the entry project's
+original hook, then removes the guard hook and both warning-list global
+properties from project references. Referenced projects evaluate their own
+hooks and lists, with real new warnings still fatal. Observed tolerated warnings
+are checked against each project's original policy, including references outside
+the entry project's directory. The temporary hook is removed after the build.
+
+Metadata queries disable the MSBuild console logger, parse stdout only, preserve
+stderr for evaluation errors and set `DOTNET_NOLOGO=1`. Build diagnostics keep
+both streams. Diagnostic parsing strips CRLF line endings and shares a single
+mixed-case alphanumeric ID grammar with `StackOnlyWarning` validation, including
+analyzer IDs such as `xUnit1004`. Sibling analyzer warnings follow the source
+warning policy; NuGet and MSBuild codes still require exact attribution.
