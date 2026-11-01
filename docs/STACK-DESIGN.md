@@ -728,8 +728,10 @@ the project body, so earlier project-body property assignments cannot read them
 either. Compile guards such as `#if STACK_ACME_CORE` work without member switches.
 
 `-p:UseStackSources=false` disables the swap, properties and constants together.
-Rig-owned member imports check for an ancestor `rig.stack.jsonc` before importing
-the nearest parent `Directory.Build.targets`. Re-running `wire` upgrades the old
+Rig-owned member imports check the nearest parent `Directory.Build.targets`
+for rig's generated-overlay or member-import marker before importing it. This
+supports `rig.stack.jsonc`, `rig.stack.json`, and inline `.rig.json` stacks
+without treating an unrelated `.rig.json` as a stack. Re-running `wire` upgrades the old
 rig-owned ungated block in writable members, preserving their other content.
 A plain clone's import does nothing even beneath unrelated build targets.
 Legacy ungated imports still resolve sources correctly and are reported as

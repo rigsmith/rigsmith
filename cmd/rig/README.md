@@ -42,6 +42,8 @@ rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path o
 fast-forwards a project you own with every commit that touched it. Mark a
 project `"owned": true` in the manifest to enable the second.
 
+See [Stackspaces](../../site/rig/stack.md) for source build signals, member imports, and evaluation timing.
+
 ## Verbs
 
 | Verb | What |
@@ -124,11 +126,3 @@ default-setter) preserve comments via the JSONC editor.
 The remaining ergonomics tail (`[suggest]` completion, menu project-pickers,
 `setup`/`self-update`, the interactive `default` verb, test-class fuzzy match)
 is tracked in [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).
-
-The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
-per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
-compile constants, plus `RIG_STACK`. Per-package properties are available inside
-targets after `RigStackSourceSignals`, not in project evaluation conditions.
-`UseStackSources=false` disables all signals and swaps. Member imports are gated
-on an ancestor stack manifest and upgraded when wired again; `stack doctor`
-previews the signals by project. See [the stack guide](../../site/rig/stack.md) for naming and timing.

@@ -80,6 +80,8 @@ JSON contract external plugins speak; `examples/plugins/changeset-changelog-chan
 is a Node reference plugin producing changelogen-style output. Set
 `"changelog": "<plugin>"` in config to swap it in.
 
+See [Stackspaces](site/rig/stack.md) for source build signals, member imports, and evaluation timing.
+
 ## Design
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module layout, the shared-core boundary, how `rig` and `shiprig` relate.
@@ -167,11 +169,3 @@ theirs:
 
 Independently: the release engine is a faithful port of **net-changesets**, which
 is itself a .NET port of [changesets](https://github.com/changesets/changesets).
-
-The .NET `stack wire` overlay exposes `RigStackspace`, `RigStackspaceRoot`,
-per-swapped-package `RigStackSource_Acme_Core` properties and `STACK_ACME_CORE`
-compile constants, plus `RIG_STACK`. Per-package properties are available inside
-targets after `RigStackSourceSignals`, not in project evaluation conditions.
-`UseStackSources=false` disables all signals and swaps. Member imports are gated
-on an ancestor stack manifest and upgraded when wired again; `stack doctor`
-previews the signals by project. See [the stack guide](site/rig/stack.md) for naming and timing.
