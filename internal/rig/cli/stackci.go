@@ -26,13 +26,16 @@ func (e *stackCIError) ExitCode() int { return e.code }
 var stackCIExecutable = os.Executable
 
 func newStackCICmd() *cobra.Command {
-	var manifest, member, build, test string
+	var manifest, member, build, test, guardProject string
+	var strict bool
 	var tip bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified.\nUse --guard-project for the observed .NET warning guard; --strict keeps all\nwarnings as errors.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&manifest, "manifest", "", "Path to a committed rig.stack.jsonc")
 	c.Flags().StringVar(&member, "member", "", "Member prefix (default: match origin URL)")
 	c.Flags().StringVar(&build, "build", "rig build", "Build command, run from the member")
 	c.Flags().StringVar(&test, "test", "rig test", "Test command, run from the member")
+	c.Flags().StringVar(&guardProject, "guard-project", "", "Build this member .NET project through ci-guard")
+	c.Flags().BoolVar(&strict, "strict", false, "Keep all guarded warnings as errors")
 	c.Flags().BoolVar(&tip, "upstream-tip", false, "Use upstream tips instead of manifest cursors")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		resolved := map[string]string{}
@@ -214,7 +217,19 @@ func newStackCICmd() *cobra.Command {
 			p.Stderr = cmd.ErrOrStderr()
 			return p.Run()
 		}
-		if e = step("build", 12, func() error { return shell(build) }); e != nil {
+		if e = step("build", 12, func() error {
+			if guardProject != "" {
+				if filepath.IsAbs(guardProject) || !insideRoot(filepath.Join(root, member), filepath.Join(root, member, guardProject)) {
+					return fmt.Errorf("guard project must be inside the member")
+				}
+				args := []string{"stack", "ci-guard", filepath.Join(root, member, guardProject)}
+				if strict {
+					args = append(args, "--strict")
+				}
+				return run(filepath.Join(root, member), args...)
+			}
+			return shell(build)
+		}); e != nil {
 			return e
 		}
 		return step("test", 13, func() error { return shell(test) })

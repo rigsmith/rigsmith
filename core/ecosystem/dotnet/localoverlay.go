@@ -327,6 +327,7 @@ func renderOverlay(redirects []plugin.Redirect) string {
 `, r.Package, name, name, strings.ToUpper(name))
 	}
 	b.WriteString("  </Target>\n\n")
+	b.WriteString(overlayCIGuard)
 	b.WriteString(overlayNoRefAssemblies)
 	b.WriteString("\n</Project>\n")
 	return b.String()
@@ -398,3 +399,13 @@ func StackSourceName(id string) string {
 		return '_'
 	}, id)
 }
+
+// Warning policy is read while NuGet constructs the restore graph. This target
+// runs after items exist, before that policy is copied. NoWarn loses evidence.
+const overlayCIGuard = `  <Target Name="RigStackCIWarningPolicy" BeforeTargets="_GenerateRestoreProjectSpec;CoreCompile" Condition="'$(RigStackCIGuard)' == 'true' And '@(_StackPresent)' != ''">
+    <PropertyGroup>
+      <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1603;NU1608;NU1605</WarningsNotAsErrors>
+    </PropertyGroup>
+  </Target>
+
+`

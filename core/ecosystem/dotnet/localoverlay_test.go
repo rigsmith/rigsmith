@@ -664,3 +664,15 @@ func TestLocalOverlayLegacyImport(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalOverlayCIGuard(t *testing.T) {
+	body := renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}})
+	for _, want := range []string{"BeforeTargets=\"_GenerateRestoreProjectSpec;CoreCompile\"", "'$(RigStackCIGuard)' == 'true' And '@(_StackPresent)' != ''", "<WarningsNotAsErrors>$(WarningsNotAsErrors);NU1603;NU1608;NU1605</WarningsNotAsErrors>"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	if strings.Contains(body, "<NoWarn>") || strings.Contains(body, "MSB3277") {
+		t.Fatal("broad suppression emitted")
+	}
+}

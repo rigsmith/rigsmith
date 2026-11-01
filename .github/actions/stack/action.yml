@@ -16,6 +16,12 @@ inputs:
   test:
     description: Test command in the member directory. Results stream to the job log.
     default: rig test
+  guard-project:
+    description: Member-relative .NET project to build through ci-guard (replaces build).
+    default: ''
+  strict:
+    description: Keep all guarded warnings as errors.
+    default: 'false'
   upstream-tip:
     description: Use upstream tips instead of manifest cursors.
     default: 'false'
@@ -43,9 +49,13 @@ runs:
         STACK_MEMBER: ${{ inputs.member }}
         STACK_BUILD: ${{ inputs.build }}
         STACK_TEST: ${{ inputs.test }}
+        STACK_GUARD_PROJECT: ${{ inputs.guard-project }}
+        STACK_STRICT: ${{ inputs.strict }}
         STACK_TIP: ${{ inputs.upstream-tip }}
       run: |
         args=(stack ci --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
+        if [[ -n "$STACK_GUARD_PROJECT" ]]; then args+=(--guard-project "$STACK_GUARD_PROJECT"); fi
+        if [[ "$STACK_STRICT" == true ]]; then args+=(--strict); fi
         rig "${args[@]}"

@@ -115,3 +115,14 @@ builds the committed checkout against sibling sources in a temporary stackspace.
 Keep this job alongside the plain-clone matrix. The self-contained composite is
 `.github/actions/stack/`; `rigsmith/stack-action@v1` is the intended name but is not published yet.
 See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
+
+`rig stack ci-guard app/App.csproj` builds one .NET project with
+`TreatWarningsAsErrors=true` and reports observed stack-only diagnostics in
+`GITHUB_STEP_SUMMARY`. In a plain clone, declare eligible compiler diagnostics
+with `<StackOnlyWarning Include="ACME0001" />` in the project. In a stackspace,
+only NU1603/NU1608/NU1605 events matched to a rewired package identity in NuGet's
+assets log are eligible. Other warnings fail; MSB3277 stays an error because
+exact assembly scoping is not established. `--strict` disables holding warnings
+back. The composite stack action accepts `guard-project: app/App.csproj` (relative
+to the member, replacing its build command) and `strict: 'true'`; the equivalent
+runner flag is `rig stack ci --guard-project app/App.csproj`.

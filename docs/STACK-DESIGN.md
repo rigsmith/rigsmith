@@ -771,3 +771,51 @@ Legacy ungated imports still resolve sources correctly and are reported as
 informational notes, not blocking problems; non-writable members are left alone.
 `doctor` previews the properties/constants by project from static discovery;
 conditional references still depend on the configuration MSBuild builds.
+
+## CI warning guard: observed diagnostics and exact identity
+
+`rig stack ci-guard <project.csproj>` builds a single .NET project. Plain-clone
+eligibility comes only from its evaluated `StackOnlyWarning` items. The stack
+context comes from `RigStackspace` and `_StackPresent` in the wired overlay.
+No build-file import is needed in a plain clone. Existing manifest-gated member
+imports retain their silent no-stack behavior.
+
+Do not use project-level `NoWarn`: it erases both fusion and unrelated warnings
+of that code, and erases the evidence needed for an honest count. Local .NET 10
+fixtures establish that per-PackageReference `NoWarn="NU1605"` does scope to that
+package while an unrelated package downgrade still fails. However a swapped
+PackageReference is removed, so that metadata is unavailable for the source
+reference. Retaining a package reference solely for suppression would change the
+wiring semantics and is not acceptable.
+
+The guard instead keeps events observable through `WarningsNotAsErrors`. Wire
+emits a target before `_GenerateRestoreProjectSpec`, after items exist and before
+NuGet copies policy into the restore graph, gated on `RigStackCIGuard=true` and
+nonempty `_StackPresent`. The graph policy alone is insufficient: the outer Restore task also reads
+policy at evaluation, and the SDK explicitly promotes NU1605 in
+`WarningsAsErrors`. The wrapper supplies the candidate demotions to the outer
+build and removes only eligible codes from its evaluated `WarningsAsErrors`
+list, preserving all other entries. This temporary demotion is not
+standalone suppression: only the guard may use that switch. It validates every
+observed event: exact project, exact code and complete message matched against
+`project.assets.json` logs, and `libraryId` equal to a swapped identity. Unmatched
+warnings remain visible and fail the guard, including non-swapped packages with
+the same code. Other projects' warnings fail closed. No MSB3277 exemption is
+emitted: a warning code cannot establish that both assemblies were swapped.
+
+The job summary counts distinct observed diagnostic records, never declarations
+or possible suppressions. Repeated console records are deduplicated; no event
+means a count of zero. `--strict`/action `strict: 'true'` bypasses demotion and
+classification. A failing build remains failed even if some events were eligible.
+
+Current local fixtures prove plain declared diagnostics are observed and held,
+real CS0168 failures in both modes, strict-mode failure, summary contents,
+package-scoped NU1605 metadata behavior, and observed NU1603/NU1608/NU1605
+holdback when explicitly declared in plain mode. A real strong-named assembly
+conflict produces MSB3277 and fails the guard in stack mode.
+A package minimum/exact constraint against a lower-version source project did
+**not** produce NU1605 on .NET 10; the clean stack build is not evidence that a
+fusion event was held. Successful real stack-mode fusion-event classification
+and exact MSB3277 assembly filtering still require proof. The real
+member project named in the pawprint is unavailable; its platform matrix is not
+verified here. Tests invoking the SDK require `RIG_STACK_E2E=1` and local feeds.

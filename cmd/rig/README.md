@@ -139,3 +139,14 @@ targets after `RigStackSourceSignals`, not in project evaluation conditions.
 `UseStackSources=false` disables all signals and swaps. Member imports are gated
 on an ancestor stack manifest and upgraded when wired again; `stack doctor`
 previews the signals by project. See [the stack guide](../../site/rig/stack.md) for naming and timing.
+
+`rig stack ci-guard app/App.csproj` builds one .NET project with
+`TreatWarningsAsErrors=true` and reports observed stack-only diagnostics in
+`GITHUB_STEP_SUMMARY`. In a plain clone, declare eligible compiler diagnostics
+with `<StackOnlyWarning Include="ACME0001" />` in the project. In a stackspace,
+only NU1603/NU1608/NU1605 events matched to a rewired package identity in NuGet's
+assets log are eligible. Other warnings fail; MSB3277 stays an error because
+exact assembly scoping is not established. `--strict` disables holding warnings
+back. The composite stack action accepts `guard-project: app/App.csproj` (relative
+to the member, replacing its build command) and `strict: 'true'`; the equivalent
+runner flag is `rig stack ci --guard-project app/App.csproj`.
