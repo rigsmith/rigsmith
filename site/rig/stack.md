@@ -677,6 +677,16 @@ records the cursor into that commit, and does not second-guess how you resolved
 it. Anything you committed on top since stays as it is; the cursor then gets a
 small commit of its own.
 
+Dry runs: `pull -n` reports each current cursor and upstream tip (including
+“nothing to pull”), without fetching objects, starting josh, or changing the
+stackspace. It retains the normal dirty-tree check; `--repin` resolves the pin
+again for the preview. Commit counts are omitted because upstream objects need
+not be present locally. Merge conflicts and replacement safety checks require a
+real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
+reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
+and `seed` refuse `--dry-run` before making changes. `status` and plain `doctor`
+are read-only; `propose`, `push`, and `pack` retain their existing previews.
+
 A [pinned](./configuration#stack) project has nothing to take: its tag was
 resolved once, and an upstream that later re-cuts that tag does not move you.
 Edit the pin to go somewhere else, or `rig stack pull --repin` to follow a moved
@@ -1014,6 +1024,48 @@ proposal. What was missing was only that nothing said so.
   you and to nobody else. To carry it to another machine, push a
   [seed](#seed) instead — the root files alone — and let `init` rebuild the
   members there.
+
+### Source signals from the .NET overlay
+
+With `UseStackSources` other than `false`, the overlay sets
+`RigStackspace=true` and `RigStackspaceRoot` (an absolute directory with a trailing
+separator). Before `PrepareForBuild` / `CoreCompile`, target
+`RigStackSourceSignals` appends `RIG_STACK` to `DefineConstants`. For each package
+actually swapped in this project, it also sets `RigStackSource_Acme_Core=true`
+and appends `STACK_ACME_CORE`. A project referencing no sibling gets only the
+stack-wide signals.
+
+Names come from the **referenced package ID**, including a republished ID:
+replace each character outside ASCII `A-Z`, `a-z`, `0-9` with `_`; preserve case
+for the property suffix and uppercase for the constant suffix. For example,
+`Acme.Core` becomes `RigStackSource_Acme_Core` and `STACK_ACME_CORE`. Prefixes
+make leading digits safe. IDs that sanitise to the same name share a signal;
+choose distinct IDs if you need to distinguish them.
+
+MSBuild evaluates properties before items. The per-package properties are
+therefore **not available in evaluation-time conditions**, including the project
+body and `Directory.Build.targets` property/item groups. Use them inside a
+member target with `AfterTargets="RigStackSourceSignals"` (or a later build
+target), where property and item conditions can read them. `RigStackspace` and
+`RigStackspaceRoot` are evaluation properties, but the overlay is imported after
+the project body, so earlier project-body property assignments cannot read them
+either. Compile guards such as `#if STACK_ACME_CORE` work without member switches.
+
+`-p:UseStackSources=false` disables the swap, properties and constants together.
+Rig-owned member imports check the nearest parent `Directory.Build.targets`
+for rig's generated-overlay or member-import marker, or the literal declaration
+`<RigStackspace>true</RigStackspace>`, before importing it. The declaration
+keeps an overlay discoverable after you drop the ownership marker to maintain
+it by hand; retain that declaration in a hand-owned overlay. A custom overlay
+written from scratch should include it too. This
+supports `rig.stack.jsonc`, `rig.stack.json`, and inline `.rig.json` stacks
+without treating an unrelated `.rig.json` as a stack. Re-running `wire` upgrades the old
+rig-owned ungated block in writable members, preserving their other content.
+A plain clone's import does nothing even beneath unrelated build targets.
+Legacy ungated imports still resolve sources correctly and are reported as
+informational notes, not blocking problems; non-writable members are left alone.
+`doctor` previews the properties/constants by project from static discovery;
+conditional references still depend on the configuration MSBuild builds.
 
 ## Testing a member PR in its stackspace
 

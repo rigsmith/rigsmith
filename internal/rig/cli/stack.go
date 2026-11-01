@@ -113,7 +113,8 @@ func newStackInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold the stack manifest, or import its repos into the stackspace",
-		Long: "With no manifest, writes a commented rig.stack.jsonc to fill in. With a\n" +
+		Long: "--dry-run is not supported; this command refuses it before making changes.\n\n" +
+			"With no manifest, writes a commented rig.stack.jsonc to fill in. With a\n" +
 			"manifest, imports each repo that has no cursor yet: fetches its upstream\n" +
 			"history through the :prefix filter and merges it in.\n\n" +
 			"A repo whose cursor is recorded but whose directory is missing — a clone\n" +
@@ -124,6 +125,9 @@ func newStackInitCmd() *cobra.Command {
 			"work that has left as a proposal and not yet merged actually lives.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun {
+				return fmt.Errorf("--dry-run is not supported for stack init")
+			}
 			ctx := cmd.Context()
 			root, err := stackRoot(ctx)
 			if err != nil {
@@ -389,7 +393,11 @@ func newStackStatusCmd() *cobra.Command {
 func newStackPullCmd() *cobra.Command {
 	var repin bool
 	cmd := &cobra.Command{
-		Use:               "pull [repo]",
+		Use: "pull [repo]",
+		Long: "Merge upstream changes into member prefixes. With --dry-run, report each cursor\n" +
+			"and upstream tip without fetching objects, starting josh, or changing files.\n" +
+			"Dirty trees are refused as for a real pull; --repin previews a newly resolved pin.\n" +
+			"Merge conflicts and replacement safety can only be checked by a real pull.",
 		Short:             "Merge new upstream commits into a repo's prefix (all repos by default)",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: stackRepoCompletion,
@@ -440,6 +448,18 @@ func newStackPullCmd() *cobra.Command {
 				tip, err := stackUpstreamTip(ctx, repo, m, name)
 				if err != nil {
 					return fmt.Errorf("pulling %s: %w", name, err)
+				}
+				if dryRun {
+					if tip == m.cursor(name) {
+						if !stackPrefixPresent(ctx, repo, name) {
+							fmt.Fprintf(cmd.OutOrStdout(), "%s: cursor at %s but no %s/ directory — `rig stack setup` reconstitutes it\n", name, short(tip), name)
+						} else {
+							fmt.Fprintf(cmd.OutOrStdout(), "%s: cursor %s, upstream %s — nothing to pull\n", name, short(m.cursor(name)), short(tip))
+						}
+					} else {
+						fmt.Fprintf(cmd.OutOrStdout(), "%s: would pull cursor %s -> upstream %s (%s); merge and replacement checks deferred\n", name, short(m.cursor(name)), short(tip), m.pin(name).describe())
+					}
+					continue
 				}
 				if tip == m.cursor(name) {
 					// The cursor is the only thing a pull consults, and one
@@ -1917,7 +1937,8 @@ func newStackWireCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "wire",
 		Short: "Write the build overlay so members resolve each other from source",
-		Long: "Works out which package references cross from one member of the stackspace\n" +
+		Long: "With --dry-run, report current wiring without writing the overlay or README.\n\n" +
+			"Works out which package references cross from one member of the stackspace\n" +
 			"to another — those are the ones that would otherwise come from a registry —\n" +
 			"and writes the build file that points them at the sources instead.\n\n" +
 			"Nothing in any project file changes, so a member cloned on its own still\n" +
@@ -1932,13 +1953,22 @@ func newStackWireCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			missing := stackMissingPrefixes(repo.Dir, m.names())
+			if dryRun {
+				if len(missing) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "would defer wiring: missing member directories: %s — run `rig stack setup` first\n", strings.Join(missing, ", "))
+					return nil
+				}
+				fmt.Fprintln(cmd.OutOrStdout(), "would regenerate build overlay and generated README.md; checking current wiring:")
+				return newStackDoctorCmd().RunE(cmd, nil)
+			}
 			// Asked before wiring, because a wire that defers still returns
 			// nil and the refresh below would go ahead anyway — writing a file
 			// nobody asked for into a tree that is about to be imported into.
 			// The heading follows the directory name, so a seed cloned under a
 			// different one is dirtied on sight, and the `setup` that follows
 			// refuses to import over it.
-			deferred := len(stackMissingPrefixes(repo.Dir, m.names())) > 0
+			deferred := len(missing) > 0
 			if _, err := stackWire(ctx, cmd.OutOrStdout(), m, repo, "", false); err != nil {
 				return err
 			}
@@ -1999,7 +2029,9 @@ func stackDirtyUnder(ctx context.Context, repo *gitrepo.Repo, name string) (bool
 func newStackDoctorCmd() *cobra.Command {
 	var fix bool
 	cmd := &cobra.Command{
-		Use:   "doctor",
+		Use: "doctor",
+		Long: "Check the engine and manifest. With --fix --dry-run, report the installation\n" +
+			"that would be attempted without downloading or installing anything.",
 		Short: "Check the stack engine and manifest; --fix installs the pinned josh",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -2027,6 +2059,8 @@ func newStackDoctorCmd() *cobra.Command {
 			switch {
 			case binErr == nil:
 				fmt.Fprintf(out, "✓ josh-proxy %s installed\n", version)
+			case fix && dryRun:
+				fmt.Fprintf(out, "would install josh-proxy %s\n", version)
 			case fix:
 				if _, err := ensureJoshProxy(ctx, version, out); err != nil {
 					return err
@@ -2055,6 +2089,10 @@ func newStackDoctorCmd() *cobra.Command {
 					for _, l := range rep.Links {
 						fmt.Fprintf(out, "    %s\n", l.describe())
 					}
+					if rep.Eco == "dotnet" && len(rep.Links) > 0 {
+						stackReportSourceSignals(out, root, rep.Links, rep.Packages)
+					}
+					stackReportNotes(out, rep.Resp.Notes)
 					for _, p := range rep.Resp.Problems {
 						where := p.Path
 						if where == "" {

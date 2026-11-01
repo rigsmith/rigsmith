@@ -18,7 +18,8 @@ func newStackAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add [upstream]",
 		Short: "Add a repo to this stackspace and import it",
-		Long: "Adds a repo to rig.stack.jsonc and imports it, without hand-editing the\n" +
+		Long: "--dry-run is not supported; this command refuses it before making changes.\n\n" +
+			"Adds a repo to rig.stack.jsonc and imports it, without hand-editing the\n" +
 			"manifest. Give the repo as host/owner/name or paste its URL — the https\n" +
 			"one from your browser, the one the clone button offers, or an ssh remote.\n\n" +
 			"With no argument it asks. Every answer is also a flag, so the same thing\n" +
@@ -29,6 +30,9 @@ func newStackAddCmd() *cobra.Command {
 			"is what makes `rig stack push` available for it.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun {
+				return fmt.Errorf("--dry-run is not supported for stack add")
+			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			m, src, _, err := stackspace(ctx)
