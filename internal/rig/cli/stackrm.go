@@ -30,7 +30,8 @@ func newStackRemoveCmd() *cobra.Command {
 		Aliases:           []string{"remove"},
 		Short:             "Remove a repo from this stackspace — manifest, tree and overlay",
 		ValidArgsFunction: stackRepoCompletion,
-		Long: "Removes a repo from the stackspace: its manifest entry and cursor go, its\n" +
+		Long: "--dry-run is not supported; this command refuses it before making changes.\n\n" +
+			"Removes a repo from the stackspace: its manifest entry and cursor go, its\n" +
 			"directory is deleted from the tree, the build overlay is rewritten so nothing\n" +
 			"still points at it, and the result is committed. Nothing outside this\n" +
 			"stackspace changes — the upstream and your fork are untouched.\n\n" +
@@ -44,6 +45,9 @@ func newStackRemoveCmd() *cobra.Command {
 			"  rig stack rm pty-core --keep-tree",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun {
+				return fmt.Errorf("--dry-run is not supported for stack rm")
+			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			m, src, repo, err := stackspace(ctx)

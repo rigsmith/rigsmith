@@ -25,13 +25,17 @@ func newStackSetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
 		Short: "Set up a freshly cloned stackspace: engine, members, build overlay",
-		Long: "Runs the steps a new clone needs, in an order where each can see what it\n" +
+		Long: "--dry-run is not supported; this command refuses it before making changes.\n\n" +
+			"Runs the steps a new clone needs, in an order where each can see what it\n" +
 			"is judging: installs the fusion engine, reconstitutes the member\n" +
 			"directories, writes the build overlay if it is missing, commits what it\n" +
 			"generated, and prints the status.\n\n" +
 			"Safe to run again — every step is a no-op once it has been done.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun {
+				return fmt.Errorf("--dry-run is not supported for stack setup")
+			}
 			ctx, out := cmd.Context(), cmd.OutOrStdout()
 			root, err := stackRoot(ctx)
 			if err != nil {
