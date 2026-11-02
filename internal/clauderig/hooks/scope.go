@@ -70,7 +70,7 @@ func ValidateProject(repo, path string) error {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return fail("resolves outside repository")
 	}
-	if err := rejectGitMetadata(root, target, rel); err != nil {
+	if err := rejectGitMetadata(root, target); err != nil {
 		return fail(err.Error())
 	}
 	home, err := os.UserHomeDir()
@@ -89,39 +89,76 @@ func ValidateProject(repo, path string) error {
 // The .git entry itself is protected even when it is a linked-worktree gitfile.
 // Git can also place its private and common directories elsewhere, including
 // beneath another name inside the checkout.
-func rejectGitMetadata(root, target, rel string) error {
-	if first := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]; strings.EqualFold(first, ".git") {
-		return fmt.Errorf("resolves into git metadata")
-	}
-	if _, err := os.Lstat(filepath.Join(root, ".git")); os.IsNotExist(err) {
-		return nil
-	} else if err != nil {
+func rejectGitMetadata(root, target string) error {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
 		return err
 	}
-	for _, flag := range []string{"--git-dir", "--git-common-dir"} {
-		cmd := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", flag)
-		// Bind discovery to root/.git, not a repository selected by the caller.
-		cmd.Env = make([]string, 0, len(os.Environ()))
-		for _, entry := range os.Environ() {
-			key, _, _ := strings.Cut(entry, "=")
-			switch strings.ToUpper(key) {
-			case "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES":
-				continue
+	var metadata []os.FileInfo
+	if _, err := os.Lstat(filepath.Join(root, ".git")); err == nil {
+		for _, flag := range []string{"--git-dir", "--git-common-dir"} {
+			cmd := exec.Command("git", "-C", root, "rev-parse", flag)
+			// Bind discovery to root/.git, not a repository selected by the caller.
+			cmd.Env = make([]string, 0, len(os.Environ()))
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				switch strings.ToUpper(key) {
+				case "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES":
+					continue
+				}
+				cmd.Env = append(cmd.Env, entry)
 			}
-			cmd.Env = append(cmd.Env, entry)
+			raw, err := cmd.Output()
+			if err != nil {
+				return fmt.Errorf("cannot resolve git metadata: %w", err)
+			}
+			info, err := os.Stat(gitMetadataPath(root, raw))
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("git metadata path is not a directory")
+			}
+			metadata = append(metadata, info)
 		}
-		raw, err := cmd.Output()
-		if err != nil {
-			return fmt.Errorf("cannot resolve git metadata: %w", err)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	// Check every component, including nested repositories and gitfiles. Identity
+	// comparisons also recognize case variants on case-insensitive filesystems.
+	for ancestor := target; ; ancestor = filepath.Dir(ancestor) {
+		if strings.EqualFold(filepath.Base(ancestor), ".git") {
+			return fmt.Errorf("resolves into git metadata")
 		}
-		dir, err := canonicalHookPath(strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r"))
-		if err != nil {
+		info, err := os.Stat(ancestor)
+		if err == nil {
+			for _, dir := range metadata {
+				if os.SameFile(info, dir) {
+					return fmt.Errorf("resolves into git metadata")
+				}
+			}
+			if os.SameFile(info, rootInfo) {
+				break
+			}
+		} else if !os.IsNotExist(err) {
 			return err
 		}
-		relative, err := filepath.Rel(dir, target)
-		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
-			return fmt.Errorf("resolves into git metadata")
+		if filepath.Dir(ancestor) == ancestor {
+			break
 		}
 	}
 	return nil
+}
+
+// Older Git versions return relative paths. Preserve literal filename bytes:
+// only Windows treats a trailing carriage return as part of the line ending.
+func gitMetadataPath(root string, raw []byte) string {
+	path := strings.TrimSuffix(string(raw), "\n")
+	if runtime.GOOS == "windows" {
+		path = strings.TrimSuffix(path, "\r")
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	return path
 }

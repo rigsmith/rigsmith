@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -149,6 +150,72 @@ func TestHardeningGitMetadata(t *testing.T) {
 		link(t, filepath.Join(metadata, "config"), guide)
 		refuse(t, root, guide)
 	})
+	t.Run("nested-repository", func(t *testing.T) {
+		root := t.TempDir()
+		git(t, "init", root)
+		nested := filepath.Join(root, "nested")
+		git(t, "init", nested)
+		guide := filepath.Join(root, "CLAUDE.md")
+		link(t, filepath.Join(nested, ".git", "config"), guide)
+		refuse(t, root, guide)
+	})
+	t.Run("case-variant", func(t *testing.T) {
+		root := t.TempDir()
+		metadata := filepath.Join(root, "private-metadata")
+		git(t, "init", "--separate-git-dir", metadata, root)
+		variant := filepath.Join(root, "PRIVATE-METADATA")
+		info, err := os.Stat(metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, err := os.Stat(variant)
+		if os.IsNotExist(err) {
+			t.Skip("case-sensitive filesystem")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(info, other) {
+			t.Skip("case variants name different directories")
+		}
+		guide := filepath.Join(root, "CLAUDE.md")
+		link(t, filepath.Join(variant, "config"), guide)
+		refuse(t, root, guide)
+		// Also exercise the .git spelling requested by the review.
+		nested := filepath.Join(root, "nested")
+		git(t, "init", nested)
+		path := filepath.Join(root, "guide.md")
+		link(t, filepath.Join(nested, ".GIT", "config"), path)
+		refuse(t, root, path)
+	})
+	for _, name := range []string{"metadata\\literal", "metadata\r/repo"} {
+		t.Run(name, func(t *testing.T) {
+			if runtime.GOOS == "windows" {
+				t.Skip("Unix filename bytes")
+			}
+			root := t.TempDir()
+			metadata := filepath.Join(root, name)
+			if err := os.MkdirAll(filepath.Dir(metadata), 0755); err != nil {
+				t.Fatal(err)
+			}
+			git(t, "init", "--separate-git-dir", metadata, root)
+			guide := filepath.Join(root, "CLAUDE.md")
+			link(t, filepath.Join(metadata, "config"), guide)
+			refuse(t, root, guide)
+			if err := ValidateProject(root, filepath.Join(root, ".claude", "settings.json")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	t.Run("broken-gitfile-fails-closed", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: missing-metadata\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateProject(root, filepath.Join(root, ".claude", "settings.json")); err == nil {
+			t.Fatal("accepted failed metadata discovery")
+		}
+	})
 	t.Run("hostile-git-environment", func(t *testing.T) {
 		root := t.TempDir()
 		metadata := filepath.Join(root, "private-metadata")
@@ -186,9 +253,31 @@ func TestHardeningGitMetadata(t *testing.T) {
 		refuse(t, root, guide)
 		for _, flag := range []string{"--git-dir", "--git-common-dir"} {
 			metadata := git(t, "-C", root, "rev-parse", "--path-format=absolute", flag)
-			if err := rejectGitMetadata(root, metadata, "metadata-alias"); err == nil {
+			if err := rejectGitMetadata(root, metadata); err == nil {
 				t.Fatalf("accepted actual %s", flag)
 			}
 		}
 	})
+}
+
+func TestHardeningGitMetadataPath(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{".git", filepath.Join("private-metadata", "repo"), filepath.Join(root, "absolute-metadata")} {
+		want := path
+		if !filepath.IsAbs(want) {
+			want = filepath.Join(root, want)
+		}
+		if got := gitMetadataPath(root, []byte(path+"\n")); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		if got := gitMetadataPath(root, []byte(".git\r\n")); got != filepath.Join(root, ".git") {
+			t.Fatal(got)
+		}
+	} else {
+		if got := gitMetadataPath(root, []byte("metadata\r\n")); got != filepath.Join(root, "metadata\r") {
+			t.Fatal(got)
+		}
+	}
 }
