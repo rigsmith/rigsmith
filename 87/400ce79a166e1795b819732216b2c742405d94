@@ -1,0 +1,23 @@
+.github/actions/stack/action.yml
+  s_84db7dfa26c0c1::t_d8808c42bed13e 199-201
+.changeset/nimble-foxes-jump.md
+  s_84db7dfa26c0c1::t_d8808c42bed13e 1-7
+internal/rig/cli/stackdeps_action_test.go
+  s_84db7dfa26c0c1::t_d8808c42bed13e 39,50,76-100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "87400ce79a166e1795b819732216b2c742405d94",
+  "prompts": {},
+  "sessions": {
+    "s_84db7dfa26c0c1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199b4-6306-70a1-9300-4c399f94a202",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
