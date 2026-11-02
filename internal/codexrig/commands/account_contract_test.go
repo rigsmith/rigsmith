@@ -202,8 +202,8 @@ func TestSwitchJSONReportsCompletedSwapWithWarning(t *testing.T) {
 				args = append(args, "--json")
 			}
 			cmd.SetArgs(args)
-			if err := cmd.Execute(); !errors.Is(err, warning) {
-				t.Fatalf("warning lost: %v", err)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("completed swap must succeed: %v", err)
 			}
 			prose := out.String()
 			if asJSON {
@@ -211,12 +211,12 @@ func TestSwitchJSONReportsCompletedSwapWithWarning(t *testing.T) {
 				if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
 					t.Fatalf("invalid JSON: %v: %s", err, out.String())
 				}
-				if !doc.Switched || doc.Message != warning.Error() || doc.Backup != "backup.json" {
+				if !doc.Switched || doc.Message != warning.Error() || doc.Backup != "backup.json" || doc.Reason != "" {
 					t.Fatalf("%+v", doc)
 				}
 				prose = errOut.String()
 			}
-			if !strings.Contains(prose, "Switched to") || !strings.Contains(prose, warning.Error()) {
+			if strings.Count(prose, "Switched to") != 1 || strings.Count(prose, warning.Error()) != 1 {
 				t.Fatalf("completed swap/warning missing: %q", prose)
 			}
 		})
