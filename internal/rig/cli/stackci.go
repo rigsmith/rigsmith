@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/internal/agentrig/ghrepo"
 	"github.com/spf13/cobra"
 )
 
@@ -41,16 +43,20 @@ var stackCIExecutable = os.Executable
 var stackCISymlink = os.Symlink
 
 func newStackCICmd() *cobra.Command {
-	var manifest, member, build, test, allowedHosts, guardProject string
+	var seed, manifest, member, build, test, allowedHosts, guardProject string
 	var strict bool
 	var tip bool
 	var cacheHistory bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nRebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nRequires exactly one of --seed or --manifest. Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "Comma-separated allowed fork/upstream hosts")
 	_ = c.RegisterFlagCompletionFunc("allowed-hosts", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	})
 	c.Flags().StringVar(&manifest, "manifest", "", "Path to a committed rig.stack.jsonc")
+	c.Flags().StringVar(&seed, "seed", "", "Manifest seed (owner/repo@ref, URL or local path); exclusive with --manifest")
+	_ = c.RegisterFlagCompletionFunc("seed", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	})
 	c.Flags().StringVar(&member, "member", "", "Member prefix (default: match origin URL)")
 	c.Flags().StringVar(&build, "build", "rig build", "Build command, run from the member")
 	c.Flags().StringVar(&test, "test", "rig test", "Test command, run from the member")
@@ -106,7 +112,7 @@ func newStackCICmd() *cobra.Command {
 		if e != nil {
 			return step("setup", 10, func() error { return e })
 		}
-		var temp, root, exe, reportPath string
+		var temp, root, exe, reportPath, seedCommit string
 		defer func() {
 			if temp != "" {
 				_ = os.RemoveAll(temp)
@@ -125,6 +131,9 @@ func newStackCICmd() *cobra.Command {
 			return p.Run()
 		}
 		e = step("setup", 10, func() error {
+			if (manifest == "") == (seed == "") {
+				return fmt.Errorf("exactly one of --manifest or --seed is required")
+			}
 			temp, e = os.MkdirTemp("", "rig-stack-ci-")
 			if e != nil {
 				return e
@@ -142,24 +151,30 @@ func newStackCICmd() *cobra.Command {
 				return e
 			}
 
-			if manifest == "" {
-				return fmt.Errorf("--manifest is required")
-			}
-
 			if e := os.Mkdir(root, 0700); e != nil {
 				return e
 			}
-			p := manifest
-			if !filepath.IsAbs(p) {
-				p = filepath.Join(checkout, p)
-			}
-			rel, e := filepath.Rel(checkout, p)
-			if e != nil {
-				return e
-			}
-			data, e := stackCIGit(cmd.Context(), checkout, "show", "HEAD:"+filepath.ToSlash(rel))
-			if e != nil {
-				return fmt.Errorf("manifest must be committed: %w", e)
+			var data []byte
+			if seed != "" {
+				data, seedCommit, e = stackCISeed(cmd.Context(), checkout, filepath.Join(temp, "seed"), seed, allowedHosts)
+				if e != nil {
+					return e
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Seed %s %s\n", ghrepo.SafeRemote(seed), seedCommit)
+				fmt.Fprintf(&summary, "\nSeed: %s (commit %s)\n", ghrepo.SafeRemote(seed), seedCommit)
+			} else {
+				p := manifest
+				if !filepath.IsAbs(p) {
+					p = filepath.Join(checkout, p)
+				}
+				rel, err := filepath.Rel(checkout, p)
+				if err != nil {
+					return err
+				}
+				data, e = stackCIGit(cmd.Context(), checkout, "show", "HEAD:"+filepath.ToSlash(rel))
+				if e != nil {
+					return fmt.Errorf("manifest must be committed: %w", e)
+				}
 			}
 			if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
 				return e
@@ -285,6 +300,9 @@ func newStackCICmd() *cobra.Command {
 				records := map[string]map[string]string{}
 				for _, n := range m.names() {
 					records[n] = map[string]string{"commit": resolved[n], "filter": stackPrefixFilter(n), "source": sources[n], "filteredCommit": filtered[n]}
+				}
+				if seed != "" {
+					records["_seed"] = map[string]string{"reference": ghrepo.SafeRemote(seed), "commit": seedCommit}
 				}
 				b, err := json.MarshalIndent(records, "", "  ")
 				if err != nil {
@@ -501,4 +519,56 @@ func stackCIGuardPush(ctx context.Context, root string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(hooks, "pre-push"), []byte("#!/bin/sh\necho 'Fused history must never be pushed' >&2\nexit 1\n"), 0700)
+}
+
+// Fetch only the committed manifest, not setup's home adoption, overlay or
+// publication state. The clone is separate from the fused repository and its
+// origin is removed before use; stackCIGuardPush still requires no remotes.
+func stackCISeed(ctx context.Context, checkout, dest, seed, allowed string) ([]byte, string, error) {
+	remote, ref, err := stackSeedReference(seed)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid seed reference: %w", err)
+	}
+	// Local paths have no host. Network remotes share the member allowlist.
+	local := filepath.IsAbs(remote) || strings.HasPrefix(remote, ".")
+	if u, err := url.Parse(remote); err == nil && u.Scheme == "file" && u.Host == "" {
+		local = true
+	}
+	if !local {
+		host, _ := stackSplitHost(stackNormalizeSpec(remote))
+		if u, err := url.Parse(remote); err == nil && u.Host != "" {
+			host = u.Host
+		}
+		ok := false
+		for _, h := range strings.Split(allowed, ",") {
+			if strings.TrimSpace(h) == host {
+				ok = true
+			}
+		}
+		if !ok {
+			return nil, "", fmt.Errorf("seed %s host %s is not in --allowed-hosts", ghrepo.SafeRemote(seed), host)
+		}
+	}
+	args := []string{"clone", "--no-checkout"}
+	if ref != "" {
+		args = append(args, "--branch", ref)
+	}
+	args = append(args, "--", remote, dest)
+	// Git uses configured credentials. Suppress raw transport errors: servers
+	// can echo credentials even when their URL is redacted.
+	if _, err = stackHomeGit(ctx, checkout, args...); err != nil {
+		return nil, "", fmt.Errorf("cannot fetch seed %s (private seeds may be unavailable to fork PRs)", ghrepo.SafeRemote(seed))
+	}
+	if _, err = stackCIGit(ctx, dest, "remote", "remove", "origin"); err != nil {
+		return nil, "", err
+	}
+	sha, err := stackCIGit(ctx, dest, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, "", err
+	}
+	data, err := stackCIGit(ctx, dest, "show", "HEAD:rig.stack.jsonc")
+	if err != nil {
+		return nil, "", fmt.Errorf("seed %s has no committed rig.stack.jsonc", ghrepo.SafeRemote(seed))
+	}
+	return data, strings.TrimSpace(string(sha)), nil
 }

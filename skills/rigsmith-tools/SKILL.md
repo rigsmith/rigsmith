@@ -124,10 +124,12 @@ workspace root names the repos.
 rig stack setup [seed]                  # explicit seed opts into a manifest home; no arg preserves config
 rig stack seed [dir]                    # export root files, or retry configured home publication with no dir
 rig stack seed --publish acme/rigstack-app@main   # opt in and publish root-only commits
-rig stack ci --manifest rig.stack.jsonc --member app  # isolated committed-checkout CI
+rig stack ci --seed acme/rigstack-app@main --member app # isolated committed-checkout CI
+rig stack ci --manifest rig.stack.jsonc --member app # alternative committed manifest
 rig stack ci-guard app/App.csproj       # observed .NET build warning policy
 rig stack released <member> <sibling> --package <id>  # verify release and preview migration
 rig stack deps [--publish]              # check topic dependencies; optionally post statuses
+rig stack deps --seed acme/rigstack-app@main [--publish] # read proposals from seed
 rig stack home [pointer-file]           # read a member's .rig-stack reference
 rig stack status                       # each repo's cursor vs its upstream tip
 rig stack pull [repo]                  # take upstream's new commits (all repos by default)
@@ -181,8 +183,15 @@ git top level, or directories that match its `repos` keys. If so:
 ### CI and source-aware code
 
 Use `ci` to build/test a committed member checkout against sibling sources in a
-temporary stackspace; keep plain-clone CI too. `--manifest` selects a committed
-manifest, `--member` selects the prefix (otherwise origin matching), `--build`
+temporary stackspace; keep plain-clone CI too. Exactly one of `--seed` or
+`--manifest` is required: seed accepts owner/repo@ref, URL, scp or a local path;
+manifest reads a committed checkout file. CI never adopts or publishes a home
+and never infers the seed from a member's `.rig-stack` pointer. Seed hosts obey
+`--allowed-hosts`; private seeds use configured Git credentials and can be
+unavailable to fork PRs. Summary/provenance records the sanitized seed and commit.
+`stack deps --seed <ref>` reads proposal records from the same source; it is
+exclusive with explicit `--manifest` and uses the same host allowlist.
+For CI, `--member` selects the prefix (otherwise origin matching), `--build`
 and `--test` run bash commands from it. `--upstream-tip` opts out of recorded
 cursors; `--cache-history=false` disables trusted history reuse. Exit codes are
 10 setup, 11 wire, 12 build, 13 test.
@@ -210,9 +219,12 @@ do not suppress it and silently omit guarded code/tests. See
 [source signals](https://rigsmith.dev/rig/stack#source-signals-from-the-net-overlay)
 for naming, conditional-reference limits and incremental/no-build behavior.
 
-The local composite at `.github/actions/stack/` accepts `manifest`, `member`,
+The local composite at `.github/actions/stack/` accepts `seed` or `manifest` (exactly one), `member`,
 `rig-version`, `rig-sha256`, `allowed-hosts`, `build`, `test`, `guard-project`,
 `strict`, `dependencies`, `upstream-tip`, `cache-history`, and `cache-packages`.
+Seed-mode history/package keys include a hash of the seed reference and the
+run ID/attempt and job ID/matrix index so partial restores can save updated bundles; both caches remain
+disabled for fork PRs. Dependency reporting accepts the seed too.
 Pin rig and reviewed action SHAs. Use ordinary `pull_request`, read-only contents,
 and checkout `persist-credentials: false`; never execute PR code under
 `pull_request_target`. Optional status publication needs `statuses: write`.

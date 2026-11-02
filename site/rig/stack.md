@@ -1257,6 +1257,20 @@ informational notes, not blocking problems; non-writable members are left alone.
 conditional references still depend on the configuration MSBuild builds.
 
 ## Testing a member PR in its stackspace
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Topic dependency reporting also reads the seed, using
+`rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
+
 
 Keep the plain-clone matrix to test released dependencies, and add a separate
 stackspace job to test sibling source changes. Copy the self-contained
@@ -1288,7 +1302,7 @@ For other CI, install pinned rig and run
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test 'rig test'`.
 The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
-wire (11), build (12), and test (13). Seed support follows in a later change.
+wire (11), build (12), and test (13). Seed mode uses the same reconstruction path.
 
 Stack CI defaults to `--allowed-hosts github.com`; explicitly list other trusted
 fork/upstream hosts with `--allowed-hosts` (the action input is `allowed-hosts`).
@@ -1324,7 +1338,8 @@ the action README for the confidentiality and trust limits.
 
 ### Stack topic dependencies
 
-`rig stack deps --manifest rig.stack.jsonc` checks the committed `proposals`
+`rig stack deps --manifest rig.stack.jsonc` (or `--seed acme/rigstack-app@main`,
+exclusive with `--manifest`; `--allowed-hosts` applies to seed fetches) checks the committed `proposals`
 records through the GitHub API, using `GITHUB_TOKEN` and `GITHUB_API_URL`.
 Without a token, local runs reuse stack's gh-first, git-helper-second credentials.
 Manifests with no dependency edges make no API or credential lookups.

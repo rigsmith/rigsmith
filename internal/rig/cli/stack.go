@@ -33,7 +33,7 @@ func newStackCmd() *cobra.Command {
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
 			"  rig stack ci-guard <project>           build with observed warning guard\n" +
-			"  rig stack ci                           build and test a member checkout with sibling sources\n" +
+			"  rig stack ci                           build/test checkout; requires --seed or --manifest\n" +
 			"  rig stack setup [seed]                 clone a manifest home; engine, members, overlay\n" +
 			"  rig stack init                         scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]               add a repo and import it (asks if not given)\n" +
@@ -41,7 +41,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack seed [dir]                   export root files; --publish updates the manifest home\n" +
 			"  rig stack home [pointer-file]          read a member seed pointer\n" +
 			"  rig stack released <member> <sibling>  check NuGet releases; --apply returns to packages\n" +
-			"  rig stack deps                         topic PR dependencies and cursor inclusion\n" +
+			"  rig stack deps                         topic PR dependencies; optional --seed manifest\n" +
 			"  rig stack status                       cursor vs upstream, per repo; --releases checks NuGet\n" +
 			"  rig stack pull [repo]                  merge new upstream commits (all by default)\n" +
 			"  rig stack propose [repo] [branch]      a branch on your fork, prefixed stack/ (asks)\n" +

@@ -981,8 +981,37 @@ conditional references still depend on the configuration MSBuild builds.
 the checkout. Manifest mode reads the committed manifest from checkout HEAD,
 normalizes sibling imports to exact cursors (ignoring proposal branches), and
 uses the existing init import path. Tip mode drops cursor and tag/commit pins.
-Seed support is deferred until the separate setup seed work merges. This verb
-requires `--manifest` and exposes no seed input.
+Exactly one of `--manifest` or `--seed` is required. Seed mode shares
+`stackSeedReference` parsing with setup but clones without checkout into a
+separate temporary directory and reads only HEAD:rig.stack.jsonc. It removes
+origin before use and never adopts or publishes a home. This avoids setup's
+engine, overlay, commit and home side effects; the fused root remains remote-free
+for `stackCIGuardPush`. Seed files and hooks are never materialized.
+Git uses configured credentials; diagnostics suppress raw clone output and
+seed references use SafeRemote in errors, summary and provenance. Shared seed
+validation rejects `?` and `#` in user-written reference forms (including local
+paths) before path resolution, without echoing them, including
+for setup, deps and home publication; configured homes are revalidated before
+retry hints. Resolved absolute local remotes retain characters inherited from
+the current directory, including when loaded from home configuration. Setup
+removes its new clone if validation or home adoption fails, restoring the empty
+destination; once adopted, later engine/member failures retain it for retry.
+Rejected references never reach CI output or provenance. Seed hosts
+obey the member allowlist. Private-seed failures explain fork PR access and
+exit setup (10). Provenance stores reference and resolved commit under _seed, which is reserved
+and rejected as a member name during manifest validation.
+Member pointers remain discoverable via `stack home`, but CI requires explicit
+selection so a checkout cannot silently change the workflow's manifest source.
+
+`stack deps --seed` uses the same read-only loader and host allowlist, leaving
+dependency evaluation and publication policy unchanged. The action dispatches
+the same source to CI and dependency reporting. Seed-mode cache keys contain a
+hash of the seed reference plus run ID, attempt, job ID and matrix index; broad restore prefixes reuse
+old entries while unique keys allow updated bundles/packages to be saved.
+This avoids an extra seed fetch before cache restore; it deliberately trades
+exact cache hits for continuing cache refresh. Manifest mode keeps content keys.
+Empty hashFiles patterns are ignored (an empty-only pattern returns an empty
+string), so they cannot represent seed cursors. Fork guards remain on both caches.
 
 The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
 `git cat-file --batch` bytes under the manifest prefix. This bypasses archive
@@ -1027,8 +1056,8 @@ history. Its key hashes source URL, exact cursor, prefix filter and engine
 version. A hit fetches locally into the fresh fused repository and skips proxy
 startup, upstream fetch and filtering. It never saves fused commits. Outer
 Actions cache restore prefixes retain unchanged member bundles across manifest
-changes and seed josh's host caches for changed members. Package download keys
-include the entire manifest's immutable sibling cursors (which identify all
+changes and seed josh's host caches for changed members. In manifest mode,
+package download keys include the entire manifest's immutable sibling cursors (which identify all
 lockfiles/pins transitively) plus checkout lockfiles. No build outputs are cached.
 Only consumed member hits enter the reported hit rate.
 

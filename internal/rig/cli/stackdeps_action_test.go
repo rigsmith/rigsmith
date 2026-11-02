@@ -36,7 +36,7 @@ func TestStackDepsAction(t *testing.T) {
 		}
 		if step.Name == "Report topic dependencies" {
 			report = step.Run
-			if !strings.Contains(step.If, "steps.install.outcome == 'success'") || !strings.Contains(step.If, "inputs.dependencies == 'true'") {
+			if step.If != "${{ always() && steps.install.outcome == 'success' && inputs.dependencies == 'true' }}" {
 				t.Fatal(step.If)
 			}
 		}
@@ -47,6 +47,7 @@ func TestStackDepsAction(t *testing.T) {
 	for _, code := range []int{0, 1, 127} {
 		t.Run(fmt.Sprintf("report exit %d", code), func(t *testing.T) {
 			p := exec.Command("bash", "-e", "-c", fmt.Sprintf("rig() { return %d; };\n", code)+report)
+			p.Env = append(os.Environ(), "STACK_MANIFEST=rig.stack.jsonc", "STACK_SEED=")
 			out, err := p.CombinedOutput()
 			if err != nil {
 				t.Fatalf("report became fatal: %v %s", err, out)
@@ -68,6 +69,35 @@ func TestStackDepsAction(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(string(out), "dependencies must be exactly true or false") || strings.Contains(string(out), "build-ran") {
 				t.Fatalf("invalid input accepted: %v %s", err, out)
+			}
+		})
+	}
+}
+
+func TestStackDepsActionSourceValidation(t *testing.T) {
+	script := stackCIActionScript(t, "Report topic dependencies")
+	for _, tc := range []struct {
+		name, manifest, seed string
+		valid                bool
+	}{
+		{"none", "", "", false},
+		{"both", "rig.stack.jsonc", "acme/seed@main", false},
+		{"manifest", "rig.stack.jsonc", "", true},
+		{"seed", "", "acme/seed@main", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := exec.Command("bash", "-euo", "pipefail", "-c", "rig() { echo publication-invoked; };\n"+script)
+			p.Env = append(os.Environ(), "STACK_MANIFEST="+tc.manifest, "STACK_SEED="+tc.seed, "STACK_ALLOWED_HOSTS=github.com")
+			out, err := p.CombinedOutput()
+			if tc.valid {
+				if err != nil || !strings.Contains(string(out), "publication-invoked") {
+					t.Fatalf("valid source blocked: %s %v", out, err)
+				}
+			} else {
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != 10 || !strings.Contains(string(out), "exactly one of manifest or seed") || strings.Contains(string(out), "publication-invoked") {
+					t.Fatalf("invalid source reached publication: %s %v", out, err)
+				}
 			}
 		})
 	}
