@@ -1,0 +1,36 @@
+examples/github-workflows/stack-canary.yml
+  s_04a6e218666af5::t_8a70ade5095f20 26-31,35,39,42-44,59-64,66
+site/rig/stack.md
+  s_04a6e218666af5::t_8a70ade5095f20 124-146
+docs/STACK-DESIGN.md
+  s_04a6e218666af5::t_8a70ade5095f20 733-755
+internal/rig/cli/stackcanary_test.go
+  s_04a6e218666af5::t_8a70ade5095f20 44-52,117,119-122,128-130,132-141
+  s_04a6e218666af5::t_193e05411c95a2 315,317
+  s_04a6e218666af5::t_25e57a31c03840 13,353-375
+  s_04a6e218666af5::t_8678b7d94956db 287-314,316,318-352,376-377
+internal/rig/cli/stackcanary.go
+  s_04a6e218666af5::t_193e05411c95a2 165-166
+  s_04a6e218666af5::t_8a70ade5095f20 9,161-164,167-172,410,413,416
+internal/rig/cli/stack.go
+  s_04a6e218666af5::t_25e57a31c03840 35-50
+  s_04a6e218666af5::t_43d3f0f31fd58e 51
+site/rig/verbs.md
+  s_04a6e218666af5::t_25e57a31c03840 294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8551dea076cefcea7a1d4d20695f06d717e8afbd",
+  "prompts": {},
+  "sessions": {
+    "s_04a6e218666af5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199ff-05fb-7132-899e-2c8fe97e74e6",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
