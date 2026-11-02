@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -232,26 +234,77 @@ func TestStackCIActionBoolean(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range []string{"STACK_TIP", "STACK_CACHE_HISTORY", "STACK_CACHE_PACKAGES", "STACK_DEPENDENCIES"} {
+	for _, input := range []string{"STACK_TIP", "STACK_CACHE_HISTORY", "STACK_CACHE_PACKAGES", "STACK_DEPENDENCIES", "STACK_STRICT"} {
 		for _, value := range []string{"true", "false", "TRUE", "yes", "", " true"} {
 			t.Run(fmt.Sprintf("%s=%q", input, value), func(t *testing.T) {
 				p := exec.Command("bash", "-e", "-c", script)
-				p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_TIP=true", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR=false", "STACK_DEPENDENCIES=true", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
+				p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR=false", input+"="+value, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true")
 				output, err := p.CombinedOutput()
 				valid := value == "true" || value == "false"
 				if valid {
 					if err != nil {
 						t.Fatalf("%v: %s", err, output)
 					}
+					if input == "STACK_STRICT" && strings.Contains(string(output), "--strict") != (value == "true") {
+						t.Fatalf("wrong strict mode: %s", output)
+					}
 					if input == "STACK_TIP" && strings.Contains(string(output), "--upstream-tip") != (value == "true") {
 						t.Fatalf("wrong mode: %s", output)
 					}
-				} else if err == nil || !strings.Contains(string(output), map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_DEPENDENCIES": "dependencies"}[input]+" must be exactly true or false") {
+				} else if err == nil || !strings.Contains(string(output), map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_DEPENDENCIES": "dependencies", "STACK_STRICT": "strict"}[input]+" must be exactly true or false") {
 					t.Fatalf("want input failure: %v %s", err, output)
 				}
 			})
 		}
 	}
+}
+
+// Derive defaults so a new action input does not break unrelated script fixtures.
+func stackCIActionDefaultEnv(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile("../../../.github/actions/stack/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action struct {
+		Inputs map[string]struct{ Default string }
+		Runs   struct {
+			Steps []struct {
+				ID  string
+				Env map[string]string
+			}
+		}
+	}
+	if err := yaml.Unmarshal(data, &action); err != nil {
+		t.Fatal(err)
+	}
+	reference := regexp.MustCompile(`^\$\{\{ inputs\.([A-Za-z_][A-Za-z0-9_-]*) \}\}$`)
+	for _, step := range action.Runs.Steps {
+		if step.ID != "run" {
+			continue
+		}
+		env := os.Environ()
+		keys := make([]string, 0, len(step.Env))
+		for key := range step.Env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			match := reference.FindStringSubmatch(step.Env[key])
+			if len(match) == 0 {
+				continue
+			}
+			input := match[1]
+			definition, ok := action.Inputs[input]
+			if !ok {
+				t.Fatalf("step env %s names undefined input %s", key, input)
+			}
+			env = append(env, key+"="+definition.Default)
+		}
+		return env
+	}
+	t.Fatal("missing action run step")
+	return nil
 }
 
 func stackCIActionScript(t *testing.T, name string) string {
@@ -277,7 +330,7 @@ func stackCIActionScript(t *testing.T, name string) string {
 	for _, step := range action.Runs.Steps {
 		if step.Name == name {
 			if name == "Rebuild, wire, build and test" {
-				for key, input := range map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_DEPENDENCIES": "dependencies"} {
+				for key, input := range map[string]string{"STACK_TIP": "upstream-tip", "STACK_CACHE_HISTORY": "cache-history", "STACK_CACHE_PACKAGES": "cache-packages", "STACK_DEPENDENCIES": "dependencies", "STACK_STRICT": "strict"} {
 					if step.Env[key] != "${{ inputs."+input+" }}" {
 						t.Fatalf("input %s mapping: %q", input, step.Env[key])
 					}
@@ -508,7 +561,7 @@ func TestStackCIActionForkCacheExecution(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
-			p.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_DEPENDENCIES=true", "STACK_TIP=false", "STACK_CACHE_HISTORY=true", "STACK_CACHE_PACKAGES=true", "STACK_FORK_PR="+fork, "STACK_ALLOWED_HOSTS=github.com", "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+			p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR="+fork, "STACK_MANIFEST=rig.stack.jsonc", "STACK_MEMBER=app", "STACK_BUILD=true", "STACK_TEST=true", "RIG_STACK_CACHE="+cache, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
 			out, err := p.CombinedOutput()
 			if err != nil {
 				t.Fatalf("run script: %v %s", err, out)
@@ -541,5 +594,32 @@ func TestStackCIActionForkCacheExecution(t *testing.T) {
 				t.Fatalf("non-fork report changed: %s", text)
 			}
 		})
+	}
+}
+
+func TestStackCIActionGuardProject(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rig"), []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	project := "tests/Acme App Tests/Acme App Tests.csproj"
+	p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
+	p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR=false", "STACK_GUARD_PROJECT="+project, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+	output, err := p.CombinedOutput()
+	if err != nil {
+		t.Fatalf("action run failed: %v %s", err, output)
+	}
+	args := strings.Split(strings.TrimSuffix(string(output), "\x00"), "\x00")
+	found := 0
+	for i, arg := range args {
+		if arg == "--guard-project" {
+			found++
+			if i+1 >= len(args) || args[i+1] != project {
+				t.Fatalf("guard path split or changed: %q", args)
+			}
+		}
+	}
+	if found != 1 {
+		t.Fatalf("want one --guard-project argument: %q", args)
 	}
 }

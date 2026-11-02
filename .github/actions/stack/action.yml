@@ -28,6 +28,12 @@ inputs:
   test:
     description: Test command in the member directory. Results stream to the job log.
     default: rig test
+  guard-project:
+    description: Member-relative .NET project to build through ci-guard (replaces build).
+    default: ''
+  strict:
+    description: Keep all guarded warnings as errors.
+    default: 'false'
   dependencies:
     description: Check and publish topic dependency statuses (optional statuses write permission).
     default: 'true'
@@ -89,6 +95,8 @@ runs:
         STACK_MEMBER: ${{ inputs.member }}
         STACK_BUILD: ${{ inputs.build }}
         STACK_TEST: ${{ inputs.test }}
+        STACK_GUARD_PROJECT: ${{ inputs.guard-project }}
+        STACK_STRICT: ${{ inputs.strict }}
         STACK_CACHE_HISTORY: ${{ inputs.cache-history }}
         STACK_CACHE_PACKAGES: ${{ inputs.cache-packages }}
         STACK_FORK_PR: ${{ github.event.pull_request != null && github.event.pull_request.head.repo.full_name != github.repository }}
@@ -120,9 +128,15 @@ runs:
           unset RIG_STACK_CACHE
           STACK_CACHE_HISTORY=false
         fi
+        case "$STACK_STRICT" in
+          true|false) ;;
+          *) echo 'strict must be exactly true or false' >&2; exit 1 ;;
+        esac
         args=(stack ci --cache-history="$STACK_CACHE_HISTORY" --allowed-hosts "$STACK_ALLOWED_HOSTS" --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
+        if [[ -n "$STACK_GUARD_PROJECT" ]]; then args+=(--guard-project "$STACK_GUARD_PROJECT"); fi
+        if [[ "$STACK_STRICT" == true ]]; then args+=(--strict); fi
         rm -f "$RIG_STACK_CACHE_REPORT" "$RIG_STACK_PROVENANCE"
         rig "${args[@]}"
     - name: Report consumed member cache hits

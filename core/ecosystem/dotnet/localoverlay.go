@@ -471,6 +471,7 @@ func renderOverlay(redirects []plugin.Redirect) string {
 `, r.Package, name, name, strings.ToUpper(name))
 	}
 	b.WriteString("  </Target>\n\n")
+	b.WriteString(overlayCIGuard)
 	b.WriteString(overlayNoRefAssemblies)
 	b.WriteString("\n</Project>\n")
 	return b.String()
@@ -570,3 +571,37 @@ func shadowedOverlayMessage(file string) string {
 	}
 	return "ends MSBuild's search for " + file + ", so projects under it miss early stack signals; redirects still work — import the file above it in a writable checkout to enable early signals"
 }
+
+// Warning policy is read while NuGet constructs the restore graph. This target
+// runs after items exist, before that policy is copied. NoWarn loses evidence.
+const overlayCIGuard = `  <!-- Keep member warning policy off source siblings. Removal is explicit:
+       MSBuild otherwise forwards command-line properties to every reference. -->
+  <ItemGroup Condition="'$(RigStackCIGuard)' == 'true' And '$(RigStackCIMemberRoot)' != ''">
+    <ProjectReference Update="@(ProjectReference)">
+      <GlobalPropertiesToRemove>%(ProjectReference.GlobalPropertiesToRemove);WarningsAsErrors;WarningsNotAsErrors</GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Update="@(ProjectReference)" Condition="!$([System.String]::Copy('%(ProjectReference.FullPath)').StartsWith('$(RigStackCIMemberRoot)'))">
+      <GlobalPropertiesToRemove>%(ProjectReference.GlobalPropertiesToRemove);TreatWarningsAsErrors;WarningsAsErrors;WarningsNotAsErrors</GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(RigStackCIGuard)' == 'true' And '$(RigStackCIMemberRoot)' != '' And !$([System.String]::Copy('$(MSBuildProjectFullPath)').StartsWith('$(RigStackCIMemberRoot)'))">
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningsAsErrors></WarningsAsErrors>
+    <MSBuildWarningsAsErrors></MSBuildWarningsAsErrors>
+  </PropertyGroup>
+
+  <Target Name="RigStackCISiblingWarningPolicy" BeforeTargets="CoreCompile" Condition="'$(RigStackCIGuard)' == 'true' And '$(RigStackCIMemberRoot)' != '' And !$([System.String]::Copy('$(MSBuildProjectFullPath)').StartsWith('$(RigStackCIMemberRoot)'))">
+    <PropertyGroup>
+      <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+      <WarningsAsErrors></WarningsAsErrors>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="RigStackCIWarningPolicy" BeforeTargets="_GenerateRestoreProjectSpec;CoreCompile" Condition="'$(RigStackCIGuard)' == 'true' And '@(_StackPresent)' != ''">
+    <PropertyGroup>
+      <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1603;NU1608;NU1605</WarningsNotAsErrors>
+    </PropertyGroup>
+  </Target>
+
+`

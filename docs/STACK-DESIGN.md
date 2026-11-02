@@ -1194,3 +1194,106 @@ the chain, and comments would require another permission and upsert lifecycle.
 Local bare Git histories and fake API responses test merge, squash and rebase
 transitions; real GitHub token permissions, event delivery, and merge metadata
 remain integration verification for a real repository.
+
+## CI warning guard: observed diagnostics and exact identity
+
+`rig stack ci-guard <project.csproj>` builds a single .NET project. Plain-clone
+eligibility comes only from its evaluated `StackOnlyWarning` items. The stack
+context comes from `RigStackspace` and `_StackPresent` in the wired overlay.
+No build-file import is needed in a plain clone. Existing manifest-gated member
+imports retain their silent no-stack behavior.
+
+Do not use project-level `NoWarn`: it erases both fusion and unrelated warnings
+of that code, and erases the evidence needed for an honest count. Local .NET 10
+fixtures establish that per-PackageReference `NoWarn="NU1605"` does scope to that
+package while an unrelated package downgrade still fails. However a swapped
+PackageReference is removed, so that metadata is unavailable for the source
+reference. Retaining a package reference solely for suppression would change the
+wiring semantics and is not acceptable.
+
+The guard instead keeps events observable through `WarningsNotAsErrors`. Wire
+emits a target before `_GenerateRestoreProjectSpec`, after items exist and before
+NuGet copies policy into the restore graph, gated on `RigStackCIGuard=true` and
+nonempty `_StackPresent`. The graph policy alone is insufficient: the outer Restore task also reads
+policy at evaluation, and the SDK explicitly promotes NU1605 in
+`WarningsAsErrors`. The wrapper supplies the candidate demotions to the outer
+build and removes only eligible codes from its evaluated `WarningsAsErrors`
+list, preserving all other entries. This temporary demotion is not
+standalone suppression: only the guard may use that switch. It validates every
+observed event: exact project, exact code and complete message matched against
+`project.assets.json` logs, and `libraryId` equal to a swapped identity. Unmatched
+NU/MSB infrastructure warnings remain visible and fail the guard, including non-swapped packages with
+the same code. Generated reference metadata removes member-specific global
+warning lists before entering referenced projects. References outside the member
+also remove global `TreatWarningsAsErrors`; a guard-only target disables compiler
+promotion there. The member is the first prefix directory below the overlay
+root, matching the manifest's single-directory member names. This applies even
+when a sibling normally sets `TreatWarningsAsErrors=true`. Sibling warnings, including compiler, analyzer and SDK diagnostics such as
+`NETSDK1138`, remain visible, counted and non-fatal, while new member
+warnings still fail unless held by an explicit declaration or tolerated by that
+project's own `WarningsNotAsErrors` policy. Warning lists are merged for the
+entry project and evaluated separately for other member projects; its original
+list entries are preserved. Strict mode keeps sibling warnings fatal too.
+Restore and assembly warnings outside exact eligibility still fail closed. No MSB3277 exemption is
+emitted: a warning code cannot establish that both assemblies were swapped.
+
+The job summary counts distinct observed diagnostic records, never declarations
+or possible suppressions. Repeated console records are deduplicated; no event
+means a count of zero. `--strict`/action `strict: 'true'` bypasses demotion and
+classification. A failing build remains failed even if some events were eligible.
+
+Current local fixtures prove plain declared diagnostics are observed and held,
+real CS0168 failures in both modes, strict-mode failure, summary contents,
+package-scoped NU1605 metadata behavior, and observed NU1603/NU1608/NU1605
+holdback when explicitly declared in plain mode. A real strong-named assembly
+conflict produces MSB3277 and fails the guard in stack mode.
+A package minimum/exact constraint against a lower-version source project did
+**not** produce NU1605 on .NET 10; the clean stack build is not evidence that a
+fusion event was held. Successful real stack-mode fusion-event classification
+and exact MSB3277 assembly filtering still require proof. The real
+reference member project is unavailable; its platform matrix is not
+verified here. Tests invoking the SDK require `RIG_STACK_E2E=1` and local feeds.
+
+Runtime warning log-message patterns are not implemented. Stack-mode fusion
+holdback remains unproven and unconfirmed against a real stack: NuGet accepted
+the swapped project whatever the tested package minimum/exact constraint, so
+the predicted warnings may not occur in that form. The sibling and member-policy
+regression fixtures were run red against the preceding implementation, then
+green after the fix; they also check strict and new member-code failures.
+
+
+Project attribution compares existing files with `os.SameFile`; entry-project
+and member-root paths resolve symlinks and Windows long names before relative
+path calculations. Sibling attribution compares actual ancestor directory
+identities, so drive case, path case and 8.3 aliases do not change ownership.
+Missing paths and symlinks escaping the stack do not qualify as siblings.
+Non-gated tests exercise differently named links to real project files and
+Windows case/drive/available 8.3 aliases through the diagnostic classifiers.
+The normal Windows test job does not set `RIG_STACK_E2E`, so real SDK guard
+builds remain gated there; these path tests require neither that switch nor
+an installed SDK. The 8.3 subtest skips if the volume has no short-name aliases.
+
+Plain-clone entry-project warning lists are scoped with a temporary
+`CustomAfterMicrosoftCommonTargets` hook. It imports the entry project's
+original hook, then removes the guard hook and both warning-list global
+properties from project references. Referenced projects evaluate their own
+hooks and lists, with real new warnings still fatal. Observed tolerated warnings
+are checked against each project's original policy, including references outside
+the entry project's directory. The temporary hook is removed after the build.
+
+Metadata queries disable the MSBuild console logger, parse stdout only, preserve
+stderr for evaluation errors and set `DOTNET_NOLOGO=1`. Build diagnostics keep
+both streams. Diagnostic parsing strips CRLF line endings and shares a single
+mixed-case alphanumeric ID grammar with `StackOnlyWarning` validation, including
+analyzer IDs such as `xUnit1004`. Sibling compiler, analyzer and SDK warnings
+follow the sibling policy; NU/MSB infrastructure warnings still require exact
+swap attribution or fail closed.
+
+The guard is scoped to `ci`'s build phase. The test phase deliberately executes
+the configured command separately; a build triggered by that command receives
+none of the guard's temporary policy. A new test mode is not required: set
+`guard-project` to the test project, then use
+`dotnet test tests/Acme.Tests.csproj --no-build` for the same project,
+configuration and target frameworks. The guarded build must produce those test
+outputs first. A test command that builds another graph can fail on sibling
+warnings under its own policy.
