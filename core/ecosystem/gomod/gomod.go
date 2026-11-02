@@ -40,7 +40,7 @@ var _ plugin.Ecosystem = (*Adapter)(nil)
 // defaultVersion is used when no `// rigsmith:version` annotation is present.
 const defaultVersion = "0.0.0"
 
-var versionCommentRe = regexp.MustCompile(`//[ \t]*rigsmith:version[ \t]+(\S+)`)
+var versionCommentRe = regexp.MustCompile(`^//[ \t]*rigsmith:version[ \t]+(\S+)`)
 
 // Info returns the Go adapter's identity and capabilities.
 func (a *Adapter) Info() plugin.EcosystemInfo {
@@ -645,9 +645,11 @@ func setVersionComment(text, newVersion string) string {
 		return text
 	}
 	var loc []int
+	var comment string
 	for _, r := range rows {
 		if r.kind == "module" && len(r.args) == 1 {
 			loc = []int{r.start, r.end}
+			comment = r.comment
 			break
 		}
 	}
@@ -659,10 +661,10 @@ func setVersionComment(text, newVersion string) string {
 	annotation := "// rigsmith:version " + newVersion
 	var newLine string
 	switch {
-	case versionCommentRe.MatchString(line):
+	case versionCommentRe.MatchString(comment):
 		// Update the existing rigsmith annotation in place.
-		newLine = versionCommentRe.ReplaceAllString(line, annotation)
-	case strings.Contains(line, "//"):
+		newLine = line[:len(line)-len(comment)] + versionCommentRe.ReplaceAllString(comment, annotation)
+	case comment != "":
 		// The module line already carries a foreign comment (e.g. a
 		// `// Deprecated:` directive). go.mod allows only one comment per line and
 		// the authoritative version source is the git tag, so leave the line intact

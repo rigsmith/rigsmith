@@ -771,3 +771,33 @@ func TestModuleHostileInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestModuleEmbeddedForeignAnnotation(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n"} {
+		for _, comment := range []string{"// Deprecated: use example.com/new // rigsmith:version 9.9.9", "// example annotation: //rigsmith:version 9.9.9"} {
+			for _, form := range []string{"module example.com/lib %s\n", "module (\n \"example.com/lib\" %s\n)\n"} {
+				body := strings.ReplaceAll(fmt.Sprintf(form, comment), "\n", ending)
+				if mod, version := parseModule(body); mod != "example.com/lib" || version != defaultVersion {
+					t.Fatalf("foreign comment parsed as annotation: %q, %q", mod, version)
+				}
+				if updated := setVersionComment(body, "2.0.0"); updated != body {
+					t.Fatalf("foreign comment changed: %q", updated)
+				}
+				root := t.TempDir()
+				path := filepath.Join(root, "go.mod")
+				writeFile(t, path, body)
+				err := New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: root, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != body {
+					t.Fatalf("SetVersion changed foreign comment: %q", got)
+				}
+			}
+		}
+	}
+}
