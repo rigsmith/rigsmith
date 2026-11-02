@@ -1,0 +1,57 @@
+.changeset/proud-falcons-sing.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1-7
+internal/rig/cli/stacktopic_test.go
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1-405
+site/rig/verbs.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 414-441
+.github/actions/stack/README.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 60-90
+.changeset/clever-foxes-sing.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1-7
+docs/GITHUB-ACTIONS.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 133-160
+cmd/rig/README.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 79-80
+internal/rig/cli/stackdeps.go
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 27-32
+docs/STACK-DESIGN.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1050-1136
+.changeset/eager-foxes-sparkle.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1-7
+internal/rig/cli/stackdeps_action_test.go
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 39
+internal/rig/cli/stacktopic.go
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1-137
+site/rig/stack.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1339-1425
+examples/github-workflows/stack-topic.yml
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1-47
+README.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 21-22
+.github/actions/stack/action.yml
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 7-9,78,92,113-114,126,159,197
+internal/rig/cli/stackci.go
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 44,47,51,56-59,76-83,128-132,232-246,255,286-296,333-342,353-357,608,614,617-624
+skills/rigsmith-tools/SKILL.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 12,199-226,252
+.changeset/proud-herons-dance.md
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 1-7
+internal/rig/cli/stackci_test.go
+  s_c99c7d1f2bd4e8::t_6ebb72e17e3f84 558,570
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "eed483023940e155fa9c8fb8ad2d3f37bd3f5254",
+  "prompts": {},
+  "sessions": {
+    "s_c99c7d1f2bd4e8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199eb-1f73-7e23-aab8-61b3fe8e36b9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
