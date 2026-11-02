@@ -783,7 +783,8 @@ const stackManifestTemplate = `{
   // and still leave as an ordinary pull request to each project.
   //
   // Publish the root files with rig stack seed --publish acme/rigstack-app@main.
-  // Fresh machines and CI use rig stack setup acme/rigstack-app@main.
+  // Fresh machines use rig stack setup acme/rigstack-app@main.
+  // CI uses rig stack ci --seed acme/rigstack-app@main.
   //
   // Uncomment the block below, point it at your repos, then run
   //     rig stack init

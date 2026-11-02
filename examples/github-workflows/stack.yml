@@ -20,7 +20,7 @@ jobs:
           allowed-hosts: github.com
           cache-history: 'true' # Fork PRs skip both caches regardless of inputs.
           cache-packages: 'true' # Set both cache inputs to 'false' for no shared caches.
-          manifest: stack/rig.stack.jsonc
+          seed: acme/rigstack-app@main # Or manifest: stack/rig.stack.jsonc; exactly one.
           member: app
           test: rig test
 

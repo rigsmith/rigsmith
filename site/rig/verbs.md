@@ -379,6 +379,20 @@ issues remain blocking. See [the stack guide](stack.md) for naming and timing.
 
 ### Stackspace member CI
 
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Seed mode skips the action's topic dependency reporting, which requires a
+checkout manifest.
+
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.
 Keep this job alongside the plain-clone matrix. The self-contained composite is

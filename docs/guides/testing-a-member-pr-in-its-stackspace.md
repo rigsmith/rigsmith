@@ -22,6 +22,20 @@ is ready to copy after selecting a rig release containing `stack ci`.
     test: dotnet test tests/App.Tests
 ```
 
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Seed mode skips the action's topic dependency reporting, which requires a
+checkout manifest.
+
 Commit the manifest and its full `lastSync` cursors. `member` defaults to a
 unique match of origin against manifest upstream/fork URLs; specify it for fork
 PRs with a different origin. The selected tree is checkout HEAD, including a

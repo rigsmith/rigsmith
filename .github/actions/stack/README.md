@@ -1,5 +1,20 @@
 # Stackspace CI action
 
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs. Credential-bearing seed
+URLs are rejected with redacted diagnostics.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Seed mode skips the action's topic dependency reporting, which requires a
+checkout manifest.
+
 Intended final home: `rigsmith/stack-action`, which is not published yet.
 Until publication, copy this entire directory into your member repository and
 use the local path. It has no relative dependencies outside this directory.
