@@ -413,6 +413,7 @@ func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo
 		}
 		r.Detail = "Codex is silently skipping: " + strings.Join(untrusted, ", ")
 		r.Hint = "Run `" + command + "`"
+		// Repository hooks require deliberate trust outside doctor --fix.
 		if !project {
 			r.FixLabel = "record these hooks as trusted"
 			r.Fix = func(c context.Context) error { _, err := hooks.Trust(c, "", cwd); return err }

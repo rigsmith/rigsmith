@@ -147,11 +147,11 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (res SwitchResult, retErr 
 	if !opts.Force && !opts.Kill {
 		insts, err := s.scanner()(machineHome)
 		if err != nil {
-			return res, fmt.Errorf("%w — nothing was changed: %v", ErrProcessScan, err)
+			return res, fmt.Errorf("%w — the live credential was not changed: %v", ErrProcessScan, err)
 		}
 		if len(insts) > 0 {
 			res.Blocking = insts
-			return res, fmt.Errorf("%w — %d session(s) started during the swap; nothing was changed", ErrCodexBusy, len(insts))
+			return res, fmt.Errorf("%w — %d session(s) started during the swap; the live credential was not changed", ErrCodexBusy, len(insts))
 		}
 	}
 	if err := WriteLive(target); err != nil {

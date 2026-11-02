@@ -265,3 +265,11 @@ func TestHookChecksProjectIndependentOfUserFile(t *testing.T) {
 		}
 	}
 }
+
+func TestHookChecksProjectTrustNeverOffersFix(t *testing.T) {
+	repo := t.TempDir()
+	r := hookTrustResult(Env{RepoRoot: repo}, true, true, []appserver.HookInfo{{SourcePath: filepath.Join(repo, ".codex", hooks.FileName), EventName: "PreToolUse", TrustStatus: "untrusted"}}, nil)
+	if r.Status != Warn || r.Fix != nil || r.FixLabel != "" || !strings.Contains(r.Hint, "codexrig project trust") {
+		t.Fatalf("project trust must be deliberate: %+v", r)
+	}
+}
