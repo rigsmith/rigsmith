@@ -1,0 +1,19 @@
+internal/clauderig/hooks/scope.go
+  s_966b46ece8767a::t_fb1a918c862ba5 89-91,127-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9e48d89c935d85f87d71c8554da8775f00e4789b",
+  "prompts": {},
+  "sessions": {
+    "s_966b46ece8767a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19e2b-cf67-7a33-8215-374b0bea5734",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
