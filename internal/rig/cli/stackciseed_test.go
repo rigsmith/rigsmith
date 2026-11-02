@@ -182,3 +182,66 @@ func TestStackCIActionSeedDependencies(t *testing.T) {
 		t.Fatal("dependency step excludes seed mode")
 	}
 }
+
+func TestStackCISeedRejectsURLSecrets(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	chdir(t, root)
+	for _, suffix := range []string{"?token=query-secret", "#fragment-secret", "?", "#"} {
+		t.Run(suffix[:1]+strings.TrimPrefix(suffix[1:], "token="), func(t *testing.T) {
+			seed := "https://github.com/acme/seed.git" + suffix
+			for _, mode := range []string{"ci", "deps", "setup", "publish"} {
+				t.Run(mode, func(t *testing.T) {
+					dir := t.TempDir()
+					summary := filepath.Join(dir, "summary")
+					provenance := filepath.Join(dir, "provenance")
+					t.Setenv("GITHUB_STEP_SUMMARY", summary)
+					t.Setenv("RIG_STACK_PROVENANCE", provenance)
+					var out bytes.Buffer
+					c := newStackCICmd()
+					args := []string{"--seed", seed}
+					switch mode {
+					case "deps":
+						c = newStackDepsCmd()
+					case "setup":
+						c = newStackSetupCmd()
+						args = []string{seed}
+					case "publish":
+						c = newStackSeedCmd()
+						args = []string{"--publish", seed}
+					}
+					c.SetArgs(args)
+					c.SetOut(&out)
+					c.SetErr(&out)
+					err := c.Execute()
+					if err == nil || !strings.Contains(err.Error(), "query or fragment") {
+						t.Fatalf("missing URL rejection: %v", err)
+					}
+					if mode == "ci" {
+						code, ok := StackCIExitCode(err)
+						if !ok || code != 10 {
+							t.Fatalf("setup exit: %v", err)
+						}
+					}
+					texts := []string{err.Error(), out.String()}
+					for _, path := range []string{summary, provenance} {
+						b, e := os.ReadFile(path)
+						if e != nil && !os.IsNotExist(e) {
+							t.Fatal(e)
+						}
+						texts = append(texts, string(b))
+					}
+					for _, text := range texts {
+						for _, secret := range []string{"query-secret", "fragment-secret", seed} {
+							if strings.Contains(text, secret) {
+								t.Fatal("seed URL leaked into diagnostics or artifacts")
+							}
+						}
+					}
+					if _, e := os.Stat(provenance); !os.IsNotExist(e) {
+						t.Fatalf("invalid seed wrote provenance: %v", e)
+					}
+				})
+			}
+		})
+	}
+}

@@ -527,7 +527,7 @@ func stackCIGuardPush(ctx context.Context, root string) error {
 func stackCISeed(ctx context.Context, checkout, dest, seed, allowed string) ([]byte, string, error) {
 	remote, ref, err := stackSeedReference(seed)
 	if err != nil {
-		return nil, "", fmt.Errorf("seed %s: %s", ghrepo.SafeRemote(seed), stackSafeHomeOutput(err.Error()))
+		return nil, "", fmt.Errorf("invalid seed reference: %w", err)
 	}
 	// Local paths have no host. Network remotes share the member allowlist.
 	local := filepath.IsAbs(remote) || strings.HasPrefix(remote, ".")

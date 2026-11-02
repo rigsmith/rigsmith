@@ -10,7 +10,8 @@ The seed host must be in `allowed-hosts`; local paths have no host.
 Private seeds use configured Git credentials and may be unavailable to fork PRs;
 fetch failures name the seed and exit at setup (10). Configure credentials outside
 the action without embedding tokens in workflow inputs. Credential-bearing seed
-URLs are rejected with redacted diagnostics.
+URLs are rejected with redacted diagnostics. Seed URLs with query or fragment
+components are also rejected without echoing them; use configured Git credentials.
 The summary and provenance artifact record the sanitized seed and resolved commit.
 Topic dependency reporting also reads the seed, using
 `rig stack deps --seed <ref> --allowed-hosts github.com --publish`.

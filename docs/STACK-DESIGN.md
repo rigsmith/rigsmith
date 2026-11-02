@@ -988,7 +988,10 @@ origin before use and never adopts or publishes a home. This avoids setup's
 engine, overlay, commit and home side effects; the fused root remains remote-free
 for `stackCIGuardPush`. Seed files and hooks are never materialized.
 Git uses configured credentials; diagnostics suppress raw clone output and
-seed references use SafeRemote in errors, summary and provenance. Seed hosts
+seed references use SafeRemote in errors, summary and provenance. Shared seed
+validation rejects URL query/fragment components without echoing them, including
+for setup, deps and home publication; configured homes are revalidated before
+retry hints. Rejected references never reach CI output or provenance. Seed hosts
 obey the member allowlist. Private-seed failures explain fork PR access and
 exit setup (10). Provenance stores reference and resolved commit under _seed.
 Member pointers remain discoverable via `stack home`, but CI requires explicit
