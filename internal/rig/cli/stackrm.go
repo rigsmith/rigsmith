@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,7 +14,9 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/cfgfind"
 	"github.com/rigsmith/rigsmith/core/confkit"
+	"github.com/rigsmith/rigsmith/core/ecosystem/gomod"
 	"github.com/rigsmith/rigsmith/core/gitrepo"
+	"github.com/rigsmith/rigsmith/core/walkutil"
 	"github.com/spf13/cobra"
 )
 
@@ -408,6 +411,7 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 		fmt.Fprintf(out, "%s%s not imported yet — nothing to wire against; run `rig stack setup`\n", indent, strings.Join(missing, ", "))
 		return nil, nil
 	}
+	stackWarnMalformedGoMembers(out, repo.Dir, m.names(), indent)
 	byEco, orphans, notes, failed := stackRedirects(ctx, repo.Dir, m.names(), m.publishing())
 	if strict && len(failed) > 0 {
 		names := make([]string, 0, len(failed))
@@ -493,4 +497,46 @@ func stackWire(ctx context.Context, out io.Writer, m *stackManifest, repo *gitre
 		fmt.Fprintf(out, "%sno package references cross between members — nothing to wire\n", indent)
 	}
 	return touched, nil
+}
+
+func stackWarnMalformedGoMembers(out io.Writer, root string, members []string, indent string) {
+	for _, member := range members {
+		memberRoot := filepath.Join(root, member)
+		ignorer := walkutil.LoadIgnorer(memberRoot)
+		err := filepath.WalkDir(memberRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			rel, err := filepath.Rel(memberRoot, path)
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() && path != memberRoot {
+				if entry.Name() == "testdata" || strings.HasPrefix(entry.Name(), "_") || strings.HasPrefix(entry.Name(), ".") || walkutil.SkippedDir(entry.Name()) || ignorer.Ignored(filepath.ToSlash(rel), true) || (!walkutil.IncludeWorktrees() && walkutil.LinkedWorktreeRoot(path)) {
+					return fs.SkipDir
+				}
+			}
+			if !entry.IsDir() && ignorer.Ignored(filepath.ToSlash(rel), false) {
+				return nil
+			}
+			if entry.IsDir() || entry.Name() != "go.mod" {
+				return nil
+			}
+			body, err := os.ReadFile(path)
+			if err == nil {
+				err = gomod.ValidateModule(string(body))
+			}
+			if err != nil {
+				displayPath, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					displayPath = path
+				}
+				fmt.Fprintf(out, "%swarning: %s: %v\n", indent, displayPath, err)
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Fprintf(out, "%swarning: scanning member %s: %v\n", indent, member, err)
+		}
+	}
 }

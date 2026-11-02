@@ -2,6 +2,7 @@ package gomod
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -578,6 +579,224 @@ func TestRequiresLineEndings(t *testing.T) {
 			got := parseRequires(strings.ReplaceAll(input, "\n", ending))
 			if len(got) != 1 || got["example.com/lib"] != "v1.2.3" {
 				t.Fatalf("parseRequires(%q) = %+v", input, got)
+			}
+		}
+	}
+}
+
+func TestModuleFormsRoundTrip(t *testing.T) {
+	for name, form := range map[string]string{
+		"bare":         "module example.com/lib",
+		"indent":       " \tmodule\texample.com/lib",
+		"quoted":       "module \"example.com/lib\"",
+		"block":        "module ( // comment\n // comment\n example.com/lib\n)",
+		"quoted-block": "module (\n \"example.com/lib\"\n)",
+	} {
+		for _, ending := range []string{"\n", "\r\n"} {
+			t.Run(name+fmt.Sprintf("/%q", ending), func(t *testing.T) {
+				body := strings.ReplaceAll(form+"\n\ngo 1.20\n", "\n", ending)
+				mod, _ := parseModule(body)
+				if mod != "example.com/lib" {
+					t.Fatalf("module = %q", mod)
+				}
+				dir := t.TempDir()
+				manifest := filepath.Join(dir, "go.mod")
+				writeFile(t, manifest, body)
+				if err := New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: dir, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"}); err != nil {
+					t.Fatal(err)
+				}
+				result, err := os.ReadFile(manifest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := string(result)
+				mod, ver := parseModule(got)
+				if mod != "example.com/lib" || ver != "2.0.0" {
+					t.Fatalf("round trip = %q %q: %s", mod, ver, got)
+				}
+				if strings.Count(got, "\r\n") != strings.Count(body, "\r\n") {
+					t.Fatal("line endings changed")
+				}
+				goBin, err := exec.LookPath("go")
+				if err != nil {
+					t.Skip("go unavailable")
+				}
+				writeFile(t, filepath.Join(dir, "go.mod"), got)
+				cmd := exec.Command(goBin, "mod", "edit", "-json")
+				cmd.Dir = dir
+				cmd.Env = append(os.Environ(), "GOWORK=off")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("Go rejected round trip: %v: %s", err, out)
+				}
+			})
+		}
+	}
+}
+
+func TestRequireForms(t *testing.T) {
+	for _, path := range []string{"example.com/lib", "\"example.com/lib\"", "`example.com/lib`"} {
+		for _, form := range []string{" \trequire\t%s v1.2.3 // indirect\n", "require ( // comment\n %s v1.2.3 // indirect\n)\n"} {
+			for _, ending := range []string{"\n", "\r\n"} {
+				body := strings.ReplaceAll(fmt.Sprintf(form, path), "\n", ending)
+				if got := parseRequires(body)["example.com/lib"]; got != "v1.2.3" {
+					t.Fatalf("require %q = %q", body, got)
+				}
+			}
+		}
+	}
+}
+
+func TestSetVersionRefusesBackquotedModule(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n"} {
+		body := "module `example.com/lib`" + ending
+		if mod, _ := parseModule(body); mod != "example.com/lib" {
+			t.Fatalf("module = %q", mod)
+		}
+		dir := t.TempDir()
+		path := filepath.Join(dir, "go.mod")
+		writeFile(t, path, body)
+		err := New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: dir, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"})
+		if err == nil || !strings.Contains(err.Error(), "backquoted") {
+			t.Fatalf("error = %v", err)
+		}
+		got, _ := os.ReadFile(path)
+		if string(got) != body {
+			t.Fatal("rewrite changed file")
+		}
+	}
+}
+
+func TestWorkspaceUseForms(t *testing.T) {
+	for _, path := range []string{"./lib", "\"./lib\"", "`./lib`"} {
+		for _, form := range []string{"use %s\n", "use ( // comment\n %s // comment\n)\n"} {
+			for _, ending := range []string{"\n", "\r\n"} {
+				if !workspaceUses(strings.ReplaceAll(fmt.Sprintf(form, path), "\n", ending), "./lib") {
+					t.Fatalf("missed %s", path)
+				}
+			}
+		}
+	}
+	if workspaceUses("// use ./lib\nuse ./library\n", "./lib") {
+		t.Fatal("matched comment or path prefix")
+	}
+}
+
+func TestParseModuleInvalidBlocks(t *testing.T) {
+	for _, body := range []string{"module (\n", "module (\n (\n)\n", "module (\n)\n", "module (\n example.com/lib extra\n)\n"} {
+		for _, ending := range []string{"\n", "\r\n"} {
+			if mod, _ := parseModule(strings.ReplaceAll(body, "\n", ending)); mod != "" {
+				t.Fatalf("invalid block %q produced %q", body, mod)
+			}
+		}
+	}
+}
+
+func TestSetVersionPreservesForeignComment(t *testing.T) {
+	for _, body := range []string{"module \"example.com/lib\" // Deprecated: use example.com/new\n", "module (\n example.com/lib // Deprecated: use example.com/new\n)\n"} {
+		for _, ending := range []string{"\n", "\r\n"} {
+			body := strings.ReplaceAll(body, "\n", ending)
+			dir := t.TempDir()
+			path := filepath.Join(dir, "go.mod")
+			writeFile(t, path, body)
+			err := New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: dir, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"})
+			if err != nil {
+				t.Fatalf("error = %v", err)
+			}
+			got, _ := os.ReadFile(path)
+			if string(got) != body {
+				t.Fatal("rewrite changed file")
+			}
+		}
+	}
+}
+
+func TestModuleAnnotationSpacing(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n"} {
+		for _, spacing := range []string{"", " ", "\t", " \t "} {
+			for _, form := range []string{"module example.com/lib //%srigsmith:version 1.2.3\n", "module (\n example.com/lib //%srigsmith:version 1.2.3\n)\n"} {
+				body := strings.ReplaceAll(fmt.Sprintf(form, spacing), "\n", ending)
+				t.Run(fmt.Sprintf("%q", body), func(t *testing.T) {
+					if mod, version := parseModule(body); mod != "example.com/lib" || version != "1.2.3" {
+						t.Fatalf("parse = %q, %q", mod, version)
+					}
+					updated := setVersionComment(body, "2.0.0")
+					if mod, version := parseModule(updated); mod != "example.com/lib" || version != "2.0.0" {
+						t.Fatalf("round trip = %q, %q", mod, version)
+					}
+					if strings.Count(updated, "rigsmith:version") != 1 {
+						t.Fatalf("duplicate annotation: %q", updated)
+					}
+					if strings.Count(updated, "\r\n") != strings.Count(body, "\r\n") {
+						t.Fatal("changed line endings")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestModuleHostileInputs(t *testing.T) {
+	for _, input := range []string{
+		"", "module", "module (", "module (\n(\n)\n", ")", "module ()", "module \"", "module `",
+		"module \"example.com/lib", "module \"example.com/lib\\", "module \"example.com/lib\\\"", "module \"\\x\"",
+		"module \"\"", "module \"example.com/lib\"extra", "module example.com/lib //rigsmith:version", "module example.com/lib //rigsmith:version 1.2.3",
+		"module example.com/lib\nrequire (\n\"\\", "module example.com/lib\nmodule other", "module \x00\n", "module \xff\n",
+	} {
+		for _, ending := range []string{"\n", "\r\n"} {
+			t.Run(fmt.Sprintf("%q/%q", input, ending), func(t *testing.T) {
+				defer func() {
+					if failure := recover(); failure != nil {
+						t.Fatalf("parser panicked: %v", failure)
+					}
+				}()
+				body := strings.ReplaceAll(input, "\n", ending)
+				parseModule(body)
+				parseRequires(body)
+				ValidateModule(body)
+				setVersionComment(body, "2.0.0")
+				workspaceUses(body, "./lib")
+				rows, _ := directiveRows(body)
+				for _, row := range rows {
+					if row.start < 0 || row.end < row.start || row.end > len(body) {
+						t.Fatalf("invalid source offsets: %+v", row)
+					}
+				}
+				root := t.TempDir()
+				writeFile(t, filepath.Join(root, "go.mod"), body)
+				if _, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root}); err != nil {
+					t.Fatal(err)
+				}
+				_ = New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: root, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"})
+			})
+		}
+	}
+}
+
+func TestModuleEmbeddedForeignAnnotation(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n"} {
+		for _, comment := range []string{"// Deprecated: use example.com/new // rigsmith:version 9.9.9", "// example annotation: //rigsmith:version 9.9.9"} {
+			for _, form := range []string{"module example.com/lib %s\n", "module (\n \"example.com/lib\" %s\n)\n"} {
+				body := strings.ReplaceAll(fmt.Sprintf(form, comment), "\n", ending)
+				if mod, version := parseModule(body); mod != "example.com/lib" || version != defaultVersion {
+					t.Fatalf("foreign comment parsed as annotation: %q, %q", mod, version)
+				}
+				if updated := setVersionComment(body, "2.0.0"); updated != body {
+					t.Fatalf("foreign comment changed: %q", updated)
+				}
+				root := t.TempDir()
+				path := filepath.Join(root, "go.mod")
+				writeFile(t, path, body)
+				err := New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: root, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(got) != body {
+					t.Fatalf("SetVersion changed foreign comment: %q", got)
+				}
 			}
 		}
 	}

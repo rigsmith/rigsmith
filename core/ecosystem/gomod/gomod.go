@@ -11,7 +11,6 @@
 package gomod
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io/fs"
@@ -20,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cmderr"
@@ -40,19 +40,7 @@ var _ plugin.Ecosystem = (*Adapter)(nil)
 // defaultVersion is used when no `// rigsmith:version` annotation is present.
 const defaultVersion = "0.0.0"
 
-var (
-	// moduleRe captures the module path and any trailing `// rigsmith:version X`.
-	// A foreign trailing comment (e.g. `// Deprecated: use bar`, a valid go.mod
-	// directive) is matched and ignored via the final `(?://.*)?` so the module is
-	// still discovered — earlier the line had to end right after the (optional)
-	// rigsmith annotation, so any other comment made the whole line fail to match
-	// and the module was silently skipped. `.` does not cross the newline under
-	// (?m), so the match stays on the module line for SetVersion's in-place rewrite.
-	// Accept CRLF explicitly: multiline $ only matches before LF. Neither
-	// capture includes CR, and SetVersion preserves it as part of the ending.
-	moduleRe         = regexp.MustCompile(`(?m)^module[ \t]+(\S+)(?:[ \t]+//[ \t]*rigsmith:version[ \t]+(\S+))?[ \t]*(?://[^\r\n]*)?\r?$`)
-	versionCommentRe = regexp.MustCompile(`//[ \t]*rigsmith:version[ \t]+\S+`)
-)
+var versionCommentRe = regexp.MustCompile(`^//[ \t]*rigsmith:version[ \t]+(\S+)`)
 
 // Info returns the Go adapter's identity and capabilities.
 func (a *Adapter) Info() plugin.EcosystemInfo {
@@ -191,6 +179,15 @@ func (a *Adapter) SetVersion(ctx context.Context, req plugin.SetVersionRequest) 
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return err
+	}
+	if mod, _ := parseModule(string(content)); mod == "" {
+		return fmt.Errorf("cannot parse module directive in %s", path)
+	}
+	rows, _ := directiveRows(string(content))
+	for _, row := range rows {
+		if row.kind == "module" && strings.Contains(strings.SplitN(string(content)[row.start:row.end], "//", 2)[0], "`") {
+			return fmt.Errorf("cannot set version in %s: Go does not accept backquoted module paths; use double quotes", path)
+		}
 	}
 	updated := setVersionComment(string(content), req.NewVersion)
 	return os.WriteFile(path, []byte(updated), 0o644)
@@ -483,15 +480,32 @@ func runCmd(ctx context.Context, dir string, env []string, name string, args ...
 // parseModule returns the module path and the optional `// rigsmith:version`
 // value (defaultVersion when the annotation is absent).
 func parseModule(text string) (module, version string) {
-	m := moduleRe.FindStringSubmatch(text)
-	if m == nil {
+	rows, ok := directiveRows(text)
+	if !ok {
 		return "", ""
 	}
-	version = defaultVersion
-	if m[2] != "" {
-		version = m[2]
+	for _, r := range rows {
+		if r.kind == "module" {
+			if module != "" || len(r.args) != 1 || r.args[0] == "" || r.args[0] == "(" || r.args[0] == ")" {
+				return "", ""
+			}
+			module, version = r.args[0], defaultVersion
+			if c := versionCommentRe.FindStringSubmatch(r.comment); c != nil {
+				version = c[1]
+			}
+		}
 	}
-	return m[1], version
+	return module, version
+}
+
+// ValidateModule reports a missing or malformed module directive. Discovery stays
+// permissive; callers that already know a manifest belongs to a member can
+// report this without changing the plugin discovery protocol.
+func ValidateModule(content string) error {
+	if module, _ := parseModule(content); module == "" {
+		return fmt.Errorf("missing or malformed module directive")
+	}
+	return nil
 }
 
 // higherVersion returns the greater of the `// rigsmith:version` comment value
@@ -515,62 +529,142 @@ func higherVersion(commentVer, tagVer string) string {
 // single-line `require x v` form and the `require ( ... )` block form.
 func parseRequires(text string) map[string]string {
 	out := map[string]string{}
-	sc := bufio.NewScanner(strings.NewReader(text))
-	inBlock := false
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if i := strings.Index(line, "//"); i >= 0 {
-			line = strings.TrimSpace(line[:i])
-		}
-		if line == "" {
-			continue
-		}
-		switch {
-		case inBlock:
-			if line == ")" {
-				inBlock = false
-				continue
-			}
-			addRequire(out, line)
-		case line == "require (":
-			inBlock = true
-		case strings.HasPrefix(line, "require ("):
-			inBlock = true
-		case strings.HasPrefix(line, "require "):
-			addRequire(out, strings.TrimSpace(strings.TrimPrefix(line, "require")))
+	rows, ok := directiveRows(text)
+	if !ok {
+		return out
+	}
+	for _, r := range rows {
+		if r.kind == "require" && len(r.args) == 2 {
+			out[r.args[0]] = r.args[1]
 		}
 	}
 	return out
 }
 
-// addRequire parses a `<module> <version>` pair into the map.
-func addRequire(out map[string]string, line string) {
-	fields := strings.Fields(line)
-	if len(fields) >= 2 {
-		out[fields[0]] = fields[1]
+// directiveRows handles the line-oriented go.mod grammar without adding a core
+// dependency. Tokens are decoded before consumers compare module identities.
+type directiveRow struct {
+	kind       string
+	args       []string
+	comment    string
+	start, end int
+}
+
+func directiveRows(text string) ([]directiveRow, bool) {
+	var rows []directiveRow
+	block := ""
+	offset := 0
+	for _, raw := range strings.SplitAfter(text, "\n") {
+		line := strings.TrimRight(raw, "\r\n")
+		tokens, comment, ok := modTokens(line)
+		if !ok {
+			return nil, false
+		}
+		if len(tokens) > 0 {
+			if block != "" {
+				if tokens[0] == ")" {
+					if len(tokens) != 1 {
+						return nil, false
+					}
+					block = ""
+				} else {
+					rows = append(rows, directiveRow{block, tokens, comment, offset, offset + len(line)})
+				}
+			} else {
+				kind := tokens[0]
+				if len(tokens) == 2 && tokens[1] == "(" {
+					block = kind
+				} else {
+					for _, t := range tokens[1:] {
+						if t == "(" || t == ")" {
+							return nil, false
+						}
+					}
+					rows = append(rows, directiveRow{kind, tokens[1:], comment, offset, offset + len(line)})
+				}
+			}
+		}
+		offset += len(raw)
 	}
+	return rows, block == ""
+}
+
+func modTokens(line string) ([]string, string, bool) {
+	var tokens []string
+	for i := 0; i < len(line); {
+		if line[i] == ' ' || line[i] == '\t' {
+			i++
+			continue
+		}
+		if strings.HasPrefix(line[i:], "//") {
+			return tokens, line[i:], true
+		}
+		start := i
+		if line[i] == '"' || line[i] == '`' {
+			quote := line[i]
+			i++
+			for i < len(line) && line[i] != quote {
+				if quote == '"' && line[i] == '\\' {
+					if i+1 >= len(line) {
+						return nil, "", false
+					}
+					i++
+				}
+				i++
+			}
+			if i >= len(line) {
+				return nil, "", false
+			}
+			i++
+			token, err := strconv.Unquote(line[start:i])
+			if err != nil {
+				return nil, "", false
+			}
+			tokens = append(tokens, token)
+			if i < len(line) && line[i] != ' ' && line[i] != '\t' && !strings.HasPrefix(line[i:], "//") {
+				return nil, "", false
+			}
+		} else if line[i] == '(' || line[i] == ')' {
+			tokens = append(tokens, line[i:i+1])
+			i++
+		} else {
+			for i < len(line) && line[i] != ' ' && line[i] != '\t' && line[i] != '(' && line[i] != ')' && !strings.HasPrefix(line[i:], "//") {
+				i++
+			}
+			tokens = append(tokens, line[start:i])
+		}
+	}
+	return tokens, "", true
 }
 
 // setVersionComment replaces the `// rigsmith:version` annotation on the module
 // line, inserting one when absent.
 func setVersionComment(text, newVersion string) string {
-	loc := moduleRe.FindStringSubmatchIndex(text)
+	rows, ok := directiveRows(text)
+	if !ok {
+		return text
+	}
+	var loc []int
+	var comment string
+	for _, r := range rows {
+		if r.kind == "module" && len(r.args) == 1 {
+			loc = []int{r.start, r.end}
+			comment = r.comment
+			break
+		}
+	}
 	if loc == nil {
 		return text
 	}
-	// Keep the matched CR outside the replacement, beside its original LF.
 	end := loc[1]
-	if end > loc[0] && text[end-1] == '\r' {
-		end--
-	}
 	line := text[loc[0]:end]
 	annotation := "// rigsmith:version " + newVersion
 	var newLine string
 	switch {
-	case versionCommentRe.MatchString(line):
+	case versionCommentRe.MatchString(comment):
 		// Update the existing rigsmith annotation in place.
-		newLine = versionCommentRe.ReplaceAllString(line, annotation)
-	case strings.Contains(line, "//"):
+		newLine = line[:len(line)-len(comment)] + versionCommentRe.ReplaceAllString(comment, annotation)
+	case comment != "":
 		// The module line already carries a foreign comment (e.g. a
 		// `// Deprecated:` directive). go.mod allows only one comment per line and
 		// the authoritative version source is the git tag, so leave the line intact
