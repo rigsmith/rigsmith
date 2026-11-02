@@ -1,0 +1,33 @@
+internal/rig/cli/stackreleased.go
+  s_c99c7d1f2bd4e8::t_8763dbbaa4ed8f 137-142
+  s_c99c7d1f2bd4e8::t_9427e093284714 79-82,87-88,91
+internal/rig/cli/stackreleasededit.go
+  s_c99c7d1f2bd4e8::t_9427e093284714 202-204,217-218
+docs/STACK-DESIGN.md
+  s_c99c7d1f2bd4e8::t_91374756edb325 1408,1411-1413,1417-1421
+  s_c99c7d1f2bd4e8::t_e856e6586f885a 1414-1416
+internal/rig/cli/stackreleasedversion.go
+  s_c99c7d1f2bd4e8::t_e856e6586f885a 36-44
+  s_c99c7d1f2bd4e8::t_9427e093284714 1-35,45-163
+internal/rig/cli/stackreleasedversion_test.go
+  s_c99c7d1f2bd4e8::t_91374756edb325 1-40,42-147
+  s_c99c7d1f2bd4e8::t_e856e6586f885a 41
+internal/rig/cli/stackreleaseddelivery.go
+  s_c99c7d1f2bd4e8::t_9427e093284714 27,31,37,39,42,44,50-51,57,61,78,145-148,152-153,156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c7e87bdfee5fc1beaa04fac1797585ebd70fa6ab",
+  "prompts": {},
+  "sessions": {
+    "s_c99c7d1f2bd4e8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199eb-1f73-7e23-aab8-61b3fe8e36b9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
