@@ -57,6 +57,37 @@ Exactly one of `manifest` or `seed` is required.
 instead of committed sibling cursors. `build` and `test` default to `rig build`
 and `rig test` and run from the member prefix with bash; empty skips a command.
 
+`--topic <name>` (action input `topic`) tests every open proposal PR head in
+that manifest topic together. Missing, closed, untrusted or known conflicting
+PRs fail setup. Head repositories must match declared fork/upstream repositories.
+Use read-only `pull_request` jobs without secrets: code from every participating
+PR runs. Name the job `stack topic`; the check covers only its triggering PR,
+so run it in each member and rerun after sibling heads move. Topic mode disables
+shared caches in the action and cannot combine with upstream-tip. See the
+[stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
+cursor and provenance semantics. No merge train is installed.
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
+Topic mode also needs `pull-requests: read` alongside `contents: read` to
+read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
+does not gain access to private sibling repositories from these permissions.
+Private sibling PRs need separately authorized metadata access; without it,
+lookups are unavailable ("could not check") and topic setup fails rather than
+testing a reduced set. Do not expose a broader token to PR build commands.
+Topic mode captures the API token and removes token variables before starting
+children; it refuses persisted checkout HTTP extraheaders. Use
+`persist-credentials: false`. A PR-owned manifest is contributor-controlled
+policy; use a reviewed immutable policy checkout for an independent allowlist.
+Copy the [topic workflow](../../../examples/github-workflows/stack-topic.yml)
+for a job named `stack topic` using an immutable `seed` pin and reviewed action
+code. Topic CI strips tokens before the seed clone; the API token is not a
+clone credential. Use a public seed or separately prefetch a private seed to a
+local path, removing preparation credentials before running topic code.
+
 `guard-project` replaces the build command with `rig stack ci-guard` for that
 member-relative .NET project. New warnings in member code fail except for
 explicit stack-only declarations and existing warning tolerances. In a stack,

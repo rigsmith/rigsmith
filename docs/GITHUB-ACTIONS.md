@@ -130,6 +130,34 @@ Keep this job alongside the plain-clone matrix. The self-contained composite is
 `.github/actions/stack/`; `rigsmith/stack-action` is the intended name but is not published yet.
 See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
 
+`--topic <name>` (action input `topic`) tests every open proposal PR head in
+that manifest topic together. Missing, closed, untrusted or known conflicting
+PRs fail setup. Head repositories must match declared fork/upstream repositories.
+Use read-only `pull_request` jobs without secrets: code from every participating
+PR runs. Name the job `stack topic`; the check covers only its triggering PR,
+so run it in each member and rerun after sibling heads move. Topic mode disables
+shared caches in the action and cannot combine with upstream-tip. See the
+[stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
+cursor and provenance semantics. No merge train is installed.
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
+Topic mode also needs `pull-requests: read` alongside `contents: read` to
+read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
+does not gain access to private sibling repositories from these permissions.
+Private sibling PRs need separately authorized metadata access; without it,
+lookups are unavailable ("could not check") and topic setup fails rather than
+testing a reduced set. Do not expose a broader token to PR build commands.
+Topic CI removes token environment variables before children run and refuses
+persisted checkout HTTP extraheaders; set `persist-credentials: false`. Use a
+reviewed immutable seed (`--seed acme/stack-policy@<full-commit-sha>`, action
+input `seed`) for an independently trusted proposal set. Topic tokens are scrubbed
+before seed cloning too; use a public seed or separately prefetched local seed
+for private policy, with preparation credentials removed before the build.
+
 For stack builds use ordinary `pull_request`, no secrets, `contents: read`, and
 checkout `persist-credentials: false`. Do not use `pull_request_target` to execute
 PR code: its base-repository privileges expose tokens and secrets. If privileged

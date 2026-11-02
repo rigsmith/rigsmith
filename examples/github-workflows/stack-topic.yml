@@ -1,0 +1,47 @@
+name: Stack topic
+on: [pull_request, workflow_dispatch]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  stack-topic:
+    name: stack topic
+    runs-on: ubuntu-latest
+    steps:
+      # Set STACK_POLICY_SHA to a reviewed full commit SHA in repository variables.
+      # The policy repo contains rig.stack.jsonc with this topic's proposals and
+      # a reviewed copy of rigsmith's .github/actions/stack directory.
+      # Do not derive the policy repo, revision or topic from PR-controlled data.
+      - name: Validate policy pin
+        shell: bash
+        env:
+          POLICY_SHA: ${{ vars.STACK_POLICY_SHA }}
+        run: '[[ "$POLICY_SHA" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          path: .stack-policy
+          repository: acme/stack-policy # Replace with your public reviewed policy repo.
+          ref: ${{ vars.STACK_POLICY_SHA }}
+          persist-credentials: false
+      # Install the SDKs needed by your member here, without secrets.
+      - uses: ./.stack-policy/.github/actions/stack
+        with:
+          rig-version: vX.Y.Z # Replace with a release containing topic CI.
+          # Recommended: rig-sha256: <independently-trusted-platform-archive-sha256>
+          seed: acme/stack-policy@${{ vars.STACK_POLICY_SHA }}
+          member: app # The PR heads come from the pinned seed's proposals.
+          topic: reader-fix # Use the same topic and policy pin in each member repo.
+          allowed-hosts: github.com
+          cache-history: 'false'
+          cache-packages: 'false'
+          dependencies: 'false' # This job's check reports only on the triggering PR.
+          test: rig test
+
+# The job token reads private PR metadata only in its own repository. Private
+# siblings need separately authorized metadata access; unavailable lookups fail setup.
+# All topic PR code runs without secrets on a disposable runner. Never use
+# pull_request_target. Each member needs its own run; rerun when any head moves.
+# Updating STACK_POLICY_SHA requires reviewed proposal records in the policy repo.
