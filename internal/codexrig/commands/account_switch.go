@@ -26,6 +26,12 @@ type switchJSON struct {
 }
 
 func newAccountSwitchCmd() *cobra.Command {
+	return newAccountSwitchCmdWithSwap(func(s *account.Store, a account.Account, opts account.SwitchOptions) (account.SwitchResult, error) {
+		return s.Switch(a, opts)
+	})
+}
+
+func newAccountSwitchCmdWithSwap(swap func(*account.Store, account.Account, account.SwitchOptions) (account.SwitchResult, error)) *cobra.Command {
 	var dryRun, force, kill, asJSON bool
 	cmd := &cobra.Command{
 		Use:   "switch [<id|email|alias>]",
@@ -78,9 +84,18 @@ func newAccountSwitchCmd() *cobra.Command {
 			}
 			doc.To, doc.ToEmail = a.ID, a.Email
 
-			res, err := s.Switch(a, account.SwitchOptions{Force: force, Kill: kill, DryRun: dryRun})
-			doc.From, doc.Backup = res.From, res.Backup
+			res, err := swap(s, a, account.SwitchOptions{Force: force, Kill: kill, DryRun: dryRun})
+			doc.From, doc.Backup, doc.Switched = res.From, res.Backup, res.Switched
 			if err != nil {
+				if res.Switched {
+					fmt.Fprintf(prose, "%s %s\n", OkStyle.Render("Switched to"), a.Title())
+					fmt.Fprintf(prose, "%s\n", WarnStyle.Render(err.Error()))
+					doc.Message = err.Error()
+					if asJSON {
+						return writeJSON(out, doc)
+					}
+					return nil
+				}
 				if errors.Is(err, account.ErrCodexBusy) {
 					fmt.Fprintf(prose, "%s\n", ErrStyle.Render("Refusing to switch: Codex is running."))
 					fmt.Fprintf(prose, "  %s\n", DimStyle.Render("close it · --kill to end it first · --force to swap anyway · or use `codexrig account run` instead"))

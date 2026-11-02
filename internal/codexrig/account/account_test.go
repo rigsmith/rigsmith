@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -803,5 +804,157 @@ func TestCaptureLiveActiveRecordsThePointerWithTheCapture(t *testing.T) {
 	}
 	if got, _ := s.Active(); got != a.ID {
 		t.Errorf("CaptureLive moved the pointer to %q", b.ID)
+	}
+}
+
+func TestSwitchFinalScan(t *testing.T) {
+	for _, saveFails := range []bool{false, true} {
+		for _, outcome := range []string{"error", "busy", "clean", "force", "kill"} {
+			t.Run(fmt.Sprintf("saveFails=%v/%s", saveFails, outcome), func(t *testing.T) {
+				s, home := sandbox(t)
+				target := fakeCred(t, "you@example.com", "A", "target", "pro")
+				a, _, err := s.CaptureLive(target)
+				if err != nil {
+					t.Fatal(err)
+				}
+				live := fakeCred(t, "other@example.com", "B", "other", "pro")
+				old, _, err := s.CaptureLive(live)
+				if err != nil {
+					t.Fatal(err)
+				}
+				live = []byte(strings.Replace(string(live), "fake-refresh-0001", "refreshed", 1))
+				if err := os.WriteFile(codexhome.Auth(home), live, 0600); err != nil {
+					t.Fatal(err)
+				}
+				if saveFails {
+					if err := os.Remove(s.credPath(old.ID)); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Mkdir(s.credPath(old.ID), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				scanCause := errors.New("process table unavailable")
+				calls := 0
+				s.scan = func(string) ([]Instance, error) {
+					calls++
+					if calls == 1 {
+						return nil, nil
+					}
+					if outcome == "clean" {
+						return nil, nil
+					}
+					if outcome == "busy" {
+						return []Instance{{PID: 4242}}, nil
+					}
+					return nil, fmt.Errorf("scan failed: %w", scanCause)
+				}
+				res, err := s.Switch(a, SwitchOptions{Force: outcome == "force", Kill: outcome == "kill"})
+				got, readErr := ReadLive()
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				blocked := outcome == "error" || outcome == "busy"
+				if blocked {
+					want := ErrProcessScan
+					if outcome == "busy" {
+						want = ErrCodexBusy
+					}
+					if saveFails && (err == nil || !strings.Contains(err.Error(), "displaced credential could not be stored") || !strings.Contains(err.Error(), res.Backup)) {
+						t.Fatalf("displaced failure hidden: %v", err)
+					}
+					if outcome == "error" && !errors.Is(err, scanCause) {
+						t.Fatalf("scan cause lost: %v", err)
+					}
+					if !errors.Is(err, want) || res.Switched || string(got) != string(live) {
+						t.Fatalf("result=%+v err=%v live changed=%v", res, err, string(got) != string(live))
+					}
+				} else {
+					if !res.Switched || string(got) != string(target) {
+						t.Fatalf("result=%+v err=%v", res, err)
+					}
+					if saveFails {
+						if err == nil || !strings.Contains(err.Error(), "displaced credential could not be stored") {
+							t.Fatalf("missing warning: %v", err)
+						}
+					} else if err != nil {
+						t.Fatal(err)
+					}
+				}
+				backup, err := os.ReadFile(res.Backup)
+				if err != nil || string(backup) != string(live) {
+					t.Fatalf("backup lost: %v", err)
+				}
+				wantCalls := 2
+				if outcome == "force" || outcome == "kill" {
+					wantCalls = 1
+				}
+				if calls != wantCalls {
+					t.Fatalf("scans=%d want %d", calls, wantCalls)
+				}
+			})
+		}
+	}
+}
+
+func TestSwitchDisplacedSaveAndWriteFailure(t *testing.T) {
+	for _, failure := range []string{"write", "active"} {
+		t.Run(failure, func(t *testing.T) {
+			s, home := sandbox(t)
+			target := fakeCred(t, "you@example.com", "A", "target", "pro")
+			a, _, err := s.CaptureLive(target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			live := fakeCred(t, "other@example.com", "B", "other", "pro")
+			old, _, err := s.CaptureLive(live)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(codexhome.Auth(home), live, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(s.credPath(old.ID)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(s.credPath(old.ID), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if failure == "active" {
+				if err := os.Remove(s.activePath()); err != nil && !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(s.activePath(), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			calls := 0
+			s.scan = func(string) ([]Instance, error) {
+				calls++
+				if calls == 2 && failure == "write" {
+					if err := os.Remove(codexhome.Auth(home)); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Mkdir(codexhome.Auth(home), 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return nil, nil
+			}
+			res, err := s.Switch(a, SwitchOptions{})
+			if err == nil || res.Switched != (failure == "active") || !strings.Contains(err.Error(), "displaced credential could not be stored") || !strings.Contains(err.Error(), res.Backup) {
+				t.Fatalf("result=%+v error=%v", res, err)
+			}
+			if failure == "active" {
+				got, readErr := ReadLive()
+				if readErr != nil || string(got) != string(target) || !strings.Contains(err.Error(), "`list` may show the wrong active account until the next switch") {
+					t.Fatalf("completed write not reported correctly: %+v %v read=%v", res, err, readErr)
+				}
+			}
+			backup, err := os.ReadFile(res.Backup)
+			if err != nil || string(backup) != string(live) {
+				t.Fatalf("backup lost: %v", err)
+			}
+		})
 	}
 }

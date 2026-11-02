@@ -50,8 +50,8 @@ type SwitchResult struct {
 //  6. store the displaced credential back under its own account, so its tokens
 //     stay current;
 //  7. write the new credential, then move the pointer.
-func (s *Store) Switch(a Account, opts SwitchOptions) (SwitchResult, error) {
-	res := SwitchResult{To: a.ID, ToEmail: a.Email}
+func (s *Store) Switch(a Account, opts SwitchOptions) (res SwitchResult, retErr error) {
+	res = SwitchResult{To: a.ID, ToEmail: a.Email}
 
 	machineHome, err := codexhome.Default()
 	if err != nil {
@@ -120,6 +120,12 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (SwitchResult, error) {
 		return res, nil
 	}
 
+	var displacedErr error
+	defer func() {
+		if displacedErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("the displaced credential could not be stored back under %s: %w (a copy is at %s)", res.From, displacedErr, res.Backup))
+		}
+	}()
 	if len(live) > 0 {
 		backup, err := s.BackupLive(live)
 		if err != nil {
@@ -130,14 +136,7 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (SwitchResult, error) {
 		// failure here is not fatal — the backup above already holds the bytes
 		// — but it must not be silent, so it is returned once the swap is done.
 		if res.From != "" && HasTokens(live) {
-			if err := s.SaveCredential(res.From, live); err != nil {
-				if werr := WriteLive(target); werr != nil {
-					return res, fmt.Errorf("could not store the displaced credential (%v) and could not complete the swap (%v) — the displaced copy is at %s", err, werr, backup)
-				}
-				_ = s.SetActive(a.ID)
-				res.Switched = true
-				return res, fmt.Errorf("switched, but the displaced credential could not be stored back under %s: %w (a copy is at %s)", res.From, err, backup)
-			}
+			displacedErr = s.SaveCredential(res.From, live)
 		}
 	}
 
@@ -146,18 +145,22 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (SwitchResult, error) {
 	// between would be running when its credential changed underneath it —
 	// the exact thing the first scan refuses. Force and Kill already decided.
 	if !opts.Force && !opts.Kill {
-		if insts, err := s.scanner()(machineHome); err == nil && len(insts) > 0 {
+		insts, err := s.scanner()(machineHome)
+		if err != nil {
+			return res, fmt.Errorf("%w — the live credential was not changed: %w", ErrProcessScan, err)
+		}
+		if len(insts) > 0 {
 			res.Blocking = insts
-			return res, fmt.Errorf("%w — %d session(s) started during the swap; nothing was changed", ErrCodexBusy, len(insts))
+			return res, fmt.Errorf("%w — %d session(s) started during the swap; the live credential was not changed", ErrCodexBusy, len(insts))
 		}
 	}
 	if err := WriteLive(target); err != nil {
 		return res, err
 	}
-	if err := s.SetActive(a.ID); err != nil {
-		return res, fmt.Errorf("switched the credential but could not record it as active: %w", err)
-	}
 	res.Switched = true
+	if err := s.SetActive(a.ID); err != nil {
+		return res, fmt.Errorf("switched the credential but could not record it as active: %w — `list` may show the wrong active account until the next switch", err)
+	}
 	return res, nil
 }
 

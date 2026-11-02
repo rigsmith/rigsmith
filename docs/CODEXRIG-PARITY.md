@@ -25,7 +25,7 @@ rows are rounded up.
 | `pull` | `pull` | ✅ | Never fatal, same as clauderig: a session must start whether or not the network is up. |
 | `restore` | `restore` | ✅ | `--dir`, `--force`, `--prune`. Also names the config files whose comments a rewrite cost, which clauderig has no need to do. |
 | `status` | `status` | ✅ | Same `--json` shape idea: the gathered struct plus a level, a stable reason token and an action. |
-| `doctor` | `doctor` | ✅ | `--fix` and the same non-zero exit. Extra check clauderig cannot have: whether Codex will actually run the hooks. |
+| `doctor` | `doctor` | ✅ | `--fix` and the same non-zero exit. Extra check clauderig cannot have: whether Codex will actually run user and installed project hooks (one bounded app-server probe); untrusted project hooks warn with `codexrig project trust`, and unavailable probes are reported as not checked. |
 | `config` | `config` | ✅ | `show`/`get`/`set`/`path`/`edit`. Keys differ where the tools differ: `syncSessions` is new, and `chunkTranscripts` is `chunkRollouts`. |
 | `guard` | `guard` | 🟡 | Base-branch and hidden-worktree protection, and a patch is judged whole. No session-relocation refusals: Codex has no such tools. No commit inspection — the write is refused before the commit, which is the better moment. |
 | `guide` | `guide` | ✅ | `AGENTS.md` instead of `CLAUDE.md`. `install`/`uninstall`/`status`/`show`, same managed-block mechanics. |
