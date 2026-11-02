@@ -239,8 +239,9 @@ that commit symlinks. Members without symlinks need no such privilege.
 
 Use `rig stack canary --seed acme/rigstack-app@main --report canary.json`
 in a read-only job, then `rig stack canary --seed acme/rigstack-app@main
---publish canary.json` on a fresh trusted runner with home contents, PR and
-issue write permissions. Never give upstream build code the write token.
+--publish canary.json` on a fresh trusted runner with `contents: write`,
+`pull-requests: write`, and `issues: write` on the manifest home repository.
+Never give upstream build code the write token.
 The composite CI action remains unchanged; scheduling and the security boundary
 belong to the calling workflow. See `examples/github-workflows/stack-canary.yml`
 and the scheduled canary section of `docs/STACK-DESIGN.md` for batch, member,
