@@ -1,0 +1,50 @@
+.changeset/calm-otters-build.md
+  s_966b46ece8767a::t_b6102c2031b2c2 1-7
+internal/clauderig/hooks/scope.go
+  s_966b46ece8767a::t_00960bf3f5ff3d 2-10,56-82
+  s_966b46ece8767a::t_348efdd64eef26 1,11-55,83
+cmd/clauderig/README.md
+  s_966b46ece8767a::t_b6102c2031b2c2 162-170
+internal/clauderig/doctor/doctor_test.go
+  s_966b46ece8767a::t_b6102c2031b2c2 174,488-516
+internal/clauderig/doctor/checks.go
+  s_966b46ece8767a::t_b6102c2031b2c2 258-266
+  s_966b46ece8767a::t_00960bf3f5ff3d 282-284,294-296
+internal/clauderig/hooks/hooks_test.go
+  s_966b46ece8767a::t_00960bf3f5ff3d 90-91,93-95,97,132,163,211
+internal/clauderig/hooks/hardening_test.go
+  s_966b46ece8767a::t_512dc55b3a3895 1-75
+internal/clauderig/hooks/display.go
+  s_966b46ece8767a::t_7ea3574fa1998e 1-30
+site/clauderig/index.md
+  s_966b46ece8767a::t_b6102c2031b2c2 93-101
+internal/clauderig/hooks/hooks.go
+  s_966b46ece8767a::t_b6102c2031b2c2 82,84,92-93,214,247,256-259,344,515,522-530
+  s_966b46ece8767a::t_00960bf3f5ff3d 9,11-12,15,97,101-103,105,150,219,431-452,454-465,489-514,516-521,531
+  s_966b46ece8767a::t_7ea3574fa1998e 21,108-109,112-137,140-149,151-175,177-180,182-184,187-190,192-193,260-262,266-267,270-273,275-291,293-297,300-310,313,315-317,331,349-359,362-363,365-396,428-430,453,466-488
+skills/rigsmith-tools/SKILL.md
+  s_966b46ece8767a::t_b6102c2031b2c2 686-694
+internal/clauderig/commands/hooks_hardening_test.go
+  s_966b46ece8767a::t_7abe316c15541b 1-68
+README.md
+  s_966b46ece8767a::t_b6102c2031b2c2 222-230
+internal/clauderig/commands/scope.go
+  s_966b46ece8767a::t_00960bf3f5ff3d 115-124,158-160,186-195,221-222
+  s_966b46ece8767a::t_348efdd64eef26 130,132,139,147,182,201,203,210,229,231,239,241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "39f2c4ad4046b925c8bc68e406bcb336d2f8f020",
+  "prompts": {},
+  "sessions": {
+    "s_966b46ece8767a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19e2b-cf67-7a33-8215-374b0bea5734",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
