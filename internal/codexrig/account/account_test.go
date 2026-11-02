@@ -834,6 +834,7 @@ func TestSwitchFinalScan(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
+				scanCause := errors.New("process table unavailable")
 				calls := 0
 				s.scan = func(string) ([]Instance, error) {
 					calls++
@@ -846,7 +847,7 @@ func TestSwitchFinalScan(t *testing.T) {
 					if outcome == "busy" {
 						return []Instance{{PID: 4242}}, nil
 					}
-					return nil, ErrProcessScan
+					return nil, fmt.Errorf("scan failed: %w", scanCause)
 				}
 				res, err := s.Switch(a, SwitchOptions{Force: outcome == "force", Kill: outcome == "kill"})
 				got, readErr := ReadLive()
@@ -861,6 +862,9 @@ func TestSwitchFinalScan(t *testing.T) {
 					}
 					if saveFails && (err == nil || !strings.Contains(err.Error(), "displaced credential could not be stored") || !strings.Contains(err.Error(), res.Backup)) {
 						t.Fatalf("displaced failure hidden: %v", err)
+					}
+					if outcome == "error" && !errors.Is(err, scanCause) {
+						t.Fatalf("scan cause lost: %v", err)
 					}
 					if !errors.Is(err, want) || res.Switched || string(got) != string(live) {
 						t.Fatalf("result=%+v err=%v live changed=%v", res, err, string(got) != string(live))

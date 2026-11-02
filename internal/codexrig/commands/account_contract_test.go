@@ -3,6 +3,8 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -174,5 +176,49 @@ func TestSwitchJSONHasTheStableShape(t *testing.T) {
 	}
 	if doc["to"] != alice.ID || doc["dryRun"] != true || doc["switched"] != false {
 		t.Errorf("object = %v, want to=%s dryRun=true switched=false", doc, alice.ID)
+	}
+}
+
+func TestSwitchJSONReportsCompletedSwapWithWarning(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprint(asJSON), func(t *testing.T) {
+			s, _ := twoAccounts(t)
+			a, err := s.Resolve("alice@example.com")
+			if err != nil {
+				t.Fatal(err)
+			}
+			warning := errors.New("switched, but the displaced credential could not be stored (a copy is at backup.json)")
+			cmd := newAccountSwitchCmdWithSwap(func(_ *account.Store, got account.Account, _ account.SwitchOptions) (account.SwitchResult, error) {
+				if got.ID != a.ID {
+					t.Fatalf("target=%s", got.ID)
+				}
+				return account.SwitchResult{Switched: true, From: "displaced", To: a.ID, Backup: "backup.json"}, warning
+			})
+			var out, errOut bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&errOut)
+			args := []string{a.ID}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			cmd.SetArgs(args)
+			if err := cmd.Execute(); !errors.Is(err, warning) {
+				t.Fatalf("warning lost: %v", err)
+			}
+			prose := out.String()
+			if asJSON {
+				var doc switchJSON
+				if err := json.Unmarshal(out.Bytes(), &doc); err != nil {
+					t.Fatalf("invalid JSON: %v: %s", err, out.String())
+				}
+				if !doc.Switched || doc.Message != warning.Error() || doc.Backup != "backup.json" {
+					t.Fatalf("%+v", doc)
+				}
+				prose = errOut.String()
+			}
+			if !strings.Contains(prose, "Switched to") || !strings.Contains(prose, warning.Error()) {
+				t.Fatalf("completed swap/warning missing: %q", prose)
+			}
+		})
 	}
 }

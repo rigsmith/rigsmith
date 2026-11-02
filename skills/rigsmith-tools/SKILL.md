@@ -494,9 +494,9 @@ clauderig desktop open <profile> --session <id-or-text>
 
 **Never date sessions by mtime.** Restores and copies can reset it, making
 "most recent chat" mean "most recently copied". `recent` reads the newest
-timestamped record inside each transcript, then sidecar metadata, and uses
-transcript mtime only as an approximate last resort when neither has a usable
-timestamp. Don't hand-roll an `ls -t` over `~/.claude/projects`.
+timestamped record inside each transcript, then sidecar metadata, then the
+ledger, and uses transcript mtime only as an approximate last resort when none
+has a usable timestamp. Don't hand-roll an `ls -t` over `~/.claude/projects`.
 
 **`desktop open --session` does not import anything itself.** It hands Claude
 Desktop a `claude://resume?session=<uuid>` deep link and the app's own handler
@@ -537,7 +537,7 @@ clauderig's sibling for the Codex CLI. Syncs the allowed setup under `~/.codex`
 runs several Codex logins side by side.
 
 ```sh
-codexrig init                    # wizard: private repo, machine name, hooks, sessions
+codexrig init                    # wizard: optional private repo, hooks, sessions; machine name automatic or --name
 codexrig global trust            # required after installing global hooks — see below
 codexrig sync                    # capture → redact → rewrite config paths → commit → push
 codexrig restore                 # pull → resolve config paths for this machine → merge (keeps local secrets)
@@ -551,11 +551,10 @@ codexrig mcp list                # which MCP servers survive a restore, and what
 **Hooks need trusting, and the failure is silent.** Codex will not run a hook
 until its hash is recorded in `config.toml`, and it says nothing when it declines.
 After any `codexrig global install` or `codexrig project install`, run the matching
-`trust`. `codexrig doctor` checks trust for global hooks only, and only when
-Codex's app server is available. A clean doctor run without the app server is
-not proof that hooks are trusted. Doctor checks project-hook installation but
-not project-hook trust: run `codexrig project trust` after `project install`;
-there is no doctor trust-check safety net for project hooks.
+`trust`. When Codex's app server is available, `codexrig doctor` checks trust
+for user hooks and installed project hooks. For untrusted project hooks it warns
+and points to `codexrig project trust`, without offering a fix. A clean doctor
+run without the app server is not proof that hooks are trusted.
 
 **Sessions are opt-in.** Enable them during `init` (or with `init --sessions`),
 or run `codexrig config set syncSessions true`. Do not tell someone their Codex
