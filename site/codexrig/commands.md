@@ -78,24 +78,28 @@ lookalike for that scope. A marker substring never grants approval.
 Commands, case-sensitive events, matcher, handler type, and all hook fields must
 match what that scope's installer writes. Unknown fields, `commandWindows`,
 explicit timeout/status-message overrides, and other execution options fail
-closed even when Codex omits them from its listing. Project trust and install
+closed even when Codex omits them from its listing. Project trust, install and uninstall
 refuse hooks resolving outside the resolved repo or to the global hooks file.
 Symlinked repo roots and macOS `/var` aliases remain supported. Parent traversal
 and ambiguous literal-backslash paths are refused.
 
-Trust reports every listed hook it handles and every handler in the requested
-file that Codex did not list. Human output escapes control characters in hook
+Trust reports approvals, failures and unlisted handlers. Exact healthy hooks
+from the other scope are omitted from text and retained under JSON `outside`. Human output escapes control characters in hook
 text, paths, events and matchers. JSON preserves the strings and returns arrays
 (including empty arrays) in `trusted`, `already`, `lookalikes`, `foreign`,
-`outside`, `refused`, and `stillTrusted`. Unrelated hooks are left alone. A refusal,
-lookalike, existing unsafe approval, or write failure in the requested scope
-makes the command exit non-zero; unrelated-only and empty scopes exit zero.
+`outside`, `refused`, `stillTrusted`, `incompatible`, and `warnings`. Unrelated hooks are left alone. A refusal,
+lookalike or write failure in the requested scope, or unsafe existing approval
+from any source in the listing, makes the command exit non-zero; unrelated-only and empty scopes exit zero.
 Later hooks are still classified after a failed write. Exact matches need no
 prompt. A missing source path fails closed with an update-Codex hint.
 
 **After upgrading, run `codexrig doctor`.** An old version may already have
-approved a lookalike. Such a hook says **STILL TRUSTED**, causes doctor to fail in
-either scope, and makes trust exit non-zero. Refusing a new approval does not
+approved a lookalike. Doctor probes from the current working directory in the
+selected Codex home. This is not a machine-wide audit: approvals in other
+repositories are not seen. Any trusted marker-bearing hook in that listing
+that is not exact in its own permitted file says **STILL TRUSTED**, including
+inline `config.toml` hooks and nested sources. It makes doctor fail and trust
+exit non-zero, even outside the requested scope. Refusing a new approval does not
 revoke an old one. Stop Codex and follow the reported instructions: remove
 `trusted_hash` from the exact `[hooks.state."<reported key>"]` table in the
 reported Codex home's `config.toml`, review/remove the handler, restart Codex,
@@ -109,7 +113,16 @@ manual review; doctor offers an install repair only if it would change something
 A global file with only unrelated hooks still warns that backup hooks are missing
 and offers installation, but has no trust row. Unrelated hooks beside healthy
 codexrig hooks do not alter their health. Disabled hooks are reported as disabled;
-if Codex does not list an installed handler, trust is explicitly unknown.
+if Codex does not list an installed handler, trust is explicitly unknown. Codex
+listing warnings are surfaced even alongside successfully listed hooks. An
+unknown future listing field fails closed with an update-codexrig hint, without
+revocation advice; this differs from an unknown field in the raw hooks file.
+Invalid project scopes are refused before classifying any hooks.
+
+Install replaces recognized commands in place when possible. If uninstall or a
+repair must move another handler to a new trust-key index, the output names
+that handler and the changed keys for review/re-approval. Malformed hooks
+document shapes are refused, and large numbers survive rewrites unchanged.
 
 The raw file is snapshotted before the listing and checked unchanged before
 writes. Its handler indices, source, command, event and matcher must agree with

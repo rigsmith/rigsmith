@@ -170,6 +170,31 @@ func TestScopeTrustProjectInstallRejectsEscapingLink(t *testing.T) {
 		t.Fatal("project install accepted escaping .codex symlink")
 	}
 }
+
+func TestScopeTrustProjectUninstallRejectsEscapingLink(t *testing.T) {
+	_, path, home, _ := scopedCommand(t, true, "uninstall")
+	global := filepath.Join(home, hooks.FileName)
+	if _, _, err := hooks.Install(global, hooks.SyncPlans()); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(global)
+	if err := os.Symlink(home, filepath.Dir(path)); err != nil {
+		t.Skip(err)
+	}
+	parent := scopeCmd("project", nil, "project", "project", func(context.Context) (string, error) { return path, nil }, guardPlans)
+	parent.SetContext(context.Background())
+	parent.SetArgs([]string{"uninstall"})
+	var out bytes.Buffer
+	parent.SetOut(&out)
+	parent.SetErr(&out)
+	if err := parent.Execute(); err == nil {
+		t.Fatal("project uninstall wrote through global alias")
+	}
+	after, _ := os.ReadFile(global)
+	if !bytes.Equal(before, after) {
+		t.Fatal("global backup hooks removed")
+	}
+}
 func TestScopeTrustThreeWayStatusOutput(t *testing.T) {
 	for _, project := range []bool{false, true} {
 		for _, mode := range []string{"healthy", "unrelated", "stale", "lookalike", "disabled", "unreported"} {

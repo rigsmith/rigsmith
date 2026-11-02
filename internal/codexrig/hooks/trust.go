@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rigsmith/rigsmith/core/gitrepo"
 	"github.com/rigsmith/rigsmith/internal/codexrig/appserver"
 	"github.com/rigsmith/rigsmith/internal/codexrig/codexhome"
 )
@@ -19,10 +20,13 @@ type CheckResult struct {
 	Foreign      []appserver.HookInfo `json:"foreign"`
 	StillTrusted []appserver.HookInfo `json:"stillTrusted"`
 	Unreported   []appserver.HookInfo `json:"unreported"`
+	Incompatible []appserver.HookInfo `json:"incompatible"`
+	Warnings     []string             `json:"warnings"`
+	ScopeErrors  []string             `json:"scopeErrors"`
 }
 
 func emptyCheck() CheckResult {
-	return CheckResult{Ours: []appserver.HookInfo{}, Lookalikes: []appserver.HookInfo{}, Foreign: []appserver.HookInfo{}, StillTrusted: []appserver.HookInfo{}, Unreported: []appserver.HookInfo{}}
+	return CheckResult{Ours: []appserver.HookInfo{}, Lookalikes: []appserver.HookInfo{}, Foreign: []appserver.HookInfo{}, StillTrusted: []appserver.HookInfo{}, Unreported: []appserver.HookInfo{}, Incompatible: []appserver.HookInfo{}, Warnings: []string{}, ScopeErrors: []string{}}
 }
 
 type Refusal struct {
@@ -39,10 +43,12 @@ type TrustResult struct {
 	Outside      []Refusal            `json:"outside"`
 	Refused      []Refusal            `json:"refused"`
 	StillTrusted []Refusal            `json:"stillTrusted"`
+	Incompatible []Refusal            `json:"incompatible"`
+	Warnings     []string             `json:"warnings"`
 }
 
 func emptyTrust() TrustResult {
-	return TrustResult{Trusted: []appserver.HookInfo{}, Already: []appserver.HookInfo{}, Foreign: []Refusal{}, Lookalikes: []Refusal{}, Outside: []Refusal{}, Refused: []Refusal{}, StillTrusted: []Refusal{}}
+	return TrustResult{Trusted: []appserver.HookInfo{}, Already: []appserver.HookInfo{}, Foreign: []Refusal{}, Lookalikes: []Refusal{}, Outside: []Refusal{}, Refused: []Refusal{}, StillTrusted: []Refusal{}, Incompatible: []Refusal{}, Warnings: []string{}}
 }
 
 // Matches uses only the plans the requested scope's installer writes. Raw file
@@ -111,10 +117,19 @@ func RevokeHint(home string, h appserver.HookInfo) string {
 // listing whose keys/hashes it writes. A changed file never gets a fresh hash.
 func TrustWithClient(ctx context.Context, client Client, home string, scope Scope) (TrustResult, error) {
 	out := emptyTrust()
+	if err := scope.Validate(); err != nil {
+		return invalidScope(scope, err)
+	}
 	snap := readSnapshot(scope)
 	list, err := client.ListHooks(ctx)
+	out.Warnings = clientWarnings(client)
 	if err != nil {
 		return out, DisplayError(err)
+	}
+	if err := scope.Validate(); err != nil {
+		result, err := invalidScope(scope, err)
+		result.Warnings = out.Warnings
+		return result, err
 	}
 	seen := map[int]bool{}
 	var failures []error
@@ -139,7 +154,24 @@ func TrustWithClient(ctx context.Context, client Client, home string, scope Scop
 			continue
 		}
 		if !scope.addresses(h.SourcePath) {
-			out.Outside = append(out.Outside, Refusal{h, "outside requested scope", "Use the command for that scope; no trust was changed here."})
+			exact, issue := outsideAssessment(ctx, h, []Scope{scope})
+			if h.Trusted() && !exact {
+				h.ValidationIssue = issue
+				r := Refusal{h, issue, RevokeHint(home, h)}
+				if compatibilityIssue(issue) {
+					r.NextStep = "Update codexrig before deciding whether to change trust."
+					out.Incompatible = append(out.Incompatible, r)
+				} else {
+					out.StillTrusted = append(out.StillTrusted, r)
+				}
+				failures = append(failures, errors.New(Display(issue)))
+			} else {
+				reason := "outside requested scope"
+				if exact {
+					reason = "outside requested scope (exact codexrig hook)"
+				}
+				out.Outside = append(out.Outside, Refusal{h, reason, "No trust was changed here."})
+			}
 			continue
 		}
 		index, issue := snap.validate(h)
@@ -149,7 +181,10 @@ func TrustWithClient(ctx context.Context, client Client, home string, scope Scop
 		if issue != "" {
 			h.ValidationIssue = issue
 			refusal := Refusal{h, issue, "Review this hook manually. Reinstall only recognized outdated codexrig commands; do not approve lookalikes."}
-			if h.Trusted() {
+			if compatibilityIssue(issue) {
+				refusal.NextStep = "Update codexrig before deciding whether to change trust."
+				out.Incompatible = append(out.Incompatible, refusal)
+			} else if h.Trusted() {
 				refusal.NextStep = RevokeHint(home, h)
 				out.StillTrusted = append(out.StillTrusted, refusal)
 			} else {
@@ -212,7 +247,20 @@ func TrustWithClient(ctx context.Context, client Client, home string, scope Scop
 	if snap.err != nil {
 		failures = append(failures, fmt.Errorf("reading hooks: %s", Display(snap.err.Error())))
 	}
-	return out, errors.Join(failures...)
+	if len(failures) == 0 {
+		return out, nil
+	}
+	messages := make([]string, len(failures))
+	for i, err := range failures {
+		messages[i] = Display(err.Error())
+	}
+	return out, errors.New(strings.Join(messages, "; "))
+}
+
+func invalidScope(scope Scope, err error) (TrustResult, error) {
+	out := emptyTrust()
+	out.Refused = append(out.Refused, Refusal{HookInfo: appserver.HookInfo{SourcePath: scope.path}, Reason: err.Error(), NextStep: "Remove the unsafe project symlink before retrying; no hook was classified or changed."})
+	return out, DisplayError(fmt.Errorf("%s: %w", scope.path, err))
 }
 
 // Check validates each requested scope independently while using one listing.
@@ -230,48 +278,114 @@ func CheckWithClient(ctx context.Context, client Client, scopes ...Scope) (Check
 	if len(scopes) == 0 {
 		return out, errors.New("explicit hook scopes required")
 	}
-	snapshots := make([]snapshot, len(scopes))
-	for i, scope := range scopes {
-		snapshots[i] = readSnapshot(scope)
+	var snapshots []snapshot
+	for _, scope := range scopes {
+		if err := scope.Validate(); err != nil {
+			out.ScopeErrors = append(out.ScopeErrors, scope.path+": "+err.Error())
+			continue
+		}
+		snapshots = append(snapshots, readSnapshot(scope))
+	}
+	if len(snapshots) == 0 {
+		return out, nil
 	}
 	list, err := client.ListHooks(ctx)
+	out.Warnings = clientWarnings(client)
 	if err != nil {
 		return out, DisplayError(err)
 	}
-	for _, h := range list {
-		if h.SourcePath == "" && candidate(h) {
-			h.ValidationIssue = "Codex did not report SourcePath; update Codex"
-			addClassified(&out, h, Scope{})
-		}
-	}
+	handled := map[int]bool{}
 	for _, snap := range snapshots {
+		if err := snap.scope.Validate(); err != nil {
+			out.ScopeErrors = append(out.ScopeErrors, snap.scope.path+": "+err.Error())
+			continue
+		}
 		if snap.err != nil {
 			return out, DisplayError(snap.err)
 		}
 		seen := map[int]bool{}
-		for _, h := range list {
+		for li, h := range list {
 			if !snap.scope.addresses(h.SourcePath) {
 				continue
 			}
+			handled[li] = true
 			i, issue := snap.validate(h)
 			if i >= 0 {
 				seen[i] = true
+				h.CodexrigCandidate = snap.hooks[i].info.CodexrigCandidate
 			}
 			if issue != "" {
 				h.ValidationIssue = issue
 			}
-			if i >= 0 {
-				h.CodexrigCandidate = snap.hooks[i].info.CodexrigCandidate
-			}
 			addClassified(&out, h, snap.scope)
 		}
 		for i, local := range snap.hooks {
-			if !seen[i] && strings.Contains(local.info.Command, Marker) {
+			if !seen[i] && candidate(local.info) {
 				out.Unreported = append(out.Unreported, local.info)
 			}
 		}
 	}
+	for i, h := range list {
+		if handled[i] || !candidate(h) || !h.Trusted() {
+			continue
+		}
+		exact, issue := outsideAssessment(ctx, h, scopes)
+		if exact {
+			continue
+		}
+		h.ValidationIssue = issue
+		if compatibilityIssue(issue) {
+			out.Incompatible = append(out.Incompatible, h)
+		} else {
+			out.StillTrusted = append(out.StillTrusted, h)
+		}
+	}
 	return out, nil
+}
+
+const compatibilityPrefix = "codexrig doesn't recognise field(s) "
+
+func compatibilityIssue(issue string) bool { return strings.HasPrefix(issue, compatibilityPrefix) }
+func clientWarnings(client Client) []string {
+	if c, ok := client.(interface{ HookWarnings() []string }); ok {
+		return c.HookWarnings()
+	}
+	return []string{}
+}
+
+// Diagnose legacy approval from the listing, without parsing inline config.
+// Only the actual global file or a repository root's project file can be exact.
+func outsideAssessment(ctx context.Context, h appserver.HookInfo, scopes []Scope) (bool, string) {
+	var known []Scope
+	for _, scope := range scopes {
+		if scope.Validate() != nil {
+			continue
+		}
+		known = append(known, scope)
+		for _, path := range scope.globalFiles {
+			known = append(known, GlobalScope(filepath.Dir(path)))
+		}
+	}
+	for _, scope := range known {
+		if scope.Validate() == nil && scope.addresses(h.SourcePath) {
+			snap := readSnapshot(scope)
+			_, issue := snap.validate(h)
+			return issue == "", issue
+		}
+	}
+	if path, err := canonicalHookPath(h.SourcePath); err == nil && filepath.Base(path) == FileName && filepath.Base(filepath.Dir(path)) == ".codex" {
+		if repo, err := gitrepo.Open(ctx, filepath.Dir(path)); err == nil {
+			if root, err := repo.Toplevel(ctx); err == nil {
+				scope := ProjectScope(root)
+				if scope.Validate() == nil && scope.addresses(path) {
+					snap := readSnapshot(scope)
+					_, issue := snap.validate(h)
+					return issue == "", issue
+				}
+			}
+		}
+	}
+	return false, "trusted marker-bearing hook is not an exact codexrig hook in its own permitted hooks.json"
 }
 
 func candidate(h appserver.HookInfo) bool {
@@ -279,7 +393,9 @@ func candidate(h appserver.HookInfo) bool {
 }
 
 func addClassified(out *CheckResult, h appserver.HookInfo, scope Scope) {
-	if Matches(h, scope) {
+	if compatibilityIssue(h.ValidationIssue) {
+		out.Incompatible = append(out.Incompatible, h)
+	} else if Matches(h, scope) {
 		out.Ours = append(out.Ours, h)
 	} else if candidate(h) {
 		if h.Trusted() {
@@ -312,8 +428,23 @@ func WriteTrustResult(w io.Writer, result TrustResult) {
 	for _, h := range result.StillTrusted {
 		fmt.Fprintf(w, "STILL TRUSTED: Codex %s this hook; codexrig did not approve it today\n  %s from %s (matcher %s): %s\n  %s\n  %s\n", runningWord(h), Display(h.EventName), Display(h.SourcePath), Display(h.Matcher), Display(h.Command), Display(h.Reason), Display(h.NextStep))
 	}
-	for _, refusals := range [][]Refusal{result.Lookalikes, result.Outside, result.Refused} {
+	for _, r := range result.Incompatible {
+		fmt.Fprintf(w, "cannot check %s from %s: %s\n  %s\n", Display(r.EventName), Display(r.SourcePath), Display(r.Command), Display(r.Reason))
+	}
+	for _, r := range result.Outside {
+		if r.Reason != "outside requested scope (exact codexrig hook)" {
+			fmt.Fprintf(w, "left alone outside requested scope %s from %s: %s\n", Display(r.EventName), Display(r.SourcePath), Display(r.Command))
+		}
+	}
+	for _, warning := range result.Warnings {
+		fmt.Fprintf(w, "Codex warning: %s\n", Display(warning))
+	}
+	for _, refusals := range [][]Refusal{result.Lookalikes, result.Refused} {
 		for _, r := range refusals {
+			if r.Command == "" && r.EventName == "" {
+				fmt.Fprintf(w, "refused scope %s: %s; %s\n", Display(r.SourcePath), Display(r.Reason), Display(r.NextStep))
+				continue
+			}
 			fmt.Fprintf(w, "refused %s from %s (matcher %s): %s\n  %s; %s\n", Display(r.EventName), Display(r.SourcePath), Display(r.Matcher), Display(r.Command), Display(r.Reason), Display(r.NextStep))
 		}
 	}

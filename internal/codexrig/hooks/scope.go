@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -142,10 +143,28 @@ func (s Scope) Contains(source string) bool { return s.Validate() == nil && s.ad
 func (s Scope) References(source string) bool { return s.addresses(source) }
 
 // InstallScope refuses project symlinks before any write takes place.
-func InstallScope(scope Scope) (added, updated []string, err error) {
+func InstallScope(scope Scope, reports ...io.Writer) (added, updated []string, err error) {
 	if err := scope.Validate(); err != nil {
 		return nil, nil, DisplayError(err)
 	}
+	before, _ := os.ReadFile(scope.path)
 	added, updated, err = Install(scope.path, scope.Plans())
+	if err == nil && len(reports) > 0 {
+		after, _ := os.ReadFile(scope.path)
+		reportMoves(scope.path, before, after, reports[0])
+	}
 	return added, updated, DisplayError(err)
+}
+
+func UninstallScope(scope Scope, reports ...io.Writer) ([]string, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, DisplayError(fmt.Errorf("%s: %w", scope.path, err))
+	}
+	before, _ := os.ReadFile(scope.path)
+	removed, err := uninstall(scope.path, scope.Plans())
+	if err == nil && len(reports) > 0 {
+		after, _ := os.ReadFile(scope.path)
+		reportMoves(scope.path, before, after, reports[0])
+	}
+	return removed, DisplayError(err)
 }

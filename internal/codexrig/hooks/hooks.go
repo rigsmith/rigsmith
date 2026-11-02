@@ -26,8 +26,10 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -166,6 +168,16 @@ func prepareInstall(doc map[string]any, plans []Plan) (added, updated []string) 
 				if repairable && matcher == p.Matcher && command == p.Command {
 					exact = true
 					handlers = append(handlers, rawHandler)
+				} else if repairable && (matcher == p.Matcher || len(hs) == 1) {
+					h["command"] = p.Command
+					if p.Matcher == "" {
+						delete(g, "matcher")
+					} else {
+						g["matcher"] = p.Matcher
+					}
+					handlers = append(handlers, h)
+					exact = true
+					changed = true
 				} else if repairable {
 					changed = true
 				} else {
@@ -216,6 +228,10 @@ func CanInstall(scope Scope) bool {
 
 // Uninstall removes codexrig's hooks and nothing else.
 func Uninstall(path string) ([]string, error) {
+	return uninstall(path, append(SyncPlans(), GuardPlans("")...))
+}
+
+func uninstall(path string, plans []Plan) ([]string, error) {
 	doc, err := load(path)
 	if err != nil {
 		return nil, err
@@ -237,7 +253,7 @@ func Uninstall(path string) ([]string, error) {
 				h, _ := rawHandler.(map[string]any)
 				command, _ := h["command"].(string)
 				remove := false
-				for _, plan := range append(SyncPlans(), GuardPlans("")...) {
+				for _, plan := range plans {
 					if string(plan.Event) == key && knownCommand(plan.Event, command, plan) && h["type"] == "command" && fieldIssue(h, "type", "command") == "" && fieldIssue(g, "matcher", "hooks") == "" {
 						remove = true
 					}
@@ -283,10 +299,16 @@ func Status(path string, scopes ...Scope) (CheckResult, error) {
 		return emptyCheck(), fmt.Errorf("exactly one explicit hook scope required")
 	}
 	scope := scopes[0]
+	if err := scope.Validate(); err != nil {
+		return emptyCheck(), fmt.Errorf("%s: %s", Display(path), Display(err.Error()))
+	}
 	if path != scope.path {
 		return emptyCheck(), fmt.Errorf("status path differs from requested scope")
 	}
 	snap := readSnapshot(scope)
+	if err := scope.Validate(); err != nil {
+		return emptyCheck(), fmt.Errorf("%s: %s", Display(path), Display(err.Error()))
+	}
 	if snap.err != nil {
 		return emptyCheck(), snap.err
 	}
@@ -409,17 +431,101 @@ func load(path string) (map[string]any, error) {
 	if strings.TrimSpace(string(b)) == "" {
 		return map[string]any{}, nil
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(b, &doc); err != nil {
-		// Refuse rather than replace. A file that does not parse is somebody's
-		// work in progress, and overwriting it is the one unrecoverable thing
-		// this package could do.
-		return nil, fmt.Errorf("%s does not parse as JSON, so codexrig will not rewrite it: %w", Display(path), err)
-	}
-	if doc == nil {
-		doc = map[string]any{}
+	doc, err := decodeDocument(b)
+	if err != nil {
+		return nil, fmt.Errorf("%s is not a valid hooks document, so codexrig will not rewrite it: %w", Display(path), err)
 	}
 	return doc, nil
+}
+
+func decodeDocument(raw []byte) (map[string]any, error) {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return map[string]any{}, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var doc map[string]any
+	if err := decoder.Decode(&doc); err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("hooks document must be an object")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return nil, fmt.Errorf("hooks document contains trailing JSON")
+	}
+	if value, present := doc["hooks"]; present {
+		events, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("hooks must be an object")
+		}
+		for event, value := range events {
+			groups, ok := value.([]any)
+			if !ok {
+				return nil, fmt.Errorf("hooks.%s must be an array", Display(event))
+			}
+			for _, value := range groups {
+				group, ok := value.(map[string]any)
+				if !ok {
+					return nil, fmt.Errorf("hook group must be an object")
+				}
+				handlers, ok := group["hooks"].([]any)
+				if !ok {
+					return nil, fmt.Errorf("group hooks must be an array")
+				}
+				for _, value := range handlers {
+					if _, ok := value.(map[string]any); !ok {
+						return nil, fmt.Errorf("hook handler must be an object")
+					}
+				}
+			}
+		}
+	}
+	return doc, nil
+}
+
+// Report key changes we cannot avoid (notably uninstall), without implying
+// that an old index's approval follows the remaining handler to its new key.
+func reportMoves(path string, before, after []byte, w io.Writer) {
+	if w == nil {
+		return
+	}
+	type position struct{ key, command string }
+	positions := func(raw []byte) map[string][]position {
+		out := map[string][]position{}
+		doc, err := decodeDocument(raw)
+		if err != nil {
+			return out
+		}
+		events, _ := doc["hooks"].(map[string]any)
+		for event, value := range events {
+			for gi, rawGroup := range value.([]any) {
+				g := rawGroup.(map[string]any)
+				for hi, rawHandler := range g["hooks"].([]any) {
+					h := rawHandler.(map[string]any)
+					token, _ := json.Marshal([]any{event, g["matcher"], h})
+					command, _ := h["command"].(string)
+					key := fmt.Sprintf("%s:%s:%d:%d", path, TrustKeyEvent(Event(event)), gi, hi)
+					out[string(token)] = append(out[string(token)], position{key, command})
+				}
+			}
+		}
+		return out
+	}
+	old, current := positions(before), positions(after)
+	var notices []string
+	for token, items := range old {
+		for i, item := range items {
+			if i < len(current[token]) && item.key != current[token][i].key {
+				notices = append(notices, fmt.Sprintf("trust key changed for %s: %s -> %s; review and re-approve this handler in Codex", Display(item.command), Display(item.key), Display(current[token][i].key)))
+			}
+		}
+	}
+	sort.Strings(notices)
+	for _, notice := range notices {
+		fmt.Fprintln(w, notice)
+	}
 }
 
 func save(path string, doc map[string]any) error {

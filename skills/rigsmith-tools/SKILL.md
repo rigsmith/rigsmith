@@ -560,11 +560,13 @@ Trust is scoped to the installer's full plan: global approves only the two sync
 hooks; project approves only the guard with the current `guard.Matcher()` tool
 matcher. Cross-scope commands, changed matchers, unknown fields (including
 `commandWindows`), and execution-field overrides are lookalikes, not ours.
-Project trust/install refuse symlinks escaping the resolved repo or targeting
+Project trust/install/uninstall refuse symlinks escaping the resolved repo or targeting
 global hooks. A marker never authorizes trust. Exact matches need no prompt.
 
 After an upgrade, run `codexrig doctor`: a previously approved lookalike can be
-STILL TRUSTED and keep running. Doctor fails in either scope; trust exits
+STILL TRUSTED and keep running. Doctor covers only the current working directory's Codex listing, not every
+repository. Trusted inline/nested/other-scope lookalikes in that listing fail
+doctor; trust exits
 non-zero and prints exact manual revocation steps. Stop Codex, remove the
 reported `trusted_hash` entry, review/remove the hook, restart and rerun doctor.
 Managed approval needs its administrator. Do not suggest an override or a revoke
@@ -580,7 +582,11 @@ include later hooks after write failures. Disabled and unlisted hooks must not
 be described as running. File snapshots must agree with the listing and remain
 unchanged before writes; command/key/CurrentHash always use one listing, without
 a refreshed hash. Codex's incomplete hashing and non-atomic write API remain an
-upstream boundary, not a reason to loosen raw-field validation.
+upstream boundary, not a reason to loosen raw-field validation. Unknown future
+listing metadata means update codexrig, without revocation advice. Listing
+warnings are always surfaced. Invalid project scopes are refused before any
+hook classification. Repairs preserve sibling indices where possible and
+report unavoidable trust-key moves for review/re-approval.
 
 **Sessions are opt-in.** Enable them during `init` (or with `init --sessions`),
 or run `codexrig config set syncSessions true`. Do not tell someone their Codex

@@ -199,7 +199,9 @@ what that installer writes, including event casing and matcher. Unknown fields
 (including `commandWindows`) are refused before trust, even when omitted from
 Codex's listing. Listing metadata that changes execution is also checked.
 Project files must resolve inside the resolved repo and never to global hooks;
-project install applies the same validation before writing. Repo-root aliases
+project install and uninstall apply the same validation before writing. An
+invalid project scope is rejected before reading/classifying its handlers, so
+a symlink cannot cause revocation advice about good global hooks. Repo-root aliases
 remain valid; parent traversal and ambiguous literal backslashes fail closed.
 
 A raw snapshot is read before the listing, bound to the reported source/event/
@@ -211,11 +213,19 @@ post-validation changes to invalidate approval. Real 0.166.0 on macOS ignored
 the hash. A Windows runner probe found no Codex installation. Permanent protection
 against a concurrent or later edit to an un-hashed field requires an upstream
 full-definition digest and conditional trust operation, not a fresh client hash.
+In particular, a later `git pull` can add `commandWindows` while keeping an old
+trust hash valid. codexrig cannot prevent that later edit; doctor flags the raw
+field only when run from a directory whose Codex listing sees that hook.
+Duplicate listing entries would require buggy Codex behavior; codexrig does not
+try to reinterpret them as a separate trust model.
 
 The marker only identifies diagnostic candidates. Unrelated hooks are left
 alone, with no trust row; missing global sync hooks still warn and remain
 installable. Already-approved lookalikes are STILL TRUSTED, fail doctor in either
-scope and make trust fail. No approval is silently revoked. The report identifies
+scope and make trust fail, whatever their listed source: inline config hooks,
+nested files and the other scope are included. Doctor probes the current
+working directory; it does not scan approvals in other repositories. No
+approval is silently revoked. The report identifies
 the exact trust table/key to remove while Codex is stopped; managed approval
 needs its policy administrator. A future revoke verb would need to resolve the
 owning config layer, preserve unrelated state, handle managed entries, and apply
@@ -227,7 +237,12 @@ write failure causes non-zero exit; all later hooks are classified even after a
 failed write. The safe installer preserves unrelated sibling handlers, only
 rewrites recognizable current/legacy commands, and exposes whether a repair
 would change anything. No-op or arbitrary lookalike cleanup requires manual
-review. Disabled hooks and unknown trust are distinct from runnable hooks.
+review. Replacements preserve sibling indices where possible; unavoidable
+trust-key changes are reported for review/re-approval. Shape-invalid JSON is
+refused and UseNumber preserves large numeric values. Codex warnings are retained
+alongside hooks. Future unrecognised listing fields fail closed with an update
+hint and no revocation advice, separately from unsafe raw-file fields. Disabled
+hooks and unknown trust are distinct from runnable hooks.
 
 All three facts are pinned by a gated live test that installs hooks into a
 temporary `CODEX_HOME`, asks a real `codex app-server` whether it can see them,

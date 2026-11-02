@@ -11,6 +11,16 @@ import (
 	"time"
 )
 
+func TestHookWarningsWithListedHooks(t *testing.T) {
+	c := fakeServer(t, func(id int, method string, w io.Writer) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": id, "result": map[string]any{"data": []any{map[string]any{"hooks": []any{map[string]any{"command": "codexrig pull"}}, "warnings": []string{"duplicate hook key"}}}}})
+	})
+	list, err := c.ListHooks(context.Background())
+	if err != nil || len(list) != 1 || len(c.HookWarnings()) != 1 {
+		t.Fatalf("warnings lost beside hooks: %+v %v %v", list, c.HookWarnings(), err)
+	}
+}
+
 // fakeServer is the stdio half of an app-server: it reads requests off the
 // client's stdin and writes whatever reply is asked for to the client's
 // stdout. Nothing here forks a process.

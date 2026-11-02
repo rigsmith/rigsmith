@@ -2,7 +2,6 @@ package hooks
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -61,15 +60,12 @@ func readSnapshot(scope Scope) snapshot {
 	if s.err != nil {
 		return s
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(s.raw, &doc); err != nil {
+	doc, err := decodeDocument(s.raw)
+	if err != nil {
 		s.err = fmt.Errorf("hooks file is invalid JSON: %w", err)
 		return s
 	}
 	rootIssue := fieldIssue(doc, "description", "hooks")
-	if err := scope.Validate(); err != nil {
-		rootIssue = err.Error()
-	}
 	hooks, _ := doc["hooks"].(map[string]any)
 	var events []string
 	for event := range hooks {
@@ -178,9 +174,6 @@ func (s snapshot) validate(h appserver.HookInfo) (int, string) {
 	if !s.unchanged() {
 		return i, "hooks file or symlink changed during validation; review and retry"
 	}
-	if len(h.UnknownFields) > 0 {
-		return i, "unsupported reported field(s): " + strings.Join(h.UnknownFields, ", ")
-	}
 	if h.Async {
 		return i, "unsupported reported field: async"
 	}
@@ -192,6 +185,9 @@ func (s snapshot) validate(h appserver.HookInfo) (int, string) {
 	}
 	if h.AdditionalContextLimit != nil {
 		return i, "unsupported reported field: additionalContextLimit"
+	}
+	if len(h.UnknownFields) > 0 {
+		return i, compatibilityPrefix + strings.Join(h.UnknownFields, ", ") + " from Codex; update codexrig"
 	}
 	if !Matches(h, s.scope) {
 		return i, "hook does not match this scope's complete installer plan"

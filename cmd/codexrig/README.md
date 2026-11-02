@@ -63,26 +63,37 @@ trust. An unavailable app server reports that trust was not checked.
 approve only the two sync hooks; project may approve only the guard with the
 current `guard.Matcher()` matcher. Raw handler/group fields are checked as well
 as the listing: unknown fields, `commandWindows`, timeout/status-message
-customizations and wrong event casing are lookalikes. Project install/trust
-refuse symlinks escaping the resolved repo or targeting global hooks.
+customizations and wrong event casing are lookalikes. Every project write verb
+refuses symlinks escaping the resolved repo or targeting global hooks.
 
 Text output escapes terminal controls; JSON retains exact strings and uses empty
-arrays instead of null. Trust reports listed hooks and unlisted file handlers,
+arrays instead of null. Trust reports approvals, problems and unlisted handlers.
+Exact healthy hooks in the other scope are quiet in text and retained under
+JSON `outside`. It
 continues reporting after write failures, and exits non-zero for any in-scope
-refusal, lookalike or unsafe existing approval. Unrelated-only/empty scopes
+refusal or lookalike, and for unsafe existing approval from any listed source.
+Unrelated-only/empty scopes
 succeed with no writes. Exact valid hooks need no prompt. Disabled hooks do not
 read as running; an unlisted installed hook has unknown trust.
 
 **Upgrade action: run `codexrig doctor`.** Previously approved lookalikes are
 STILL TRUSTED, not newly safe. Doctor fails in either scope and prints the exact
 manual revocation table/key and Codex home. Stop Codex, remove that
-`trusted_hash`, review/remove the handler, restart and rerun doctor. Managed
-approval needs the policy administrator. There is no auto-revoke or override.
+`trusted_hash`, review/remove the handler, restart and rerun doctor. Its probe
+only covers hooks Codex lists from the current working directory and selected
+Codex home; other repositories are not scanned. Inline and nested-source legacy
+approvals in that listing are included. Managed approval needs the policy administrator. There is no auto-revoke or override.
 
 Safe reinstall preserves unrelated handlers and only repairs recognizable
 current or known legacy commands. Doctor suppresses no-op repairs and directs
 lookalikes to manual review. A global file containing only unrelated hooks
 still reports missing sync hooks and offers installation, without a trust row.
+Recognized replacements stay in place; unavoidable handler-key moves are
+printed for review/re-approval. Malformed shapes are refused and large numbers
+survive rewrites. Invalid project symlinks are refused before classification,
+without revocation advice about global hooks. Unknown future listing fields
+require updating codexrig, not revoking otherwise valid hooks. Listing warnings
+are shown even when Codex successfully lists other hooks.
 
 Raw-file snapshots and reported handler indices/fields must agree; hashes and
 keys always come from one listing. The file/symlink is checked unchanged before

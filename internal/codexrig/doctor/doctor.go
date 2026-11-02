@@ -50,6 +50,7 @@ func Fixable(s []Section) []Result                   { return coredoctor.Fixable
 // it once so the checks stay free of discovery logic — and so the same checks
 // can be run from somewhere that is not a terminal.
 type Env struct {
+	Cwd        string
 	Output     io.Writer // receives commands approved or refused by a trust fix
 	Version    string
 	Config     *config.Config
@@ -80,6 +81,7 @@ func NewEnv(ctx context.Context, version string) Env {
 		e.HooksPath = filepath.Join(e.CodexHome, hooks.FileName)
 	}
 	if cwd, err := os.Getwd(); err == nil {
+		e.Cwd = cwd
 		if repo, err := gitrepo.Open(ctx, cwd); err == nil {
 			e.RepoRoot, _ = repo.Toplevel(ctx)
 		}
@@ -355,7 +357,7 @@ func hookChecksWithProbe(ctx context.Context, env Env, available bool, check fun
 				Hint:     "Run `codexrig project install`, review the result, then `codexrig project trust`",
 				FixLabel: "reinstall the project guard",
 				Fix: func(context.Context) error {
-					_, _, err := hooks.InstallScope(hooks.ProjectScope(env.RepoRoot, env.CodexHome))
+					_, _, err := hooks.InstallScope(hooks.ProjectScope(env.RepoRoot, env.CodexHome), env.Output)
 					return err
 				},
 			})
@@ -377,23 +379,32 @@ func hookChecksWithProbe(ctx context.Context, env Env, available bool, check fun
 			}
 		}
 	}
-	if globalPresent || projectPresent {
-		cwd := env.CodexHome
-		if projectPresent {
+	if globalPresent || projectPresent || available {
+		home := env.CodexHome
+		if home == "" && env.HooksPath != "" {
+			home = filepath.Dir(env.HooksPath)
+		}
+		cwd := env.Cwd
+		if cwd == "" {
 			cwd = env.RepoRoot
+		}
+		if cwd == "" {
+			cwd = home
 		}
 		var checked hooks.CheckResult
 		var probeErr error
 		if available {
 			probe, cancel := context.WithTimeout(ctx, 25*time.Second)
 			var scopes []hooks.Scope
-			if globalPresent {
+			if globalHookScope(env).Validate() == nil {
 				scopes = append(scopes, globalHookScope(env))
 			}
-			if projectPresent {
+			if env.RepoRoot != "" && hooks.ProjectScope(env.RepoRoot, env.CodexHome).Validate() == nil {
 				scopes = append(scopes, hooks.ProjectScope(env.RepoRoot, env.CodexHome))
 			}
-			checked, probeErr = check(probe, env.CodexHome, cwd, scopes...)
+			if len(scopes) > 0 {
+				checked, probeErr = check(probe, home, cwd, scopes...)
+			}
 			cancel()
 		}
 		if globalPresent {
@@ -401,6 +412,26 @@ func hookChecksWithProbe(ctx context.Context, env Env, available bool, check fun
 		}
 		if projectPresent {
 			out = append(out, hookTrustResult(env, true, available, checked, probeErr))
+		}
+		covered := func(h appserver.HookInfo) bool {
+			return (globalPresent && (h.SourcePath == "" || globalHookScope(env).References(h.SourcePath))) || (projectPresent && (h.SourcePath == "" || hooks.ProjectScope(env.RepoRoot, env.CodexHome).References(h.SourcePath)))
+		}
+		for _, h := range checked.StillTrusted {
+			if !covered(h) {
+				out = append(out, Result{ID: "other-hook-trust", Name: "other hooks still trusted", Status: Fail, Detail: "STILL TRUSTED from " + hooks.Display(h.SourcePath) + ": " + hooks.Display(h.Command), Hint: hooks.Display(hooks.RevokeHint(home, h))})
+			}
+		}
+		for _, h := range checked.Incompatible {
+			if !covered(h) {
+				out = append(out, Result{ID: "hook-compatibility", Name: "Codex hook compatibility", Status: Warn, Detail: hooks.Display(h.ValidationIssue), Hint: "Update codexrig; no trust was changed or revocation recommended."})
+			}
+		}
+		if len(checked.Warnings) > 0 {
+			warnings := make([]string, len(checked.Warnings))
+			for i, w := range checked.Warnings {
+				warnings[i] = hooks.Display(w)
+			}
+			out = append(out, Result{ID: "hook-warnings", Name: "Codex hook warnings", Status: Warn, Detail: strings.Join(warnings, "\n")})
 		}
 	}
 
@@ -467,7 +498,7 @@ func hookTrustResult(env Env, project, available bool, checked hooks.CheckResult
 		r.Hint = "Enable these hooks in Codex after reviewing them"
 	} else if seen {
 		r.Status, r.Detail = OK, "Codex will run them"
-	} else if len(lookalikes) == 0 {
+	} else if len(lookalikes) == 0 && !hasScopedDiagnostics(scope, checked) {
 		// Callers only request this row when the file has current hooks or lookalikes.
 		r.Detail = "Codex did not report the installed codexrig hooks or lookalikes"
 	}
@@ -498,7 +529,31 @@ func hookTrustResult(env Env, project, available bool, checked hooks.CheckResult
 			r.Hint += "\n" + hooks.Display(hooks.RevokeHint(env.CodexHome, h))
 		}
 	}
+	for _, h := range checked.Incompatible {
+		if scope.References(h.SourcePath) {
+			if r.Status != Fail {
+				r.Status = Warn
+			}
+			r.Fix = nil
+			r.FixLabel = ""
+			r.Detail += "\n" + hooks.Display(h.ValidationIssue)
+			r.Hint += "\nUpdate codexrig; no revocation is recommended for an unrecognised listing field."
+		}
+	}
+	r.Detail = strings.TrimSpace(r.Detail)
+	r.Hint = strings.TrimSpace(r.Hint)
 	return r
+}
+
+func hasScopedDiagnostics(scope hooks.Scope, checked hooks.CheckResult) bool {
+	for _, list := range [][]appserver.HookInfo{checked.StillTrusted, checked.Incompatible, checked.Unreported} {
+		for _, h := range list {
+			if h.SourcePath == "" || scope.References(h.SourcePath) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func globalHookScope(env Env) hooks.Scope {
@@ -512,7 +567,11 @@ func globalHookScope(env Env) hooks.Scope {
 func describeHookCommands(list []appserver.HookInfo) string {
 	var details []string
 	for _, h := range list {
-		details = append(details, hooks.Display(h.EventName)+": "+hooks.Display(h.Command)+" ("+hooks.Display(h.ValidationIssue)+")")
+		text := hooks.Display(h.EventName) + ": " + hooks.Display(h.Command)
+		if h.ValidationIssue != "" {
+			text += " (" + hooks.Display(h.ValidationIssue) + ")"
+		}
+		details = append(details, text)
 	}
 	return strings.Join(details, "; ")
 }
@@ -546,15 +605,24 @@ func userHookChecks(env Env) ([]Result, hooks.CheckResult) {
 		}
 		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: detail,
 			Hint:     "Run `codexrig global install`, review the result, then `codexrig global trust`",
-			FixLabel: "reinstall the sync hooks", Fix: func(context.Context) error { _, _, err := hooks.InstallScope(globalHookScope(env)); return err },
+			FixLabel: "reinstall the sync hooks", Fix: func(context.Context) error {
+				_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
+				return err
+			},
 		})
 	case len(installed.Ours) == 0:
 		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: "not installed",
-			FixLabel: "install the sync hooks into your Codex home", Fix: func(context.Context) error { _, _, err := hooks.InstallScope(globalHookScope(env)); return err },
+			FixLabel: "install the sync hooks into your Codex home", Fix: func(context.Context) error {
+				_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
+				return err
+			},
 		})
 	case len(missing) > 0:
 		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: "missing: " + strings.Join(missing, ", "),
-			FixLabel: "install the missing sync hooks", Fix: func(context.Context) error { _, _, err := hooks.InstallScope(globalHookScope(env)); return err },
+			FixLabel: "install the missing sync hooks", Fix: func(context.Context) error {
+				_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
+				return err
+			},
 		})
 	default:
 		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: OK, Detail: hooks.Display(strings.Join(installed.Events(), ", "))})
@@ -562,7 +630,10 @@ func userHookChecks(env Env) ([]Result, hooks.CheckResult) {
 	if len(installed.Lookalikes) == 0 {
 		if drifted, derr := hooks.Drift(env.HooksPath, want); derr == nil && len(drifted) > 0 {
 			out = append(out, Result{ID: "hook-drift", Name: "hook commands", Status: Warn, Detail: "out of date, reinstall: " + strings.Join(drifted, ", "),
-				FixLabel: "bring the hook commands up to date", Fix: func(context.Context) error { _, _, err := hooks.InstallScope(globalHookScope(env)); return err },
+				FixLabel: "bring the hook commands up to date", Fix: func(context.Context) error {
+					_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
+					return err
+				},
 			})
 		}
 	}

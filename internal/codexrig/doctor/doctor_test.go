@@ -544,7 +544,7 @@ func TestHookChecksThreeWayReporting(t *testing.T) {
 					if !project {
 						expected = 1
 					}
-					if calls != 0 || len(results) != expected {
+					if calls != 1 || len(results) != expected {
 						t.Fatalf("unrelated-only file produced diagnostics: calls=%d results=%+v", calls, results)
 					}
 					return
@@ -602,7 +602,7 @@ func TestHookDoctorStillTrustedFailsBothScopes(t *testing.T) {
 		command := "curl evil # codexrig\ntrusted forged\x1b]52;c;YWJj\a"
 		h := appserver.HookInfo{SourcePath: path, Key: path + ":stop:0:0", Command: command, TrustStatus: "trusted", Enabled: true}
 		r := hookTrustResult(env, project, true, hooks.CheckResult{StillTrusted: []appserver.HookInfo{h}}, nil)
-		if r.Status != Fail || r.Fix != nil || !strings.Contains(r.Detail, "STILL TRUSTED") || !strings.Contains(r.Hint, "remove trusted_hash") || strings.ContainsAny(r.Detail+r.Hint, "\x1b\a") || strings.Contains(r.Detail, "\ntrusted forged") {
+		if r.Status != Fail || r.Fix != nil || !strings.Contains(r.Detail, "STILL TRUSTED") || !strings.Contains(r.Hint, "remove trusted_hash") || strings.ContainsAny(r.Detail+r.Hint, "\x1b\a") || strings.Contains(r.Detail, "\ntrusted forged") || strings.Contains(r.Detail, "did not report") || strings.HasPrefix(r.Detail, "\n") {
 			t.Fatalf("unsafe existing trust: %+v", r)
 		}
 	}
@@ -662,5 +662,129 @@ func TestHookDoctorNoopLookalikeHasNoRepair(t *testing.T) {
 				t.Fatalf("lookalike offered a repair that cannot fix it: %+v", r)
 			}
 		}
+	}
+}
+
+type finalReviewClient struct {
+	list     []appserver.HookInfo
+	warnings []string
+}
+
+func (c *finalReviewClient) ListHooks(context.Context) ([]appserver.HookInfo, error) {
+	return c.list, nil
+}
+func (c *finalReviewClient) WriteConfig(context.Context, string, any) error {
+	return errors.New("unexpected write")
+}
+func (c *finalReviewClient) HookWarnings() []string { return c.warnings }
+
+func TestHookDoctorFindsListedInlineApprovalWithoutHooksFiles(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	cwd := filepath.Join(repo, "sub")
+	c := &finalReviewClient{}
+	for _, source := range []string{filepath.Join(home, "config.toml"), filepath.Join(repo, ".codex", "config.toml"), filepath.Join(repo, "sub", ".codex", hooks.FileName)} {
+		c.list = append(c.list, appserver.HookInfo{SourcePath: source, Command: "codexrig pull; evil", EventName: "sessionStart", Key: source + ":session_start:0:0", TrustStatus: "trusted", Enabled: true})
+	}
+	rows := hookChecksWithProbe(context.Background(), Env{CodexHome: home, HooksPath: filepath.Join(home, hooks.FileName), RepoRoot: repo, Cwd: cwd}, true, func(ctx context.Context, _, from string, scopes ...hooks.Scope) (hooks.CheckResult, error) {
+		if from != cwd {
+			t.Fatalf("probe left current cwd: %s", from)
+		}
+		return hooks.CheckWithClient(ctx, c, scopes...)
+	})
+	fails := 0
+	for _, r := range rows {
+		if r.ID == "other-hook-trust" {
+			if r.Status != Fail || !strings.Contains(r.Detail, "STILL TRUSTED") || !strings.Contains(r.Detail, "from ") {
+				t.Fatalf("legacy approval hidden: %+v", r)
+			}
+			fails++
+		}
+	}
+	if fails != len(c.list) {
+		t.Fatalf("listed approvals missed: %+v", rows)
+	}
+}
+
+func TestHookDoctorInvalidProjectLeavesGlobalHealthy(t *testing.T) {
+	repo := t.TempDir()
+	home := filepath.Join(repo, "global-home")
+	global := hooks.GlobalScope(home)
+	if _, _, err := hooks.InstallScope(global); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, ".codex", hooks.FileName)
+	if err := os.Symlink(home, filepath.Dir(path)); err != nil {
+		t.Skip(err)
+	}
+	status, err := hooks.Status(filepath.Join(home, hooks.FileName), global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range status.Ours {
+		status.Ours[i].TrustStatus = "trusted"
+		status.Ours[i].CurrentHash = "sha256:fixture"
+	}
+	c := &finalReviewClient{list: status.Ours}
+	rows := hookChecksWithProbe(context.Background(), Env{CodexHome: home, HooksPath: filepath.Join(home, hooks.FileName), RepoRoot: repo}, true, func(ctx context.Context, _, _ string, scopes ...hooks.Scope) (hooks.CheckResult, error) {
+		return hooks.CheckWithClient(ctx, c, scopes...)
+	})
+	globalSeen, projectSeen := false, false
+	for _, r := range rows {
+		if strings.Contains(r.Detail+r.Hint, "remove trusted_hash") {
+			t.Fatalf("symlink recommended revoking global hooks: %+v", r)
+		}
+		if r.ID == "hook-trust" {
+			globalSeen = true
+			if r.Status != OK {
+				t.Fatalf("global row poisoned: %+v", r)
+			}
+		}
+		if r.ID == "project-guard" {
+			projectSeen = true
+			if r.Status != Warn || !strings.Contains(r.Detail, path) {
+				t.Fatalf("invalid scope not identified: %+v", r)
+			}
+		}
+		if r.ID == "project-hook-trust" {
+			t.Fatal("invalid project scope was classified")
+		}
+	}
+	if !globalSeen || !projectSeen {
+		t.Fatalf("missing diagnostics: %+v", rows)
+	}
+}
+
+func TestHookDoctorWarningsAndCompatibilityAreNotRevocations(t *testing.T) {
+	home := t.TempDir()
+	scope := hooks.GlobalScope(home)
+	if _, _, err := hooks.InstallScope(scope); err != nil {
+		t.Fatal(err)
+	}
+	status, err := hooks.Status(filepath.Join(home, hooks.FileName), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range status.Ours {
+		status.Ours[i].TrustStatus = "trusted"
+		status.Ours[i].CurrentHash = "sha256:fixture"
+	}
+	status.Ours[0].UnknownFields = []string{"futureCodexField"}
+	c := &finalReviewClient{list: status.Ours, warnings: []string{"duplicate key\x1b]52;c;YWJj\a"}}
+	rows := hookChecksWithProbe(context.Background(), Env{CodexHome: home, HooksPath: filepath.Join(home, hooks.FileName)}, true, func(ctx context.Context, _, _ string, scopes ...hooks.Scope) (hooks.CheckResult, error) {
+		return hooks.CheckWithClient(ctx, c, scopes...)
+	})
+	compat, warning := false, false
+	for _, r := range rows {
+		if strings.Contains(r.Detail+r.Hint, "remove trusted_hash") || strings.ContainsAny(r.Detail+r.Hint, "\x1b\a") {
+			t.Fatalf("unsafe compatibility/warning advice: %+v", r)
+		}
+		compat = compat || strings.Contains(r.Detail, "futureCodexField")
+		warning = warning || strings.Contains(r.Detail, "duplicate key")
+	}
+	if !compat || !warning {
+		t.Fatalf("warnings dropped: %+v", rows)
+	}
+	if text := describeHookCommands([]appserver.HookInfo{{EventName: "stop", Command: "acme"}}); strings.Contains(text, "()") {
+		t.Fatalf("empty reason: %s", text)
 	}
 }

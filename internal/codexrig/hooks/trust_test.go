@@ -25,7 +25,10 @@ type fakeTrustClient struct {
 	beforeWrite func()
 	writeErr    error
 	attempts    int
+	warnings    []string
 }
+
+func (c *fakeTrustClient) HookWarnings() []string { return append([]string{}, c.warnings...) }
 
 func (c *fakeTrustClient) ListHooks(context.Context) ([]appserver.HookInfo, error) {
 	c.lists++
@@ -174,7 +177,11 @@ func TestTrustUnknownFieldsFailClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		res, err := TrustWithClient(context.Background(), c, "", scope)
-		if err == nil || len(res.Lookalikes) != 1 || !strings.Contains(res.Lookalikes[0].Reason, field) {
+		items := res.Lookalikes
+		if field == "futureExecutionField" {
+			items = res.Incompatible
+		}
+		if err == nil || len(items) != 1 || !strings.Contains(items[0].Reason, field) {
 			t.Fatalf("reported field=%s result=%+v err=%v", field, res, err)
 		}
 	}
@@ -259,7 +266,7 @@ func TestTrustEscapingSymlinksFailClosed(t *testing.T) {
 		}
 		res, err := TrustWithClient(context.Background(), gc, home, scope)
 		after, _ := os.ReadFile(filepath.Join(home, FileName))
-		if err == nil || len(gc.writes) != 0 || !bytes.Equal(before, after) || len(res.Lookalikes) == 0 {
+		if err == nil || len(gc.writes) != 0 || !bytes.Equal(before, after) || len(res.Refused) != 1 {
 			t.Fatalf("symlink result=%+v err=%v", res, err)
 		}
 	}

@@ -42,7 +42,8 @@ type Client struct {
 	// still deliver that reply later, into a buffer nobody drains, and every
 	// later exchange would be reading one message behind — so a client that
 	// has timed out once refuses further calls rather than answer wrongly.
-	dead error
+	dead         error
+	hookWarnings []string
 }
 
 // Available reports whether the Codex CLI is on PATH at all.
@@ -280,6 +281,9 @@ func (h *HookInfo) UnmarshalJSON(data []byte) error {
 // ListHooks reports every hook Codex can see from its working directory,
 // together with why it will or will not run.
 func (c *Client) ListHooks(ctx context.Context) ([]HookInfo, error) {
+	c.mu.Lock()
+	c.hookWarnings = nil
+	c.mu.Unlock()
 	raw, err := c.Call(ctx, "hooks/list", map[string]any{})
 	if err != nil {
 		return nil, err
@@ -300,6 +304,9 @@ func (c *Client) ListHooks(ctx context.Context) ([]HookInfo, error) {
 		out = append(out, d.Hooks...)
 		warnings = append(warnings, d.Warnings...)
 	}
+	c.mu.Lock()
+	c.hookWarnings = append([]string{}, warnings...)
+	c.mu.Unlock()
 	if len(out) == 0 && len(warnings) > 0 {
 		// A hooks file Codex could not parse is a silent no-op otherwise:
 		// nothing errors, nothing runs. Surfacing the warning is the only way
@@ -307,6 +314,12 @@ func (c *Client) ListHooks(ctx context.Context) ([]HookInfo, error) {
 		return nil, fmt.Errorf("codex could not use the hooks file: %s", strings.Join(warnings, "; "))
 	}
 	return out, nil
+}
+
+func (c *Client) HookWarnings() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string{}, c.hookWarnings...)
 }
 
 // WriteConfig sets one value in Codex's own config, through Codex.

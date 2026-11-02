@@ -101,7 +101,7 @@ func scopeCmd(name string, aliases []string, short, long string,
 				if err != nil {
 					return hooks.DisplayError(err)
 				}
-				removed, err := hooks.Uninstall(path)
+				removed, err := hooks.UninstallScope(commandHookScope(cmd, path), cmd.OutOrStdout())
 				if err != nil {
 					return hooks.DisplayError(err)
 				}
@@ -129,8 +129,8 @@ func scopeCmd(name string, aliases []string, short, long string,
 				"Only exact current codexrig commands in this scope are approved, without a prompt.\n" +
 				"Every command approved, refused, or left alone is printed (also with --json).\n" +
 				"Lookalike or outdated commands are refused: reinstall outdated hooks, and review\n" +
-				"lookalikes through Codex itself. Other hooks are left alone. Nothing eligible\n" +
-				"means a non-zero exit.",
+				"lookalikes through Codex itself. Empty scopes and unrelated-only hooks succeed.\n" +
+				"Any refusal, incompatible listing, or unsafe existing approval fails.",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return trustScope(cmd, pathOf)
 			},
@@ -150,7 +150,7 @@ func installScope(cmd *cobra.Command, pathOf func(context.Context) (string, erro
 	if err != nil {
 		return hooks.DisplayError(err)
 	}
-	added, updated, err := hooks.InstallScope(commandHookScope(cmd, path))
+	added, updated, err := hooks.InstallScope(commandHookScope(cmd, path), cmd.OutOrStdout())
 	if err != nil {
 		return hooks.DisplayError(err)
 	}
@@ -214,6 +214,8 @@ func printTrustState(cmd *cobra.Command, path string, installed hooks.CheckResul
 	}
 	check, err := hooks.Check(cmd.Context(), commandCodexHome(cmd, path), filepath.Dir(path), commandHookScope(cmd, path))
 	if err != nil {
+		installed.Warnings = check.Warnings
+		installed.ScopeErrors = check.ScopeErrors
 		printOtherHooks(cmd, path, installed)
 		fmt.Fprintf(out, "  %s\n", DimStyle.Render("could not ask Codex whether it will run them: "+hooks.Display(err.Error())))
 		return
@@ -224,6 +226,15 @@ func printTrustState(cmd *cobra.Command, path string, installed hooks.CheckResul
 func printOtherHooks(cmd *cobra.Command, path string, check hooks.CheckResult) {
 	out := cmd.OutOrStdout()
 	scope := commandHookScope(cmd, path)
+	for _, warning := range check.Warnings {
+		fmt.Fprintf(out, "  Codex warning: %s\n", hooks.Display(warning))
+	}
+	for _, issue := range check.ScopeErrors {
+		fmt.Fprintf(out, "  refused scope: %s\n", hooks.Display(issue))
+	}
+	for _, h := range check.Incompatible {
+		fmt.Fprintf(out, "  cannot check %s from %s: %s\n", hooks.Display(h.Command), hooks.Display(h.SourcePath), hooks.Display(h.ValidationIssue))
+	}
 	for _, h := range check.Lookalikes {
 		if scope.References(h.SourcePath) {
 			fmt.Fprintf(out, "  lookalike or out of date %s: %s\n    Reinstall outdated hooks; review lookalikes in Codex itself.\n", hooks.Display(h.EventName), hooks.Display(h.Command))
@@ -261,7 +272,7 @@ func printCheckedTrustState(cmd *cobra.Command, path string, check hooks.CheckRe
 		}
 	}
 	for _, h := range check.StillTrusted {
-		if h.SourcePath == "" || scope.References(h.SourcePath) {
+		{
 			fmt.Fprintf(out, "  STILL TRUSTED: %s from %s: %s\n    %s\n", hooks.Display(h.EventName), hooks.Display(h.SourcePath), hooks.Display(h.Command), hooks.Display(hooks.RevokeHint("", h)))
 		}
 	}
