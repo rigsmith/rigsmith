@@ -291,7 +291,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack rm <repo>` | Remove a repo — manifest entry, directory and overlay redirects; refuses while it holds unsent or uncommitted work, or files git ignores (`--force` overrides); `--keep-tree` keeps the directory, and needs a clean one even with `--force` |
 | `stack seed [dir] [--publish <seed>]` | With --publish, publish root-only commits to a manifest home; with no arguments, retry the configured home. Unsent member work is refused unless --force overrides the reconstruction check. A directory and --publish cannot be combined. Local publication requires a bare home. With a directory, export the root files as a small repo (conventionally `rigstack-<name>`, suggested outside enclosing repositories); `stack init` on a clone of it rebuilds every member at its recorded cursor, or from the fork branch it was last proposed to while that branch still exists; refuses while a member holds unsent commits (`--force`) |
 | `stack home [pointer-file]` | Read a member’s single-reference .rig-stack pointer (default .rig-stack) |
-| `stack deps` | Check topic PR dependencies against upstream merge states and manifest cursors; `--publish` posts statuses only in `GITHUB_REPOSITORY` |
+| `stack deps` | Read `--manifest <path>` or `--seed <ref>` (exclusive); `--allowed-hosts <hosts>` restricts seed hosts; check topic PR dependencies against upstream merge states and manifest cursors; `--publish` posts statuses only in `GITHUB_REPOSITORY` |
 | `stack status` | Each repo's cursor against its upstream, whether it holds work that has not left — all of which `propose` would send — and, listed under it, each `stack-pr-*` topic in flight with the fork branch its pull request is on, `not proposed yet`, whether the branch has moved since, and whether a pull left it behind |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default); private upstreams through your `gh` login, as with `init` |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch — **all** of them, the prefix's whole divergence from upstream; `--from <branch>` sends only what a topic branch of the stackspace adds (a bare name resolves to the conventional `stack-pr-<name>`), so a second fix can be its own pull request (needs `trackBranch`, which it then keeps current); `--dry-run` shows the commit and branch that would go and touches no remote; both report any package the branch references that this stackspace provides from source rather than a feed, since a plain checkout of the branch cannot restore those |
@@ -379,6 +379,20 @@ root props or member shadowing) are advisory and do not block packing; targets
 issues remain blocking. See [the stack guide](stack.md) for naming and timing.
 
 ### Stackspace member CI
+
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Topic dependency reporting also reads the seed, using
+`rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
 
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.

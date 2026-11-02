@@ -23,6 +23,9 @@ import (
 // URLs, scp remotes and local paths retain git's normal spelling.
 func stackSeedReference(s string) (remote, ref string, err error) {
 	s = strings.TrimSpace(s)
+	if strings.ContainsAny(s, "?#") {
+		return "", "", fmt.Errorf("seed references must not contain query or fragment characters (? or #); configure Git credentials separately")
+	}
 	if err := stackValidateHomeRemote(s); err != nil {
 		return "", "", err
 	}
@@ -128,7 +131,15 @@ func stackPublishAfterPull(ctx context.Context, repo *gitrepo.Repo, m *stackMani
 }
 
 // Credentials belong in Git's credential helper, never persisted in the home URL.
+// User-written references are checked before path resolution. Absolute local
+// remotes may inherit ?/# from the working directory and have no URL components.
 func stackValidateHomeRemote(remote string) error {
+	if filepath.IsAbs(remote) {
+		return nil
+	}
+	if strings.ContainsAny(remote, "?#") {
+		return fmt.Errorf("seed references must not contain query or fragment characters (? or #); configure Git credentials separately")
+	}
 	u, err := url.Parse(remote)
 	if strings.Contains(remote, "://") && (err != nil || u.Scheme == "" || (u.Host == "" && u.Scheme != "file") || (u.Scheme == "file" && u.Path == "")) {
 		return fmt.Errorf("invalid seed URL")
@@ -175,6 +186,9 @@ func stackPublishConfiguredHome(ctx context.Context, repo *gitrepo.Repo, m *stac
 	remote := stackHomeConfig(ctx, repo.Dir, "URL")
 	if remote == "" {
 		return nil
+	}
+	if err := stackValidateHomeRemote(remote); err != nil {
+		return err
 	}
 	branch := stackHomeConfig(ctx, repo.Dir, "Branch")
 	base := stackHomeConfig(ctx, repo.Dir, "Base")

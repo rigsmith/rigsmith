@@ -900,3 +900,41 @@ func TestStackHomeRejectsMalformedPointers(t *testing.T) {
 		}
 	}
 }
+
+func TestStackHomeRejectsURLSecrets(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	ctx := context.Background()
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"?token=query-secret", "#fragment-secret", "?", "#"} {
+		remote := "https://github.com/acme/seed.git" + suffix
+		check := func(err error) {
+			t.Helper()
+			if err == nil || !strings.Contains(err.Error(), "query or fragment") || strings.Contains(err.Error(), remote) || strings.Contains(err.Error(), "query-secret") || strings.Contains(err.Error(), "fragment-secret") {
+				t.Fatalf("unsafe rejection: %v", err)
+			}
+		}
+		_, _, err := stackSeedReference(remote)
+		check(err)
+		check(stackConfigureHome(ctx, root, remote, "main", ""))
+		// Legacy configured homes must fail before the retry hint echoes the URL.
+		mustGitStack(t, root, "config", "rig.stackHomeURL", remote)
+		check(stackPublishConfiguredHome(ctx, repo, nil, stackHomePublishPolicy{}))
+		mustGitStack(t, root, "config", "--unset", "rig.stackHomeURL")
+	}
+}
+
+func TestStackHomeRejectsExistingLocalQueryCharacters(t *testing.T) {
+	// Even an existing legal filename is rejected: seed references have one
+	// portable grammar, so existence cannot turn a secret-bearing input valid.
+	path := filepath.Join(t.TempDir(), "seed#fragment-secret")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := stackSeedReference(path)
+	if err == nil || strings.Contains(err.Error(), "fragment-secret") {
+		t.Fatalf("local reference rejection: %v", err)
+	}
+}
