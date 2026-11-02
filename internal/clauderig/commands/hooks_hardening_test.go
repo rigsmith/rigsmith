@@ -23,18 +23,18 @@ func TestHardeningScopeCommands(t *testing.T) {
 				if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
 					t.Fatalf("%s: %v", out, err)
 				}
-				old, _ := os.Getwd()
-				if err := os.Chdir(root); err != nil {
-					t.Fatal(err)
-				}
-				defer os.Chdir(old)
+				t.Chdir(root)
 				outside := t.TempDir()
-				os.Symlink(outside, filepath.Join(root, ".claude"))
+				if err := os.Symlink(outside, filepath.Join(root, ".claude")); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
 				target := filepath.Join(outside, "settings.json")
 				if sp.use == "local" {
 					target = filepath.Join(outside, "settings.local.json")
 				}
-				os.WriteFile(target, []byte(`{}`), 0644)
+				if err := os.WriteFile(target, []byte(`{}`), 0644); err != nil {
+					t.Fatal(err)
+				}
 				cmd := &cobra.Command{}
 				cmd.SetContext(context.Background())
 				cmd.SetOut(&bytes.Buffer{})
@@ -47,7 +47,10 @@ func TestHardeningScopeCommands(t *testing.T) {
 				if err == nil {
 					t.Fatal("command accepted escaping link")
 				}
-				raw, _ := os.ReadFile(target)
+				raw, err := os.ReadFile(target)
+				if err != nil {
+					t.Fatal(err)
+				}
 				if string(raw) != `{}` {
 					t.Fatal("outside settings modified")
 				}
@@ -57,7 +60,9 @@ func TestHardeningScopeCommands(t *testing.T) {
 }
 func TestHardeningCandidateOutput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	os.WriteFile(path, []byte(`{"hooks":{"Stop":[{"matcher":"x\u001b","hooks":[{"type":"command","command":"echo clauderig\n\u001b"}]}]}}`), 0644)
+	if err := os.WriteFile(path, []byte(`{"hooks":{"Stop":[{"matcher":"x\u001b","hooks":[{"type":"command","command":"echo clauderig\n\u001b"}]}]}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 	text := hooks.Candidates(path)
 	if bytes.ContainsAny([]byte(text), "\n\x1b") {
 		t.Fatalf("unsafe diagnostic %q", text)

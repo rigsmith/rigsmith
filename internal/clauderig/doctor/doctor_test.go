@@ -498,10 +498,17 @@ func TestHardeningDoctorFixRefusesSymlinks(t *testing.T) {
 				t.Fatal(err)
 			}
 		} else {
-			os.WriteFile(target, []byte(`{}`), 0644)
+			if err := os.WriteFile(target, []byte(`{}`), 0644); err != nil {
+				t.Fatal(err)
+			}
 		}
-		before, _ := os.ReadFile(target)
-		os.Symlink(outside, filepath.Join(root, ".claude"))
+		before, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, ".claude")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
 		got := checkProjectGuard(Env{RepoRoot: root, ProjectSettings: filepath.Join(root, ".claude", "settings.json"), LocalSettings: filepath.Join(root, ".claude", "settings.local.json")})
 		if got.Fix == nil {
 			t.Fatal("missing fix")
@@ -509,7 +516,10 @@ func TestHardeningDoctorFixRefusesSymlinks(t *testing.T) {
 		if err := got.Fix(context.Background()); err == nil {
 			t.Fatal("fix followed escaping link")
 		}
-		after, _ := os.ReadFile(target)
+		after, err := os.ReadFile(target)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if string(before) != string(after) {
 			t.Fatal("outside file changed")
 		}

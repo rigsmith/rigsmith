@@ -79,6 +79,8 @@ clauderig ui                   # interactive dashboard
   MCP servers across user / project / local scopes — args-driven or via an
   interactive screen (mirrors `claude mcp`).
 
+- **Safe hook writes.** Claude hook writes preserve unrelated handlers, including commands that merely mention `clauderig`. Ownership requires the exact event, matcher and installer-shaped command; only explicitly known historical plans are migrated or removed. Unknown lookalikes are reported with their command and left untouched. Project/local install, uninstall and doctor fixes refuse settings symlinks escaping the resolved repository or targeting global settings; symlinked checkout paths remain supported. Malformed hook structures are refused, JSON numbers retain their precision, and diagnostic controls are escaped.
+
 ## Install
 
 ```sh
@@ -90,12 +92,3 @@ go build -o clauderig ./cmd/clauderig
 Requires `git` and the GitHub CLI (`gh`, authenticated) for the private-repo gate.
 
 - [All commands →](./commands)
-
-
-Claude hook writes preserve unrelated handlers, including commands that merely mention
-`clauderig`. Ownership requires the exact event, matcher and installer-shaped command;
-only explicitly known historical plans are migrated or removed. Unknown lookalikes
-are reported with their command and left untouched. Project/local install, uninstall
-and doctor fixes refuse settings symlinks escaping the resolved repository or targeting
-global settings; symlinked checkout paths remain supported. Malformed hook structures
-are refused, JSON numbers retain their precision, and diagnostic controls are escaped.

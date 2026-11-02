@@ -3,6 +3,7 @@ package hooks
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -69,6 +70,9 @@ func ValidateProject(repo, path string) error {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return fail("resolves outside repository")
 	}
+	if err := rejectGitMetadata(root, target, rel); err != nil {
+		return fail(err.Error())
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -77,6 +81,36 @@ func ValidateProject(repo, path string) error {
 		global, e := canonicalHookPath(filepath.Join(home, ".claude", name))
 		if e == nil && global == target {
 			return fail("resolves to global settings")
+		}
+	}
+	return nil
+}
+
+// The .git entry itself is protected even when it is a linked-worktree gitfile.
+// Git can also place its private and common directories elsewhere, including
+// beneath another name inside the checkout.
+func rejectGitMetadata(root, target, rel string) error {
+	if first := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]; strings.EqualFold(first, ".git") {
+		return fmt.Errorf("resolves into git metadata")
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".git")); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	for _, flag := range []string{"--git-dir", "--git-common-dir"} {
+		cmd := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", flag)
+		raw, err := cmd.Output()
+		if err != nil {
+			return fmt.Errorf("cannot resolve git metadata: %w", err)
+		}
+		dir, err := canonicalHookPath(strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r"))
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(dir, target)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
+			return fmt.Errorf("resolves into git metadata")
 		}
 	}
 	return nil

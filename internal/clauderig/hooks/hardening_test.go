@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,14 +15,24 @@ func TestHardeningScope(t *testing.T) {
 		for _, linkDir := range []bool{false, true} {
 			root := t.TempDir()
 			outside := filepath.Join(home, ".claude")
-			os.MkdirAll(outside, 0755)
+			if err := os.MkdirAll(outside, 0755); err != nil {
+				t.Fatal(err)
+			}
 			target := filepath.Join(outside, file)
-			os.WriteFile(target, []byte("{}"), 0644)
+			if err := os.WriteFile(target, []byte("{}"), 0644); err != nil {
+				t.Fatal(err)
+			}
 			if linkDir {
-				os.Symlink(outside, filepath.Join(root, ".claude"))
+				if err := os.Symlink(outside, filepath.Join(root, ".claude")); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
 			} else {
-				os.MkdirAll(filepath.Join(root, ".claude"), 0755)
-				os.Symlink(target, filepath.Join(root, ".claude", file))
+				if err := os.MkdirAll(filepath.Join(root, ".claude"), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, filepath.Join(root, ".claude", file)); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
 			}
 			if err := ValidateProject(root, filepath.Join(root, ".claude", file)); err == nil {
 				t.Fatal("accepted escaping symlink")
@@ -30,7 +41,9 @@ func TestHardeningScope(t *testing.T) {
 	}
 	root := t.TempDir()
 	alias := filepath.Join(t.TempDir(), "repo")
-	os.Symlink(root, alias)
+	if err := os.Symlink(root, alias); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 	if err := ValidateProject(alias, filepath.Join(alias, ".claude", "settings.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +57,10 @@ func TestHardeningOwnership(t *testing.T) {
 	if _, err := Uninstall(path); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := os.ReadFile(path)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(raw), "echo clauderig") || !strings.Contains(string(raw), "keep") || strings.Contains(string(raw), "clauderig sync") {
 		t.Fatalf("foreign sibling lost or stale retained: %s", raw)
 	}
@@ -55,14 +71,22 @@ func TestHardeningShapes(t *testing.T) {
 		if _, err := Install(p, SyncPlans()); err == nil {
 			t.Fatalf("accepted %s", raw)
 		}
-		after, _ := os.ReadFile(p)
+		after, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if string(after) != raw {
 			t.Fatal("modified invalid file")
 		}
 	}
 	p := settingsPath(t, `{"large":9007199254740993}`)
-	Install(p, SyncPlans())
-	b, _ := os.ReadFile(p)
+	if _, err := Install(p, SyncPlans()); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(string(b), "9007199254740993") {
 		t.Fatal(string(b))
 	}
@@ -72,4 +96,74 @@ func TestHardeningDisplay(t *testing.T) {
 	if strings.ContainsAny(got, "\x1b\n\u202e") {
 		t.Fatal(got)
 	}
+}
+
+func TestHardeningGitMetadata(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	git := func(t *testing.T, args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", args...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	link := func(t *testing.T, target, path string) {
+		t.Helper()
+		if err := os.Symlink(target, path); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
+	refuse := func(t *testing.T, root, path string) {
+		t.Helper()
+		if err := ValidateProject(root, path); err == nil || !strings.Contains(err.Error(), "git metadata") {
+			t.Fatalf("expected metadata refusal for %s, got %v", path, err)
+		}
+	}
+	t.Run("directory", func(t *testing.T) {
+		root := t.TempDir()
+		git(t, "init", root)
+		target := filepath.Join(root, ".git", "hooks", "pre-commit")
+		if err := os.WriteFile(target, []byte("original"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		guide := filepath.Join(root, "CLAUDE.md")
+		link(t, target, guide)
+		refuse(t, root, guide)
+		if err := os.MkdirAll(filepath.Join(root, ".claude"), 0755); err != nil {
+			t.Fatal(err)
+		}
+		settings := filepath.Join(root, ".claude", "settings.json")
+		link(t, filepath.Join("..", ".git", "config"), settings)
+		refuse(t, root, settings)
+		// A similarly named ordinary directory is not metadata.
+		if err := ValidateProject(root, filepath.Join(root, ".github", "settings.json")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("separate-directory", func(t *testing.T) {
+		root := t.TempDir()
+		metadata := filepath.Join(root, "private-metadata")
+		git(t, "init", "--separate-git-dir", metadata, root)
+		guide := filepath.Join(root, "CLAUDE.md")
+		link(t, filepath.Join(metadata, "config"), guide)
+		refuse(t, root, guide)
+	})
+	t.Run("linked-worktree", func(t *testing.T) {
+		base := t.TempDir()
+		git(t, "init", base)
+		git(t, "-C", base, "-c", "user.name=Example", "-c", "user.email=you@example.com", "commit", "--allow-empty", "-m", "initial")
+		root := filepath.Join(t.TempDir(), "checkout")
+		git(t, "-C", base, "worktree", "add", "--detach", root)
+		t.Cleanup(func() { git(t, "-C", base, "worktree", "remove", "--force", root) })
+		guide := filepath.Join(root, "CLAUDE.md")
+		link(t, filepath.Join(root, ".git"), guide)
+		refuse(t, root, guide)
+		for _, flag := range []string{"--git-dir", "--git-common-dir"} {
+			metadata := git(t, "-C", root, "rev-parse", "--path-format=absolute", flag)
+			if err := rejectGitMetadata(root, metadata, "metadata-alias"); err == nil {
+				t.Fatalf("accepted actual %s", flag)
+			}
+		}
+	})
 }
