@@ -333,6 +333,10 @@ func sessionsCheck(env Env) (Result, bool) {
 }
 
 func hookChecks(ctx context.Context, env Env) []Result {
+	return hookChecksWithProbe(ctx, env, appserver.Available(), hooks.Check)
+}
+
+func hookChecksWithProbe(ctx context.Context, env Env, available bool, check func(context.Context, string, string) ([]appserver.HookInfo, error)) []Result {
 	var out []Result
 	if env.HooksPath == "" {
 		return out
@@ -391,40 +395,6 @@ func hookChecks(ctx context.Context, env Env) []Result {
 		})
 	}
 
-	// The quiet failure. An installed, untrusted hook runs nothing and says
-	// nothing — Codex declines it without a word — so a machine can look fully
-	// set up and be backing nothing up at all.
-	if len(present) > 0 && appserver.Available() {
-		probe, cancel := context.WithTimeout(ctx, 25*time.Second)
-		ours, herr := hooks.Check(probe, "", env.CodexHome)
-		cancel()
-		switch {
-		case herr != nil:
-			out = append(out, Result{ID: "hook-trust", Name: "hooks trusted", Status: Warn, Detail: "could not ask Codex: " + herr.Error()})
-		default:
-			var untrusted []string
-			for _, h := range ours {
-				if !h.Trusted() {
-					untrusted = append(untrusted, h.EventName)
-				}
-			}
-			if len(untrusted) > 0 {
-				home := env.CodexHome
-				out = append(out, Result{
-					ID: "hook-trust", Name: "hooks trusted", Status: Fail,
-					Detail:   "Codex is silently skipping: " + strings.Join(untrusted, ", "),
-					FixLabel: "record these hooks as trusted",
-					Fix: func(c context.Context) error {
-						_, err := hooks.Trust(c, "", home)
-						return err
-					},
-				})
-			} else if len(ours) > 0 {
-				out = append(out, Result{ID: "hook-trust", Name: "hooks trusted", Status: OK, Detail: "Codex will run them"})
-			}
-		}
-	}
-
 	if env.RepoRoot != "" {
 		projectPath := filepath.Join(env.RepoRoot, ".codex", hooks.FileName)
 		if got, gerr := hooks.Status(projectPath); gerr == nil && len(got) > 0 {
@@ -437,5 +407,92 @@ func hookChecks(ctx context.Context, env Env) []Result {
 			})
 		}
 	}
+	projectPresent := false
+	if env.RepoRoot != "" {
+		got, err := hooks.Status(filepath.Join(env.RepoRoot, ".codex", hooks.FileName))
+		projectPresent = err == nil && len(got) > 0
+	}
+	if len(present) > 0 || projectPresent {
+		cwd := env.CodexHome
+		if projectPresent {
+			cwd = env.RepoRoot
+		}
+		var ours []appserver.HookInfo
+		var probeErr error
+		if available {
+			probe, cancel := context.WithTimeout(ctx, 25*time.Second)
+			ours, probeErr = check(probe, "", cwd)
+			cancel()
+		}
+		if len(present) > 0 {
+			out = append(out, hookTrustResult(env, false, available, ours, probeErr))
+		}
+		if projectPresent {
+			out = append(out, hookTrustResult(env, true, available, ours, probeErr))
+		}
+	}
+
 	return out
+}
+
+func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo, probeErr error) Result {
+	r := Result{ID: "hook-trust", Name: "hooks trusted", Status: Warn}
+	cwd, command := env.CodexHome, "codexrig global trust"
+	if project {
+		r.ID, r.Name = "project-hook-trust", "repo hooks trusted"
+		cwd, command = env.RepoRoot, "codexrig project trust"
+	}
+	if !available {
+		r.Status = Info
+		r.Detail = "not checked — Codex app server is unavailable"
+		return r
+	}
+	if probeErr != nil {
+		r.Detail = "could not ask Codex: " + probeErr.Error()
+		return r
+	}
+	var untrusted []string
+	seen := false
+	for _, h := range ours {
+		if projectHookPath(env.RepoRoot, h.SourcePath) != project {
+			continue
+		}
+		seen = true
+		if !h.Trusted() {
+			untrusted = append(untrusted, h.EventName)
+		}
+	}
+	if len(untrusted) > 0 {
+		r.Status = Fail
+		if project {
+			r.Status = Warn
+		}
+		r.Detail = "Codex is silently skipping: " + strings.Join(untrusted, ", ")
+		r.Hint = "Run `" + command + "`"
+		r.FixLabel = "record these hooks as trusted"
+		r.Fix = func(c context.Context) error { _, err := hooks.Trust(c, "", cwd); return err }
+	} else if seen {
+		r.Status, r.Detail = OK, "Codex will run them"
+	} else {
+		r.Detail = "Codex did not report the installed hooks"
+	}
+	return r
+}
+
+// Codex's source enum is not a stable scope contract. Use the file it loaded,
+// resolving symlinks so macOS /var and /private/var spellings compare equally.
+func projectHookPath(repo, source string) bool {
+	if repo == "" || source == "" {
+		return false
+	}
+	normalize := func(path string) string {
+		path = filepath.Clean(filepath.FromSlash(strings.ReplaceAll(path, `\`, "/")))
+		if resolved, err := filepath.EvalSymlinks(path); err == nil {
+			path = resolved
+		}
+		return path
+	}
+	root := normalize(filepath.Join(repo, ".codex"))
+	rel, err := filepath.Rel(root, normalize(source))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }

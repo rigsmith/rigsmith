@@ -54,6 +54,9 @@ no hook.
 `config.toml` and declines anything else without a word. That makes
 installed-but-untrusted the quietest way for a backup tool to stop backing up,
 which is why `doctor` asks Codex directly rather than checking that a file exists.
+It checks both user hooks and installed project hooks with one bounded probe
+from the repository. Untrusted project hooks warn with `codexrig project trust`
+and offer a trust fix; an unavailable app server reports that trust was not checked.
 
 **Codex writes absolute paths as TABLE KEYS**, not only as values:
 `[projects."/Users/someone/Git/thing"]`. Claude Code does not, so a path rewriter

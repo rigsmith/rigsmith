@@ -9,7 +9,7 @@
 | `codexrig pull` | Bring down what another machine synced. |
 | `codexrig restore` | Write the synced setup onto this machine. |
 | `codexrig status` | Where this machine stands. `--json` for scripts. |
-| `codexrig doctor` | Check it is actually working. `--fix` repairs what it can. |
+| `codexrig doctor` | Check it is actually working, including user and installed project hook trust. `--fix` repairs what it can. |
 
 `sync` takes `--dry-run` to capture without publishing, `--hook` to mark a
 hook-driven run (which debounces, and never blocks), and `--flush` to capture the
