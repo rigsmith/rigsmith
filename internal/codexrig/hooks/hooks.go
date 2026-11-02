@@ -157,7 +157,9 @@ func prepareInstall(doc map[string]any, plans []Plan) (added, updated []string) 
 		for _, rawGroup := range raw {
 			g, _ := rawGroup.(map[string]any)
 			hs, _ := g["hooks"].([]any)
-			matcher, _ := g["matcher"].(string)
+			rawMatcher, matcherPresent := g["matcher"]
+			matcher, matcherIsString := rawMatcher.(string)
+			matcherExact := (p.Matcher == "" && !matcherPresent) || (p.Matcher != "" && matcherIsString && matcher == p.Matcher)
 			var handlers []any
 			for _, rawHandler := range hs {
 				h, _ := rawHandler.(map[string]any)
@@ -165,10 +167,10 @@ func prepareInstall(doc map[string]any, plans []Plan) (added, updated []string) 
 				// Unknown fields and lookalikes are somebody else's work, even when
 				// they share a group with a command we recognize.
 				repairable := h["type"] == "command" && fieldIssue(h, "type", "command") == "" && fieldIssue(g, "matcher", "hooks") == "" && knownCommand(p.Event, command, p)
-				if repairable && matcher == p.Matcher && command == p.Command {
+				if repairable && matcherExact && command == p.Command {
 					exact = true
 					handlers = append(handlers, rawHandler)
-				} else if repairable && (matcher == p.Matcher || len(hs) == 1) {
+				} else if repairable && (matcherExact || len(hs) == 1) {
 					h["command"] = p.Command
 					if p.Matcher == "" {
 						delete(g, "matcher")

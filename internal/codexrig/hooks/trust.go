@@ -301,7 +301,8 @@ func CheckWithClient(ctx context.Context, client Client, scopes ...Scope) (Check
 			continue
 		}
 		if snap.err != nil {
-			return out, DisplayError(snap.err)
+			out.ScopeErrors = append(out.ScopeErrors, snap.scope.path+": "+snap.err.Error())
+			continue
 		}
 		seen := map[int]bool{}
 		for li, h := range list {

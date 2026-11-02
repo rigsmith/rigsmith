@@ -661,6 +661,9 @@ func TestHookDoctorNoopLookalikeHasNoRepair(t *testing.T) {
 			if r.Fix != nil {
 				t.Fatalf("lookalike offered a repair that cannot fix it: %+v", r)
 			}
+			if project && r.ID == "project-guard" && !strings.Contains(r.Hint, "Review lookalikes manually") {
+				t.Fatalf("missing lookalike advice: %+v", r)
+			}
 		}
 	}
 }
@@ -741,7 +744,7 @@ func TestHookDoctorInvalidProjectLeavesGlobalHealthy(t *testing.T) {
 		}
 		if r.ID == "project-guard" {
 			projectSeen = true
-			if r.Status != Warn || !strings.Contains(r.Detail, path) {
+			if r.Status != Warn || !strings.Contains(r.Detail, path) || r.Hint != "" || r.Fix != nil {
 				t.Fatalf("invalid scope not identified: %+v", r)
 			}
 		}
@@ -751,6 +754,52 @@ func TestHookDoctorInvalidProjectLeavesGlobalHealthy(t *testing.T) {
 	}
 	if !globalSeen || !projectSeen {
 		t.Fatalf("missing diagnostics: %+v", rows)
+	}
+}
+
+func TestHookDoctorMalformedProjectKeepsLegacyTrustFailures(t *testing.T) {
+	home, repo := t.TempDir(), t.TempDir()
+	global, project := hooks.GlobalScope(home), hooks.ProjectScope(repo, home)
+	for _, scope := range []hooks.Scope{global, project} {
+		if _, _, err := hooks.InstallScope(scope); err != nil {
+			t.Fatal(err)
+		}
+	}
+	globalPath := filepath.Join(home, hooks.FileName)
+	status, err := hooks.Status(globalPath, global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range status.Ours {
+		status.Ours[i].TrustStatus = "trusted"
+	}
+	projectPath := filepath.Join(repo, ".codex", hooks.FileName)
+	if err := os.WriteFile(projectPath, []byte(`{"hooks":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := &finalReviewClient{list: status.Ours}
+	for _, source := range []string{globalPath, filepath.Join(repo, ".codex", "config.toml")} {
+		c.list = append(c.list, appserver.HookInfo{SourcePath: source, Command: "codexrig pull; evil", EventName: "sessionStart", Key: source + ":session_start:1:0", TrustStatus: "trusted", Enabled: true})
+	}
+	rows := hookChecksWithProbe(context.Background(), Env{CodexHome: home, HooksPath: globalPath, RepoRoot: repo}, true, func(ctx context.Context, _, _ string, scopes ...hooks.Scope) (hooks.CheckResult, error) {
+		return hooks.CheckWithClient(ctx, c, scopes...)
+	})
+	globalFail, inlineFail, parseWarning := false, false, false
+	for _, r := range rows {
+		if strings.Contains(r.Detail, "could not ask Codex") {
+			t.Fatalf("file error misreported as probe failure: %+v", r)
+		}
+		switch r.ID {
+		case "hook-trust":
+			globalFail = r.Status == Fail && strings.Contains(r.Detail, "STILL TRUSTED")
+		case "other-hook-trust":
+			inlineFail = r.Status == Fail && strings.Contains(r.Detail, "config.toml") && strings.Contains(r.Detail, "STILL TRUSTED")
+		case "project-guard":
+			parseWarning = r.Status == Warn && r.Hint == "" && r.Fix == nil && strings.Contains(r.Detail, "invalid JSON")
+		}
+	}
+	if !globalFail || !inlineFail || !parseWarning {
+		t.Fatalf("malformed scope hid or misdiagnosed findings: %+v", rows)
 	}
 }
 

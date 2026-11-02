@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -148,6 +149,56 @@ func TestTrustUnlistedHandlerIsReported(t *testing.T) {
 	result, err := TrustWithClient(context.Background(), c, "", scope)
 	if err == nil || len(result.Refused) != 1 || result.Refused[0].Command != "codexrig sync --hook" {
 		t.Fatalf("unlisted handler hidden: %+v %v", result, err)
+	}
+}
+
+func TestTrustCheckMalformedScopeKeepsOtherDiagnostics(t *testing.T) {
+	global := GlobalScope(t.TempDir())
+	project := ProjectScope(t.TempDir(), filepath.Dir(global.path))
+	c := installFixture(t, global)
+	installFixture(t, project)
+	if err := os.WriteFile(project.path, []byte(`{"hooks":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	legacy := c.hooks[0]
+	legacy.SourcePath = filepath.Join(filepath.Dir(project.path), "config.toml")
+	legacy.Key = legacy.SourcePath + ":session_start:0:0"
+	legacy.Command = "codexrig pull; evil"
+	legacy.TrustStatus = "trusted"
+	c.hooks = append(c.hooks, legacy)
+	for _, scopes := range [][]Scope{{project, global}, {global, project}} {
+		checked, err := CheckWithClient(context.Background(), c, scopes...)
+		if err != nil || len(checked.ScopeErrors) != 1 || !strings.Contains(checked.ScopeErrors[0], project.path) || len(checked.Ours) != 2 || len(checked.StillTrusted) != 1 || checked.StillTrusted[0].Command != legacy.Command {
+			t.Fatalf("malformed scope hid other diagnostics: %+v %v", checked, err)
+		}
+	}
+}
+
+func TestInstallRepairsSyncMatcherPresenceAndType(t *testing.T) {
+	for _, matcher := range []any{"", nil, false, 42} {
+		t.Run(fmt.Sprint(matcher), func(t *testing.T) {
+			scope := GlobalScope(t.TempDir())
+			installFixture(t, scope)
+			editFixture(t, scope, func(doc map[string]any) {
+				doc["hooks"].(map[string]any)["Stop"].([]any)[0].(map[string]any)["matcher"] = matcher
+			})
+			if !CanInstall(scope) {
+				t.Fatal("installer does not offer to repair an unsupported matcher")
+			}
+			_, updated, err := InstallScope(scope)
+			if err != nil || len(updated) != 1 || updated[0] != "Stop" {
+				t.Fatalf("matcher repair: updated=%v err=%v", updated, err)
+			}
+			status, err := Status(scope.path, scope)
+			if err != nil || len(status.Ours) != 2 || len(status.Lookalikes) != 0 || CanInstall(scope) {
+				t.Fatalf("repair did not converge: %+v %v", status, err)
+			}
+			c := listedFixture(t, scope)
+			trusted, err := TrustWithClient(context.Background(), c, "", scope)
+			if err != nil || len(trusted.Trusted) != 2 {
+				t.Fatalf("repaired hooks not trusted: %+v %v", trusted, err)
+			}
+		})
 	}
 }
 

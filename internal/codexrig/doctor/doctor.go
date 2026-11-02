@@ -352,7 +352,7 @@ func hookChecksWithProbe(ctx context.Context, env Env, available bool, check fun
 		case err != nil:
 			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: Warn, Detail: hooks.Display(err.Error())})
 		case len(status.Lookalikes) > 0:
-			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: Warn,
+			r := Result{ID: "project-guard", Name: "repo guard", Status: Warn,
 				Detail:   "lookalike or out of date, reinstall: " + describeHookCommands(status.Lookalikes),
 				Hint:     "Run `codexrig project install`, review the result, then `codexrig project trust`",
 				FixLabel: "reinstall the project guard",
@@ -360,7 +360,13 @@ func hookChecksWithProbe(ctx context.Context, env Env, available bool, check fun
 					_, _, err := hooks.InstallScope(hooks.ProjectScope(env.RepoRoot, env.CodexHome), env.Output)
 					return err
 				},
-			})
+			}
+			if !hooks.CanInstall(hooks.ProjectScope(env.RepoRoot, env.CodexHome)) {
+				r.Fix = nil
+				r.FixLabel = ""
+				r.Hint = "Review lookalikes manually in the hooks file; the safe installer cannot repair them."
+			}
+			out = append(out, r)
 		case len(status.Ours) > 0:
 			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: OK, Detail: hooks.Display(strings.Join(status.Events(), ", "))})
 		case len(status.Foreign) > 0:
@@ -368,15 +374,6 @@ func hookChecksWithProbe(ctx context.Context, env Env, available bool, check fun
 		default:
 			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: Info,
 				Detail: "not installed in this repository", Hint: "`codexrig project install` keeps code changes off a base branch"})
-		}
-	}
-	for i := range out {
-		if out[i].ID == "project-guard" && !hooks.CanInstall(hooks.ProjectScope(env.RepoRoot, env.CodexHome)) {
-			out[i].Fix = nil
-			out[i].FixLabel = ""
-			if out[i].Status == Warn {
-				out[i].Hint = "Review lookalikes manually in the hooks file; the safe installer cannot repair them."
-			}
 		}
 	}
 	if globalPresent || projectPresent || available {
