@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -39,6 +40,15 @@ func TestStackCanaryPublish(t *testing.T) {
 						w.Write([]byte(`{"sha":"abc","tree":{"sha":"tree"},"object":{"sha":"abc"}}`))
 					}
 					return
+				}
+				if strings.HasSuffix(p, "/pulls") || strings.HasSuffix(p, "/pulls/1") {
+					var payload struct{ Body string }
+					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+						t.Error(err)
+					}
+					if !strings.Contains(payload.Body, "reported green by the build job") || !strings.Contains(payload.Body, "not the build outcome") {
+						t.Error("PR body overstates verification")
+					}
 				}
 				if strings.HasSuffix(p, "/git/trees") {
 					var payload struct {
@@ -104,14 +114,31 @@ func TestStackCanaryWorkflow(t *testing.T) {
 	}
 	var workflow struct {
 		Jobs map[string]struct {
+			If          string
 			Permissions map[string]string
-			Steps       []struct{ With map[string]any }
+			Steps       []struct {
+				With map[string]any
+				Uses string
+			}
 		}
 	}
 	if e = yaml.Unmarshal(b, &workflow); e != nil {
 		t.Fatal(e)
 	}
+	if workflow.Jobs["publish"].If != "${{ needs.build.result == 'success' }}" {
+		t.Fatal("publisher must require successful build job")
+	}
 	build := workflow.Jobs["build"]
+	for _, job := range workflow.Jobs {
+		for _, step := range job.Steps {
+			if strings.HasPrefix(step.Uses, "actions/upload-artifact@") && step.Uses != "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" {
+				t.Fatal("upload pin drift")
+			}
+			if strings.HasPrefix(step.Uses, "actions/download-artifact@") && step.Uses != "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333" {
+				t.Fatal("download pin drift")
+			}
+		}
+	}
 	for _, v := range build.Permissions {
 		if v == "write" {
 			t.Fatal("unsafe build permissions")
@@ -255,5 +282,96 @@ func TestStackCanaryFlow(t *testing.T) {
 		if e = json.Unmarshal(b, &r); e != nil || len(r.Results) != 1 || r.Results[0].Green != green {
 			t.Fatalf("report %s error %v", b, e)
 		}
+	}
+}
+
+func TestStackCanaryRejectsForkNetworkCommit(t *testing.T) {
+	dir := t.TempDir()
+	mustGitStack(t, dir, "init", "-q", "-b", "main")
+	mustGitStack(t, dir, "config", "user.name", "test")
+	mustGitStack(t, dir, "config", "user.email", "test@localhost")
+	from, to := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	writeStackManifest(t, dir, fmt.Sprintf(`{"repos":{"app":{"upstream":"github.com/acme/app","fork":"github.com/you/app","upstreamBranch":"release/trusted"}},"lastSync":{"app":%q}}`, from))
+	mustGitStack(t, dir, "add", ".")
+	mustGitStack(t, dir, "commit", "-qm", "seed")
+	base := strings.TrimSpace(mustGitStack(t, dir, "rev-parse", "HEAD"))
+	bare := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, dir, "clone", "--bare", dir, bare)
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url."+filepath.ToSlash(bare)+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/acme/home.git")
+	for _, status := range []string{"diverged", "ahead", "behind", "identical"} {
+		t.Run(status, func(t *testing.T) {
+			writes, checked := 0, false
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" {
+					writes++
+					w.Write([]byte(`{"sha":"new"}`))
+					return
+				}
+				switch {
+				case strings.Contains(r.URL.Path, "/compare/"+from+"..."+to):
+					json.NewEncoder(w).Encode(map[string]any{"status": "ahead", "commits": []any{map[string]string{"sha": to}}})
+				case strings.Contains(r.URL.Path, "/compare/refs/heads/"):
+					checked = true
+					if !strings.HasSuffix(r.URL.Path, "/compare/refs/heads/release/trusted..."+to) {
+						t.Errorf("branch not read from manifest: %s", r.URL.Path)
+					}
+					json.NewEncoder(w).Encode(map[string]string{"status": status})
+				case strings.HasSuffix(r.URL.Path, "/issues"), strings.HasSuffix(r.URL.Path, "/pulls"):
+					w.Write([]byte(`[]`))
+				default:
+					w.Write([]byte(`{"sha":"seed","tree":{"sha":"tree"}}`))
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("GITHUB_API_URL", srv.URL)
+			t.Setenv("GITHUB_TOKEN", "test-token")
+			report := filepath.Join(t.TempDir(), "report.json")
+			b, e := json.Marshal(stackCanaryReport{Base: base, Results: []stackCanaryResult{{Changes: []stackCanaryChange{{Member: "app", From: from, To: to}}, Green: true}}})
+			if e != nil {
+				t.Fatal(e)
+			}
+			if e = os.WriteFile(report, b, 0600); e != nil {
+				t.Fatal(e)
+			}
+			c := newStackCanaryCmd()
+			c.SetArgs([]string{"--seed", "acme/home@main", "--publish", report})
+			err := c.Execute()
+			allowed := status == "behind" || status == "identical"
+			if allowed {
+				if err != nil || writes == 0 {
+					t.Fatalf("allowed ancestor rejected: %v writes %d", err, writes)
+				}
+			} else if err == nil || writes != 0 {
+				t.Fatalf("fork-network commit published: err=%v writes=%d", err, writes)
+			}
+			if !checked {
+				t.Fatal("tracked upstream branch was not checked")
+			}
+		})
+	}
+}
+
+func TestStackCanaryHelpAlignment(t *testing.T) {
+	columns := regexp.MustCompile(`^  rig stack .*? {2,}`)
+	column := -1
+	for _, line := range strings.Split(newStackCmd().Long, "\n") {
+		if !strings.HasPrefix(line, "  rig stack ") {
+			continue
+		}
+		prefix := columns.FindString(line)
+		if prefix == "" {
+			t.Fatalf("missing description column: %s", line)
+		}
+		if column < 0 {
+			column = len(prefix)
+		}
+		if len(prefix) != column {
+			t.Fatalf("misaligned description: %s", line)
+		}
+	}
+	if column < 0 {
+		t.Fatal("no stack help entries")
 	}
 }

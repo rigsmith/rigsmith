@@ -121,8 +121,29 @@ it runs no project commands and restores no build cache. Do not reuse a
 self-hosted workspace between these jobs. Environment scrubbing of `*_TOKEN`
 and `*_PAT` in build children is defense in depth, not a sandbox: arbitrary
 upstream code can leave files behind, which is why the separate runner matters.
-A report can misstate its build outcome; treat artifacts from an untrusted run
-as evidence for review, never automatic merge authorization.
+The report is attacker-controlled: upstream code can replace `Green`, member
+selection and attribution. The publisher cannot verify that a build ran, passed,
+or tested these exact commits. PR bodies say "reported green by the build job";
+this is a claim from that job, never proof or automatic merge authorization.
+The publisher independently verifies the seed base, allowed cursor deltas, and
+that every target advances the cursor and is an ancestor of the current tracked
+upstream branch. The branch comes from the fresh seed manifest, never the report.
+A fork-network SHA that merely compares ahead of the cursor is insufficient.
+Human review and trusted PR checks remain necessary before merging.
+
+The workflow explicitly requires `needs.build.result == 'success'` for publication.
+A red canary records its failure in a report and exits successfully so it can
+open an issue. Setup failures, failed/missing artifact uploads and cancelled
+build jobs skip publication, leaving existing PRs/issues unchanged. Success of
+the job only establishes workflow completion, not the truth of `Green`.
+
+The example installs a reviewed release with `go install module@version` on each
+fresh runner, with public module verification through `sum.golang.org` enabled.
+Go checks module source hashes against that checksum database; it builds the
+pinned trusted tool source rather than authenticating a prebuilt release archive.
+This is a source-build alternative to the checksum-verified binary installer;
+it does not use the upstream checkout or build-job executables. See the
+[Go module authentication reference](https://go.dev/ref/mod#authenticating).
 
 Publication requires the same seed commit, validates the cursor-only deltas,
 and reloads the manifest from an independent read-only seed clone. It uses

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,6 +157,18 @@ func newStackCanaryCmd() *cobra.Command {
 					upstream := strings.SplitN(m.Repos[ch.Member].Upstream, "/", 2)
 					if len(upstream) != 2 || upstream[0] != "github.com" {
 						return fmt.Errorf("publication requires GitHub upstreams")
+					}
+					// GitHub resolves SHAs across a fork network. Advancing the
+					// cursor alone does not prove membership in upstream's branch.
+					var membership struct{ Status string }
+					tracked := url.PathEscape("refs/heads/" + m.branch(ch.Member))
+					// Compare branch...target: behind means the target trails upstream.
+					endpoint := "/repos/" + upstream[1] + "/compare/" + tracked + "..." + ch.To
+					if e = api.request(ctx, "GET", endpoint, nil, &membership); e != nil {
+						return fmt.Errorf("cannot verify tracked upstream branch: %w", e)
+					}
+					if membership.Status != "behind" && membership.Status != "identical" {
+						return fmt.Errorf("cursor target is not on the tracked upstream branch")
 					}
 					ch.Commits = nil
 					for page := 1; page <= 100; page++ {
@@ -394,13 +407,13 @@ func stackCanaryPublish(ctx context.Context, a stackDepsAPI, repo, baseBranch, b
 	key := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(names, "\n"))))[:16]
 	branch := "rig-canary/" + key
 	marker := "<!-- rig-canary:" + key + " -->"
-	text := marker + "\nUpstream canary" + body.String()
+	text := marker + "\nUpstream canary: reported green by the build job. The publisher verifies upstream ancestry, not the build outcome. Review before merging.\n" + body.String()
 	if !r.Green {
 		for _, n := range r.Failures {
-			fmt.Fprintf(&body, "\nIndividual test failed: %s\n", stackCanaryText(n))
+			fmt.Fprintf(&body, "\nIndividual test reported failed: %s\n", stackCanaryText(n))
 		}
 		text = marker + "\nUpstream canary" + body.String()
-		text += "\nBuild failed. Listed members and ranges are candidates; a batch failure does not establish individual blame.\n"
+		text += "\nBuild reported failed by the build job; the publisher cannot verify this outcome. Listed members and ranges are candidates; a batch failure does not establish individual blame.\n"
 	}
 	path := "/repos/" + repo
 	var issues []struct {
