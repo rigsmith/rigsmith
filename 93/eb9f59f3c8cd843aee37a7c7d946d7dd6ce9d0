@@ -1,0 +1,21 @@
+internal/rig/cli/stack.go
+  s_8cf1a2bc8ee3e0::t_3b462084f69d3e 1923-1924
+internal/rig/cli/stackpush_test.go
+  s_8cf1a2bc8ee3e0::t_3b462084f69d3e 158-206
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "93eb9f59f3c8cd843aee37a7c7d946d7dd6ce9d0",
+  "prompts": {},
+  "sessions": {
+    "s_8cf1a2bc8ee3e0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19d68-72be-73b1-b194-72f9775283f7",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
