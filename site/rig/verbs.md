@@ -482,3 +482,8 @@ match against the project's full name, short name, and repo-relative path.
 commit ancestry. `--version` selects a release, `--feed` selects a flat-container
 feed, `--warning` explicitly attributes warning IDs, and `--apply` edits a clean
 working tree after interactive confirmation. `-n` previews only. See [stackspaces](./stack).
+
+For transitive siblings, `stack released --via-package Acme.Control
+--via-version 4.0.0` selects a direct package whose nuspec must deliver the
+verified sibling minimum in every target-framework group. `rig stack status
+--releases` opts into bounded release annotations; default status skips discovery.

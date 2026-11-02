@@ -194,3 +194,7 @@ is itself a .NET port of [changesets](https://github.com/changesets/changesets).
 For .NET stackspaces, `rig stack released app lib --package Acme.Lib` checks
 published NuGet commit ancestry and previews a return to packages. `--apply`
 edits a clean tree after confirmation. See [the stack guide](site/rig/stack.md).
+
+Transitive package migrations verify a published delivery dependency with
+`--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
+release discovery; ordinary status performs no additional registry checks.

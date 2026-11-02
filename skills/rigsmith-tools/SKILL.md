@@ -436,3 +436,9 @@ Require repository commit ancestry proof; missing evidence is not a release.
 `--apply` is interactive and clean-tree only; `-n` previews. Explicitly attribute
 StackOnlyWarning IDs with `--warning`; review all refused rewrites and build
 with UseStackSources=false. The command creates no PR.
+
+For a transitive stack sibling, use --via-package/--via-version to verify a
+published direct package delivers the verified sibling minimum in all nuspec
+framework groups. Publish the sibling, then migrate/publish its consumer, then
+the application. A failed delivery proof must leave guards in place. Use
+`rig stack status --releases` to opt into discovery; default status skips it.

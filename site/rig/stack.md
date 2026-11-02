@@ -1416,7 +1416,7 @@ commit metadata against all recorded sibling proposals and its upstream cursor.
 Use `--version 2.0.0` for one version or `--feed <flat-container-url>` for another
 feed. The default checks up to 20 newest stable versions. Missing metadata says
 “can't tell”; feed failures say “can't check”. Dates and version names are never
-containment evidence. Status annotates merged dependencies when release proof
+containment evidence. `rig stack status --releases` annotates merged dependencies when release proof
 fits its existing short network budget.
 
 Add `--apply` to bump literal PackageReference or central PackageVersion pins
@@ -1427,3 +1427,13 @@ unattributed StackOnlyWarning declarations are listed for manual review.
 Use `--warning ACME0001` only after identifying that declaration as belonging to
 this package. Floating versions and conditional pins require manual work.
 Review and build with stack sources off before committing. No PR is opened.
+
+For `App -> Acme.Control -> Acme.Core`, the Core release alone is insufficient.
+`rig stack released app core --package Acme.Core --via-package Acme.Control`
+checks published Control nuspecs for a Core minimum at least as new as the proven
+release in **every** framework group, then bumps Control and removes Core guards.
+`--via-version` selects a Control release. If none qualifies, guards remain;
+publish Core, migrate/publish Control against it, then migrate App. A manually
+added direct Core reference is an explicit alternative. Control guards need their
+own migration. No dependency is silently added. Default status skips release
+discovery; `--releases` opts into one shared scan under its short report deadline.

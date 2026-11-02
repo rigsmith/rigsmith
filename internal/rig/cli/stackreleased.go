@@ -131,10 +131,10 @@ func stackReleaseVersion(ctx context.Context, a stackDepsAPI, m *stackManifest, 
 }
 
 func newStackReleasedCmd() *cobra.Command {
-	var pkg, version, feed string
+	var pkg, version, feed, via, viaVersion string
 	var apply bool
 	var warnings []string
-	c := &cobra.Command{Use: "released <member> <sibling>", Short: "Check NuGet release ancestry and prepare a return to packages", Long: "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\n--apply requires a clean tree and interactive confirmation. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only. No commits, pushes or PRs are created.", Args: cobra.ExactArgs(2)}
+	c := &cobra.Command{Use: "released <member> <sibling>", Short: "Check NuGet release ancestry and prepare a return to packages", Long: "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\n--apply requires a clean tree and interactive confirmation. Transitive siblings require a published direct package dependency minimum in every framework group.\n--via-package/--via-version select that delivery release. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only. No commits, pushes or PRs are created.", Args: cobra.ExactArgs(2)}
 	c.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		root, err := stackRoot(cmd.Context())
 		if err != nil {
@@ -147,6 +147,8 @@ func newStackReleasedCmd() *cobra.Command {
 		return m.names(), cobra.ShellCompDirectiveNoFileComp
 	}
 	c.Flags().StringVar(&pkg, "package", "", "Sibling NuGet package identity (required)")
+	c.Flags().StringVar(&via, "via-package", "", "Direct delivery package for a transitive sibling")
+	c.Flags().StringVar(&viaVersion, "via-version", "", "Delivery package release (otherwise checks 20 newest stable versions)")
 	c.Flags().StringVar(&version, "version", "", "Published version to check")
 	c.Flags().StringVar(&feed, "feed", stackNugetFeed, "NuGet flat-container base URL")
 	c.Flags().StringSliceVar(&warnings, "warning", nil, "Explicit warning IDs belonging to this package to remove")
@@ -169,19 +171,9 @@ func newStackReleasedCmd() *cobra.Command {
 		if pkg == "" {
 			return fmt.Errorf("--package is required")
 		}
-		// Verify package ownership using the same discovered redirects as wire.
-		links, failed := stackStackOnlyPins(cmd.Context(), root, m, args[0])
-		if len(failed) > 0 {
-			return fmt.Errorf("can't check package ownership: discovery failed")
-		}
-		owned := false
-		for _, l := range links {
-			if l.To == args[1] && strings.EqualFold(l.Package, pkg) {
-				owned = true
-			}
-		}
-		if !owned {
-			return fmt.Errorf("package is not a discovered reference to this sibling")
+		links, err := stackReleaseAllLinks(cmd.Context(), root, m)
+		if err != nil {
+			return err
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
 		defer cancel()
@@ -191,7 +183,12 @@ func newStackReleasedCmd() *cobra.Command {
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: released in %s (all recorded proposals and upstream cursor checked)\n", pkg, v)
 		symbol := "STACK_" + strings.ToUpper(dotnet.StackSourceName(pkg))
-		edits, notes, err := stackReleaseEdits(filepath.Join(root, args[0]), pkg, v, symbol, warnings...)
+		pin, pinVersion, delivery, err := stackReleaseDelivery(ctx, stackDepsClient(), links, args[0], args[1], pkg, v, via, viaVersion, feed)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), delivery)
+		edits, notes, err := stackReleaseEdits(filepath.Join(root, args[0]), pin, pinVersion, symbol, warnings...)
 		if err != nil {
 			return err
 		}
@@ -224,32 +221,4 @@ func newStackReleasedCmd() *cobra.Command {
 		return stackReleaseWrite(edits)
 	}
 	return c
-}
-
-func stackReleaseStatus(ctx context.Context, m *stackManifest, a stackDepsAPI, member, sibling string) string {
-	if ctx.Err() != nil {
-		return ""
-	}
-	root, err := stackRoot(ctx)
-	if err != nil {
-		return ""
-	}
-	links, failed := stackStackOnlyPins(ctx, root, m, member)
-	if len(failed) > 0 {
-		return ""
-	}
-	var labels []string
-	for _, l := range links {
-		if l.To != sibling {
-			continue
-		}
-		v, err := stackReleaseVersion(ctx, a, m, sibling, l.Package, "", stackNugetFeed)
-		if err == nil {
-			labels = append(labels, l.Package+" released in "+v)
-		}
-	}
-	if len(labels) == 0 {
-		return ""
-	}
-	return " (" + strings.Join(labels, "; ") + ")"
 }

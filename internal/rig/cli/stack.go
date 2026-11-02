@@ -42,7 +42,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack home [pointer-file]          read a member seed pointer\n" +
 			"  rig stack released <member> <sibling>   check NuGet releases; --apply returns to packages\n" +
 			"  rig stack deps                         topic PR dependencies and cursor inclusion\n" +
-			"  rig stack status                       cursor vs upstream, per repo\n" +
+			"  rig stack status                       cursor vs upstream, per repo; --releases checks NuGet\n" +
 			"  rig stack pull [repo]                  merge new upstream commits (all by default)\n" +
 			"  rig stack propose [repo] [branch]      a branch on your fork, prefixed stack/ (asks)\n" +
 			"  rig stack push [repo]                  fast-forward a repo you own, history intact\n" +
@@ -275,10 +275,11 @@ func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfin
 }
 
 func newStackStatusCmd() *cobra.Command {
+	var releases bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Each repo's cursor, unsent work and topic PR dependency chain",
-		Long:  "Shows cursor and unsent work per member, plus recorded topic PR dependencies\nchecked after local output with a two-second total API lookup budget.\nUnavailable API data is labelled could not check.",
+		Long:  "Shows cursor and unsent work per member, plus recorded topic PR dependencies\nchecked after local output with a two-second total API lookup budget.\nUnavailable API data is labelled could not check. --releases opts into package discovery and\nNuGet release evidence within that same deadline; omitted by default for fast offline status.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -389,10 +390,11 @@ func newStackStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "\ntopics in flight: %s\n", strings.Join(topics, ", "))
 				fmt.Fprintf(out, "  propose one with `rig stack propose <repo> <name> --from %s`\n", strings.TrimPrefix(topics[0], stackTopicPrefix))
 			}
-			stackStatusDependencies(ctx, m, out)
+			stackStatusDependencies(ctx, m, out, releases)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&releases, "releases", false, "Check NuGet releases (optional discovery, shared two-second report budget)")
 	return cmd
 }
 

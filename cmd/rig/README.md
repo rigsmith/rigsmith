@@ -153,3 +153,7 @@ is tracked in [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).
 `rig stack released app lib --package Acme.Lib` verifies NuGet commit ancestry
 and previews package pin and simple stack guard edits. `--apply` requires a clean
 tree and interactive confirmation; `-n` previews. See [stackspaces](../../site/rig/stack.md).
+
+Transitive package migrations verify a published delivery dependency with
+`--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
+release discovery; ordinary status performs no additional registry checks.

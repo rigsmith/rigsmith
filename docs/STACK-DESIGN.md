@@ -1327,13 +1327,32 @@ commit metadata therefore says **can't tell**. Registries other than NuGet and
 authenticated feed support remain future work.
 
 Guards identify packages, using the same normalized package ID as the .NET
-overlay, rather than topics. The selected package must be a discovered direct
-reference from the member to that sibling. All recorded sibling proposals must
+overlay, rather than topics. The selected package must be produced by the sibling and be reachable through
+the discovered package graph. All recorded sibling proposals must
 be included; the cursor additionally bounds recorded upstream work. Unrecorded
 fork work and a guard's actual feature requirements cannot be inferred. Keep
-proposal records current and review the preview. Transitive-only package
-consumers currently need manual migration because there is no direct package
-pin to bump.
+proposal records current and review the preview. For a transitive sibling, a published direct delivery package must explicitly
+require the verified sibling version or higher. `--via-package Acme.Control`
+disambiguates multiple delivery paths; `--via-version 4.0.0` selects a release.
+Otherwise up to 20 newest stable delivery releases are checked. The tool bumps
+that direct pin and removes only the selected sibling's guards; it does not
+remove the delivery package's own guards.
+
+Every nuspec dependency group must include the sibling with a provable minimum
+at least as new as the verified release. Bare NuGet versions mean inclusive
+minima; `[2.0.0]`, `[2.0.0,3.0.0)` and `(2.0.0,3.0.0)` can establish a minimum;
+floating versions and unbounded lower ranges cannot. Groups missing the sibling,
+older minima, invalid ranges or excluded compile assets block migration. All
+groups are checked rather than guessing evaluated target frameworks. Only an
+explicit immediate dependency in the delivery nuspec qualifies; deeper chains
+require an explicit delivery dependency or a manually added direct reference.
+
+If no checked release qualifies, guards and pins stay unchanged. The report names
+the required sibling minimum and recommends migrating/publishing the sibling,
+then its direct consumer, then the application. An exact future delivery version
+cannot be predicted. Adding a direct sibling PackageReference manually is an
+explicit alternative; the next run then follows the ordinary direct path.
+No direct reference is silently added.
 
 The default is read-only. `--apply` prepares edits in memory and lists files and
 manual-review notes, refuses tracked or untracked dirt, and asks for interactive
@@ -1369,11 +1388,16 @@ that single Include attribute. Other declarations are listed unchanged. Users
 must attribute those warning IDs during review; guessing from an ID could
 remove a warning for another unreleased sibling.
 
-`stack status` and `stack deps` annotate included merged dependencies with
-`Acme.Lib released in X.Y.Z` when discovery and evidence succeed. Status shares
+`stack status --releases` annotates included merged dependencies with
+`Acme.Lib released in X.Y.Z` when discovery and evidence succeed. Release checks are opt-in because discovery can scan a large repository. The
+default status and stack deps do no release discovery or registry work. Status shares
 its existing two-second optional dependency-report budget; it makes no new
 registry call unless a merged proposal was first verified in the cursor.
-Offline or exhausted budgets simply omit release annotations. There is no
+Discovery is lazy and performed once for the entire report, and repeated
+member/sibling annotations are cached within that report. The same context
+deadline reaches discovery, credentials, GitHub and feed requests. Offline or
+exhausted budgets simply omit release annotations. A hanging-feed fixture measured
+2.003 seconds for the two-second budget, including one discovery call. There is no
 persistent cache of release claims.
 
 Fake-server tests exercise repository metadata and ancestry outcomes; golden
