@@ -913,7 +913,7 @@ func projectReferences(text string) []plugin.Dependency {
 		if name == "" {
 			continue
 		}
-		deps = append(deps, plugin.Dependency{Name: name, Kind: plugin.DepNormal})
+		deps = append(deps, plugin.Dependency{Name: name, Kind: plugin.DepNormal, ProjectPath: include})
 	}
 	return deps
 }

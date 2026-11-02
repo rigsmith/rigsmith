@@ -833,10 +833,73 @@ LF or CRLF newline; embedded whitespace and control characters are rejected.
 With `UseStackSources` other than `false`, the overlay sets
 `RigStackspace=true` and `RigStackspaceRoot` (an absolute directory with a trailing
 separator). Before `PrepareForBuild` / `CoreCompile`, target
-`RigStackSourceSignals` appends `RIG_STACK` to `DefineConstants`. For each package
-actually swapped in this project, it also sets `RigStackSource_Acme_Core=true`
+`RigStackSourceSignals` appends `RIG_STACK` to `DefineConstants`. For each sibling whose source is reached directly by a swap or transitively
+through a swapped sibling, it also sets `RigStackSource_Acme_Core=true`
 and appends `STACK_ACME_CORE`. A project referencing no sibling gets only the
 stack-wide signals.
+
+`wire` computes a sorted, deduplicated closure of scanned PackageReference
+edges per producing project and emits it with each redirect. Cycles terminate
+and diamonds share one signal. A closure is activated only when MSBuild actually
+swaps its root PackageReference in the consuming project. Unreachable members
+remain absent. `doctor` previews the same closure; its full generated-file
+comparison detects stale links, so re-run `wire` after reference changes.
+
+ProjectReferences propagate signals too: `Tests -> App -> Acme.Control ->
+Acme.Core` gives Tests both sibling signals. `RigStackGetSourceSignals` queries
+referenced projects' effective sets recursively at target time. SDK projects use
+the SDK's configuration, platform and nearest-target-framework reference metadata;
+an outer multi-target query combines its inner builds. Direct ProjectReferences
+to an offered source producer also count. No sibling signal is added merely
+because an unrelated ProjectReference exists, or for a producer referring only
+to itself. Both properties and constants are published before compile, including
+on incremental builds.
+
+The query invokes only signal and SDK reference-preparation targets, never Build
+or Restore. SDK preparation reads existing restore assets, as a normal build
+does after restore. An ancestry list of full project paths, compared without
+case sensitivity, terminates cycles. Diamonds can query a project under several
+ancestries, but each package's constant is emitted once. MSBuild caches target
+execution within each project/global-property instance. The cost is additional
+project evaluations and reference queries proportional to reachable paths; large,
+heavily shared graphs can cost more than a simple chain. There is no extra
+compilation or restore. Queries require the referenced project to import the
+overlay; projects hiding it cannot return their effective sets.
+
+SDK reference preparation uses private SDK targets and items. If an SDK project
+has evaluated ProjectReferences to existing files but preparation returns no
+candidates, the query fails with `RIGSTACK001`, naming a likely SDK item-contract
+change. Conditional references that evaluate away and missing files do not
+trigger this check. This is a hard error, independent of `TreatWarningsAsErrors`:
+a warning could be ignored and silently compile guarded code or tests out. A
+build with untrustworthy source signals must stop until rig or the SDK is updated.
+
+`BuildProjectReferences=false` suppresses referenced builds, not the read-only
+signal query: a caller being compiled still needs its effective constants even
+when sibling binaries already exist. `dotnet test --no-build` skips compilation
+and uses the constants baked into the existing test assembly; it does not need
+to recompute source signals. Build that assembly with the intended stack-source
+settings first. A no-build run cannot recover tests omitted by an earlier build.
+
+The static PackageReference closure remains as a conservative fallback for
+package edges inside swapped siblings. Direct conditional PackageReferences and
+ProjectReferences are evaluated by MSBuild, including the selected SDK framework.
+Deeper package conditions in the static closure can still report a source signal
+for an inactive edge. This prefers a visible compile error from an overly broad
+true signal to silently losing guarded code from a false signal. References
+introduced after the overlay's evaluation or only by targets are not guaranteed.
+
+`doctor` follows scanned ProjectReference paths relative to each consuming
+manifest, including across members, instead of guessing from project filenames.
+Its output is explicitly a static preview: conditions, framework selection,
+property-expanded paths and imported references are resolved by MSBuild during
+the real build, so the preview can overstate conditional edges or omit dynamic
+ones. The preview agrees with unconditional, literal-path graphs.
+
+`UseStackSources=false` disables swaps, source properties and constants together.
+Hand-owned gated parent imports are preserved without a legacy advisory.
+Historical ungated rig imports remain detectable; customized blocks that wire
+cannot safely replace get a manual inspection remedy.
 
 Names come from the **referenced package ID**, including a republished ID:
 replace each character outside ASCII `A-Z`, `a-z`, `0-9` with `_`; preserve case
@@ -883,9 +946,9 @@ Use `STACK_ACME_CORE` for that compile-time decision.
 
 `RigStackSource_*` remains available only in targets after
 `RigStackSourceSignals`; `STACK_*` still means this assembly compiles against
-that source. Conditional PackageReferences are resolved by MSBuild for the
-selected configuration/TFM: availability can be true while no swap or constant
-is produced. Use availability to condition a PackageReference, but use the
+that source. Direct conditional PackageReferences are resolved by MSBuild for the
+selected configuration/TFM; transitive signals use the static closure described
+above. Availability can be true while no swap or constant is produced. Use availability to condition a PackageReference, but use the
 compile constant to guard source-only APIs. No static per-project facts are
 promised. Re-run `wire` after changing members or references.
 

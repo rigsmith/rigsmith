@@ -636,7 +636,7 @@ func TestStackSourceSignalsE2E(t *testing.T) {
 #if !RIG_STACK
 #error missing stack constant
 #endif
-public class App { int value = Core.SourceOnly; }
+public class App { public static int SourceOnly => Core.SourceOnly; }
 #else
 #if RIG_STACK
 #error unexpected stack constant
@@ -1029,5 +1029,307 @@ func TestLocalOverlayPreservesCustomizedLegacyPropsBlock(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestReachableSourceSignals(t *testing.T) {
+	body := renderOverlay([]plugin.Redirect{
+		{Package: "Acme.Control", Path: "control/Control.csproj", Reachable: []string{"Acme.Core"}},
+		{Package: "Acme.Core", Path: "core/Core.csproj"},
+		{Package: "Acme.Unused", Path: "unused/Unused.csproj"},
+	})
+	if !strings.Contains(body, `Condition="@(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Control')) Or @(_StackPresent->AnyHaveMetadataValue('Identity', 'Acme.Core'))"`) {
+		t.Fatal(body)
+	}
+	for _, fragment := range []string{`Returns="@(_RigStackEffectiveSource)"`, `DependsOnTargets="RigStackGetSourceSignals" BeforeTargets="PrepareForBuild;CoreCompile"`, `Targets="RigStackGetSourceSignals"`, `System.StringComparison.OrdinalIgnoreCase`, `Code="RIGSTACK001"`, `Condition="Exists('%(ProjectReference.FullPath)')"`} {
+		if !strings.Contains(body, fragment) {
+			t.Fatalf("missing source query contract %s", fragment)
+		}
+	}
+	if strings.Contains(body, `Targets="Build"`) {
+		t.Fatal("source query must not build references")
+	}
+}
+
+func TestHandOwnedGatedWalkUp(t *testing.T) {
+	body := `<Project><!-- Added by rig. This file is maintained by you. -->
+<PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+<Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != '' and Exists('$(MSBuildThisFileDirectory)../rig.stack.jsonc')" /></Project>`
+	if !continuesWalkUp(body) || legacyWalkUp(body) {
+		t.Fatal("hand-owned gated import misclassified")
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app", overlayFile), body)
+	resp, err := New().LocalOverlay(context.Background(), plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "core/Core.csproj"}}, Writable: []string{"app"}, Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, note := range resp.Notes {
+		if strings.Contains(note, "legacy") {
+			t.Fatal(note)
+		}
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "app", overlayFile))
+	if string(got) != body {
+		t.Fatal("hand-owned file changed")
+	}
+}
+
+func TestStackTransitiveSourceSignalsE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("RIG_STACK_E2E=1")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("dotnet unavailable")
+	}
+	root := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("dotnet", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			if len(args) > 1 && args[0] == "build" {
+				diagnostic := exec.Command("dotnet", "msbuild", args[1], "-t:ResolveReferences", "-getItem:ReferencePath")
+				diagnostic.Dir = root
+				detail, _ := diagnostic.CombinedOutput()
+				for _, line := range strings.Split(string(detail), "\n") {
+					if strings.Contains(line, `"Identity":`) && !strings.Contains(line, "/packs/") {
+						t.Log(line)
+					}
+				}
+			}
+			t.Fatalf("dotnet %v: %v\n%s", args, err, out)
+		}
+	}
+	writeFile(t, filepath.Join(root, "NuGet.Config"), `<configuration><packageSources><clear/><add key="fixture" value="./feed"/></packageSources></configuration>`)
+	project := func(name, refs string) string {
+		return `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework><PackageId>Acme.` + name + `</PackageId><Version>1.0.0</Version></PropertyGroup>` + refs + `</Project>`
+	}
+	core := filepath.Join(root, "core/Core.csproj")
+	writeFile(t, core, project("Core", ""))
+	writeFile(t, filepath.Join(root, "core/Core.cs"), `public class Core { public static int Released => 1; }`)
+	run("pack", core, "-o", filepath.Join(root, "feed"))
+	control := filepath.Join(root, "control/Control.csproj")
+	writeFile(t, control, project("Control", `<ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0"/></ItemGroup>`))
+	writeFile(t, filepath.Join(root, "control/Control.cs"), `public class Control {}`)
+	run("pack", control, "-o", filepath.Join(root, "feed"))
+	writeFile(t, filepath.Join(root, "core/Core.cs"), `public class Core { public static int SourceOnly => 1; }`)
+	writeFile(t, filepath.Join(root, "unused/Unused.csproj"), project("Unused", ""))
+	writeFile(t, filepath.Join(root, overlayFile), renderOverlay([]plugin.Redirect{{Package: "Acme.Control", Path: "control/Control.csproj", Reachable: []string{"Acme.Core"}}, {Package: "Acme.Core", Path: "core/Core.csproj"}, {Package: "Acme.Unused", Path: "unused/Unused.csproj"}}))
+	for _, mode := range []string{"stack", "optout", "plain"} {
+		dir := filepath.Join(root, mode)
+		writeFile(t, filepath.Join(dir, "App.csproj"), project("App", `<ItemGroup><PackageReference Include="Acme.Control" Version="1.0.0"/></ItemGroup><Target Name="Check" AfterTargets="RigStackSourceSignals" Condition="'$(UseStackSources)' != 'false'"><Error Condition="'$(RigStackSource_Acme_Core)' != 'true' Or '$(RigStackSource_Acme_Unused)' != ''" Text="incorrect transitive properties"/></Target>`))
+		writeFile(t, filepath.Join(dir, "App.cs"), `#if STACK_ACME_UNUSED
+#error unreachable sibling
+#endif
+#if STACK_ACME_CORE
+public class App { public static int SourceOnly => Core.SourceOnly; }
+#else
+#if RIG_STACK
+#error missing transitive constant
+#endif
+public class App { int value = Core.Released; }
+#endif`)
+		args := []string{"build", filepath.Join(dir, "App.csproj"), "--no-incremental", "-p:RestorePackagesPath=" + filepath.Join(root, "packages")}
+		if mode == "plain" {
+			writeFile(t, filepath.Join(dir, overlayFile), `<Project/>`)
+			writeFile(t, filepath.Join(dir, "Directory.Build.props"), `<Project/>`)
+		}
+		if mode == "optout" {
+			args = append(args, "-p:UseStackSources=false")
+		}
+		run(args...)
+		testsDir := filepath.Join(root, mode+"-tests")
+		if mode == "plain" {
+			writeFile(t, filepath.Join(testsDir, overlayFile), `<Project/>`)
+		}
+		testsProject := strings.Replace(project("Tests", `<ItemGroup><ProjectReference Include="../`+mode+`/App.csproj" /></ItemGroup>`), `<TargetFramework>`, `<OutputType>Exe</OutputType><TargetFramework>`, 1)
+		writeFile(t, filepath.Join(testsDir, "Tests.csproj"), testsProject)
+		writeFile(t, filepath.Join(testsDir, "Tests.cs"), `public class Tests {
+#if STACK_ACME_CORE
+static void GuardedTest() { if (App.SourceOnly != 1) throw new System.Exception("source assertion failed"); }
+#endif
+public static void Main(string[] args) {
+int count = 0;
+#if STACK_ACME_CORE && STACK_ACME_CONTROL
+GuardedTest(); count++;
+#endif
+#if STACK_ACME_UNUSED
+#error unreachable sibling in tests
+#endif
+if (count != int.Parse(args[0])) throw new System.Exception("guarded test did not run");
+System.Console.WriteLine("Executed " + count + " guarded tests");
+}}`)
+		testArgs := []string{"build", filepath.Join(testsDir, "Tests.csproj"), "-p:RestorePackagesPath=" + filepath.Join(root, "packages")}
+		expected := "1"
+		if mode != "stack" {
+			expected = "0"
+		}
+		if mode == "optout" {
+			testArgs = append(testArgs, "-p:UseStackSources=false")
+		}
+		run(testArgs...)
+		// A second, incremental build must retain the same effective signals.
+		run(testArgs...)
+		run(filepath.Join(testsDir, "bin/Debug/net10.0/Tests.dll"), expected)
+		if mode == "stack" {
+			empty := filepath.Join(root, "empty")
+			writeFile(t, filepath.Join(empty, "Empty.csproj"), project("Empty", ""))
+			writeFile(t, filepath.Join(root, "isolated/Isolated.csproj"), project("Isolated", `<ItemGroup><ProjectReference Include="../empty/Empty.csproj"/><ProjectReference Include="../stack/App.csproj" Condition="'$(Configuration)' == 'Release'"/></ItemGroup>`))
+			writeFile(t, filepath.Join(root, "isolated/Check.cs"), `#if STACK_ACME_CORE || STACK_ACME_CONTROL
+#error unreachable through inactive reference
+#endif
+public class Isolated {}`)
+			run("build", filepath.Join(root, "isolated/Isolated.csproj"))
+			writeFile(t, filepath.Join(root, "direct/Direct.csproj"), project("Direct", `<ItemGroup><ProjectReference Include="../core/Core.csproj"/></ItemGroup><Target Name="Check" AfterTargets="RigStackSourceSignals"><Error Condition="'$(RigStackSource_Acme_Core)' != 'true' Or '$(RigStackSource_Acme_Control)' != ''" Text="direct producer signal mismatch"/></Target>`))
+			writeFile(t, filepath.Join(root, "direct/Check.cs"), `#if STACK_ACME_CORE
+public class Direct { int value = Core.SourceOnly; }
+#else
+#error direct source constant missing
+#endif`)
+			run("build", filepath.Join(root, "direct/Direct.csproj"))
+		}
+		if mode == "stack" {
+			// A direct-only overlay reproduces the old behavior against the
+			// same real graph; this fixture must reject the missing signal.
+			original, _ := os.ReadFile(filepath.Join(root, overlayFile))
+			writeFile(t, filepath.Join(root, overlayFile), renderOverlay([]plugin.Redirect{
+				{Package: "Acme.Control", Path: "control/Control.csproj"},
+				{Package: "Acme.Core", Path: "core/Core.csproj"},
+			}))
+			directOnly, _ := os.ReadFile(filepath.Join(root, overlayFile))
+			writeFile(t, filepath.Join(root, overlayFile), strings.Replace(strings.Replace(string(directOnly), `Condition="'@(_RigStackQueryReference)' != ''"`, `Condition="false"`, 1), `<_RigStackEffectiveSource Include="@(_RigStackReferencedProducer->'%(Package)')" />`, "", 1))
+			cmd := exec.Command("dotnet", args...)
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), "incorrect transitive properties") {
+				t.Fatalf("direct-only overlay should fail: %v\n%s", err, out)
+			}
+			writeFile(t, filepath.Join(root, overlayFile), string(original))
+		}
+	}
+}
+
+func TestLocalOverlayRefusesPartialLegacyUpgrade(t *testing.T) {
+	root := t.TempDir()
+	body := `<Project><!-- Added by rig. historical explanation -->
+<PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+<Import Project="$(StackParentTargets)" Condition="'$(StackParentTargets)' != ''" />
+<PropertyGroup><StackParentTargets>$([MSBuild]::GetPathOfFileAbove('Directory.Build.targets', '$(MSBuildThisFileDirectory)../'))</StackParentTargets></PropertyGroup>
+<Import Condition="'$(StackParentTargets)' != ''" Project="$(StackParentTargets)" />
+</Project>`
+	path := filepath.Join(root, "app", overlayFile)
+	writeFile(t, path, body)
+	writeFile(t, filepath.Join(root, "core/Core.csproj"), `<Project/>`)
+	for i := 0; i < 2; i++ {
+		resp, err := New().LocalOverlay(context.Background(), plugin.LocalOverlayRequest{Root: root, Redirects: []plugin.Redirect{{Package: "Acme.Core", Path: "core/Core.csproj"}}, Write: true, Writable: []string{"app"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, _ := os.ReadFile(path)
+		if string(after) != body || len(resp.Fixed) != 0 {
+			t.Fatalf("partial rewrite: %+v\n%s", resp, after)
+		}
+		if len(resp.Notes) != 1 || !strings.Contains(resp.Notes[0], "manual") {
+			t.Fatal(resp.Notes)
+		}
+	}
+}
+
+func TestStackSourceQueryE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("RIG_STACK_E2E=1")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("dotnet unavailable")
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, overlayFile), renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "core/Core.csproj"}}))
+	// Non-SDK projects make it explicit that a source query must never build.
+	project := func(body string) string {
+		return `<Project>` + body + `<Import Project="../Directory.Build.targets"/><Target Name="Build"><Error Text="query built a project"/></Target></Project>`
+	}
+	writeFile(t, filepath.Join(root, "core/Core.csproj"), project(""))
+	writeFile(t, filepath.Join(root, "cycle/A.proj"), project(`<ItemGroup><ProjectReference Include="B.proj"/></ItemGroup><Target Name="Check" DependsOnTargets="RigStackSourceSignals"><Error Condition="'$(RigStackSource_Acme_Core)' != 'true'" Text="cycle lost signal"/></Target>`))
+	writeFile(t, filepath.Join(root, "cycle/B.proj"), project(`<ItemGroup><ProjectReference Include="A.proj"/><PackageReference Include="Acme.Core"/></ItemGroup>`))
+	run := func(path, target string) {
+		t.Helper()
+		cmd := exec.Command("dotnet", "msbuild", filepath.Join(root, path), "-t:"+target, "-nologo")
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("query %s: %v\n%s", path, err, out)
+		}
+	}
+	run("cycle/A.proj", "Check")
+	// Framework negotiation must choose net10, whose conditional edge is absent,
+	// rather than union the sibling's netstandard-only dependency into the caller.
+	writeFile(t, filepath.Join(root, "multi/Multi.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences><TargetFrameworks>netstandard2.1;net10.0</TargetFrameworks></PropertyGroup><ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'"><PackageReference Include="Acme.Core" Version="1.0.0"/></ItemGroup><Target Name="NeverCompile" BeforeTargets="CoreCompile"><Error Text="query compiled multi"/></Target><Target Name="CheckOuter" DependsOnTargets="RigStackGetSourceSignals"><Error Condition="'@(_RigStackEffectiveSource)' == ''" Text="outer query lost source"/></Target></Project>`)
+	writeFile(t, filepath.Join(root, "caller/Caller.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><ProjectReference Include="../multi/Multi.csproj"/></ItemGroup><Target Name="Check" DependsOnTargets="RigStackSourceSignals"><Error Condition="'$(RigStackSource_Acme_Core)' != ''" Text="wrong framework leaked signal"/></Target></Project>`)
+	writeFile(t, filepath.Join(root, "NuGet.Config"), `<configuration><packageSources><clear/></packageSources></configuration>`)
+	writeFile(t, filepath.Join(root, "core/Core.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences><TargetFramework>netstandard2.1</TargetFramework></PropertyGroup><Target Name="NeverCompile" BeforeTargets="CoreCompile"><Error Text="query compiled core"/></Target></Project>`)
+	// SDK reference preparation reads restore assets but never performs restore.
+	run("caller/Caller.csproj", "Restore")
+	run("caller/Caller.csproj", "Check")
+	// Querying an outer multi-target project includes the effective inner sets.
+	run("multi/Multi.csproj", "CheckOuter")
+	for _, dir := range []string{"core", "caller", "multi"} {
+		if _, err := os.Stat(filepath.Join(root, dir, "bin")); !os.IsNotExist(err) {
+			t.Fatalf("query created build output for %s: %v", dir, err)
+		}
+	}
+}
+
+func TestStackSourceSdkItemGuardE2E(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") != "1" {
+		t.Skip("RIG_STACK_E2E=1")
+	}
+	if _, err := exec.LookPath("dotnet"); err != nil {
+		t.Skip("dotnet unavailable")
+	}
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "NuGet.Config"), `<configuration><packageSources><clear/></packageSources></configuration>`)
+	writeFile(t, filepath.Join(root, overlayFile), renderOverlay([]plugin.Redirect{{Package: "Acme.Core", Path: "lib/Lib.csproj"}}))
+	writeFile(t, filepath.Join(root, "lib/Lib.csproj"), `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><Target Name="ForbidReferenceCompilation" BeforeTargets="CoreCompile" Condition="'$(ForbidReferenceCompilation)' == 'true'"><Error Text="source query compiled reference"/></Target></Project>`)
+	writeFile(t, filepath.Join(root, "lib/Lib.cs"), `public class Lib { public static int Source => 1; }`)
+	project := func(refs string) string {
+		return `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup>` + refs + `</ItemGroup><Target Name="SimulateSdkItemRename" BeforeTargets="RigStackGetSourceSignals" Condition="'$(SimulateSdkItemRename)' == 'true'"><ItemGroup><_RenamedSdkProjectReference Include="@(_MSBuildProjectReferenceExistent)"/><_MSBuildProjectReferenceExistent Remove="@(_MSBuildProjectReferenceExistent)"/></ItemGroup></Target></Project>`
+	}
+	app := filepath.Join(root, "app/App.csproj")
+	writeFile(t, app, project(`<ProjectReference Include="../lib/Lib.csproj"/>`))
+	writeFile(t, filepath.Join(root, "app/App.cs"), `#if STACK_ACME_CORE
+public class App { int value = Lib.Source; }
+#else
+#error missing normal source signal
+#endif`)
+	invoke := func(wantGuard bool, args ...string) {
+		t.Helper()
+		cmd := exec.Command("dotnet", args...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
+		hasGuard := strings.Contains(string(out), "RIGSTACK001")
+		if wantGuard {
+			if err == nil || !hasGuard || !strings.Contains(string(out), "SDK may have changed") {
+				t.Fatalf("missing SDK-contract error: %v\n%s", err, out)
+			}
+		} else if err != nil || hasGuard {
+			t.Fatalf("unexpected guard/build failure: %v\n%s", err, out)
+		}
+	}
+	invoke(false, "build", app)
+	invoke(false, "build", app, "--no-restore", "--no-incremental", "-p:BuildProjectReferences=false", "-p:ForbidReferenceCompilation=true")
+	invoke(true, "build", app, "--no-restore", "-p:SimulateSdkItemRename=true")
+	invoke(false, "msbuild", app, "-t:RigStackGetSourceSignals", "-p:UseStackSources=false", "-p:SimulateSdkItemRename=true")
+	// Evaluated-away and nonexistent references must not be diagnosed as SDK drift,
+	// even with the same simulated rename. Query without assets for these fixtures
+	// so a previous restore cannot add unrelated transitive references back in.
+	for _, tc := range []struct{ name, refs string }{
+		{"inactive", `<ProjectReference Include="../lib/Lib.csproj" Condition="'1' == '2'"/>`},
+		{"missing", `<ProjectReference Include="../missing/Missing.csproj"/>`},
+	} {
+		path := filepath.Join(root, tc.name, "App.csproj")
+		writeFile(t, path, project(tc.refs))
+		invoke(false, "msbuild", path, "-t:RigStackGetSourceSignals", "-p:SkipResolvePackageAssets=true", "-p:SimulateSdkItemRename=true")
 	}
 }

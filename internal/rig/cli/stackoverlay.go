@@ -219,6 +219,46 @@ func stackRedirectsFromScan(scans []stackScanResult, members []string, publishin
 				})
 			}
 		}
+		// Traverse projects, not members: unrelated projects in a producer's
+		// repository must not leak their sibling signals into consumers.
+		byID := map[string]plugin.Redirect{}
+		for _, l := range links {
+			byID[l.Package] = l.Redirect
+		}
+		for i := range links {
+			seen := map[string]bool{}
+			ids := map[string]bool{}
+			var visit func(plugin.Package)
+			visit = func(p plugin.Package) {
+				if seen[p.ManifestPath] {
+					return
+				}
+				seen[p.ManifestPath] = true
+				for _, d := range p.Dependencies {
+					if !d.ViaRegistry {
+						continue
+					}
+					if r, ok := byID[d.Name]; ok {
+						ids[d.Name] = true
+						for _, q := range resp.Packages {
+							if filepath.ToSlash(q.ManifestPath) == r.Path {
+								visit(q)
+							}
+						}
+					}
+				}
+			}
+			for _, p := range resp.Packages {
+				if filepath.ToSlash(p.ManifestPath) == links[i].Path {
+					visit(p)
+				}
+			}
+			delete(ids, links[i].Package)
+			for id := range ids {
+				links[i].Reachable = append(links[i].Reachable, id)
+			}
+			sort.Strings(links[i].Reachable)
+		}
 		if len(links) > 0 {
 			sort.Slice(links, func(i, j int) bool { return links[i].Package < links[j].Package })
 			for i := range links {
@@ -454,14 +494,55 @@ func stackReportSourceSignals(out io.Writer, root string, links []stackLink, pac
 	for _, l := range links {
 		fmt.Fprintf(out, "    RigStackAvailable_%s=true (stack-wide availability during props evaluation; not an actual project swap)\n", dotnet.StackSourceName(l.Package))
 	}
+	byPath := map[string]plugin.Package{}
+	for _, p := range packages {
+		byPath[filepath.Clean(filepath.FromSlash(p.ManifestPath))] = p
+	}
 	for _, p := range packages {
 		fmt.Fprintf(out, "    %s: RigStackspace=true RigStackspaceRoot=%s; RIG_STACK (UseStackSources != false)\n", filepath.ToSlash(p.ManifestPath), filepath.ToSlash(root))
-		for _, d := range p.Dependencies {
-			if !d.ViaRegistry || !ids[d.Name] {
-				continue
+		signals := map[string]bool{}
+		visited := map[string]bool{}
+		var visit func(plugin.Package)
+		visit = func(q plugin.Package) {
+			if visited[q.ManifestPath] {
+				return
 			}
-			name := dotnet.StackSourceName(d.Name)
-			fmt.Fprintf(out, "      RigStackSource_%s=true; STACK_%s (when PackageReference is active; available in targets after RigStackSourceSignals)\n", name, strings.ToUpper(name))
+			visited[q.ManifestPath] = true
+			for _, d := range q.Dependencies {
+				if d.ProjectPath != "" {
+					path := filepath.Clean(filepath.Join(filepath.Dir(q.ManifestPath), filepath.FromSlash(d.ProjectPath)))
+					for _, l := range links {
+						if path == filepath.Clean(filepath.FromSlash(l.Path)) {
+							signals[l.Package] = true
+						}
+					}
+					if next, ok := byPath[path]; ok {
+						visit(next)
+					}
+				} else if d.ViaRegistry && ids[d.Name] {
+					signals[d.Name] = true
+					for _, l := range links {
+						if l.Package == d.Name {
+							for _, id := range l.Reachable {
+								signals[id] = true
+							}
+							if next, ok := byPath[filepath.Clean(filepath.FromSlash(l.Path))]; ok {
+								visit(next)
+							}
+						}
+					}
+				}
+			}
+		}
+		visit(p)
+		names := make([]string, 0, len(signals))
+		for id := range signals {
+			names = append(names, id)
+		}
+		sort.Strings(names)
+		for _, id := range names {
+			name := dotnet.StackSourceName(id)
+			fmt.Fprintf(out, "      RigStackSource_%s=true; STACK_%s (when PackageReference is active; static preview through ProjectReferences and swaps; MSBuild evaluates conditions and frameworks; available in targets after RigStackSourceSignals)\n", name, strings.ToUpper(name))
 		}
 	}
 }

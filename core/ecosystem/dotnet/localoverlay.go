@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -236,7 +237,10 @@ func overlayProblemsFile(req plugin.LocalOverlayRequest, overlayFile string) ([]
 			if oldGatedWalkUp(string(data)) {
 				message = rel + ": the old rig import can miss supported stack overlays; upgrade it to recognize every manifest format and hand-owned overlays"
 			}
-			if allowed {
+			_, upgradeLegacy := stripLegacyImport(string(data))
+			if legacyWalkUp(string(data)) && !upgradeLegacy {
+				message += " — this customized import is hand-owned; inspect its gate manually because wire cannot safely upgrade it"
+			} else if allowed {
 				message += " — re-run `rig stack wire` to upgrade the import"
 			} else {
 				message += " — this member is not writable; upgrade its rig-owned import in a writable checkout"
@@ -283,9 +287,19 @@ func underAny(rel string, dirs []string) bool {
 	return false
 }
 
+var legacyImportRE = regexp.MustCompile(`(?s)<!-- Added by rig\.[^<]*?-->\s*<PropertyGroup>\s*<StackParentTargets>[^<]*</StackParentTargets>\s*</PropertyGroup>\s*<Import Project="\$\(StackParentTargets\)" Condition="'\$\(StackParentTargets\)' != ''"\s*/>`)
+
+// A second, customized import must not survive an apparently successful upgrade.
+func stripLegacyImport(body string) (string, bool) {
+	stripped := legacyImportRE.ReplaceAllString(body, "")
+	return stripped, stripped != body && !strings.Contains(stripped, "$(StackParentTargets)")
+}
+
 // legacyWalkUp identifies the historical rig-owned, ungated member import.
 func legacyWalkUp(body string) bool {
-	return strings.Contains(body, "<!-- Added by rig.") && !strings.Contains(body, "<!-- rig:stack-import -->")
+	return strings.Contains(body, "<!-- Added by rig.") &&
+		!strings.Contains(body, "<!-- rig:stack-import -->") &&
+		regexp.MustCompile(`<Import\b[^>]*\bCondition="'\$\(StackParentTargets\)' != ''"[^>]*>`).MatchString(body)
 }
 
 // oldGatedWalkUp identifies imports from before hand-owned overlay detection.
@@ -305,8 +319,8 @@ func patchWalkUp(body string) (string, bool) { return patchWalkUpFile(body, over
 func patchWalkUpFile(body, file string) (string, bool) {
 	// Require the historical structure: custom XML between these elements
 	// belongs to the member and must never be removed as part of an upgrade.
-	stripped := regexp.MustCompile(`(?s)<!-- Added by rig\.[^<]*?-->\s*<PropertyGroup>\s*<StackParentTargets>[^<]*</StackParentTargets>\s*</PropertyGroup>\s*<Import Project="\$\(StackParentTargets\)" Condition="'\$\(StackParentTargets\)' != ''"\s*/>`).ReplaceAllString(body, "")
-	if legacyWalkUp(body) && stripped == body {
+	stripped, upgradeLegacy := stripLegacyImport(body)
+	if legacyWalkUp(body) && !upgradeLegacy {
 		return "", false
 	}
 	body = stripped
@@ -404,14 +418,53 @@ func renderOverlay(redirects []plugin.Redirect) string {
   </PropertyGroup>
   <!-- Items are available only after property evaluation. Publish per-project
        signals at target execution, before build properties are consumed. -->
-  <Target Name="RigStackSourceSignals" BeforeTargets="PrepareForBuild;CoreCompile" Condition="'$(UseStackSources)' != 'false'">
+  <!-- Query targets only: no restore, compilation or referenced Build target.
+       The ancestry property bounds cycles; each invocation uses evaluated items. -->
+  <PropertyGroup Condition="'$(UsingMicrosoftNETSdk)' == 'true' and '$(TargetFramework)' != ''">
+    <_RigStackQueryDependsOn>AssignProjectConfiguration;_SplitProjectReferencesByFileExistence;_GetProjectReferenceTargetFrameworkProperties</_RigStackQueryDependsOn>
+  </PropertyGroup>
+  <Target Name="RigStackGetSourceSignals" DependsOnTargets="$(_RigStackQueryDependsOn)" Returns="@(_RigStackEffectiveSource)" Condition="'$(UseStackSources)' != 'false'">
     <PropertyGroup>
-      <DefineConstants>$(DefineConstants);RIG_STACK</DefineConstants>
+      <_RigStackNextVisited>$(_RigStackVisited)|$(MSBuildProjectFullPath)|</_RigStackNextVisited>
     </PropertyGroup>
+    <ItemGroup>
+      <_RigStackQueryFramework Include="$(TargetFrameworks)" Condition="'$(TargetFramework)' == ''" />
+      <_RigStackQueryCandidate Include="@(_MSBuildProjectReferenceExistent)" Condition="'$(_RigStackQueryDependsOn)' != ''" />
+      <_RigStackQueryCandidate Include="@(ProjectReference)" Condition="'$(_RigStackQueryDependsOn)' == ''" />
+      <_RigStackExistingReference Include="@(ProjectReference)" Condition="Exists('%(ProjectReference.FullPath)')" />
+    </ItemGroup>
+    <Error Code="RIGSTACK001" Condition="'$(_RigStackQueryDependsOn)' != '' and '@(_RigStackExistingReference)' != '' and '@(_RigStackQueryCandidate)' == ''" Text="rig stack cannot determine source signals for $(MSBuildProjectFullPath): SDK reference preparation returned no candidates for existing ProjectReferences. The SDK may have changed its _MSBuildProjectReferenceExistent item contract. Update rig or the SDK before building with stack sources." />
+    <ItemGroup>
+      <_RigStackQueryReference Include="@(_RigStackQueryCandidate)" Condition="$([System.String]::Copy('$(_RigStackNextVisited)').IndexOf('|%(_RigStackQueryCandidate.FullPath)|', System.StringComparison.OrdinalIgnoreCase)) == -1" />
+      <_RigStackProducer Include="@(StackSource)"><Package>%(StackSource.Identity)</Package></_RigStackProducer>
+      <_RigStackProducerPath Include="@(_RigStackProducer->'$(MSBuildThisFileDirectory)%(Path)')" />
+      <_RigStackMissingProducer Include="@(_RigStackProducerPath)" Exclude="@(_RigStackQueryReference->'%(FullPath)')" />
+      <_RigStackReferencedProducer Include="@(_RigStackProducerPath)" Exclude="@(_RigStackMissingProducer)" />
+      <_RigStackEffectiveSource Include="@(_RigStackReferencedProducer->'%(Package)')" />
+    </ItemGroup>
+    <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="RigStackGetSourceSignals" Properties="TargetFramework=%(_RigStackQueryFramework.Identity)" Condition="'@(_RigStackQueryFramework)' != ''">
+      <Output TaskParameter="TargetOutputs" ItemName="_RigStackEffectiveSource" />
+    </MSBuild>
+    <MSBuild Projects="@(_RigStackQueryReference)" Targets="RigStackGetSourceSignals" Properties="%(_RigStackQueryReference.SetConfiguration);%(_RigStackQueryReference.SetPlatform);%(_RigStackQueryReference.SetTargetFramework);_RigStackVisited=$(_RigStackNextVisited)" RemoveProperties="%(_RigStackQueryReference.GlobalPropertiesToRemove);$(_GlobalPropertiesToRemoveFromProjectReferences)" SkipNonexistentTargets="true" Condition="'@(_RigStackQueryReference)' != ''">
+      <Output TaskParameter="TargetOutputs" ItemName="_RigStackEffectiveSource" />
+    </MSBuild>
+`)
+	for _, r := range sorted {
+		var conditions []string
+		for _, source := range sorted {
+			if source.Package == r.Package || slices.Contains(source.Reachable, r.Package) {
+				conditions = append(conditions, fmt.Sprintf("@(_StackPresent->AnyHaveMetadataValue('Identity', '%s'))", source.Package))
+			}
+		}
+		fmt.Fprintf(&b, "    <ItemGroup Condition=\"%s\"><_RigStackEffectiveSource Include=\"%s\" /></ItemGroup>\n", strings.Join(conditions, " Or "), r.Package)
+	}
+	b.WriteString(`  </Target>
+  <Target Name="RigStackSourceSignals" DependsOnTargets="RigStackGetSourceSignals" BeforeTargets="PrepareForBuild;CoreCompile" Condition="'$(UseStackSources)' != 'false'">
+    <PropertyGroup><DefineConstants>$(DefineConstants);RIG_STACK</DefineConstants></PropertyGroup>
 `)
 	for _, r := range sorted {
 		name := StackSourceName(r.Package)
-		fmt.Fprintf(&b, `    <PropertyGroup Condition="@(_StackPresent->AnyHaveMetadataValue('Identity', '%s'))">
+		fmt.Fprintf(&b, `    <PropertyGroup Condition="@(_RigStackEffectiveSource->AnyHaveMetadataValue('Identity', '%s'))">
       <RigStackSource_%s>true</RigStackSource_%s>
       <DefineConstants>$(DefineConstants);STACK_%s</DefineConstants>
     </PropertyGroup>
