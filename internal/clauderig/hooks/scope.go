@@ -100,6 +100,16 @@ func rejectGitMetadata(root, target, rel string) error {
 	}
 	for _, flag := range []string{"--git-dir", "--git-common-dir"} {
 		cmd := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", flag)
+		// Bind discovery to root/.git, not a repository selected by the caller.
+		cmd.Env = make([]string, 0, len(os.Environ()))
+		for _, entry := range os.Environ() {
+			key, _, _ := strings.Cut(entry, "=")
+			switch strings.ToUpper(key) {
+			case "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CEILING_DIRECTORIES":
+				continue
+			}
+			cmd.Env = append(cmd.Env, entry)
+		}
 		raw, err := cmd.Output()
 		if err != nil {
 			return fmt.Errorf("cannot resolve git metadata: %w", err)

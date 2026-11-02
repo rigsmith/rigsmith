@@ -149,6 +149,31 @@ func TestHardeningGitMetadata(t *testing.T) {
 		link(t, filepath.Join(metadata, "config"), guide)
 		refuse(t, root, guide)
 	})
+	t.Run("hostile-git-environment", func(t *testing.T) {
+		root := t.TempDir()
+		metadata := filepath.Join(root, "private-metadata")
+		git(t, "init", "--separate-git-dir", metadata, root)
+		other := t.TempDir()
+		git(t, "init", other)
+		guide := filepath.Join(root, "CLAUDE.md")
+		link(t, filepath.Join(metadata, "config"), guide)
+		overrides := map[string]string{
+			"GIT_DIR":                 filepath.Join(other, ".git"),
+			"GIT_COMMON_DIR":          filepath.Join(other, ".git"),
+			"GIT_WORK_TREE":           other,
+			"GIT_INDEX_FILE":          filepath.Join(other, ".git", "index"),
+			"GIT_CEILING_DIRECTORIES": root,
+		}
+		for key, value := range overrides {
+			t.Run(key, func(t *testing.T) {
+				t.Setenv(key, value)
+				refuse(t, root, guide)
+				if err := ValidateProject(root, filepath.Join(root, ".claude", "settings.json")); err != nil {
+					t.Fatalf("ordinary project path rejected under %s: %v", key, err)
+				}
+			})
+		}
+	})
 	t.Run("linked-worktree", func(t *testing.T) {
 		base := t.TempDir()
 		git(t, "init", base)
