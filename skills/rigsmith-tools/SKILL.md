@@ -494,8 +494,9 @@ clauderig desktop open <profile> --session <id-or-text>
 
 **Never date sessions by mtime.** Restores and copies can reset it, making
 "most recent chat" mean "most recently copied". `recent` reads the newest
-timestamped record inside each transcript instead. Don't hand-roll an `ls -t`
-over `~/.claude/projects`.
+timestamped record inside each transcript, then sidecar metadata, and uses
+transcript mtime only as an approximate last resort when neither has a usable
+timestamp. Don't hand-roll an `ls -t` over `~/.claude/projects`.
 
 **`desktop open --session` does not import anything itself.** It hands Claude
 Desktop a `claude://resume?session=<uuid>` deep link and the app's own handler
@@ -550,7 +551,9 @@ codexrig mcp list                # which MCP servers survive a restore, and what
 **Hooks need trusting, and the failure is silent.** Codex will not run a hook
 until its hash is recorded in `config.toml`, and it says nothing when it declines.
 After any `codexrig global install` or `codexrig project install`, run the matching
-`trust`. `codexrig doctor` notices installed but untrusted hooks.
+`trust`. `codexrig doctor` notices installed but untrusted hooks only when
+Codex's app server is available. A clean doctor run without the app server is
+not proof that hooks are trusted.
 
 **Sessions are opt-in.** Enable them during `init` (or with `init --sessions`),
 or run `codexrig config set syncSessions true`. Do not tell someone their Codex
