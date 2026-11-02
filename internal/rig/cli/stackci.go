@@ -41,15 +41,20 @@ func StackCIExitCode(err error) (int, bool) {
 
 var stackCIExecutable = os.Executable
 var stackCISymlink = os.Symlink
+var stackCISeedGit = stackHomeGit
 
 func newStackCICmd() *cobra.Command {
-	var seed, manifest, member, build, test, allowedHosts, guardProject string
+	var seed, manifest, member, build, test, allowedHosts, guardProject, topic string
 	var strict bool
 	var tip bool
 	var cacheHistory bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nRequires exactly one of --seed or --manifest. Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "ci", Short: "Build and test a checkout or topic PR heads inside a stackspace", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nRequires exactly one of --seed or --manifest. Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Use --topic to replace every topic proposal member with its open PR head.\nTopic heads must come from declared fork/upstream repositories; use read-only\ncredentials and no secrets. Topic mode removes token environment variables\nand refuses persisted checkout HTTP extraheaders (persist-credentials: false).\nCommands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "Comma-separated allowed fork/upstream hosts")
 	_ = c.RegisterFlagCompletionFunc("allowed-hosts", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	})
+	c.Flags().StringVar(&topic, "topic", "", "Apply every open proposal PR head in this manifest topic")
+	_ = c.RegisterFlagCompletionFunc("topic", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	})
 	c.Flags().StringVar(&manifest, "manifest", "", "Path to a committed rig.stack.jsonc")
@@ -67,6 +72,14 @@ func newStackCICmd() *cobra.Command {
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		if dryRun {
 			return fmt.Errorf("--dry-run is not supported for stack ci")
+		}
+		var topicAPI stackDepsAPI
+		if topic != "" {
+			var err error
+			topicAPI, err = stackTopicAPI()
+			if err != nil {
+				return &stackCIError{"setup", 10, err}
+			}
 		}
 		resolved := map[string]string{}
 		results := map[string]string{}
@@ -111,6 +124,11 @@ func newStackCICmd() *cobra.Command {
 		checkout, e := stackRoot(cmd.Context())
 		if e != nil {
 			return step("setup", 10, func() error { return e })
+		}
+		if topic != "" {
+			if e := stackTopicCheckCheckout(cmd.Context(), checkout); e != nil {
+				return step("setup", 10, func() error { return e })
+			}
 		}
 		var temp, root, exe, reportPath, seedCommit string
 		defer func() {
@@ -211,6 +229,21 @@ func newStackCICmd() *cobra.Command {
 			if m.Repos[member] == nil {
 				return fmt.Errorf("cannot match member; set --member to a manifest prefix")
 			}
+			heads := map[string]stackDepsPR{}
+			if topic != "" {
+				if tip {
+					return fmt.Errorf("--topic cannot be combined with --upstream-tip")
+				}
+				heads, e = stackTopicHeads(cmd.Context(), m, topic, topicAPI)
+				if e != nil {
+					return e
+				}
+				if _, ok := heads[member]; !ok {
+					return fmt.Errorf("selected member %s has no proposal in topic %q", member, topic)
+				}
+				cacheHistory = false
+				summary.WriteString("\nStack topic: all recorded PR heads applied together.\n")
+			}
 			// CI cursor mode must not silently select a proposed fork branch.
 			for _, n := range m.names() {
 				r := m.Repos[n]
@@ -219,7 +252,7 @@ func newStackCICmd() *cobra.Command {
 					r.UpstreamCommit = ""
 					r.UpstreamTag = ""
 					delete(m.LastSync, n)
-				} else if n != member {
+				} else if n != member || topic != "" {
 					if !stackIsSHA(m.cursor(n)) {
 						return fmt.Errorf("member %s has no full manifest cursor", n)
 					}
@@ -250,9 +283,17 @@ func newStackCICmd() *cobra.Command {
 			for _, n := range m.names() {
 				resolved[n] = m.cursor(n)
 			}
-			sha, e := stackCIReplace(cmd.Context(), checkout, root, member)
-			if e != nil {
-				return e
+			sha := ""
+			if topic != "" {
+				if e = stackTopicApply(cmd.Context(), root, m, heads, resolved); e != nil {
+					return e
+				}
+				sha = resolved[member]
+			} else {
+				sha, e = stackCIReplace(cmd.Context(), checkout, root, member)
+				if e != nil {
+					return e
+				}
 			}
 			if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 				if err != nil {
@@ -289,7 +330,16 @@ func newStackCICmd() *cobra.Command {
 				}
 			}
 			sources[member] = "fetched"
-			summary.WriteString("\nSource is cache or fetched; the selected member is materialized from checkout HEAD. Cached filtered commits are not verified against their upstream cursors.\n")
+			for n, pr := range heads {
+				sources[n] = "topic-head"
+				filtered[n] = ""
+				fmt.Fprintf(&summary, "\nTopic member %s: PR %d, head `%s`, repository `%s`.\n", n, pr.Number, pr.Head.SHA, pr.Head.Repo.FullName)
+			}
+			if topic == "" {
+				summary.WriteString("\nSource is cache or fetched; the selected member is materialized from checkout HEAD. Cached filtered commits are not verified against their upstream cursors.\n")
+			} else {
+				summary.WriteString("\nTopic-head members use exact fetched PR trees; other members use manifest cursors.\n")
+			}
 			summary.WriteString("\n| Member | Resolved commit | Josh filter | Source | Filtered import commit |\n| --- | --- | --- | --- | --- |\n")
 			for _, n := range m.names() {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s %s\n", n, resolved[n])
@@ -300,6 +350,11 @@ func newStackCICmd() *cobra.Command {
 				records := map[string]map[string]string{}
 				for _, n := range m.names() {
 					records[n] = map[string]string{"commit": resolved[n], "filter": stackPrefixFilter(n), "source": sources[n], "filteredCommit": filtered[n]}
+					if pr, ok := heads[n]; ok {
+						records[n]["topic"] = topic
+						records[n]["headRepository"] = pr.Head.Repo.FullName
+						records[n]["pullRequest"] = strconv.Itoa(pr.Number)
+					}
 				}
 				if seed != "" {
 					records["_seed"] = map[string]string{"reference": ghrepo.SafeRemote(seed), "commit": seedCommit}
@@ -550,14 +605,23 @@ func stackCISeed(ctx context.Context, checkout, dest, seed, allowed string) ([]b
 		}
 	}
 	args := []string{"clone", "--no-checkout"}
-	if ref != "" {
+	if ref != "" && !stackIsSHA(ref) {
 		args = append(args, "--branch", ref)
 	}
 	args = append(args, "--", remote, dest)
 	// Git uses configured credentials. Suppress raw transport errors: servers
 	// can echo credentials even when their URL is redacted.
-	if _, err = stackHomeGit(ctx, checkout, args...); err != nil {
+	if _, err = stackCISeedGit(ctx, checkout, args...); err != nil {
 		return nil, "", fmt.Errorf("cannot fetch seed %s (private seeds may be unavailable to fork PRs)", ghrepo.SafeRemote(seed))
+	}
+	if stackIsSHA(ref) {
+		// clone --branch accepts branch/tag names, not immutable commit IDs.
+		if _, err = stackCISeedGit(ctx, dest, "fetch", "--no-tags", "--depth=1", "origin", ref); err != nil {
+			return nil, "", fmt.Errorf("cannot fetch pinned seed %s", ghrepo.SafeRemote(seed))
+		}
+		if _, err = stackCIGit(ctx, dest, "update-ref", "HEAD", ref); err != nil {
+			return nil, "", err
+		}
 	}
 	if _, err = stackCIGit(ctx, dest, "remote", "remove", "origin"); err != nil {
 		return nil, "", err

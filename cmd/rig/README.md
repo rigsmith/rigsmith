@@ -72,6 +72,8 @@ Scheduled upstream checks: `rig stack canary` tests tips and reports cursor PRs
 or failure issues through separate build and publish jobs. See the
 [stack guide](https://rigsmith.dev/rig/stack).
 
+`rig stack ci --topic <name>` tests all recorded topic PR heads together; see [stack CI](https://rigsmith.dev/rig/stack#testing-a-complete-topic).
+
 ## Verbs
 
 | Verb | What |

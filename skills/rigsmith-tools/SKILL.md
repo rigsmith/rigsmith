@@ -9,7 +9,7 @@ description: >
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code
   setup, finding or reopening a past Claude Code session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home,
-  setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, topic PR dependencies,
+  setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
@@ -206,6 +206,34 @@ and `--test` run bash commands from it. `--upstream-tip` opts out of recorded
 cursors; `--cache-history=false` disables trusted history reuse. Exit codes are
 10 setup, 11 wire, 12 build, 13 test.
 
+`--topic <name>` (action input `topic`) tests every open proposal PR head in
+that manifest topic together. Missing, closed, untrusted or known conflicting
+PRs fail setup. Head repositories must match declared fork/upstream repositories.
+Use read-only `pull_request` jobs without secrets: code from every participating
+PR runs. Name the job `stack topic`; the check covers only its triggering PR,
+so run it in each member and rerun after sibling heads move. Topic mode disables
+shared caches in the action and cannot combine with upstream-tip. See the
+[stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
+cursor and provenance semantics. No merge train is installed.
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
+Topic mode also needs `pull-requests: read` alongside `contents: read` to
+read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
+does not gain access to private sibling repositories from these permissions.
+Private sibling PRs need separately authorized metadata access; without it,
+lookups are unavailable ("could not check") and topic setup fails rather than
+testing a reduced set. Do not expose a broader token to PR build commands.
+Topic CI removes token environment variables before children run and refuses
+persisted checkout HTTP extraheaders; set `persist-credentials: false`. Use a
+reviewed immutable seed (`--seed acme/stack-policy@<full-commit-sha>`, action
+input `seed`) for an independently trusted proposal set. Topic tokens are scrubbed
+before seed cloning too; use a public seed or separately prefetched local seed
+for private policy, with preparation credentials removed before the build.
+
 Use `ci-guard <project.csproj>` for an observed .NET build: the member's own new
 warnings fail except declared stack-only warnings or existing tolerances;
 sibling warnings remain visible and non-fatal unless `--strict`. Unattributed
@@ -231,7 +259,7 @@ for naming, conditional-reference limits and incremental/no-build behavior.
 
 The local composite at `.github/actions/stack/` accepts `seed` or `manifest` (exactly one), `member`,
 `rig-version`, `rig-sha256`, `allowed-hosts`, `build`, `test`, `guard-project`,
-`strict`, `dependencies`, `upstream-tip`, `cache-history`, and `cache-packages`.
+`strict`, `dependencies`, `topic`, `upstream-tip`, `cache-history`, and `cache-packages`.
 Seed-mode history/package keys include a hash of the seed reference and the
 run ID/attempt and job ID/matrix index so partial restores can save updated bundles; both caches remain
 disabled for fork PRs. Dependency reporting accepts the seed too.

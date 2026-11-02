@@ -34,7 +34,7 @@ func newStackCmd() *cobra.Command {
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
 			"  rig stack canary                     test tips; publish cursor PRs or failure issues\n" +
 			"  rig stack ci-guard <project>         build with observed warning guard\n" +
-			"  rig stack ci                         build/test checkout; requires --seed or --manifest\n" +
+			"  rig stack ci [--topic <name>]        build/test checkout or topic; --seed or --manifest\n" +
 			"  rig stack setup [seed]               clone a manifest home; engine, members, overlay\n" +
 			"  rig stack init                       scaffold the manifest / import the repos\n" +
 			"  rig stack add [upstream]             add a repo and import it (asks if not given)\n" +

@@ -36,7 +36,7 @@ func TestStackDepsAction(t *testing.T) {
 		}
 		if step.Name == "Report topic dependencies" {
 			report = step.Run
-			if step.If != "${{ always() && steps.install.outcome == 'success' && inputs.dependencies == 'true' }}" {
+			if step.If != "${{ always() && steps.install.outcome == 'success' && inputs.topic == '' && inputs.dependencies == 'true' }}" {
 				t.Fatal(step.If)
 			}
 		}

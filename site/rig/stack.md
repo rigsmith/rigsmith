@@ -1409,6 +1409,93 @@ action guards do not change GitHub's cache access policy or erase existing
 self-hosted runner files. Real hosted fork behavior is unverified locally; see
 the action README for the confidentiality and trust limits.
 
+### Testing a complete topic
+
+Use `rig stack ci --topic reader-fix --seed acme/stack-policy@<full-commit-sha> --member app`
+(or action inputs `topic` and `seed`) to test all recorded proposals in that
+topic together. Publish the proposal set to a reviewed seed and pin the same
+seed commit in each member's job. `--manifest` remains available for a committed
+checkout manifest; its trust depends on who controls that checkout.
+Every recorded PR must resolve and be open; missing, closed, ambiguous or known
+conflicting PRs fail setup rather than silently reducing the set. One PR is valid.
+The selected member must participate. `--upstream-tip` cannot be combined with
+`--topic`; `-n` refuses as for ordinary CI.
+
+Each participating member uses its exact PR head tree, fetched read-only from
+its declared fork or upstream. Other head repositories are refused even on an
+allowed host. Nonparticipating members retain their manifest cursors. A cursor
+remains the upstream import baseline, not the PR head or a claim of ancestry.
+A PR based behind that cursor replaces the tree wholesale, including older
+files; no merge or rebase onto the cursor is implied. Known API merge conflicts
+fail setup; unknown mergeability does not establish merge readiness. Raw-tree
+materialization preserves the existing LFS, submodule and escaping-symlink
+refusals. Summary and provenance identify each applied head and repository.
+Shared history and package caches are disabled by the action in topic mode.
+
+Name the calling workflow job `stack topic`. Its check belongs only to the
+triggering PR; each participating PR needs its own run covering the same set.
+There are no cross-repository writes, automatic fan-out, or reruns when a sibling
+head moves. Compare recorded SHAs and rerun each job after changes. Dependency
+status publication still writes only to `GITHUB_REPOSITORY`. Merge-train
+scheduling is deferred.
+
+Topic builds execute code from **all** participating PR heads, including other
+people's commits in declared forks. Declaring a repository does not make its
+contributors trusted. Use ordinary `pull_request`, `contents: read`,
+`pull-requests: read`, no secrets,
+checkout `persist-credentials: false`, and an isolated disposable runner. The
+GitHub token is captured for in-process metadata lookups only. Before any
+child processes run, topic CI removes token environment variables (including
+`GITHUB_TOKEN`, `GH_TOKEN`, enterprise variants, Actions tokens and PAT variables).
+Build, test, init, wire and guard children inherit that scrubbed environment.
+Topic mode also refuses HTTP extraheaders visible in the checkout's Git config,
+without logging their values; set checkout `persist-credentials: false`.
+This is credential hygiene, not a sandbox: use no secrets or privileged PATs,
+and no runner with reusable credentials in files or credential helpers.
+Fork-origin jobs use the same checks and may fail for inaccessible private repos.
+Topic CI refuses `pull_request_target`.
+
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
+
+Topic mode also needs `pull-requests: read` alongside `contents: read` to
+read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
+does not gain access to private sibling repositories from these permissions.
+Private sibling PRs need separately authorized metadata access; without it,
+lookups are unavailable ("could not check") and topic setup fails rather than
+testing a reduced set. Do not expose a broader token to PR build commands.
+
+The source of the manifest determines the authority of the repository allowlist
+and proposal set. With `--manifest`, the file comes from the selected checkout's
+committed HEAD. If that checkout is the triggering PR, the contributor controls
+both declarations and which other heads are tested. Matching a declared fork
+therefore means consistency with that manifest, not independent authorization.
+A same-repository PR does not make this policy trustworthy or justify stronger
+permissions. API metadata identifies a PR head; it does not authorize its code.
+Trust reviewed workflow/action code for execution policy and a separately
+reviewed, immutable manifest checkout for repository declarations and topic
+membership. Use the [topic workflow example](https://github.com/rigsmith/rigsmith/blob/main/examples/github-workflows/stack-topic.yml)
+to load `--seed acme/stack-policy@<full-commit-sha>` as the recommended
+independent policy source, with an explicitly selected member. The example
+also checks out reviewed action code separately. All tested member code comes
+from resolved PR heads. Publish updated proposal records to the seed before
+running CI; do not derive the seed URL/ref from PR data. Full SHA pins are
+fetched explicitly, rather than interpreted as branch names.
+
+Token scrubbing happens before seed parsing or cloning, as well as before
+init, wire, build and test. The captured job token is only for API metadata;
+it is never forwarded to the seed clone. Use a public seed or a separately
+prefetched local seed for private policy. Fetch private seeds in an isolated
+trusted preparation step and remove credentials before topic CI; do not leave
+persistent extraheaders, helpers or reusable credentials on the build runner.
+An unavailable private seed fails setup, without falling back to the checkout's
+manifest. Ordinary non-topic seed mode retains its configured Git credential
+behavior.
+
 ### Stack topic dependencies
 
 `rig stack deps --manifest rig.stack.jsonc` (or `--seed acme/rigstack-app@main`,
