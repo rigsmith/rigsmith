@@ -5,3 +5,5 @@ scope: rig
 ---
 
 Parse quoted, indented and block Go module directives and sibling requirements while preserving line endings during version updates. Warn about malformed Go module directives inside stack members during wiring.
+
+Avoid discovery panics when a version annotation has no space after `//`.

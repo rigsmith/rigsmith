@@ -40,7 +40,7 @@ var _ plugin.Ecosystem = (*Adapter)(nil)
 // defaultVersion is used when no `// rigsmith:version` annotation is present.
 const defaultVersion = "0.0.0"
 
-var versionCommentRe = regexp.MustCompile(`//[ \t]*rigsmith:version[ \t]+\S+`)
+var versionCommentRe = regexp.MustCompile(`//[ \t]*rigsmith:version[ \t]+(\S+)`)
 
 // Info returns the Go adapter's identity and capabilities.
 func (a *Adapter) Info() plugin.EcosystemInfo {
@@ -490,8 +490,8 @@ func parseModule(text string) (module, version string) {
 				return "", ""
 			}
 			module, version = r.args[0], defaultVersion
-			if c := versionCommentRe.FindString(r.comment); c != "" {
-				version = strings.Fields(c)[2]
+			if c := versionCommentRe.FindStringSubmatch(r.comment); c != nil {
+				version = c[1]
 			}
 		}
 	}
@@ -605,6 +605,9 @@ func modTokens(line string) ([]string, string, bool) {
 			i++
 			for i < len(line) && line[i] != quote {
 				if quote == '"' && line[i] == '\\' {
+					if i+1 >= len(line) {
+						return nil, "", false
+					}
 					i++
 				}
 				i++

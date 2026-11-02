@@ -709,3 +709,65 @@ func TestSetVersionPreservesForeignComment(t *testing.T) {
 		}
 	}
 }
+
+func TestModuleAnnotationSpacing(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n"} {
+		for _, spacing := range []string{"", " ", "\t", " \t "} {
+			for _, form := range []string{"module example.com/lib //%srigsmith:version 1.2.3\n", "module (\n example.com/lib //%srigsmith:version 1.2.3\n)\n"} {
+				body := strings.ReplaceAll(fmt.Sprintf(form, spacing), "\n", ending)
+				t.Run(fmt.Sprintf("%q", body), func(t *testing.T) {
+					if mod, version := parseModule(body); mod != "example.com/lib" || version != "1.2.3" {
+						t.Fatalf("parse = %q, %q", mod, version)
+					}
+					updated := setVersionComment(body, "2.0.0")
+					if mod, version := parseModule(updated); mod != "example.com/lib" || version != "2.0.0" {
+						t.Fatalf("round trip = %q, %q", mod, version)
+					}
+					if strings.Count(updated, "rigsmith:version") != 1 {
+						t.Fatalf("duplicate annotation: %q", updated)
+					}
+					if strings.Count(updated, "\r\n") != strings.Count(body, "\r\n") {
+						t.Fatal("changed line endings")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestModuleHostileInputs(t *testing.T) {
+	for _, input := range []string{
+		"", "module", "module (", "module (\n(\n)\n", ")", "module ()", "module \"", "module `",
+		"module \"example.com/lib", "module \"example.com/lib\\", "module \"example.com/lib\\\"", "module \"\\x\"",
+		"module \"\"", "module \"example.com/lib\"extra", "module example.com/lib //rigsmith:version", "module example.com/lib //rigsmith:version 1.2.3",
+		"module example.com/lib\nrequire (\n\"\\", "module example.com/lib\nmodule other", "module \x00\n", "module \xff\n",
+	} {
+		for _, ending := range []string{"\n", "\r\n"} {
+			t.Run(fmt.Sprintf("%q/%q", input, ending), func(t *testing.T) {
+				defer func() {
+					if failure := recover(); failure != nil {
+						t.Fatalf("parser panicked: %v", failure)
+					}
+				}()
+				body := strings.ReplaceAll(input, "\n", ending)
+				parseModule(body)
+				parseRequires(body)
+				ValidateModule(body)
+				setVersionComment(body, "2.0.0")
+				workspaceUses(body, "./lib")
+				rows, _ := directiveRows(body)
+				for _, row := range rows {
+					if row.start < 0 || row.end < row.start || row.end > len(body) {
+						t.Fatalf("invalid source offsets: %+v", row)
+					}
+				}
+				root := t.TempDir()
+				writeFile(t, filepath.Join(root, "go.mod"), body)
+				if _, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root}); err != nil {
+					t.Fatal(err)
+				}
+				_ = New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: root, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"})
+			})
+		}
+	}
+}
