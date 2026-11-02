@@ -1,0 +1,33 @@
+internal/rig/cli/stackci.go
+  s_84db7dfa26c0c1::t_b607eba7fde5c9 530
+site/rig/verbs.md
+  s_84db7dfa26c0c1::t_b607eba7fde5c9 294
+.github/actions/stack/README.md
+  s_84db7dfa26c0c1::t_c06ee03e3fef72 13-14
+internal/rig/cli/stackciseed_test.go
+  s_84db7dfa26c0c1::t_b607eba7fde5c9 185-247
+internal/rig/cli/stackhome_test.go
+  s_84db7dfa26c0c1::t_b607eba7fde5c9 903-927
+internal/rig/cli/stackhome.go
+  s_84db7dfa26c0c1::t_b607eba7fde5c9 131-132,138-140,184-185
+docs/STACK-DESIGN.md
+  s_84db7dfa26c0c1::t_c06ee03e3fef72 991-994
+.changeset/witty-herons-wander.md
+  s_84db7dfa26c0c1::t_b607eba7fde5c9 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5080f2dce38dee95d968312a797080b6e13f89c4",
+  "prompts": {},
+  "sessions": {
+    "s_84db7dfa26c0c1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199b4-6306-70a1-9300-4c399f94a202",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
