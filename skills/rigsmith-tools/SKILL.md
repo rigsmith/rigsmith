@@ -564,10 +564,15 @@ may vary, but the command must match exactly. Outdated commands or paths from
 another machine require the matching `install` before `trust`. Review foreign
 hooks through Codex itself; do not suggest an override flag. Exact current
 commands need no prompt, including global trust through `doctor --fix`.
-`trust` prints every approval and refusal with the exact command; `--json`
+`trust` prints every approval, refusal, and left-alone hook with the exact command; `--json`
 returns the same decisions and refusal next steps. Nothing eligible exits
 non-zero. Never replace a validated listing's hash with one fetched later:
 command, key, and `CurrentHash` must come from the same Codex listing.
+Only non-matching commands containing the marker are warned about as lookalikes
+or stale installs. Other people's hooks are simply left alone and never change
+doctor's healthy status, even when they are the only hooks in the file. Stale
+installations read "out of date, reinstall" and retain the install repair. A
+missing source path must fail closed with an instruction to update Codex.
 
 **Sessions are opt-in.** Enable them during `init` (or with `init --sessions`),
 or run `codexrig config set syncSessions true`. Do not tell someone their Codex

@@ -127,9 +127,10 @@ func scopeCmd(name string, aliases []string, short, long string,
 				"This asks Codex for that hash and hands it back, rather than computing one,\n" +
 				"and makes the edit through Codex so config.toml keeps its own formatting.\n" +
 				"Only exact current codexrig commands in this scope are approved, without a prompt.\n" +
-				"Every command approved or refused is printed (also with --json). Foreign or\n" +
-				"outdated commands are refused: reinstall outdated hooks, and review foreign\n" +
-				"hooks through Codex itself. Nothing eligible means a non-zero exit.",
+				"Every command approved, refused, or left alone is printed (also with --json).\n" +
+				"Lookalike or outdated commands are refused: reinstall outdated hooks, and review\n" +
+				"lookalikes through Codex itself. Other hooks are left alone. Nothing eligible\n" +
+				"means a non-zero exit.",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return trustScope(cmd, pathOf)
 			},
@@ -182,47 +183,67 @@ func statusScope(cmd *cobra.Command, pathOf func(context.Context) (string, error
 	if err != nil {
 		return err
 	}
-	present, err := hooks.Status(path)
+	status, err := hooks.Status(path)
 	if err != nil {
 		return err
 	}
-	if len(present) == 0 {
+	present := status.Events()
+	switch {
+	case len(status.Lookalikes) > 0:
+		fmt.Fprintf(out, "%s — run `codexrig %s install`\n", WarnStyle.Render("lookalike or out of date, reinstall"), cmd.Parent().Name())
+	case len(present) == 0:
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("not installed — `codexrig "+cmd.Parent().Name()+" install`"))
-		printTrustState(cmd, path)
-		return nil
+	default:
+		fmt.Fprintf(out, "%s %s\n", OkStyle.Render("installed"), strings.Join(present, ", "))
 	}
-	fmt.Fprintf(out, "%s %s\n", OkStyle.Render("installed"), strings.Join(present, ", "))
 	fmt.Fprintf(out, "  %s\n", DimStyle.Render(path))
-
 	plans, err := plansOf(cmd.Context())
-	if err == nil {
+	if err == nil && len(status.Lookalikes) == 0 {
 		if drifted, derr := hooks.Drift(path, plans); derr == nil && len(drifted) > 0 {
-			fmt.Fprintf(out, "  %s %s\n", WarnStyle.Render("out of date:"), strings.Join(drifted, ", "))
-			fmt.Fprintf(out, "  %s\n", DimStyle.Render("`codexrig "+cmd.Parent().Name()+" install` brings them up to date"))
+			fmt.Fprintf(out, "  %s %s\n", WarnStyle.Render("out of date, reinstall:"), strings.Join(drifted, ", "))
+			fmt.Fprintf(out, "  `codexrig %s install` brings them up to date\n", cmd.Parent().Name())
 		}
 	}
 	// Ask Codex whether it will actually run them, since that is the question
 	// somebody checking status is really asking.
-	printTrustState(cmd, path)
+	printTrustState(cmd, path, status)
 	return nil
 }
 
-func printTrustState(cmd *cobra.Command, path string) {
+func printTrustState(cmd *cobra.Command, path string, installed hooks.CheckResult) {
 	out := cmd.OutOrStdout()
 	if !appserverAvailable() {
+		printOtherHooks(cmd, path, installed)
 		return
 	}
 	check, err := hooks.Check(cmd.Context(), "", filepath.Dir(path))
 	if err != nil {
+		printOtherHooks(cmd, path, installed)
 		fmt.Fprintf(out, "  %s\n", DimStyle.Render("could not ask Codex whether it will run them: "+err.Error()))
 		return
 	}
+	printCheckedTrustState(cmd, path, check)
+}
+
+func printOtherHooks(cmd *cobra.Command, path string, check hooks.CheckResult) {
+	out := cmd.OutOrStdout()
 	scope := commandHookScope(cmd, path)
-	for _, h := range check.Foreign {
+	for _, h := range check.Lookalikes {
 		if scope.Contains(h.SourcePath) {
-			fmt.Fprintf(out, "  foreign or out of date %s: %s\n    Reinstall outdated hooks; review foreign hooks in Codex itself.\n", h.EventName, h.Command)
+			fmt.Fprintf(out, "  lookalike or out of date %s: %s\n    Reinstall outdated hooks; review lookalikes in Codex itself.\n", h.EventName, h.Command)
 		}
 	}
+	for _, h := range check.Foreign {
+		if scope.Contains(h.SourcePath) {
+			fmt.Fprintf(out, "  left alone %s: %s\n", h.EventName, h.Command)
+		}
+	}
+}
+
+func printCheckedTrustState(cmd *cobra.Command, path string, check hooks.CheckResult) {
+	out := cmd.OutOrStdout()
+	scope := commandHookScope(cmd, path)
+	printOtherHooks(cmd, path, check)
 	var untrusted []string
 	seen := 0
 	for _, h := range check.Ours {

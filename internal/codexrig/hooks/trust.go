@@ -53,8 +53,9 @@ func normalizeHookPath(path string) string {
 
 // CheckResult keeps foreign commands visible without identifying them as ours.
 type CheckResult struct {
-	Ours    []appserver.HookInfo `json:"ours"`
-	Foreign []appserver.HookInfo `json:"foreign"`
+	Ours       []appserver.HookInfo `json:"ours"`
+	Lookalikes []appserver.HookInfo `json:"lookalikes"`
+	Foreign    []appserver.HookInfo `json:"foreign"`
 }
 
 // Refusal includes the exact command Codex reported and how to proceed.
@@ -65,11 +66,12 @@ type Refusal struct {
 }
 
 type TrustResult struct {
-	Trusted []appserver.HookInfo `json:"trusted"`
-	Already []appserver.HookInfo `json:"already"`
-	Foreign []Refusal            `json:"foreign"`
-	Outside []Refusal            `json:"outside"`
-	Refused []Refusal            `json:"refused"`
+	Trusted    []appserver.HookInfo `json:"trusted"`
+	Already    []appserver.HookInfo `json:"already"`
+	Foreign    []Refusal            `json:"foreign"`
+	Lookalikes []Refusal            `json:"lookalikes"`
+	Outside    []Refusal            `json:"outside"`
+	Refused    []Refusal            `json:"refused"`
 }
 
 // Matches compares the command and its event against today's installer plans.
@@ -123,12 +125,20 @@ func trust(ctx context.Context, client trustClient, scope Scope) (TrustResult, e
 		return out, err
 	}
 	for _, h := range list {
+		if h.SourcePath == "" {
+			out.Refused = append(out.Refused, Refusal{h, "Codex did not say where this hook came from", "Update Codex and retry; no trust was recorded for this hook."})
+			continue
+		}
+		if !Matches(h) && !strings.Contains(h.Command, Marker) {
+			out.Foreign = append(out.Foreign, Refusal{h, "not codexrig's", "Manage this hook in Codex itself."})
+			continue
+		}
 		if !scope.Contains(h.SourcePath) {
 			out.Outside = append(out.Outside, Refusal{h, "outside requested scope", "Use the trust command for that scope; review foreign hooks in Codex itself."})
 			continue
 		}
 		if !Matches(h) {
-			out.Foreign = append(out.Foreign, Refusal{h, "foreign or out of date", "Review foreign hooks in Codex itself. For an outdated codexrig hook, run `codexrig " + scope.name + " install`, then trust again."})
+			out.Lookalikes = append(out.Lookalikes, Refusal{h, "lookalike or out of date", "For an outdated codexrig hook, run `codexrig " + scope.name + " install`, then trust again. Review lookalikes in Codex itself."})
 			continue
 		}
 		if h.Trusted() {
@@ -174,6 +184,8 @@ func classify(list []appserver.HookInfo) CheckResult {
 	for _, h := range list {
 		if Matches(h) {
 			out.Ours = append(out.Ours, h)
+		} else if strings.Contains(h.Command, Marker) {
+			out.Lookalikes = append(out.Lookalikes, h)
 		} else {
 			out.Foreign = append(out.Foreign, h)
 		}
@@ -192,7 +204,10 @@ func WriteTrustResult(w io.Writer, result TrustResult) {
 	for _, h := range result.Already {
 		fmt.Fprintf(w, "already trusted %s from %s: %s\n", h.EventName, h.SourcePath, h.Command)
 	}
-	for _, refusals := range [][]Refusal{result.Foreign, result.Outside, result.Refused} {
+	for _, h := range result.Foreign {
+		fmt.Fprintf(w, "left alone %s from %s: %s\n  %s; %s\n", h.EventName, h.SourcePath, h.Command, h.Reason, h.NextStep)
+	}
+	for _, refusals := range [][]Refusal{result.Lookalikes, result.Outside, result.Refused} {
 		for _, r := range refusals {
 			fmt.Fprintf(w, "refused %s from %s: %s\n  %s; %s\n", r.EventName, r.SourcePath, r.Command, r.Reason, r.NextStep)
 		}

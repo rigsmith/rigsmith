@@ -67,12 +67,19 @@ and paths from another machine require reinstalling before trusting. Foreign
 hooks must be reviewed in Codex itself, with no override flag. Exact matches
 remain non-interactive, including `doctor --fix` for global hooks.
 
-`global trust` and `project trust` print every command approved or refused;
+`global trust` and `project trust` print every command approved, refused, or left alone;
 `--json` carries the same decisions, reasons, and next steps. Nothing eligible
 means a non-zero exit. Partial successes are reported even if a later write
 fails. The command and `CurrentHash` are taken from the same Codex listing, so a
 later file edit never receives a newly fetched hash from an earlier approval.
 Codex owns the binding between a command and its hash, and trust invalidation.
+
+Reporting distinguishes exact commands, marker-bearing lookalikes or stale
+commands, and unrelated hooks. Only the first group is ours. Lookalikes warn
+with the command shown; stale installs say "out of date, reinstall" and keep the
+install repair. Unrelated hooks are left alone and never change doctor's status,
+including when they are the only hooks in a file. Missing `SourcePath` fails
+closed with an instruction to update Codex, rather than naming the wrong scope.
 
 **Codex writes absolute paths as TABLE KEYS**, not only as values:
 `[projects."/Users/someone/Git/thing"]`. Claude Code does not, so a path rewriter

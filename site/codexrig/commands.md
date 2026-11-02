@@ -75,18 +75,25 @@ path separators. Guard matchers may differ; the guard command must still match
 exactly. Global trust cannot approve project hooks, even when `CODEX_HOME` is
 inside the repository. Project trust cannot approve global hooks.
 
-Every approved, already trusted, and refused command is shown verbatim, with its
-source and event. `--json` returns the same decisions in `trusted`, `already`,
-`foreign`, `outside`, and `refused` lists, including reasons and next steps for
-refusals. If no current hook in the requested scope can be trusted (or is already
+Every approved, already trusted, refused, and left-alone command is shown
+verbatim, with its source and event. `--json` returns the same decisions in
+`trusted`, `already`, `lookalikes`, `foreign`, `outside`, and `refused` lists.
+Marker-bearing commands that do not match are refused as lookalikes or outdated
+hooks. Commands without the marker are simply left alone in `foreign`;
+doctor does not warn about them or add rows for files containing only those
+hooks. An unrelated hook beside healthy codexrig hooks leaves their status OK.
+Refusals include reasons and next steps. If no current hook in the requested scope can be trusted (or is already
 trusted), the command exits non-zero. Other eligible hooks can still be approved
 when one is refused. Exact matches work without a prompt.
 
 Old commands, including commands with paths from another machine, are refused.
 Run the matching `global install` or `project install`, review the result, then
 trust again. Review foreign hooks in Codex itself; there is no override flag.
-Status and doctor name foreign or outdated commands instead of treating them as
-codexrig's. `doctor --fix` can trust only exact global hooks and prints its
+Status and doctor name lookalike or outdated commands instead of treating them as
+codexrig's. Outdated installations say "out of date, reinstall", retaining the
+install repair. Status prints unrelated commands as "left alone". A hook without
+`SourcePath` is refused because Codex did not say where it came from; update
+Codex before retrying. `doctor --fix` can trust only exact global hooks and prints its
 decisions; project trust remains deliberate.
 
 The command, key, and hash come from one Codex listing. codexrig records that

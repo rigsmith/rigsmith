@@ -202,7 +202,14 @@ The explicit global or project scope identifies one normalized hooks file,
 resolving symlinks and Windows separators. Discovery cwd and Codex's `Source`
 enum cannot authorize a scope. Check and status share the exact identity test.
 
-Every approval and refusal includes the command in text and JSON output. Doctor
+The marker has one reporting role: a non-matching command containing it is a
+lookalike or stale install, shown as a warning with the command. Unrelated hooks
+without the marker are left alone, do not alter healthy doctor results, and
+produce no doctor rows when they are all a file has. Local Status retains the
+three categories so stale installs keep their reinstall repair rather than
+reading as absent. A missing `SourcePath` is refused with an update-Codex hint.
+
+Every approval, refusal, and left-alone hook includes the command in text and JSON output. Doctor
 can approve only exact global hooks, and shows its decisions without requiring
 interactive input. The validated command, trust key, and `CurrentHash` come from
 one listing; codexrig never refreshes a hash after validating the command. This
