@@ -1498,7 +1498,7 @@ func TestStackPullDryRunPreview(t *testing.T) {
 
 func TestStackDryRunUnsupportedWriters(t *testing.T) {
 	stackDryRun(t)
-	for _, makeCmd := range []func() *cobra.Command{newStackInitCmd, newStackAddCmd, newStackRemoveCmd, newStackSetupCmd} {
+	for _, makeCmd := range []func() *cobra.Command{newStackInitCmd, newStackAddCmd, newStackRemoveCmd, newStackSetupCmd, newStackCICmd, newStackDepsCmd} {
 		cmd := makeCmd()
 		t.Run(cmd.Name(), func(t *testing.T) {
 			_, err := runVerbOut(context.Background(), cmd)
@@ -1611,5 +1611,13 @@ func TestStackWireDryRunMissingMembers(t *testing.T) {
 	}
 	if got := mustGitStack(t, ws, "status", "--porcelain"); got != before {
 		t.Fatalf("deferred wire wrote files: %s", got)
+	}
+}
+
+func TestStackCIGuardDryRun(t *testing.T) {
+	stackDryRun(t)
+	_, err := runVerbOut(context.Background(), newStackCIGuardCmd(), "missing.csproj")
+	if err == nil || !strings.Contains(err.Error(), "--dry-run is not supported for stack ci-guard") {
+		t.Fatalf("expected refusal: %v", err)
 	}
 }

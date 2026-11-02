@@ -526,3 +526,19 @@ func TestStackSeedAlternateBranchPreservesHome(t *testing.T) {
 		t.Fatal("alternate publication retargeted configured home")
 	}
 }
+
+func TestStackSeedPublishDryRunRefusesDirtyTree(t *testing.T) {
+	root := rmStackspace(t, rmManifest)
+	if err := os.WriteFile(filepath.Join(root, "dirty"), []byte("dirty"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	stackDryRun(t)
+	cmd := newStackSeedCmd()
+	if err := cmd.Flags().Set("publish", filepath.Join(t.TempDir(), "home.git")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runVerbOut(context.Background(), cmd)
+	if err == nil || !strings.Contains(err.Error(), "commit stack changes") {
+		t.Fatalf("expected dirty-tree refusal: %v", err)
+	}
+}

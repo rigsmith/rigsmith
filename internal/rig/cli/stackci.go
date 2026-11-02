@@ -45,7 +45,7 @@ func newStackCICmd() *cobra.Command {
 	var strict bool
 	var tip bool
 	var cacheHistory bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "Rebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "ci", Short: "Build and test a CI checkout inside an isolated stackspace", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nRebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "Comma-separated allowed fork/upstream hosts")
 	_ = c.RegisterFlagCompletionFunc("allowed-hosts", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -59,6 +59,9 @@ func newStackCICmd() *cobra.Command {
 	c.Flags().BoolVar(&cacheHistory, "cache-history", true, "Trust and reuse cached member history (disable for release-grade runs)")
 	c.Flags().BoolVar(&tip, "upstream-tip", false, "Use upstream tips instead of manifest cursors")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		if dryRun {
+			return fmt.Errorf("--dry-run is not supported for stack ci")
+		}
 		resolved := map[string]string{}
 		results := map[string]string{}
 		var summary strings.Builder
