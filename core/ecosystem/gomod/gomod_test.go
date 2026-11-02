@@ -479,3 +479,98 @@ func hasToken(tokens []plugin.TokenSpec, envVar string) bool {
 	}
 	return false
 }
+
+func TestModuleLineEndings(t *testing.T) {
+	for _, ending := range []struct{ name, value string }{{"LF", "\n"}, {"CRLF", "\r\n"}, {"EOF", ""}} {
+		for _, comment := range []string{"", " // rigsmith:version 1.2.3", " // Deprecated: use example.com/new"} {
+			t.Run(ending.name+comment, func(t *testing.T) {
+				suffix := ending.value
+				if ending.value != "" {
+					suffix += ending.value + "go 1.26" + ending.value
+				}
+				input := "module example.com/lib" + comment + suffix
+				wantVersion := defaultVersion
+				if strings.Contains(comment, "rigsmith:version") {
+					wantVersion = "1.2.3"
+				}
+				if mod, ver := parseModule(input); mod != "example.com/lib" || ver != wantVersion {
+					t.Fatalf("parseModule(%q) = %q, %q", input, mod, ver)
+				}
+				root := t.TempDir()
+				writeFile(t, filepath.Join(root, "go.mod"), input)
+				if err := New().SetVersion(context.Background(), plugin.SetVersionRequest{RepoRoot: root, Package: plugin.Package{ManifestPath: "go.mod"}, NewVersion: "2.0.0"}); err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(filepath.Join(root, "go.mod"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "module example.com/lib // rigsmith:version 2.0.0" + suffix
+				if strings.Contains(comment, "Deprecated:") {
+					want = input
+				}
+				if string(got) != want {
+					t.Fatalf("rewrite = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestDiscoverLineEndingsToWork(t *testing.T) {
+	for _, ending := range []struct{ name, value string }{{"LF", "\n"}, {"CRLF", "\r\n"}} {
+		t.Run(ending.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "lib", "go.mod"), strings.ReplaceAll("module example.com/lib\n\ngo 1.26\n", "\n", ending.value))
+			writeFile(t, filepath.Join(root, "app", "go.mod"), "module example.com/app\n\ngo 1.25\nrequire (\n example.com/lib v1.0.0\n)\n")
+			a := New()
+			got, err := a.Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Packages) != 2 {
+				t.Fatalf("packages = %+v", got.Packages)
+			}
+			var redirects []plugin.Redirect
+			for _, p := range got.Packages {
+				for _, dep := range p.Dependencies {
+					redirects = append(redirects, plugin.Redirect{Package: dep.Name, Path: "lib/go.mod"})
+				}
+			}
+			if len(redirects) != 1 {
+				t.Fatalf("redirects = %+v", redirects)
+			}
+			if _, err := a.LocalOverlay(context.Background(), plugin.LocalOverlayRequest{Root: root, Redirects: redirects, Write: true}); err != nil {
+				t.Fatal(err)
+			}
+			body, err := os.ReadFile(filepath.Join(root, "go.work"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := renderWork("1.26", []string{"app", "lib"}); string(body) != want {
+				t.Fatalf("go.work = %q, want %q", body, want)
+			}
+		})
+	}
+}
+
+func TestDiscoverMalformedModule(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "lib", "go.mod")
+	writeFile(t, path, "go 1.26\n")
+	_, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "module directive") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRequiresLineEndings(t *testing.T) {
+	for _, ending := range []string{"\n", "\r\n"} {
+		for _, input := range []string{"require example.com/lib v1.2.3\n", "require (\n example.com/lib v1.2.3 // comment\n)\n"} {
+			got := parseRequires(strings.ReplaceAll(input, "\n", ending))
+			if len(got) != 1 || got["example.com/lib"] != "v1.2.3" {
+				t.Fatalf("parseRequires(%q) = %+v", input, got)
+			}
+		}
+	}
+}
