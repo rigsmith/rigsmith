@@ -1,0 +1,19 @@
+docs/guides/testing-a-member-pr-in-its-stackspace.md
+  s_ca2ca1ac39d1f2::t_0a348e9220a98d 72-74
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "fd68870a6d2801162a9c1d66288f23619463bfe0",
+  "prompts": {},
+  "sessions": {
+    "s_ca2ca1ac39d1f2": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19ea3-4005-74e1-9110-a37be91ae14c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
