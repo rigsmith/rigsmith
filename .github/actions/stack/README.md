@@ -235,6 +235,57 @@ file and target; it does not replace the link with a regular file. Windows
 runners may need Developer Mode or symlink-creation privileges for members
 that commit symlinks. Members without symlinks need no such privilege.
 
+### Scheduled cursor updates
+
+Use `rig stack canary --seed acme/rigstack-app@main --report canary.json`
+in a read-only job, then `rig stack canary --seed acme/rigstack-app@main
+--publish canary.json` on a fresh trusted runner with `contents: write`,
+`pull-requests: write`, and `issues: write` on the manifest home repository.
+Never give upstream build code the write token.
+The composite CI action remains unchanged; scheduling and the security boundary
+belong to the calling workflow. See `examples/github-workflows/stack-canary.yml`
+and the scheduled canary section of `docs/STACK-DESIGN.md` for batch, member,
+attribution and preview policies.
+
+Private seeds require Git credentials in **both** jobs. Checkout uses
+`persist-credentials: false`, and `GITHUB_TOKEN` alone does not configure Git:
+configure a read-only Git credential helper in the build job, and independently
+configure Git access to reload the seed on the fresh publish runner. Missing
+build-job seed credentials fail setup before a report; missing publish-job seed
+credentials fail seed reload before any publication. Never give the build job
+a home write token. See [private seed access](https://rigsmith.dev/rig/stack#one-manifest-home).
+
+For workflow-token PR creation, enable Settings → Actions → General →
+**Allow GitHub Actions to create and approve pull requests**, or supply a token
+with home PR write access. `pull-requests: write` alone does not override that
+repository policy. If PR creation is denied after branch creation, the summary
+names this setting and warns that a `rig-canary/` branch may remain. The next
+run updates that same stable branch and retries PR creation.
+
+The publish API token must also read every upstream for ancestry comparisons;
+Git fetch credentials do not grant API access. Public upstreams work with the
+example token; private upstreams in another repository require a suitable
+publish-only token with upstream read and home contents/PR/issue write access.
+Missing API access skips that result with a summary and success status; other
+results still proceed. Invalid ancestry is a hard error, checked across all
+available results before publication writes. Missing token skips publication.
+Each result's publication success or failure appears in the summary; a failed
+PR or issue does not stop later results.
+
+Setup and configured command outcomes are separate. Filesystem errors,
+materialization, manifest parsing, tool lookup, `git init`, `rig stack init`
+and `rig stack wire` failures are **inconclusive**: the command fails before
+writing a report, so the workflow skips publication and preserves existing
+PRs/issues. Cancellation or failure to start a command is also inconclusive.
+Only a configured `--build` or `--test` process exiting non-zero produces red.
+This deliberately includes deterministic import/filter/wiring failures at a
+new tip in the inconclusive category: init/wire expose no typed distinction
+between transport/engine trouble and source incompatibility. Rig does not
+classify arbitrary diagnostics by text or blame a member on that evidence.
+Inspect the failed phase and reproduce locally; a future typed setup diagnostic
+could support narrower attribution. Isolation setup errors likewise abort the
+whole run without a partial report.
+
 ### Fork PR cache policy
 
 When a pull request's `github.event.pull_request.head.repo.full_name` differs

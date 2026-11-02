@@ -1,0 +1,90 @@
+name: Upstream canary
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: stack-canary
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Install pinned rig
+        # Replace vX.Y.Z with a reviewed release containing stack canary.
+        # Go authenticates public module sources via the checksum database;
+        # this builds a trusted pinned release, not the upstream checkout.
+        env:
+          GOSUMDB: sum.golang.org
+          GONOSUMDB: ''
+          GOPRIVATE: ''
+        run: go install github.com/rigsmith/rigsmith/cmd/rig@vX.Y.Z
+      # Private seed/upstreams: configure READ-ONLY Git credentials here.
+      # persist-credentials:false means checkout did not install a Git helper;
+      # GITHUB_TOKEN alone does not authenticate stackCISeed's Git clone.
+      # Missing seed access fails setup and produces no report/publication.
+      # See https://rigsmith.dev/rig/stack#one-manifest-home.
+      - name: Test upstream tips
+        run: rig stack canary --seed acme/rigstack-app@main --build 'rig build' --test 'rig test' --report canary.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: canary-report
+          path: canary.json
+          if-no-files-found: error
+  publish:
+    needs: build
+    # A red canary writes its report and exits successfully. Setup failures,
+    # failed uploads and cancelled builds must not publish stale/partial data.
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Enable Settings > Actions > General > "Allow GitHub Actions to create
+      # and approve pull requests", or use a token with home PR write access.
+      # Denial may leave a rig-canary/ branch; summary explains the setting,
+      # and the next run reuses the branch and retries creating the PR.
+      pull-requests: write
+      issues: write
+    steps:
+      # This job must run on a fresh hosted runner, without build caches,
+      # upstream checkout, or any executable supplied by the build job.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Install pinned rig
+        # Replace vX.Y.Z with a reviewed release containing stack canary.
+        # Go authenticates public module sources via the checksum database;
+        # this builds a trusted pinned release, not the upstream checkout.
+        env:
+          GOSUMDB: sum.golang.org
+          GONOSUMDB: ''
+          GOPRIVATE: ''
+        run: go install github.com/rigsmith/rigsmith/cmd/rig@vX.Y.Z
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: canary-report
+          path: report
+      # Private seed: configure Git credentials independently on THIS runner
+      # to reload it. Missing Git access fails before any publication.
+      # See https://rigsmith.dev/rig/stack#one-manifest-home.
+      - name: Publish cursor updates or failure issue
+        env:
+          # Must read every upstream for compare validation, as well as write
+          # the home. A private cross-repository upstream needs a suitable
+          # publish-only token; Git fetch access alone is insufficient.
+          # Missing API access skips that result with a summary, continuing
+          # others. Missing token skips all publication. Invalid ancestry fails.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: rig stack canary --seed acme/rigstack-app@main --publish report/canary.json
