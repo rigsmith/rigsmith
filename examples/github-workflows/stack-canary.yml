@@ -1,0 +1,57 @@
+name: Upstream canary
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: stack-canary
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Install pinned rig
+        # Replace vX.Y.Z with a reviewed release containing stack canary.
+        run: go install github.com/rigsmith/rigsmith/cmd/rig@vX.Y.Z
+      - name: Test upstream tips
+        run: rig stack canary --seed acme/rigstack-app@main --build 'rig build' --test 'rig test' --report canary.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: canary-report
+          path: canary.json
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      # This job must run on a fresh hosted runner, without build caches,
+      # upstream checkout, or any executable supplied by the build job.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Install pinned rig
+        # Replace vX.Y.Z with a reviewed release containing stack canary.
+        run: go install github.com/rigsmith/rigsmith/cmd/rig@vX.Y.Z
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: canary-report
+          path: report
+      - name: Publish cursor updates or failure issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: rig stack canary --seed acme/rigstack-app@main --publish report/canary.json

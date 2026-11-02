@@ -110,6 +110,17 @@ release makes no `ui/` tag, so only the CLI build runs. The composite
 
 ## Stackspace member CI
 
+### Scheduled cursor updates
+
+Use `rig stack canary --seed acme/rigstack-app@main --report canary.json`
+in a read-only job, then `rig stack canary --seed acme/rigstack-app@main
+--publish canary.json` on a fresh trusted runner with home contents, PR and
+issue write permissions. Never give upstream build code the write token.
+The composite CI action remains unchanged; scheduling and the security boundary
+belong to the calling workflow. See `examples/github-workflows/stack-canary.yml`
+and the scheduled canary section of `docs/STACK-DESIGN.md` for batch, member,
+attribution and preview policies.
+
 Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
 to read the committed manifest from its home, or `manifest` / `--manifest`
 to read it from checkout HEAD. Exactly one is required. Seed references use the

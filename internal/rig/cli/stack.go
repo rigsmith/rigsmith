@@ -32,6 +32,7 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
+			"  rig stack canary                    test tips; publish cursor PRs or failure issues\n" +
 			"  rig stack ci-guard <project>        build with observed warning guard\n" +
 			"  rig stack ci                        build/test checkout; requires --seed or --manifest\n" +
 			"  rig stack setup [seed]              clone a manifest home; engine, members, overlay\n" +
@@ -55,7 +56,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackCanaryCmd(), newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 

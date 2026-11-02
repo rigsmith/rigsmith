@@ -114,6 +114,17 @@ Custom commands honor `--dry-run`, forward extra args, and take `env`/`cwd`/
 
 ## rig stack — several forked repos in one history
 
+### Scheduled cursor updates
+
+Use `rig stack canary --seed acme/rigstack-app@main --report canary.json`
+in a read-only job, then `rig stack canary --seed acme/rigstack-app@main
+--publish canary.json` on a fresh trusted runner with home contents, PR and
+issue write permissions. Never give upstream build code the write token.
+The composite CI action remains unchanged; scheduling and the security boundary
+belong to the calling workflow. See `examples/github-workflows/stack-canary.yml`
+and the scheduled canary section of `docs/STACK-DESIGN.md` for batch, member,
+attribution and preview policies.
+
 A **stack workspace** fuses upstream repos you maintain forks of into one git
 history, each under its own directory (`pty-core/`, `term-core/`, …). A change
 spans them in one commit and the build compiles against source; each project

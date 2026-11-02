@@ -31,6 +31,10 @@ winget / Scoop on any machine John roams onto. Every release builds the tools
 for macOS, Linux, and Windows, on x86-64 and Arm64 alike — except `brewrig`,
 which is macOS and Linux only because Homebrew does not run on Windows.
 
+Scheduled upstream checks: `rig stack canary` tests tips and reports cursor PRs
+or failure issues through separate build and publish jobs. See the
+[stack guide](https://rigsmith.dev/rig/stack).
+
 ## Status
 
 **At parity — ported 2026-06-11/12.** The shared engine, both CLIs, and the

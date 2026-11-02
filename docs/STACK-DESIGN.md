@@ -702,6 +702,58 @@ exactly one unmerged topic — and silently wrong otherwise — is worse than th
 step it replaces.
 
 
+### Scheduled upstream canary
+
+`rig stack canary --seed acme/rigstack-app@main --report canary.json`
+resolves eligible upstream branches at tip, rebuilds and wires a temporary
+stack, then runs `--build` and `--test` from its root. Commands use bash.
+`--members app,core` restricts following. Tags, `upstreamCommit` pins and
+fork-tracking (`trackBranch`) members are excluded from movement; fork-tracking
+members retain their configured fork source. A full cursor and a fast-forward
+upstream range are required. Nothing new produces an empty report and no writes.
+
+Copy `examples/github-workflows/stack-canary.yml`, select a released rig version
+containing this verb and set the seed and build commands. The cron expression
+controls frequency. `--mode batch` is the default: one build and one PR for all
+updates. Red batches list candidate members and ranges without claiming a
+single culprit. `--isolate` adds a full build per moved member after a red batch;
+`--mode separate` always tests and proposes each member independently. This
+costs one rebuild per member and does not prove combined compatibility.
+Bisect is deliberately skipped: no implicit unbounded build loop is run.
+
+The build job has only `contents: read` and checkout `persist-credentials: false`.
+It receives no write secret. A fresh hosted publish job consumes only the JSON
+report and a trusted pinned rig installation, with `contents: write`,
+`pull-requests: write`, and `issues: write`. It runs
+`rig stack canary --seed acme/rigstack-app@main --publish report/canary.json`;
+it runs no project commands and restores no build cache. Do not reuse a
+self-hosted workspace between these jobs. Environment scrubbing of `*_TOKEN`
+and `*_PAT` in build children is defense in depth, not a sandbox: arbitrary
+upstream code can leave files behind, which is why the separate runner matters.
+A report can misstate its build outcome; treat artifacts from an untrusted run
+as evidence for review, never automatic merge authorization.
+
+Publication requires the same seed commit, validates the cursor-only deltas,
+and reloads the manifest from an independent read-only seed clone. It uses
+`stackCheckHome` over reachable history and creates a one-parent commit via
+GitHub's Git data API, with only `rig.stack.jsonc` replaced in the seed tree.
+No fused objects or build-job files enter that commit. Root overlays and README
+remain the seed's. The stable `rig-canary/<group-hash>` branch (one fixed batch group, or one group per member) is reset to
+one commit on the seed base each update; serialize workflow runs to avoid races.
+PRs are updated by branch; failure issues by a stable body marker. Recovery
+closes the matching issue when the green PR is published. A merged PR advances
+the seed, so an unchanged next run does nothing. Use a dedicated branch namespace.
+
+Reports list member labels, full ranges and commit hashes rather than untrusted
+commit subjects or subprocess output. This avoids Markdown mentions, leaked
+command diagnostics and workflow command injection. Build output is suppressed;
+reproduce failures locally using the listed ranges. No tokens enter the report.
+Without `GITHUB_TOKEN`, publication reports a summary and succeeds; unavailable
+API permissions likewise produce a summary without replacing the build result.
+Setup errors and stale seed reports fail. Build/test failures are recorded in
+the report so the later job can publish the issue. `-n` previews without builds,
+report files, API writes, commits or branch updates (reading the seed is allowed).
+
 ### Manifest home (default)
 
 Keep one small seed repository as the manifest home: the committed
