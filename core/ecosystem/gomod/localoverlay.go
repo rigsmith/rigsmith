@@ -100,7 +100,7 @@ func (a *Adapter) LocalOverlay(ctx context.Context, req plugin.LocalOverlayReque
 	// discard whatever else it says. Report what is missing from it instead.
 	if readErr == nil && !generated {
 		for _, m := range mods {
-			if !strings.Contains(string(existing), "./"+m) {
+			if !workspaceUses(string(existing), "./"+m) {
 				resp.Problems = append(resp.Problems, plugin.OverlayProblem{
 					Path:    workFile,
 					Message: m + " is not in this go.work, so a require on it is fetched from the proxy instead of read from the tree",
@@ -246,3 +246,16 @@ func renderWork(goVersion string, mods []string) string {
 // crlfToLF normalises line endings for a comparison that must not see a
 // checkout's autocrlf as a difference.
 func crlfToLF(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
+
+func workspaceUses(content, path string) bool {
+	rows, ok := directiveRows(content)
+	if !ok {
+		return false
+	}
+	for _, row := range rows {
+		if row.kind == "use" && len(row.args) == 1 && filepath.Clean(row.args[0]) == filepath.Clean(path) {
+			return true
+		}
+	}
+	return false
+}
