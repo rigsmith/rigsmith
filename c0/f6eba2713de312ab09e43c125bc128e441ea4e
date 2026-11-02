@@ -1,0 +1,22 @@
+skills/rigsmith-tools/SKILL.md
+  s_c5c64884eff7f0::t_2022070b73abed 6-8,10-12,18,33-34,481-508,518-522,531-532,535-633,640-642
+  s_c5c64884eff7f0::t_5f4f12aa3d60d2 533-534
+.changeset/quiet-falcons-dance.md
+  s_c5c64884eff7f0::t_5f4f12aa3d60d2 1-5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c0f6eba2713de312ab09e43c125bc128e441ea4e",
+  "prompts": {},
+  "sessions": {
+    "s_c5c64884eff7f0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19c72-6967-7b33-9df3-46e9b85d4a5b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
