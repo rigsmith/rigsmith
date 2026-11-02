@@ -48,8 +48,10 @@ var (
 	// rigsmith annotation, so any other comment made the whole line fail to match
 	// and the module was silently skipped. `.` does not cross the newline under
 	// (?m), so the match stays on the module line for SetVersion's in-place rewrite.
-	moduleRe         = regexp.MustCompile(`(?m)^module[ \t]+(\S+)(?:[ \t]+//[ \t]*rigsmith:version[ \t]+(\S+))?[ \t]*(?://.*)?$`)
-	versionCommentRe = regexp.MustCompile(`//\s*rigsmith:version\s+\S+`)
+	// Accept CRLF explicitly: multiline $ only matches before LF. Neither
+	// capture includes CR, and SetVersion preserves it as part of the ending.
+	moduleRe         = regexp.MustCompile(`(?m)^module[ \t]+(\S+)(?:[ \t]+//[ \t]*rigsmith:version[ \t]+(\S+))?[ \t]*(?://[^\r\n]*)?\r?$`)
+	versionCommentRe = regexp.MustCompile(`//[ \t]*rigsmith:version[ \t]+\S+`)
 )
 
 // Info returns the Go adapter's identity and capabilities.
@@ -556,7 +558,12 @@ func setVersionComment(text, newVersion string) string {
 	if loc == nil {
 		return text
 	}
-	line := text[loc[0]:loc[1]]
+	// Keep the matched CR outside the replacement, beside its original LF.
+	end := loc[1]
+	if end > loc[0] && text[end-1] == '\r' {
+		end--
+	}
+	line := text[loc[0]:end]
 	annotation := "// rigsmith:version " + newVersion
 	var newLine string
 	switch {
@@ -573,7 +580,7 @@ func setVersionComment(text, newVersion string) string {
 	default:
 		newLine = strings.TrimRight(line, " \t") + " " + annotation
 	}
-	return text[:loc[0]] + newLine + text[loc[1]:]
+	return text[:loc[0]] + newLine + text[end:]
 }
 
 func relTo(root, path string) string {
