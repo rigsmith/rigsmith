@@ -1,0 +1,19 @@
+skills/rigsmith-tools/SKILL.md
+  s_c5c64884eff7f0::t_a876ace67427fb 497-499,554-556
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "17660d24cea529060169eb8367853e5234bb7b4c",
+  "prompts": {},
+  "sessions": {
+    "s_c5c64884eff7f0": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19c72-6967-7b33-9df3-46e9b85d4a5b",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
