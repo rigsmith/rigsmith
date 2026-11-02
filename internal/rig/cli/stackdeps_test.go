@@ -577,3 +577,28 @@ func TestStackDepsExistingCycleErrorNamesFileChainAndRepair(t *testing.T) {
 		})
 	}
 }
+
+func TestStackDepsPublishDryRun(t *testing.T) {
+	stackDryRun(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Error("dry run posted a GitHub status")
+		}
+		t.Error("refused dry run contacted API")
+	}))
+	defer server.Close()
+	t.Setenv("GITHUB_API_URL", server.URL)
+	summary := filepath.Join(t.TempDir(), "summary")
+	t.Setenv("GITHUB_STEP_SUMMARY", summary)
+	cmd := newStackDepsCmd()
+	if err := cmd.Flags().Set("publish", "true"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runVerbOut(context.Background(), cmd)
+	if err == nil || !strings.Contains(err.Error(), "--dry-run is not supported for stack deps") {
+		t.Fatalf("expected refusal: %v", err)
+	}
+	if _, err := os.Stat(summary); !os.IsNotExist(err) {
+		t.Fatal("dry run wrote summary")
+	}
+}
