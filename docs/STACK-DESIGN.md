@@ -1525,3 +1525,140 @@ none of the guard's temporary policy. A new test mode is not required: set
 configuration and target frameworks. The guarded build must produce those test
 outputs first. A test command that builds another graph can fail on sibling
 warnings under its own policy.
+
+## Returning to published NuGet packages
+
+`rig stack released <member> <sibling> --package Acme.Lib` checks up to the
+20 newest stable versions returned by a NuGet flat-container index. An explicit
+`--version 2.0.0` checks only that version. `--feed` accepts a flat-container base
+URL (default public nuget.org), not a v3 service index. There is one 20-second
+budget including GitHub reads; HTTP clients also have a 15-second timeout.
+Feed failures, including authentication failures, mean **can't check**, never
+not released. No registry credentials are copied or inferred for custom feeds.
+Private feeds requiring authentication are currently reported as inaccessible.
+
+Evidence is a nuspec repository URL matching the sibling upstream and a full
+repository commit SHA. GitHub compare must report ahead or identical from
+**every** recorded proposal's upstream merge SHA and the manifest's unfiltered
+upstream cursor to that package commit. PR discovery shares `stack deps`' fork
+branch lookup and ambiguity checks. The merge SHA handles merge, squash and
+rebase histories without assuming the original PR head survives upstream.
+Open proposals block migration too. No proposals, missing cursors, missing
+metadata, inaccessible comparisons and ambiguous branches cannot establish a
+release. A partial release is insufficient. The report says exactly that all
+recorded proposals and the cursor were checked.
+
+Version numbers and dates never prove containment. This implementation does not
+fall back to tags: even a tag named for a version needs an explicit repository
+and packaging convention before it is useful evidence. Missing repository
+commit metadata therefore says **can't tell**. Registries other than NuGet and
+authenticated feed support remain future work.
+
+Guards identify packages, using the same normalized package ID as the .NET
+overlay, rather than topics. The selected package must be produced by the sibling and be reachable through
+the discovered package graph. All recorded sibling proposals must
+be included; the cursor additionally bounds recorded upstream work. Unrecorded
+fork work and a guard's actual feature requirements cannot be inferred. Keep
+proposal records current and review the preview. For a transitive sibling, a published direct delivery package must explicitly
+require the verified sibling version or higher. `--via-package Acme.Control`
+disambiguates multiple delivery paths; `--via-version 4.0.0` selects a release.
+Otherwise up to 20 newest stable delivery releases are checked. The tool bumps
+that direct pin and removes only the selected sibling's guards; it does not
+remove the delivery package's own guards.
+
+Every nuspec dependency group must include the sibling with a provable minimum
+at least as new as the verified release. Bare NuGet versions mean inclusive
+minima; `[2.0.0]`, `[2.0.0,3.0.0)` and `(2.0.0,3.0.0)` can establish a minimum;
+floating versions and unbounded lower ranges cannot. Groups missing the sibling,
+older minima, invalid ranges or excluded compile assets block migration. All
+groups are checked rather than guessing evaluated target frameworks. Only an
+explicit immediate dependency in the delivery nuspec qualifies; deeper chains
+require an explicit delivery dependency or a manually added direct reference.
+
+If no checked release qualifies, guards and pins stay unchanged. The report names
+the required sibling minimum and recommends migrating/publishing the sibling,
+then its direct consumer, then the application. An exact future delivery version
+cannot be predicted. Adding a direct sibling PackageReference manually is an
+explicit alternative; the next run then follows the ordinary direct path.
+No direct reference is silently added.
+
+The default is read-only. `--apply` prepares edits in memory and lists files and
+manual-review notes, refuses tracked or untracked dirt, and asks for interactive
+confirmation. It fails off a terminal; no `--yes` bypass is provided for this
+first destructive source rewrite. This follows the destructive replacement rule
+even though the working tree is clean and Git can recover it. `-n` always stays
+in preview mode, including with `--apply`. Nothing commits, pushes or opens a PR.
+A later opt-in PR layer would need contents/pull-requests write permissions;
+no action permissions or workflow inputs change here.
+
+Only exact `#if STACK_ID`, optional `#else`, and balanced nested directives are
+rewritten, keeping the selected branch's bytes. Compound expressions, `#elif`
+on a selected guard, malformed directives and non-directive symbol occurrences
+refuse the entire file. As a deliberately conservative lexical fence, any file
+containing the symbol and string/character literals, comments or unsupported
+encoding is listed unchanged; this includes verbatim and raw strings. A future
+C# lexer can widen eligibility. UTF-8 BOM and CRLF are preserved. UTF-16 is not
+rewritten. Generated files and bin/obj/vendor/node_modules/packages/generated
+and .vs directories are skipped; symlinks are not followed.
+
+Before preparing any edit, a static pin preflight inspects projects and build
+props/targets in the member plus automatic Directory.Build.props/targets and
+Directory.Packages.props files in ancestor directories. VersionOverride,
+PackageReference/PackageVersion Update or Remove, unresolved/property-based
+versions or identities, wildcard updates, default item metadata, and selected
+references introduced by build props/targets refuse the whole migration. Explicit
+imports require MSBuild evaluation and are refused in this first implementation;
+files are never silently assumed harmless. The ordinary source-only overlay
+condition `'$(UseStackSources)' != 'false'` is ignored for this package-mode proof.
+Every project must receive the selected package through a literal direct pin,
+a versionless reference to its nearest enabled central file within the member,
+or a simple local ProjectReference to a project already proved. Conditional,
+external, or metadata-bearing project reference paths cannot establish delivery.
+An unrelated or shadowing central file is insufficient. Transitive migration also
+checks the guarded sibling for explicit pins that could override the delivery
+package dependency; those require a separate direct migration. Failure returns no edit
+plan and leaves all pins and guards intact; reconcile complex MSBuild rules
+manually. Static discovery is not a replacement for evaluating arbitrary MSBuild.
+
+Version edits use XML token offsets, preserving surrounding bytes, comments,
+BOM and line endings. Literal Version attributes on PackageReference and central
+PackageVersion items (including Directory.Packages.props) can be updated.
+Floating versions, unsupported version syntax, downgrades,
+conditional references and nested version metadata refuse guard edits. A
+versionless self-closing PackageReference can use an updated central pin; no
+literal pin means no migration. All version comparisons use NuGet's four numeric
+components (absent components are zero: 1.0 equals 1.0.0.0), followed by
+case-insensitive prerelease identifier ordering; metadata does not affect
+precedence. Numeric components and numeric prerelease labels must fit a nonnegative 32-bit
+integer; overflow labels are refused rather than assuming SemVer ordering.
+This matches the supported subset of [NuGet's version comparer](https://github.com/NuGet/NuGet.Client/blob/dev/src/NuGet.Core/NuGet.Versioning/VersionComparer.cs). Unknown
+syntax and ambiguous legacy prerelease labels fail closed. Delivery minima,
+range bounds, candidate sorting and downgrade protection share this parser.
+Feed requests use normalized versions, preserving nonzero revisions. The release
+containment check itself remains commit ancestry, never numeric precedence.
+RigStackSource_* and RigStackAvailable_*
+conditions are listed and never rewritten.
+
+StackOnlyWarning carries no package identity. Explicit `--warning ACME0001`
+attribution removes only an unconditional self-closing declaration containing
+that single Include attribute. Other declarations are listed unchanged. Users
+must attribute those warning IDs during review; guessing from an ID could
+remove a warning for another unreleased sibling.
+
+`stack status --releases` annotates included merged dependencies with
+`Acme.Lib released in X.Y.Z` when discovery and evidence succeed. Release checks are opt-in because discovery can scan a large repository. The
+default status and stack deps do no release discovery or registry work. Status shares
+its existing two-second optional dependency-report budget; it makes no new
+registry call unless a merged proposal was first verified in the cursor.
+Discovery is lazy and performed once for the entire report, and repeated
+member/sibling annotations are cached within that report. The same context
+deadline reaches discovery, credentials, GitHub and feed requests. Offline or
+exhausted budgets simply omit release annotations. A hanging-feed fixture measured
+2.003 seconds for the two-second budget, including one discovery call. There is no
+persistent cache of release claims.
+
+Fake-server tests exercise repository metadata and ancestry outcomes; golden
+rewrite fixtures preserve exact bytes, including BOM/CRLF. The gated
+RIG_STACK_E2E=1 fixture packs a local NuGet library, rewrites a consumer, then
+builds it with UseStackSources=false. Hosted GitHub and private-feed integration
+remain unverified.

@@ -293,7 +293,8 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack home [pointer-file]` | Read a member’s single-reference .rig-stack pointer (default .rig-stack) |
 | `stack canary` | Test upstream tips; required `--seed`, `--allowed-hosts`, `--members`, `--mode batch` or `--mode separate`, `--isolate`, `--build`, `--test`, `--report`; `--publish` validates tracked upstream ancestry and reconciles reported build outcomes into cursor PRs or failure issues on a fresh trusted runner; `-n` previews |
 | `stack deps` | Read `--manifest <path>` or `--seed <ref>` (exclusive); `--allowed-hosts <hosts>` restricts seed hosts; check topic PR dependencies against upstream merge states and manifest cursors; `--publish` posts statuses only in `GITHUB_REPOSITORY` |
-| `stack status` | Each repo's cursor against its upstream, whether it holds work that has not left — all of which `propose` would send — and, listed under it, each `stack-pr-*` topic in flight with the fork branch its pull request is on, `not proposed yet`, whether the branch has moved since, and whether a pull left it behind |
+| `stack released <member> <sibling> --package <id>` | Verify NuGet release ancestry and package delivery; preview pin and guard edits, or use `--apply` on a clean tree with interactive confirmation. `-n` previews only |
+| `stack status` | Each repo's cursor against its upstream, whether it holds work that has not left — all of which `propose` would send — and, listed under it, each `stack-pr-*` topic in flight with the fork branch its pull request is on, `not proposed yet`, whether the branch has moved since, and whether a pull left it behind; `--releases` opts into NuGet release annotations under the shared short deadline |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default); private upstreams through your `gh` login, as with `init` |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch — **all** of them, the prefix's whole divergence from upstream; `--from <branch>` sends only what a topic branch of the stackspace adds (a bare name resolves to the conventional `stack-pr-<name>`), so a second fix can be its own pull request (needs `trackBranch`, which it then keeps current); `--dry-run` shows the commit and branch that would go and touches no remote; both report any package the branch references that this stackspace provides from source rather than a feed, since a plain checkout of the branch cannot restore those |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours; `--dry-run` shows the target, branch and commits that would go and touches no remote |
@@ -301,6 +302,16 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack wire` | Write the build overlay so members resolve each other from source |
 | `stack pack [repo]` | Build a member's publishable packages from inside the stackspace, where the build overlay makes cross-member references resolve from source (every member with no argument); `--out` chooses the directory, default `dist/`; refuses while the overlay is missing, since without it the packages are the ones a bare checkout would produce |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what's missing |
+
+`rig stack released <member> <sibling> --package Acme.Lib` checks NuGet release
+commit ancestry. `--version` selects a release, `--feed` selects a flat-container
+feed, `--warning` explicitly attributes warning IDs, and `--apply` edits a clean
+working tree after interactive confirmation. `-n` previews only. See [stackspaces](./stack).
+
+For transitive siblings, `stack released --via-package Acme.Control
+--via-version 4.0.0` selects a direct package whose nuspec must deliver the
+verified sibling minimum in every target-framework group. `rig stack status
+--releases` opts into bounded release annotations; default status skips discovery.
 
 On .NET, `wire` source constants and target-time properties include the static
 PackageReference closure of each swapped sibling, propagated through evaluated

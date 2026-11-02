@@ -159,7 +159,7 @@ func (a stackDepsAPI) dependency(ctx context.Context, r *stackRepo, p stackPropo
 	}
 	return label + " (merged; included in cursor)", true
 }
-func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out io.Writer, publish bool) {
+func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out io.Writer, publish bool, releases ...stackReleaseAnnotation) {
 	publishRepo := os.Getenv("GITHUB_REPOSITORY")
 	if publish {
 		matched := false
@@ -201,6 +201,9 @@ func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out 
 					continue
 				}
 				text, ready := a.dependency(ctx, m.Repos[dep], p, m.cursor(dep))
+				if ready && len(releases) > 0 {
+					text += releases[0](member, dep)
+				}
 				if !ready {
 					state = "pending"
 				}
@@ -229,11 +232,23 @@ func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out 
 		}
 	}
 }
-func stackStatusDependencies(ctx context.Context, m *stackManifest, out io.Writer) {
+func stackStatusDependencies(ctx context.Context, m *stackManifest, out io.Writer, releases ...bool) {
 	// One deadline for the entire optional report, including credential helpers.
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	stackDepsReport(ctx, m, stackDepsClient(), out, false)
+	a := stackDepsClient()
+	if len(releases) > 0 && releases[0] {
+		annotate := stackReleaseAnnotations(ctx, m, a, stackNugetFeed, func(ctx context.Context) ([]stackLink, error) {
+			root, err := stackRoot(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return stackReleaseAllLinks(ctx, root, m)
+		})
+		stackDepsReport(ctx, m, a, out, false, annotate)
+	} else {
+		stackDepsReport(ctx, m, a, out, false)
+	}
 }
 
 func stackDepsDescription(s string) string {

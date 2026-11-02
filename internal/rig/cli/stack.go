@@ -32,23 +32,24 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
-			"  rig stack canary                     test tips; publish cursor PRs or failure issues\n" +
-			"  rig stack ci-guard <project>         build with observed warning guard\n" +
-			"  rig stack ci [--topic <name>]        build/test checkout or topic; --seed or --manifest\n" +
-			"  rig stack setup [seed]               clone a manifest home; engine, members, overlay\n" +
-			"  rig stack init                       scaffold the manifest / import the repos\n" +
-			"  rig stack add [upstream]             add a repo and import it (asks if not given)\n" +
-			"  rig stack rm <repo>                  remove a repo: manifest, tree and overlay\n" +
-			"  rig stack seed [dir]                 export root files; --publish updates the manifest home\n" +
-			"  rig stack home [pointer-file]        read a member seed pointer\n" +
-			"  rig stack deps                       topic PR dependencies; optional --seed manifest\n" +
-			"  rig stack status                     cursor vs upstream, per repo\n" +
-			"  rig stack pull [repo]                merge new upstream commits (all by default)\n" +
-			"  rig stack propose [repo] [branch]    a branch on your fork, prefixed stack/ (asks)\n" +
-			"  rig stack push [repo]                fast-forward a repo you own, history intact\n" +
-			"  rig stack wire                       write the build overlay for the members\n" +
-			"  rig stack pack [repo]                build a member's packages here, where the overlay applies\n" +
-			"  rig stack doctor                     engine + manifest checks (--fix installs josh)",
+			"  rig stack canary                       test tips; publish cursor PRs or failure issues\n" +
+			"  rig stack ci-guard <project>           build with observed warning guard\n" +
+			"  rig stack ci [--topic <name>]          build/test checkout or topic; --seed or --manifest\n" +
+			"  rig stack setup [seed]                 clone a manifest home; engine, members, overlay\n" +
+			"  rig stack init                         scaffold the manifest / import the repos\n" +
+			"  rig stack add [upstream]               add a repo and import it (asks if not given)\n" +
+			"  rig stack rm <repo>                    remove a repo: manifest, tree and overlay\n" +
+			"  rig stack seed [dir]                   export root files; --publish updates the manifest home\n" +
+			"  rig stack home [pointer-file]          read a member seed pointer\n" +
+			"  rig stack released <member> <sibling>  check NuGet releases; --apply returns to packages\n" +
+			"  rig stack deps                         topic PR dependencies; optional --seed manifest\n" +
+			"  rig stack status                       cursor vs upstream, per repo; --releases checks NuGet\n" +
+			"  rig stack pull [repo]                  merge new upstream commits (all by default)\n" +
+			"  rig stack propose [repo] [branch]      a branch on your fork, prefixed stack/ (asks)\n" +
+			"  rig stack push [repo]                  fast-forward a repo you own, history intact\n" +
+			"  rig stack wire                         write the build overlay for the members\n" +
+			"  rig stack pack [repo]                  build a member's packages here, where the overlay applies\n" +
+			"  rig stack doctor                       engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -56,7 +57,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackCanaryCmd(), newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackCanaryCmd(), newStackReleasedCmd(), newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
@@ -275,10 +276,11 @@ func stackOnlyManifestDirty(ctx context.Context, repo *gitrepo.Repo, src *cfgfin
 }
 
 func newStackStatusCmd() *cobra.Command {
+	var releases bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Each repo's cursor, unsent work and topic PR dependency chain",
-		Long:  "Shows cursor and unsent work per member, plus recorded topic PR dependencies\nchecked after local output with a two-second total API lookup budget.\nUnavailable API data is labelled could not check.",
+		Long:  "Shows cursor and unsent work per member, plus recorded topic PR dependencies\nchecked after local output with a two-second total API lookup budget.\nUnavailable API data is labelled could not check. --releases opts into package discovery and\nNuGet release evidence within that same deadline; omitted by default for fast offline status.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -389,10 +391,11 @@ func newStackStatusCmd() *cobra.Command {
 				fmt.Fprintf(out, "\ntopics in flight: %s\n", strings.Join(topics, ", "))
 				fmt.Fprintf(out, "  propose one with `rig stack propose <repo> <name> --from %s`\n", strings.TrimPrefix(topics[0], stackTopicPrefix))
 			}
-			stackStatusDependencies(ctx, m, out)
+			stackStatusDependencies(ctx, m, out, releases)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&releases, "releases", false, "Check NuGet releases (optional discovery, shared two-second report budget)")
 	return cmd
 }
 

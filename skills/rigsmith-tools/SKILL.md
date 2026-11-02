@@ -139,6 +139,7 @@ rig stack seed --publish acme/rigstack-app@main   # opt in and publish root-only
 rig stack ci --seed acme/rigstack-app@main --member app # isolated committed-checkout CI
 rig stack ci --manifest rig.stack.jsonc --member app # alternative committed manifest
 rig stack ci-guard app/App.csproj       # observed .NET build warning policy
+rig stack released <member> <sibling> --package <id>  # verify release and preview migration
 rig stack deps [--publish]              # check topic dependencies; optionally post statuses
 rig stack deps --seed acme/rigstack-app@main [--publish] # read proposals from seed
 rig stack home [pointer-file]           # read a member's .rig-stack reference
@@ -349,6 +350,21 @@ landed in between. When you see that, `rig stack pull <repo>` and send again —
 do not work around it.
 
 Full guide: <https://rigsmith.dev/rig/stack>.
+
+### Return to packages
+
+For returning .NET stack members to packages, preview with
+`rig stack released <member> <sibling> --package Acme.Lib [--version 2.0.0]`.
+Require repository commit ancestry proof; missing evidence is not a release.
+`--apply` is interactive and clean-tree only; `-n` previews. Explicitly attribute
+StackOnlyWarning IDs with `--warning`; review all refused rewrites and build
+with UseStackSources=false. The command creates no PR.
+
+For a transitive stack sibling, use --via-package/--via-version to verify a
+published direct package delivers the verified sibling minimum in all nuspec
+framework groups. Publish the sibling, then migrate/publish its consumer, then
+the application. A failed delivery proof must leave guards in place. Use
+`rig stack status --releases` to opt into discovery; default status skips it.
 
 ## changerig — changesets (the changelog source of truth)
 
