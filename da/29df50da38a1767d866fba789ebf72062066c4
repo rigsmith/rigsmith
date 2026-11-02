@@ -1,0 +1,40 @@
+internal/rig/cli/stackrm.go
+  s_c451f8ac058d80::t_5fa8b680b3e460 414,501-503,522-529,535-541
+  s_c451f8ac058d80::t_21b613a61070d4 8,521,530-534
+  s_c451f8ac058d80::t_3cc7e6d31acacb 17,19
+  s_c451f8ac058d80::t_b254bdaf6a859f 504-520
+.changeset/quiet-foxes-parse.md
+  s_c451f8ac058d80::t_3cc7e6d31acacb 1-7
+core/ecosystem/gomod/gomod_test.go
+  s_c451f8ac058d80::t_e2e3d395851343 586-587,634-636
+  s_c451f8ac058d80::t_3cc7e6d31acacb 5,588-601,613-633,637-642,675-677,681
+  s_c451f8ac058d80::t_10216b4a9f56d5 683-693,695-701,703-706,708-711
+  s_c451f8ac058d80::t_5fa8b680b3e460 602-612,643-663,665-674,678-680
+  s_c451f8ac058d80::t_21b613a61070d4 664,694,702,707
+core/ecosystem/gomod/localoverlay.go
+  s_c451f8ac058d80::t_3cc7e6d31acacb 103,249-261
+internal/rig/cli/stackgomod_test.go
+  s_c451f8ac058d80::t_5fa8b680b3e460 1-12,15-28,40-41
+  s_c451f8ac058d80::t_21b613a61070d4 13-14,29-39
+core/ecosystem/gomod/gomod.go
+  s_c451f8ac058d80::t_3cc7e6d31acacb 22,183-185,483-484,487-488,490-506,508,532-538,540-541,546-552,554-561,563-584,587,589,593-632,634,640-650
+  s_c451f8ac058d80::t_10216b4a9f56d5 489
+  s_c451f8ac058d80::t_5fa8b680b3e460 186-191
+  s_c451f8ac058d80::t_b1f66d47fee86c 43,544-545,553,592
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "da29df50da38a1767d866fba789ebf72062066c4",
+  "prompts": {},
+  "sessions": {
+    "s_c451f8ac058d80": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19d0a-a828-7bf1-a834-1ea70f04c7c5",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": null
+    }
+  }
+}
