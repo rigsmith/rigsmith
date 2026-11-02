@@ -86,9 +86,9 @@ func ValidateProject(repo, path string) error {
 	return nil
 }
 
-// The .git entry itself is protected even when it is a linked-worktree gitfile.
-// Git can also place its private and common directories elsewhere, including
-// beneath another name inside the checkout.
+// Protect this repository's Git directories and any path component named .git,
+// including gitfiles. Other repositories' separate Git directories are outside
+// this check's scope.
 func rejectGitMetadata(root, target string) error {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
@@ -124,8 +124,8 @@ func rejectGitMetadata(root, target string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	// Check every component, including nested repositories and gitfiles. Identity
-	// comparisons also recognize case variants on case-insensitive filesystems.
+	// Check each component for .git and this repository's metadata identities.
+	// Identity comparisons recognize case variants on case-insensitive filesystems.
 	for ancestor := target; ; ancestor = filepath.Dir(ancestor) {
 		if strings.EqualFold(filepath.Base(ancestor), ".git") {
 			return fmt.Errorf("resolves into git metadata")
