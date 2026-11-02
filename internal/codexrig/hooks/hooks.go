@@ -32,13 +32,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/rigsmith/rigsmith/internal/codexrig/appserver"
 )
 
-// Marker locates candidate groups for install/update/removal, including stale
-// commands. It is NOT an identity or trust check: Matches validates current
-// command/event pairs before any trust is recorded or reported.
+// Marker identifies diagnostic candidates, including stale commands. It never
+// authorizes trust or chooses handlers the installer may overwrite.
 //
 // It is "codexrig" rather than "rig", which would also match clauderig's
 // commands and every rig binary on the machine.
@@ -132,44 +129,89 @@ func Install(path string, plans []Plan) (added, updated []string, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	added, updated = prepareInstall(doc, plans)
+	if len(added)+len(updated) == 0 {
+		return nil, nil, nil
+	}
+	return added, updated, save(path, doc)
+}
+
+// knownCommand recognizes only commands from the current installer and the
+// documented old Stop plan. A substring, shell wrapper, or unknown option is
+// not a stale installation we may rewrite.
+func knownCommand(event Event, command string, plan Plan) bool {
+	return command == plan.Command || (event == Stop && plan.Command == "codexrig sync --hook" && command == "codexrig sync")
+}
+
+func prepareInstall(doc map[string]any, plans []Plan) (added, updated []string) {
 	hooksAny, _ := doc["hooks"].(map[string]any)
 	if hooksAny == nil {
 		hooksAny = map[string]any{}
 	}
-
 	for _, p := range plans {
-		key := string(p.Event)
-		raw, _ := hooksAny[key].([]any)
-		mine := -1
-		for i, g := range raw {
-			if groupIsOurs(g) {
-				mine = i
-				break
+		raw, _ := hooksAny[string(p.Event)].([]any)
+		var kept []any
+		exact, changed := false, false
+		for _, rawGroup := range raw {
+			g, _ := rawGroup.(map[string]any)
+			hs, _ := g["hooks"].([]any)
+			matcher, _ := g["matcher"].(string)
+			var handlers []any
+			for _, rawHandler := range hs {
+				h, _ := rawHandler.(map[string]any)
+				command, _ := h["command"].(string)
+				// Unknown fields and lookalikes are somebody else's work, even when
+				// they share a group with a command we recognize.
+				repairable := h["type"] == "command" && fieldIssue(h, "type", "command") == "" && fieldIssue(g, "matcher", "hooks") == "" && knownCommand(p.Event, command, p)
+				if repairable && matcher == p.Matcher && command == p.Command {
+					exact = true
+					handlers = append(handlers, rawHandler)
+				} else if repairable {
+					changed = true
+				} else {
+					handlers = append(handlers, rawHandler)
+				}
+			}
+			if len(handlers) == len(hs) {
+				kept = append(kept, rawGroup)
+			} else if len(handlers) > 0 {
+				g["hooks"] = handlers
+				kept = append(kept, g)
 			}
 		}
-		newGroup := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": p.Command}}}
-		if p.Matcher != "" {
-			newGroup["matcher"] = p.Matcher
+		if !exact {
+			g := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": p.Command}}}
+			if p.Matcher != "" {
+				g["matcher"] = p.Matcher
+			}
+			kept = append(kept, g)
+			if !changed {
+				added = append(added, string(p.Event))
+			}
 		}
-		if mine < 0 {
-			hooksAny[key] = append(raw, newGroup)
-			added = append(added, key)
-			continue
+		if changed {
+			updated = append(updated, string(p.Event))
 		}
-		if !sameGroup(raw[mine], newGroup) {
-			raw[mine] = newGroup
-			hooksAny[key] = raw
-			updated = append(updated, key)
-		}
-	}
-	if len(added) == 0 && len(updated) == 0 {
-		return nil, nil, nil
+		hooksAny[string(p.Event)] = kept
 	}
 	doc["hooks"] = hooksAny
 	if _, ok := doc["description"]; !ok {
 		doc["description"] = "Managed by codexrig — run `codexrig hooks install` to update."
 	}
-	return added, updated, save(path, doc)
+	return added, updated
+}
+
+// CanInstall reports whether the safe installer would actually change anything.
+func CanInstall(scope Scope) bool {
+	if scope.Validate() != nil {
+		return false
+	}
+	doc, err := load(scope.path)
+	if err != nil {
+		return false
+	}
+	added, updated := prepareInstall(doc, scope.Plans())
+	return len(added)+len(updated) > 0
 }
 
 // Uninstall removes codexrig's hooks and nothing else.
@@ -186,13 +228,34 @@ func Uninstall(path string) ([]string, error) {
 	for key, v := range hooksAny {
 		raw, _ := v.([]any)
 		kept := make([]any, 0, len(raw))
-		for _, g := range raw {
-			if groupIsOurs(g) {
-				continue
+		changed := false
+		for _, rawGroup := range raw {
+			g, _ := rawGroup.(map[string]any)
+			hs, _ := g["hooks"].([]any)
+			var handlers []any
+			for _, rawHandler := range hs {
+				h, _ := rawHandler.(map[string]any)
+				command, _ := h["command"].(string)
+				remove := false
+				for _, plan := range append(SyncPlans(), GuardPlans("")...) {
+					if string(plan.Event) == key && knownCommand(plan.Event, command, plan) && h["type"] == "command" && fieldIssue(h, "type", "command") == "" && fieldIssue(g, "matcher", "hooks") == "" {
+						remove = true
+					}
+				}
+				if remove {
+					changed = true
+				} else {
+					handlers = append(handlers, rawHandler)
+				}
 			}
-			kept = append(kept, g)
+			if len(handlers) == len(hs) {
+				kept = append(kept, rawGroup)
+			} else if len(handlers) > 0 {
+				g["hooks"] = handlers
+				kept = append(kept, g)
+			}
 		}
-		if len(kept) == len(raw) {
+		if !changed {
 			continue
 		}
 		removed = append(removed, key)
@@ -215,29 +278,23 @@ func Uninstall(path string) ([]string, error) {
 // Status distinguishes current installations, marker-bearing lookalikes or
 // stale commands, and unrelated hooks. Only current commands are identified as
 // ours; the marker is diagnostic evidence, never authorization.
-func Status(path string) (CheckResult, error) {
-	doc, err := load(path)
-	if err != nil {
-		return CheckResult{}, err
+func Status(path string, scopes ...Scope) (CheckResult, error) {
+	if len(scopes) != 1 {
+		return emptyCheck(), fmt.Errorf("exactly one explicit hook scope required")
 	}
-	hooksAny, _ := doc["hooks"].(map[string]any)
-	var list []appserver.HookInfo
-	for key, v := range hooksAny {
-		raw, _ := v.([]any)
-		for _, rawGroup := range raw {
-			g, _ := rawGroup.(map[string]any)
-			matcher, _ := g["matcher"].(string)
-			hs, _ := g["hooks"].([]any)
-			for _, rawHandler := range hs {
-				h, _ := rawHandler.(map[string]any)
-				typ, _ := h["type"].(string)
-				command, _ := h["command"].(string)
-				list = append(list, appserver.HookInfo{EventName: wireEvent(Event(key)), Matcher: matcher, HandlerType: typ, Command: command, SourcePath: path})
-			}
-		}
+	scope := scopes[0]
+	if path != scope.path {
+		return emptyCheck(), fmt.Errorf("status path differs from requested scope")
 	}
-	sort.SliceStable(list, func(i, j int) bool { return list[i].EventName < list[j].EventName })
-	return classify(list), nil
+	snap := readSnapshot(scope)
+	if snap.err != nil {
+		return emptyCheck(), snap.err
+	}
+	out := emptyCheck()
+	for _, local := range snap.hooks {
+		addClassified(&out, local.info, scope)
+	}
+	return out, nil
 }
 
 // Events returns the current hooks' event names in the installer's file form.
@@ -254,7 +311,9 @@ func (r CheckResult) Events() []string {
 	return events
 }
 
-func (r CheckResult) HasCandidates() bool { return len(r.Ours)+len(r.Lookalikes) > 0 }
+func (r CheckResult) HasCandidates() bool {
+	return len(r.Ours)+len(r.Lookalikes)+len(r.StillTrusted)+len(r.Unreported) > 0
+}
 
 // Drift reports events whose installed codexrig hook no longer matches the plan.
 //
@@ -355,7 +414,7 @@ func load(path string) (map[string]any, error) {
 		// Refuse rather than replace. A file that does not parse is somebody's
 		// work in progress, and overwriting it is the one unrecoverable thing
 		// this package could do.
-		return nil, fmt.Errorf("%s does not parse as JSON, so codexrig will not rewrite it: %w", path, err)
+		return nil, fmt.Errorf("%s does not parse as JSON, so codexrig will not rewrite it: %w", Display(path), err)
 	}
 	if doc == nil {
 		doc = map[string]any{}

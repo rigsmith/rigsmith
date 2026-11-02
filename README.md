@@ -20,7 +20,10 @@ and the shared engine under `core/`:
 codexrig commands in the requested scope. Both show every approved, refused, or left-alone
 command, also with `--json`; outdated commands require reinstalling, and foreign
 hooks require review in Codex itself.
-Unrelated hooks do not cause doctor warnings; marker-bearing lookalikes do.
+Global trust approves only sync hooks; project trust approves only the guard.
+After upgrading, run `codexrig doctor` to find previously approved lookalikes
+that remain trusted. Unrelated hooks have no trust warning; missing sync hooks
+still warn and offer installation.
 
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`) and offline seed directory exports refuse dry-run; seed publication previews without cloning or pushing; `wire` and `doctor --fix` report without writing. `ci`, `ci-guard`, and `deps` (including `--publish`) refuse dry-run; `home` is read-only.
 

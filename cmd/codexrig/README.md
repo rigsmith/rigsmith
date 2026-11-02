@@ -59,27 +59,36 @@ from the repository. Untrusted project hooks warn with `codexrig project trust`
 and require that explicit trust command. `doctor --fix` never grants project hook
 trust. An unavailable app server reports that trust was not checked.
 
-**Trust approves only exact current codexrig command/event pairs in the requested
-hooks file.** Source paths are normalized and symlinks resolved; Codex's source
-enum is not used as a scope contract. A marker in a shell comment cannot grant
-trust. Guard matchers may vary without loosening command matching. Old commands
-and paths from another machine require reinstalling before trusting. Foreign
-hooks must be reviewed in Codex itself, with no override flag. Exact matches
-remain non-interactive, including `doctor --fix` for global hooks.
+**Trust binds the file and the scope's complete installer plans.** Global may
+approve only the two sync hooks; project may approve only the guard with the
+current `guard.Matcher()` matcher. Raw handler/group fields are checked as well
+as the listing: unknown fields, `commandWindows`, timeout/status-message
+customizations and wrong event casing are lookalikes. Project install/trust
+refuse symlinks escaping the resolved repo or targeting global hooks.
 
-`global trust` and `project trust` print every command approved, refused, or left alone;
-`--json` carries the same decisions, reasons, and next steps. Nothing eligible
-means a non-zero exit. Partial successes are reported even if a later write
-fails. The command and `CurrentHash` are taken from the same Codex listing, so a
-later file edit never receives a newly fetched hash from an earlier approval.
-Codex owns the binding between a command and its hash, and trust invalidation.
+Text output escapes terminal controls; JSON retains exact strings and uses empty
+arrays instead of null. Trust reports listed hooks and unlisted file handlers,
+continues reporting after write failures, and exits non-zero for any in-scope
+refusal, lookalike or unsafe existing approval. Unrelated-only/empty scopes
+succeed with no writes. Exact valid hooks need no prompt. Disabled hooks do not
+read as running; an unlisted installed hook has unknown trust.
 
-Reporting distinguishes exact commands, marker-bearing lookalikes or stale
-commands, and unrelated hooks. Only the first group is ours. Lookalikes warn
-with the command shown; stale installs say "out of date, reinstall" and keep the
-install repair. Unrelated hooks are left alone and never change doctor's status,
-including when they are the only hooks in a file. Missing `SourcePath` fails
-closed with an instruction to update Codex, rather than naming the wrong scope.
+**Upgrade action: run `codexrig doctor`.** Previously approved lookalikes are
+STILL TRUSTED, not newly safe. Doctor fails in either scope and prints the exact
+manual revocation table/key and Codex home. Stop Codex, remove that
+`trusted_hash`, review/remove the handler, restart and rerun doctor. Managed
+approval needs the policy administrator. There is no auto-revoke or override.
+
+Safe reinstall preserves unrelated handlers and only repairs recognizable
+current or known legacy commands. Doctor suppresses no-op repairs and directs
+lookalikes to manual review. A global file containing only unrelated hooks
+still reports missing sync hooks and offers installation, without a trust row.
+
+Raw-file snapshots and reported handler indices/fields must agree; hashes and
+keys always come from one listing. The file/symlink is checked unchanged before
+each write. This cannot make Codex's API atomic or fix its incomplete hash
+coverage: 0.166.0 on macOS ignored `commandWindows` in both listing and hash.
+The Windows runner had no `codex` on PATH, so Windows behavior remains unverified.
 
 **Codex writes absolute paths as TABLE KEYS**, not only as values:
 `[projects."/Users/someone/Git/thing"]`. Claude Code does not, so a path rewriter

@@ -230,20 +230,52 @@ func (c *Client) notify(method string, params any) error {
 
 // HookInfo is one hook as Codex sees it.
 type HookInfo struct {
-	Key         string `json:"key"`
-	EventName   string `json:"eventName"`
-	HandlerType string `json:"handlerType"`
-	Command     string `json:"command"`
-	Matcher     string `json:"matcher"`
-	SourcePath  string `json:"sourcePath"`
-	Source      string `json:"source"`
-	CurrentHash string `json:"currentHash"`
-	TrustStatus string `json:"trustStatus"`
-	Enabled     bool   `json:"enabled"`
+	Key                    string   `json:"key"`
+	EventName              string   `json:"eventName"`
+	HandlerType            string   `json:"handlerType"`
+	Command                string   `json:"command"`
+	Matcher                string   `json:"matcher"`
+	SourcePath             string   `json:"sourcePath"`
+	Source                 string   `json:"source"`
+	CurrentHash            string   `json:"currentHash"`
+	TrustStatus            string   `json:"trustStatus"`
+	Enabled                bool     `json:"enabled"`
+	TimeoutSec             *float64 `json:"timeoutSec,omitempty"`
+	StatusMessage          *string  `json:"statusMessage,omitempty"`
+	Async                  bool     `json:"async,omitempty"`
+	AdditionalContextLimit *int     `json:"additionalContextLimit,omitempty"`
+	UnknownFields          []string `json:"-"`
+	ValidationIssue        string   `json:"validationIssue,omitempty"`
+	CodexrigCandidate      bool     `json:"-"`
 }
 
-// Trusted reports whether Codex will run this hook as it stands.
+// Trusted reports recorded approval, independently of whether the hook is enabled.
 func (h HookInfo) Trusted() bool { return h.TrustStatus == "trusted" || h.TrustStatus == "managed" }
+
+func (h HookInfo) Runnable() bool { return h.Trusted() && h.Enabled }
+
+func (h *HookInfo) UnmarshalJSON(data []byte) error {
+	type plain HookInfo
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*h = HookInfo(decoded)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	known := map[string]bool{}
+	for _, key := range []string{"key", "eventName", "handlerType", "command", "matcher", "sourcePath", "source", "currentHash", "trustStatus", "enabled", "async", "timeoutSec", "statusMessage", "additionalContextLimit", "pluginId", "environmentId", "displayOrder", "isManaged"} {
+		known[key] = true
+	}
+	for key, value := range fields {
+		if !known[key] || ((key == "pluginId" || key == "environmentId") && string(value) != "null") {
+			h.UnknownFields = append(h.UnknownFields, key)
+		}
+	}
+	return nil
+}
 
 // ListHooks reports every hook Codex can see from its working directory,
 // together with why it will or will not run.

@@ -38,7 +38,7 @@ func TestInstalledHooksAreSeenAndTrustedByCodex(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	before, err := Check(ctx, home, cwd)
+	before, err := Check(ctx, home, cwd, GlobalScope(home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestInstalledHooksAreSeenAndTrustedByCodex(t *testing.T) {
 	}
 	t.Logf("trusted: %v already: %v", res.Trusted, res.Already)
 
-	after, err := Check(ctx, home, cwd)
+	after, err := Check(ctx, home, cwd, GlobalScope(home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,4 +67,55 @@ func TestInstalledHooksAreSeenAndTrustedByCodex(t *testing.T) {
 	}
 	cfg, _ := os.ReadFile(filepath.Join(home, "config.toml"))
 	t.Logf("config.toml:\n%s", cfg)
+}
+
+// Read-only RPC probe; all edits are to disposable fixture files. Keep this
+// alongside the manual 0.166.0 probe so field/hash behavior can be rechecked.
+func TestHookLiveReviewFields(t *testing.T) {
+	if os.Getenv("CODEXRIG_LIVE_CODEX") == "" || !appserver.Available() {
+		t.Skip("needs codex and CODEXRIG_LIVE_CODEX=1")
+	}
+	home, cwd := t.TempDir(), t.TempDir()
+	scope := GlobalScope(home)
+	if _, _, err := InstallScope(scope); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	client, err := appserver.Start(ctx, home, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	var original string
+	for _, field := range []string{"", "commandWindows", "timeout", "statusMessage"} {
+		doc := map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "codexrig sync --hook"}}}}}}
+		if field != "" {
+			value := any("probe only; never executed")
+			if field == "timeout" {
+				value = 20
+			}
+			firstHandler(doc, "Stop")[field] = value
+		}
+		if err := save(scope.path, doc); err != nil {
+			t.Fatal(err)
+		}
+		list, err := client.ListHooks(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(list) != 1 {
+			t.Fatalf("unexpected listing: %+v", list)
+		}
+		if field == "" {
+			original = list[0].CurrentHash
+		}
+		t.Logf("field=%q command=%q hash=%q changed=%v", field, list[0].Command, list[0].CurrentHash, list[0].CurrentHash != original)
+		if field != "" {
+			checked, err := CheckWithClient(ctx, client, scope)
+			if err != nil || len(checked.Lookalikes) != 1 {
+				t.Fatalf("field %q accepted: %+v %v", field, checked, err)
+			}
+		}
+	}
 }

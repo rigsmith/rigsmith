@@ -193,29 +193,41 @@ computing one — the hash is Codex's opinion about a file, not ours — and mak
 the edit *through* Codex's own `config/value/write`, so `config.toml` keeps
 whatever formatting Codex keeps instead of surviving a TOML round trip.
 
-Trust authorization uses exact command/event pairs from the current `SyncPlans`
-and `GuardPlans`, never the maintenance marker used to locate stale groups for
-reinstallation. Guard matchers may vary because they are selection data, not
-shell text. Outdated commands must be reinstalled before trust can be recorded;
-foreign commands belong in Codex's own approval flow, with no override here.
-The explicit global or project scope identifies one normalized hooks file,
-resolving symlinks and Windows separators. Discovery cwd and Codex's `Source`
-enum cannot authorize a scope. Check and status share the exact identity test.
+Trust authorization binds scope and plans: global uses `SyncPlans`; project
+uses `GuardPlans(guard.Matcher())`. Full file-handler/group fields must match
+what that installer writes, including event casing and matcher. Unknown fields
+(including `commandWindows`) are refused before trust, even when omitted from
+Codex's listing. Listing metadata that changes execution is also checked.
+Project files must resolve inside the resolved repo and never to global hooks;
+project install applies the same validation before writing. Repo-root aliases
+remain valid; parent traversal and ambiguous literal backslashes fail closed.
 
-The marker has one reporting role: a non-matching command containing it is a
-lookalike or stale install, shown as a warning with the command. Unrelated hooks
-without the marker are left alone, do not alter healthy doctor results, and
-produce no doctor rows when they are all a file has. Local Status retains the
-three categories so stale installs keep their reinstall repair rather than
-reading as absent. A missing `SourcePath` is refused with an update-Codex hint.
+A raw snapshot is read before the listing, bound to the reported source/event/
+handler indices, and checked unchanged before each write. Keys and hashes remain
+those of that single listing. This detects observed changes but is not an atomic
+conditional API write. Codex must bind all executable fields into its hash for
+post-validation changes to invalidate approval. Real 0.166.0 on macOS ignored
+`commandWindows` in the listing and hash, while timeout and statusMessage changed
+the hash. A Windows runner probe found no Codex installation. Permanent protection
+against a concurrent or later edit to an un-hashed field requires an upstream
+full-definition digest and conditional trust operation, not a fresh client hash.
 
-Every approval, refusal, and left-alone hook includes the command in text and JSON output. Doctor
-can approve only exact global hooks, and shows its decisions without requiring
-interactive input. The validated command, trust key, and `CurrentHash` come from
-one listing; codexrig never refreshes a hash after validating the command. This
-relies on Codex binding each reported command to that hash and rejecting stale
-trust after a file change. An internally inconsistent Codex listing cannot be
-detected by this client without an independent hashing contract.
+The marker only identifies diagnostic candidates. Unrelated hooks are left
+alone, with no trust row; missing global sync hooks still warn and remain
+installable. Already-approved lookalikes are STILL TRUSTED, fail doctor in either
+scope and make trust fail. No approval is silently revoked. The report identifies
+the exact trust table/key to remove while Codex is stopped; managed approval
+needs its policy administrator. A future revoke verb would need to resolve the
+owning config layer, preserve unrelated state, handle managed entries, and apply
+the repository's interactive-confirmation/non-interactive-failure rule.
+
+All human hook metadata is escaped against terminal control injection. JSON
+keeps original strings and consistent empty lists. Every in-scope refusal and
+write failure causes non-zero exit; all later hooks are classified even after a
+failed write. The safe installer preserves unrelated sibling handlers, only
+rewrites recognizable current/legacy commands, and exposes whether a repair
+would change anything. No-op or arbitrary lookalike cleanup requires manual
+review. Disabled hooks and unknown trust are distinct from runnable hooks.
 
 All three facts are pinned by a gated live test that installs hooks into a
 temporary `CODEX_HOME`, asks a real `codex app-server` whether it can see them,
