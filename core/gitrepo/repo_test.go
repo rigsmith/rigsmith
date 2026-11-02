@@ -537,3 +537,81 @@ func TestEnsureRemoteAddsThenRepoints(t *testing.T) {
 		t.Errorf("origin = %q, want the repointed url", got)
 	}
 }
+
+func TestReparentCommitHeaders(t *testing.T) {
+	ctx := context.Background()
+	r, err := Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, r.Dir, "file", "content\n")
+	if _, err := r.Commit(ctx, "base"); err != nil {
+		t.Fatal(err)
+	}
+	base, err := r.RevParse(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := r.RevParse(ctx, "HEAD^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taggedParent, err := r.CommitTree(ctx, tree, base, "tagged parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newParent, err := r.CommitTree(ctx, tree, base, "new parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const identity = "author Acme Author <author@acme.example> 1700000000 +0530\n" +
+		"committer Acme Committer <committer@acme.example> 1700000123 -0700\n"
+	const encoding = "encoding ISO-8859-1\n"
+	// Use non-UTF-8 bytes and trailing whitespace/newlines to catch any
+	// decoding or trimming while the commit is read and rewritten.
+	const message = "Preserve caf\xe9\n\nBody with trailing spaces.  \n\n"
+	const signatures = "gpgsig -----BEGIN PGP SIGNATURE-----\n" +
+		" signature continuation\n \n -----END PGP SIGNATURE-----\n" +
+		"gpgsig-sha256 -----BEGIN PGP SIGNATURE-----\n" +
+		" sha256 continuation\n \n -----END PGP SIGNATURE-----\n"
+	// A valid embedded tag for the second parent of the source merge. The
+	// public reparenting helper must discard it when making a linear commit.
+	tag := "object " + taggedParent + "\ntype commit\ntag acme-v1\n" +
+		"tagger Acme Tagger <tagger@acme.example> 1700000123 +0000\n\nTagged parent.\n"
+	mergetag := "mergetag " + strings.ReplaceAll(strings.TrimSuffix(tag, "\n"), "\n", "\n ") + "\n"
+	raw := "tree " + tree + "\nparent " + base + "\nparent " + taggedParent + "\n" +
+		identity + signatures + encoding + mergetag + "\n" + message
+	written, err := runGitStdin(ctx, r.Dir, raw, nil, "hash-object", "-t", "commit", "-w", "--stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := strings.TrimSpace(written)
+	if err := r.SetRef(ctx, "refs/heads/header-fixture", source); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.ReparentCommit(ctx, source, newParent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := runGit(ctx, r.Dir, "cat-file", "commit", got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "tree " + tree + "\nparent " + newParent + "\n" + identity + encoding + "\n" + message
+	if actual != want {
+		t.Fatalf("reparented commit differs byte-for-byte:\n got: %q\nwant: %q", actual, want)
+	}
+	headers, _, _ := strings.Cut(actual, "\n\n")
+	if strings.Count(headers, "\nparent ") != 1 || !strings.HasPrefix(actual, "tree "+tree+"\nparent "+newParent+"\n") {
+		t.Fatalf("expected exactly one new parent immediately after tree: %q", headers)
+	}
+	for _, removed := range []string{"gpgsig", "gpgsig-sha256", "mergetag", "signature continuation", "sha256 continuation", "Tagged parent."} {
+		if strings.Contains(headers, removed) {
+			t.Fatalf("removed header or continuation remains (%s): %q", removed, headers)
+		}
+	}
+	if out, err := runGit(ctx, r.Dir, "fsck", "--strict", "--no-reflogs", got); err != nil {
+		t.Fatalf("git fsck rejected the object: %v\n%s", err, out)
+	}
+}

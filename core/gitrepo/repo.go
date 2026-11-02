@@ -829,6 +829,8 @@ func (r *Repo) ArchiveTar(ctx context.Context, rev string, paths []string) ([]by
 
 // ReparentCommit preserves a linear commit's tree, author, committer and message
 // on a new parent. Signatures cannot survive changed ancestry and are omitted.
+// Embedded mergetags describe merge parents, so they are also dropped when
+// replacing the parent list, even though stack replay already refuses merges.
 func (r *Repo) ReparentCommit(ctx context.Context, commit, parent string) (string, error) {
 	raw, err := runGit(ctx, r.Dir, "cat-file", "commit", commit)
 	if err != nil {
