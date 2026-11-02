@@ -5,3 +5,5 @@ scope: rig
 ---
 
 Check NuGet release ancestry and direct or verified transitive package delivery before migrating stack guards; opt into status release checks with --releases
+
+Refuse guard migration when MSBuild overrides or unresolved package pins prevent proving delivery.

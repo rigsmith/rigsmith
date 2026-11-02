@@ -193,7 +193,7 @@ func newStackReleasedCmd() *cobra.Command {
 			return err
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), delivery)
-		edits, notes, err := stackReleaseEdits(filepath.Join(root, args[0]), pin, pinVersion, symbol, warnings...)
+		edits, notes, err := stackReleaseMigrationEdits(filepath.Join(root, args[0]), pkg, pin, pinVersion, symbol, warnings...)
 		if err != nil {
 			return err
 		}

@@ -1489,6 +1489,25 @@ C# lexer can widen eligibility. UTF-8 BOM and CRLF are preserved. UTF-16 is not
 rewritten. Generated files and bin/obj/vendor/node_modules/packages/generated
 and .vs directories are skipped; symlinks are not followed.
 
+Before preparing any edit, a static pin preflight inspects projects and build
+props/targets in the member plus automatic Directory.Build.props/targets and
+Directory.Packages.props files in ancestor directories. VersionOverride,
+PackageReference/PackageVersion Update or Remove, unresolved/property-based
+versions or identities, wildcard updates, default item metadata, and selected
+references introduced by build props/targets refuse the whole migration. Explicit
+imports require MSBuild evaluation and are refused in this first implementation;
+files are never silently assumed harmless. The ordinary source-only overlay
+condition `'$(UseStackSources)' != 'false'` is ignored for this package-mode proof.
+Every project must receive the selected package through a literal direct pin,
+a versionless reference to its nearest enabled central file within the member,
+or a simple local ProjectReference to a project already proved. Conditional,
+external, or metadata-bearing project reference paths cannot establish delivery.
+An unrelated or shadowing central file is insufficient. Transitive migration also
+checks the guarded sibling for explicit pins that could override the delivery
+package dependency; those require a separate direct migration. Failure returns no edit
+plan and leaves all pins and guards intact; reconcile complex MSBuild rules
+manually. Static discovery is not a replacement for evaluating arbitrary MSBuild.
+
 Version edits use XML token offsets, preserving surrounding bytes, comments,
 BOM and line endings. Literal Version attributes on PackageReference and central
 PackageVersion items (including Directory.Packages.props) can be updated.

@@ -1539,3 +1539,10 @@ publish Core, migrate/publish Control against it, then migrate App. A manually
 added direct Core reference is an explicit alternative. Control guards need their
 own migration. No dependency is silently added. Default status skips release
 discovery; `--releases` opts into one shared scan under its short report deadline.
+
+Guard migration also requires a provable package pin for every member project.
+VersionOverride, Update/Remove references, unresolved property versions, and
+references or overrides introduced by build props/targets refuse the whole
+migration. Ancestor build files are checked too. Simple enabled central pins
+and local project-reference propagation are supported; explicit imports and
+complex MSBuild rules need manual review. Refusals leave pins and guards intact.

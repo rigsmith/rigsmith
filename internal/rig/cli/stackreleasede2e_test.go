@@ -39,7 +39,12 @@ func TestStackReleasedE2E(t *testing.T) {
 			if transitive {
 				reference = "Acme.Control"
 			}
-			write("app/App.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="`+reference+`" Version="1.0.0" /><StackOnlyWarning Include="ACME0001" /></ItemGroup></Project>`)
+			versionAttribute := ` Version="1.0.0"`
+			if transitive {
+				versionAttribute = ""
+				write("app/Directory.Packages.props", `<Project><PropertyGroup><ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally></PropertyGroup><ItemGroup><PackageVersion Include="`+reference+`" Version="1.0.0" /></ItemGroup></Project>`)
+			}
+			write("app/App.csproj", `<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="`+reference+`"`+versionAttribute+` /><StackOnlyWarning Include="ACME0001" /></ItemGroup></Project>`)
 			write("app/Consumer.cs", "public static class Consumer { public static int Read() {\n#if STACK_ACME_CORE\nreturn Api.Released;\n#else\nreturn 0;\n#endif\n} }\n")
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
 			defer cancel()
@@ -85,7 +90,7 @@ func TestStackReleasedE2E(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			edits, _, err := stackReleaseEdits(filepath.Join(root, "app"), pin, pinVersion, "STACK_ACME_CORE", "ACME0001")
+			edits, _, err := stackReleaseMigrationEdits(filepath.Join(root, "app"), "Acme.Core", pin, pinVersion, "STACK_ACME_CORE", "ACME0001")
 			if err != nil {
 				t.Fatal(err)
 			}

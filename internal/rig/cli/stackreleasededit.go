@@ -140,7 +140,7 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 		}
 		inCondition := len(conditions) > 0 && conditions[len(conditions)-1]
 		for _, a := range el.Attr {
-			if a.Name.Local == "Condition" {
+			if strings.EqualFold(a.Name.Local, "Condition") {
 				inCondition = true
 			}
 		}
@@ -170,24 +170,35 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 			}
 			notes = append(notes, "StackOnlyWarning has no sibling identity or is complex; use --warning for a simple declaration after manual attribution")
 		}
-		if el.Name.Local != "PackageReference" && el.Name.Local != "PackageVersion" {
+		if !strings.EqualFold(el.Name.Local, "PackageReference") && !strings.EqualFold(el.Name.Local, "PackageVersion") {
 			continue
 		}
 		match := false
 		current := ""
 		conditional := inCondition
+		override, update := false, false
 		for _, a := range el.Attr {
-			if (a.Name.Local == "Include" || a.Name.Local == "Update") && strings.EqualFold(a.Value, pkg) {
+			if (strings.EqualFold(a.Name.Local, "Include") || strings.EqualFold(a.Name.Local, "Update")) && strings.EqualFold(a.Value, pkg) {
 				match = true
 			}
-			if a.Name.Local == "Version" {
+			if strings.EqualFold(a.Name.Local, "VersionOverride") {
+				override = true
+			}
+			if strings.EqualFold(a.Name.Local, "Update") {
+				update = true
+			}
+			if strings.EqualFold(a.Name.Local, "Version") {
 				current = a.Value
 			}
-			if a.Name.Local == "Condition" {
+			if strings.EqualFold(a.Name.Local, "Condition") {
 				conditional = true
 			}
 		}
 		if !match {
+			continue
+		}
+		if override || update {
+			notes = append(notes, "unsafe package version: VersionOverride or Update")
 			continue
 		}
 		if conditional {
@@ -209,7 +220,7 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 		raw := data[start:end]
 		var loc []int
 		for _, attr := range stackReleaseVersionAttr.FindAllSubmatchIndex(raw, -1) {
-			if string(raw[attr[2]:attr[3]]) == "Version" {
+			if strings.EqualFold(string(raw[attr[2]:attr[3]]), "Version") {
 				loc = []int{attr[0], attr[1], attr[4], attr[5]}
 				break
 			}
@@ -233,6 +244,9 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 }
 
 func stackReleaseEdits(root, pkg, version, symbol string, warnings ...string) ([]stackReleaseEdit, []string, error) {
+	if err := stackReleaseProvePins(root, pkg); err != nil {
+		return nil, nil, err
+	}
 	var edits []stackReleaseEdit
 	var notes []string
 	pinChanged := false
