@@ -662,3 +662,10 @@ it can silently stop reporting third-party tap formulae.
 - "what was I working on", "find that chat", "reopen it in Desktop" → **clauderig** (`recent` / `search` / `desktop open`)
 - "sync my Codex setup", "run or switch Codex logins", "find or resume that Codex session" → **codexrig** (`recent -l` / `search` / `account`)
 - "sync Homebrew packages or versions", "what's installed on my other Mac" → **brewrig**
+
+When driving `rig stack push`, use `--dry-run` to inspect the same plan a real
+push uses. Squash/rebase merges with identical member content need no push.
+New commits remain individual; IDs can change when reparented after a squash.
+If rig cannot find a safe tree boundary, pull and reconcile or propose the diff
+for review. Never bypass the ancestry refusal or force the upstream branch.
+Removing/re-adding a member does not reset unsent work and needs no reset flag.

@@ -1621,3 +1621,118 @@ func TestStackCIGuardDryRun(t *testing.T) {
 		t.Fatalf("expected refusal: %v", err)
 	}
 }
+
+func TestStackPushSquashMerge(t *testing.T) {
+	if os.Getenv("RIG_STACK_E2E") == "" {
+		t.Skip("set RIG_STACK_E2E=1")
+	}
+	for _, tool := range []string{toolFilter, toolProxy} {
+		bin, err := stackJoshToolBin(stackJoshVersion, tool)
+		if err != nil || stackJoshInstalled(bin) != nil {
+			t.Skipf("no %s installed; run `rig stack doctor --fix` first", tool)
+		}
+	}
+	filter, _ := stackJoshToolBin(stackJoshVersion, toolFilter)
+
+	work := t.TempDir()
+	srv := newGitServer(t, filepath.Join(work, "srv"))
+	srv.seed(t, "you/app", "app")
+	upstream := srv.path("you/app")
+	tip := strings.TrimSpace(mustGitStack(t, upstream, "rev-parse", "main"))
+
+	// A stackspace shaped the way init makes one, without the proxy: the
+	// upstream history run through the same :prefix filter, merged in under
+	// the prefix with --no-ff, and the cursor recorded at the tip.
+	ws := filepath.Join(work, "stackspace")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "init", "-q", "-b", "main")
+	mustGitStack(t, ws, "config", "user.email", "t@t")
+	mustGitStack(t, ws, "config", "user.name", "t")
+	writeStackManifest(t, ws, fmt.Sprintf(`{
+  "repos": { "app": { "upstream": %[1]q, "fork": %[1]q, "upstreamBranch": "main", "owned": true } },
+  "lastSync": { "app": %[2]q }
+}`, srv.spec("you/app"), tip))
+	mustGitStack(t, ws, "add", "-A")
+	mustGitStack(t, ws, "commit", "-qm", "manifest")
+	mustGitStack(t, ws, "fetch", "-q", "--no-tags", upstream, "main")
+	prefixed := exec.Command(filter, stackPrefixFilter("app"), "--update", "refs/rigsmith/test/import", "FETCH_HEAD")
+	prefixed.Dir = ws
+	if out, err := prefixed.CombinedOutput(); err != nil {
+		t.Fatalf("josh-filter :prefix=app: %v\n%s", err, out)
+	}
+	mustGitStack(t, ws, "merge", "-q", "--allow-unrelated-histories", "--no-ff", "-m",
+		"stack: import app @ "+short(tip), "refs/rigsmith/test/import")
+
+	mustGitStack(t, upstream, "config", "receive.denyNonFastForwards", "false")
+	for i := 1; i <= 5; i++ {
+		if err := os.WriteFile(filepath.Join(ws, "app", "src", "app.txt"), []byte(fmt.Sprintf("app %d\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, ws, "commit", "-qam", fmt.Sprintf("app: change %d", i))
+	}
+	chdir(t, ws)
+	ctx := context.Background()
+	if out, err := runVerbOut(ctx, newStackSendCmd(), "app", "some-topic"); err != nil {
+		t.Fatalf("propose: %v\n%s", err, out)
+	}
+	proposed := strings.TrimSpace(mustGitStack(t, upstream, "rev-parse", "refs/heads/stack/some-topic"))
+	tree := strings.TrimSpace(mustGitStack(t, upstream, "rev-parse", proposed+"^{tree}"))
+	squash := strings.TrimSpace(mustGitStack(t, ws, "commit-tree", tree, "-p", tip, "-m", "squash"))
+	mustGitStack(t, ws, "push", upstream, squash+":refs/heads/main")
+	if out, err := runVerbOut(ctx, newStackPullCmd(), "app"); err != nil {
+		t.Fatalf("pull: %v\n%s", err, out)
+	}
+	stackDryRun(t)
+	if out, err := runVerbOut(ctx, newStackPushCmd(), "app"); err != nil || !strings.Contains(out, "nothing to push") {
+		t.Fatalf("squash push: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "app", "src", "app.txt"), []byte("new work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "commit", "-qam", "app: new work")
+	if out, err := runVerbOut(ctx, newStackPushCmd(), "app"); err != nil || !strings.Contains(out, "app: new work") || strings.Contains(out, "app: change") {
+		t.Fatalf("new push: %v\n%s", err, out)
+	}
+
+	preview, err := runVerbOut(ctx, newStackPushCmd(), "app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dryRun = false
+	if out, err := runVerbOut(ctx, newStackPushCmd(), "app"); err != nil {
+		t.Fatalf("real push: %v\n%s", err, out)
+	}
+	pushed := strings.TrimSpace(mustGitStack(t, upstream, "rev-parse", "main"))
+	if !strings.Contains(preview, short(pushed)) {
+		t.Fatalf("preview differs from real push: %s vs %s", preview, pushed)
+	}
+	if parent := strings.TrimSpace(mustGitStack(t, upstream, "rev-parse", "main^")); parent != squash {
+		t.Fatalf("new work not directly on squash: %s", parent)
+	}
+	if out, err := runVerbOut(ctx, newStackRemoveCmd(), "app"); err != nil {
+		t.Fatalf("rm: %v\n%s", err, out)
+	}
+	add := newStackAddCmd()
+	if err := add.Flags().Set("owned", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := add.Flags().Set("as", "app"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runVerbOut(ctx, add, srv.spec("you/app")); err != nil {
+		t.Fatalf("add: %v\n%s", err, out)
+	}
+	dryRun = true
+	if out, err := runVerbOut(ctx, newStackPushCmd(), "app"); err != nil || !strings.Contains(out, "nothing to push") {
+		t.Fatalf("rm/add push: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "app", "src", "app.txt"), []byte("after re-add\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, ws, "commit", "-qam", "app: after re-add")
+	if out, err := runVerbOut(ctx, newStackPushCmd(), "app"); err != nil || !strings.Contains(out, "app: after re-add") || strings.Contains(out, "stack: remove") || strings.Contains(out, "stack: cursor") {
+		t.Fatalf("new rm/add push: %v\n%s", err, out)
+	}
+}

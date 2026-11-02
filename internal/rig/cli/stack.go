@@ -1458,10 +1458,6 @@ func newStackSendCmd() *cobra.Command {
 
 			// A new commit object never equals its parent, so the no-op has to be
 			// read off the trees: same tree as upstream means nothing to send.
-			tipTree, err := repo.RevParse(ctx, tip+"^{tree}")
-			if err != nil {
-				return err
-			}
 			// Everything the prefix carries, kept aside before a topic narrows
 			// what is proposed: it is what trackBranch is updated with below, so
 			// a rebuild still gets the fixes this pull request leaves out.
@@ -1556,7 +1552,11 @@ func newStackSendCmd() *cobra.Command {
 				}
 				tree = topicTree
 			}
-			if tipTree == tree {
+			unsent, err := stackDeliveryUnsent(ctx, repo, tip, tree)
+			if err != nil {
+				return err
+			}
+			if !unsent {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s: nothing to send — it matches upstream\n", name)
 				return stackPublishHome(ctx, repo, m, cmd.OutOrStdout())
 			}
@@ -1732,12 +1732,15 @@ func newStackPushCmd() *cobra.Command {
 			"`send` is the verb for someone else's project: it proposes one squashed\n" +
 			"commit on a branch of your fork, which is what a reviewer wants and the\n" +
 			"wrong thing entirely for a repository that is yours.\n\n" +
+			"Squash/rebase-merged content counts as sent. New linear commits are\n" +
+			"reparented individually when an exact upstream-tree boundary exists;\n" +
+			"ambiguous replay is refused. Ancestry is checked locally before pushing.\n\n" +
 			"With --dry-run, prints the target, the branch and the commits that would\n" +
 			"go, and stops there: nothing reaches the remote, and nothing local\n" +
 			"records a push.",
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: stackRepoCompletion,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (result error) {
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			m, src, repo, err := stackspace(ctx)
@@ -1821,8 +1824,8 @@ func newStackPushCmd() *cobra.Command {
 				return err
 			}
 			// :/<name> is the exact inverse of the :prefix=<name> this was imported
-			// with, so the shared history filters back to upstream's own commit ids
-			// and what is left on top is a fast-forward rather than a fork of it.
+			// with. Shared history normally recovers upstream's IDs; after a
+			// squash/rebase, tree reconciliation below establishes a safe base.
 			ref := "refs/rigsmith/push/" + name
 			// A dry run leaves no trace, and the filter writes this ref: note what
 			// it held (nothing, usually) so that it can be put back on the way out.
@@ -1832,6 +1835,9 @@ func newStackPushCmd() *cobra.Command {
 					prior = v
 				}
 			}
+			if dryRun {
+				defer func() { result = errors.Join(result, stackRestoreRef(ctx, repo, ref, prior)) }()
+			}
 			if err := stackRunJoshFilter(ctx, filter, repo.Dir, ":/"+name, ref); err != nil {
 				return err
 			}
@@ -1839,11 +1845,18 @@ func newStackPushCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := repo.FetchObjects(ctx, upstreamURL, tip, stackAuthForURL(ctx, upstreamURL)); err != nil {
+				return err
+			}
+			head, err = stackPushHead(ctx, repo, tip, head)
+			if err != nil {
+				return err
+			}
+			if err := stackRequireFastForward(ctx, repo, tip, head, name); err != nil {
+				return err
+			}
 			if head == tip {
 				fmt.Fprintf(out, "%s: nothing to push — it matches %s\n", name, r.Upstream)
-				if dryRun {
-					return stackRestoreRef(ctx, repo, ref, prior)
-				}
 				return nil
 			}
 
@@ -1860,7 +1873,7 @@ func newStackPushCmd() *cobra.Command {
 				for _, c := range commits {
 					fmt.Fprintf(out, "  %s %s\n", short(c.SHA), c.Subject)
 				}
-				return stackRestoreRef(ctx, repo, ref, prior)
+				return nil
 			}
 
 			// The second engine before the push, not after: the stackspace has to
@@ -1875,7 +1888,7 @@ func newStackPushCmd() *cobra.Command {
 			// No force and no lease: a push that is not a fast-forward means the
 			// filtered history is not a continuation of upstream's, and overwriting
 			// is never the right answer to that.
-			if err := repo.PushRef(ctx, upstreamURL, head, "refs/heads/"+branch, stackAuthForURL(ctx, upstreamURL)); err != nil {
+			if err := stackPushToUpstream(ctx, repo, upstreamURL, head, branch, name); err != nil {
 				return fmt.Errorf("pushing %s to %s:%s: %w", name, r.Upstream, branch, err)
 			}
 
@@ -1907,6 +1920,8 @@ func newStackPushCmd() *cobra.Command {
 // stackRestoreRef puts ref back to what it held before a dry run wrote it:
 // prior, or nothing at all when there was nothing.
 func stackRestoreRef(ctx context.Context, repo *gitrepo.Repo, ref, prior string) error {
+	// Cleanup must still restore the ref when the command was canceled.
+	ctx = context.WithoutCancel(ctx)
 	if prior != "" {
 		return repo.SetRef(ctx, ref, prior)
 	}
