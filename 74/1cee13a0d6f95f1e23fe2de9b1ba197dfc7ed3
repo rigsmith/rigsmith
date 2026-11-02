@@ -1,0 +1,45 @@
+site/rig/verbs.md
+  s_c14a08c9b7c859::t_1304771b10fd18 322,324
+internal/rig/cli/stackdeps_test.go
+  s_c14a08c9b7c859::t_78212b178cd055 593-597
+  s_c14a08c9b7c859::t_1304771b10fd18 580-592,598-604
+internal/rig/cli/stackflow_test.go
+  s_c14a08c9b7c859::t_1304771b10fd18 1501,1616-1621
+internal/rig/cli/stackseed_test.go
+  s_c14a08c9b7c859::t_1304771b10fd18 529-535,541-544
+  s_c14a08c9b7c859::t_78212b178cd055 536-540
+internal/rig/cli/stackdeps.go
+  s_c14a08c9b7c859::t_ad9d5bc00ed113 249,253-255
+site/rig/stack.md
+  s_c14a08c9b7c859::t_1304771b10fd18 769,771
+skills/rigsmith-tools/SKILL.md
+  s_c14a08c9b7c859::t_c8e0bc786d6c1d 12-13,127-129,180-224
+cmd/rig/README.md
+  s_c14a08c9b7c859::t_1304771b10fd18 41
+.changeset/nimble-yaks-build.md
+  s_c14a08c9b7c859::t_ebe3d1eaf224d2 1-6
+internal/rig/cli/stackhome.go
+  s_c14a08c9b7c859::t_ad9d5bc00ed113 228-232
+README.md
+  s_c14a08c9b7c859::t_1304771b10fd18 19
+internal/rig/cli/stackciguard.go
+  s_c14a08c9b7c859::t_ad9d5bc00ed113 18,22-24
+internal/rig/cli/stackci.go
+  s_c14a08c9b7c859::t_ad9d5bc00ed113 48,62-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "741cee13a0d6f95f1e23fe2de9b1ba197dfc7ed3",
+  "prompts": {},
+  "sessions": {
+    "s_c14a08c9b7c859": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199b4-9ed6-72e0-9090-41b7e4c845de",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
