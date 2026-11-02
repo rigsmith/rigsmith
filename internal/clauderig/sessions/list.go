@@ -295,7 +295,7 @@ func List(opts Options) ([]Row, Report) {
 			}
 		}
 		if row.When.IsZero() {
-			row.When = SessionTime(act, meta, row.Path)
+			row.When = SessionTime(act, meta, led.End, row.Path)
 			if row.Cwd == "" {
 				row.Cwd = ResolveCwd(opts.Machine, meta, row.Path)
 			}
@@ -304,9 +304,6 @@ func List(opts Options) ([]Row, Report) {
 			row.Client = ClientWithProfile("", meta.Profile)
 		}
 		if hasLed {
-			if row.When.IsZero() {
-				row.When = led.End
-			}
 			if row.Cwd == "" && led.Cwd != "" {
 				row.Cwd = ResolvePath(opts.Machine, led.Cwd)
 			}
@@ -464,16 +461,18 @@ func matchesStores(row Row, opts Options) bool {
 	return true
 }
 
-// sessionTime ranks three answers by trust: the transcript's own last record,
-// then the Desktop sidecar, then mtime. The transcript leads because it is the
-// only one a copy cannot move; the sidecar still beats mtime for a transcript
-// that cannot answer at all.
-func SessionTime(act session.Activity, meta session.Meta, path string) time.Time {
+// SessionTime ranks the transcript's own last record, then the Desktop sidecar,
+// then the ledger, then mtime. Content-derived dates survive copies and restores;
+// mtime is only a last resort when none of those sources can date the session.
+func SessionTime(act session.Activity, meta session.Meta, ledgerEnd time.Time, path string) time.Time {
 	if !act.At.IsZero() {
 		return act.At
 	}
 	if !meta.LastActivity.IsZero() {
 		return meta.LastActivity
+	}
+	if !ledgerEnd.IsZero() {
+		return ledgerEnd
 	}
 	if path != "" {
 		if info, err := transcript.Stat(path); err == nil {
