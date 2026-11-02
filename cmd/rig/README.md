@@ -52,6 +52,9 @@ See [source signals](../../site/rig/stack.md#source-signals-from-the-net-overlay
 and preview limitations. SDK changes that erase reference candidates fail with
 `RIGSTACK001` instead of silently dropping guarded code or tests.
 
+For GitHub Actions, use `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`
+(full SHA recommended; `@v1` is the moving major tag).
+
 `rig stack ci` requires exactly one of `--seed acme/rigstack-app@main` or
 `--manifest stack/rig.stack.jsonc` and builds a member checkout with sibling sources in a temporary
 stackspace. Its action verifies release downloads and reports trusted history

@@ -1141,11 +1141,31 @@ uses rig's manifest/default josh pin on first import. Summary writing is optiona
 outside GitHub. Commands run from the selected member and test results stream
 to stdout. See [the member CI guide](guides/testing-a-member-pr-in-its-stackspace.md).
 
-The action's final home is the separate `rigsmith/stack-action` repository,
-following the shiprig-action model. `rigsmith/stack-action` is intended but
-not published yet. Until that later publication, ship the fully self-contained
-`.github/actions/stack/` directory with no references outside it; workflow
-examples use its in-repo path. This change does not create the new repository.
+The published action is `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`.
+Its source of truth remains `.github/actions/stack/` in rigsmith. The initial
+release copies action.yml and install-rig.sh byte-for-byte from v1.24.0
+(`49c1c594bc3a40ee5cbee7d42707b3fa26d3f48b`). Full SHA pinning is recommended;
+`@v1` is a moving major tag.
+
+### Keeping the published action in sync
+
+Recommend a manual release-checklist step for now; no automatic synchronization
+is installed. After each rig release, compare `.github/actions/stack/` at the
+released tag with the previous exported source. If it changed, export from that
+immutable tag, copy action.yml and install-rig.sh unchanged to the standalone
+repository root, adapt its README and copy LICENSE, and record the full rigsmith
+source commit. Review the diff and run the Linux/macOS/Windows same-repo and fork
+PR checks, including installer checksum pinning. Publish a new annotated action
+version tag and advance its compatible major tag only after verification.
+Verify from a fresh clone that executable files match the source bytes, then
+update rigsmith examples to the new full action SHA and version comment in a PR.
+Do not retag an existing version. Choose the action version for action API
+compatibility independently of the rig version selected by `rig-version`.
+
+This keeps the first releases reviewable without granting a release workflow
+cross-repository write credentials. If release frequency warrants automation,
+a release-time workflow should open a reviewed export PR rather than silently
+advancing action tags.
 
 Fresh-runner engine acquisition follows `stack init` → `stackEngine` →
 `ensureJoshProxy` → the pinned installer. No separate josh action step is needed.
@@ -1280,7 +1300,7 @@ Raw-blob materialization now uses one `cat-file --batch` subprocess rather than
 one per file. LFS is deliberately refused, checking `.gitattributes` across all
 members for `filter=lfs`, so pointer-only builds cannot pass silently. Commits
 and prefix filters are written to summary and a JSON provenance artifact. Pin
-external actions by full reviewed SHA; `rigsmith/stack-action` remains unpublished.
+external actions by full reviewed SHA, including `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`.
 
 Local measurement (`BenchmarkStackCIMaterialize`, 100 committed seven-byte files,
 three iterations, macOS arm64): batch 74.98 ms/op versus per-file 2351.51 ms/op,

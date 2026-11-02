@@ -368,7 +368,7 @@ func TestStackTopicWorkflow(t *testing.T) {
 				policyCheckout = step.With["ref"] == "${{ vars.STACK_POLICY_SHA }}" && step.With["path"] == ".stack-policy"
 			}
 		}
-		if step.Uses == "./.stack-policy/.github/actions/stack" {
+		if step.Uses == "rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128" {
 			topic = step.With["topic"] != "" && step.With["member"] != "" && step.With["seed"] == "acme/stack-policy@${{ vars.STACK_POLICY_SHA }}" && step.With["manifest"] == ""
 		}
 	}

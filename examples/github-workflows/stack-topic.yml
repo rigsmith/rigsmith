@@ -9,8 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Set STACK_POLICY_SHA to a reviewed full commit SHA in repository variables.
-      # The policy repo contains rig.stack.jsonc with this topic's proposals and
-      # a reviewed copy of rigsmith's .github/actions/stack directory.
+      # The policy repo contains rig.stack.jsonc with this topic's proposals.
       # Do not derive the policy repo, revision or topic from PR-controlled data.
       - name: Validate policy pin
         shell: bash
@@ -27,7 +26,7 @@ jobs:
           ref: ${{ vars.STACK_POLICY_SHA }}
           persist-credentials: false
       # Install the SDKs needed by your member here, without secrets.
-      - uses: ./.stack-policy/.github/actions/stack
+      - uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
         with:
           rig-version: vX.Y.Z # Replace with a release containing topic CI.
           # Recommended: rig-sha256: <independently-trusted-platform-archive-sha256>

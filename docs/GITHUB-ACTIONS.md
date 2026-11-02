@@ -138,8 +138,8 @@ Topic dependency reporting also reads the seed, using
 
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.
-Keep this job alongside the plain-clone matrix. The self-contained composite is
-`.github/actions/stack/`; `rigsmith/stack-action` is the intended name but is not published yet.
+Keep this job alongside the plain-clone matrix. The published composite is
+`rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0` (full SHA recommended; `@v1` moves).
 See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
 
 `--topic <name>` (action input `topic`) tests every open proposal PR head in
@@ -177,8 +177,8 @@ metadata handling is necessary, isolate it in a metadata-only workflow that
 never checks out PR code or executes untrusted artifacts. This restriction is
 stronger than the separate changeset-comment workflow described above.
 
-Pin all external actions by full reviewed commit SHA. `rigsmith/stack-action`
-is not published yet; copy the local directory from a reviewed commit meanwhile.
+Pin all external actions by full reviewed commit SHA, including
+`rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`. The `@v1` tag moves.
 The action verifies rig's release `checksums.txt`; pin `rig-sha256` in the workflow
 for protection if the release itself is compromised. Release-provided checksums
 alone detect corruption or a tampered mirror, not replacement of the release.

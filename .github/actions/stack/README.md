@@ -26,15 +26,15 @@ a content hash. Manifest mode retains content-based keys. Fork PRs skip both
 caches. An empty `hashFiles('')` returns an empty string rather than an error;
 it provides no seed cursor identity.
 
-Intended final home: `rigsmith/stack-action`, which is not published yet.
-Until publication, copy this entire directory into your member repository and
-use the local path. It has no relative dependencies outside this directory.
+The published action is `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`.
+Pin by full reviewed SHA (recommended); `@v1` is the moving major tag.
+This directory remains the source of truth and has no external relative dependencies.
 
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
   with:
     persist-credentials: false
-- uses: ./.github/actions/stack
+- uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
   with:
     rig-version: vX.Y.Z # select an exact release containing stack ci
     manifest: stack/rig.stack.jsonc
@@ -171,10 +171,8 @@ privileges. If privileged PR metadata handling is ever needed, use a separate
 metadata-only job/workflow that never checks out or executes PR code, validates
 all input, and never consumes executable artifacts from the untrusted build.
 
-Pin all external actions by full reviewed commit SHA, including the eventual
-`rigsmith/stack-action@<full-reviewed-commit-sha>` after publication. Tags are
-mutable; the intended separate action repository is not published yet. For now
-copy this directory from a reviewed rigsmith commit and use its local path.
+Pin all external actions by full reviewed commit SHA. Use `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`;
+`@v1` is mutable.
 
 ### History cache trust
 

@@ -4,9 +4,8 @@ Keep the plain-clone build matrix: it tests released sibling packages. Add a
 separate stackspace job to compile code and tests against sibling sources.
 The two jobs answer different questions and should both be required checks.
 
-The composite lives at `.github/actions/stack/` in rigsmith. The short name
-`rigsmith/stack-action` is the intended name but is not published yet. Copy that self-contained directory
-into your member repository to use the local path below. The workflow in
+Use the published composite `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`
+(full SHA recommended; `@v1` moves). The workflow in
 [examples/github-workflows/stack.yml](../../examples/github-workflows/stack.yml)
 is ready to copy after selecting a rig release containing `stack ci`.
 
@@ -14,7 +13,7 @@ is ready to copy after selecting a rig release containing `stack ci`.
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
   with:
     persist-credentials: false
-- uses: ./.github/actions/stack
+- uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
   with:
     rig-version: vX.Y.Z # exact release containing stack ci
     manifest: stack/rig.stack.jsonc

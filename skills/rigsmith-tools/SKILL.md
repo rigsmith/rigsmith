@@ -263,7 +263,8 @@ do not suppress it and silently omit guarded code/tests. See
 [source signals](https://rigsmith.dev/rig/stack#source-signals-from-the-net-overlay)
 for naming, conditional-reference limits and incremental/no-build behavior.
 
-The local composite at `.github/actions/stack/` accepts `seed` or `manifest` (exactly one), `member`,
+The published composite `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`
+(full SHA recommended; `@v1` moves) accepts `seed` or `manifest` (exactly one), `member`,
 `rig-version`, `rig-sha256`, `allowed-hosts`, `build`, `test`, `guard-project`,
 `strict`, `dependencies`, `topic`, `upstream-tip`, `cache-history`, and `cache-packages`.
 Seed-mode history/package keys include a hash of the seed reference and the
@@ -272,7 +273,7 @@ disabled for fork PRs. Dependency reporting accepts the seed too.
 Pin rig and reviewed action SHAs. Use ordinary `pull_request`, read-only contents,
 and checkout `persist-credentials: false`; never execute PR code under
 `pull_request_target`. Optional status publication needs `statuses: write`.
-See [action inputs and cache policy](https://github.com/rigsmith/rigsmith/tree/main/.github/actions/stack)
+See [action inputs and cache policy](https://github.com/rigsmith/stack-action)
 and [CI guidance](https://github.com/rigsmith/rigsmith/blob/main/docs/GITHUB-ACTIONS.md).
 
 Dry runs: `ci`, `ci-guard`, `deps` (even without `--publish`), setup writers and
