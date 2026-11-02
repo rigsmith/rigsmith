@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"slices"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ func stackReleaseAnnotations(ctx context.Context, m *stackManifest, a stackDepsA
 		}
 		var labels []string
 		for _, l := range links {
-			if l.To != sibling {
+			if l.To != sibling || !slices.Contains(l.From, member) {
 				continue
 			}
 			v, err := stackReleaseVersion(ctx, a, m, sibling, l.Package, "", feed)

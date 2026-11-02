@@ -90,6 +90,14 @@ manifest cursors; `rig stack status` shows the same chain. See the
 [stack dependency guide](site/rig/stack.md#stack-topic-dependencies) for recording
 edges, publishing statuses, and enabling scheduled refresh.
 
+For .NET stackspaces, `rig stack released app lib --package Acme.Lib` checks
+published NuGet commit ancestry and previews a return to packages. `--apply`
+edits a clean tree after confirmation. See [the stack guide](site/rig/stack.md).
+
+Transitive package migrations verify a published delivery dependency with
+`--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
+release discovery; ordinary status performs no additional registry checks.
+
 The release engine — changeset parsing, the dependency **cascade** (a dependent
 is patch-bumped when its dependency releases), **linked/fixed/lockstep**
 grouping, version bumping, and changelog rendering — is a faithful port of
@@ -190,11 +198,3 @@ theirs:
 
 Independently: the release engine is a faithful port of **net-changesets**, which
 is itself a .NET port of [changesets](https://github.com/changesets/changesets).
-
-For .NET stackspaces, `rig stack released app lib --package Acme.Lib` checks
-published NuGet commit ancestry and previews a return to packages. `--apply`
-edits a clean tree after confirmation. See [the stack guide](site/rig/stack.md).
-
-Transitive package migrations verify a published delivery dependency with
-`--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
-release discovery; ordinary status performs no additional registry checks.

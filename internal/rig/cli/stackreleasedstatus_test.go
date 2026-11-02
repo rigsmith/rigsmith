@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
 func TestStackReleasedStatusBudget(t *testing.T) {
@@ -98,5 +100,50 @@ func TestStackReleasedStatusDiscoveryOnceAcrossMembers(t *testing.T) {
 	annotate("control", "core")
 	if scans != 1 {
 		t.Fatalf("discovery repeated %d times", scans)
+	}
+}
+
+func TestStackReleasedStatusConsumerLabels(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	var firstFeed, secondFeed atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "index.json"):
+			if strings.Contains(r.URL.Path, "acme.first") {
+				firstFeed.Add(1)
+			} else if strings.Contains(r.URL.Path, "acme.second") {
+				secondFeed.Add(1)
+			} else {
+				t.Errorf("unexpected feed path: %s", r.URL.Path)
+			}
+			fmt.Fprint(w, `{"versions":["2.0.0"]}`)
+		case strings.HasSuffix(r.URL.Path, ".nuspec"):
+			fmt.Fprintf(w, `<package><metadata><repository url="https://github.com/acme/core" commit="%s" /></metadata></package>`, sha)
+		case strings.Contains(r.URL.Path, "/compare/"):
+			fmt.Fprint(w, `{"status":"identical"}`)
+		case strings.HasSuffix(r.URL.Path, "/pulls/1"):
+			fmt.Fprintf(w, `{"merged_at":"today","merge_commit_sha":%q}`, sha)
+		default:
+			fmt.Fprint(w, `[{"number":1,"head":{"ref":"stack/topic","repo":{"full_name":"you/core"}}}]`)
+		}
+	}))
+	defer srv.Close()
+	m := &stackManifest{Repos: map[string]*stackRepo{"core": {Upstream: "github.com/acme/core", Fork: "github.com/you/core"}}, LastSync: map[string]string{"core": sha}, Proposals: map[string]map[string]stackProposal{"core": {"topic": {Branch: "stack/topic"}}}}
+	links := []stackLink{
+		{Redirect: plugin.Redirect{Package: "Acme.First"}, From: []string{"first"}, To: "core"},
+		{Redirect: plugin.Redirect{Package: "Acme.Second"}, From: []string{"second"}, To: "core"},
+	}
+	scans := 0
+	annotate := stackReleaseAnnotations(context.Background(), m, stackDepsAPI{base: srv.URL, client: srv.Client()}, srv.URL, func(context.Context) ([]stackLink, error) { scans++; return links, nil })
+	first := annotate("first", "core")
+	if !strings.Contains(first, "Acme.First released in 2.0.0") || strings.Contains(first, "Acme.Second") || firstFeed.Load() != 1 || secondFeed.Load() != 0 {
+		t.Fatalf("first consumer: %s; feeds %d/%d", first, firstFeed.Load(), secondFeed.Load())
+	}
+	second := annotate("second", "core")
+	if !strings.Contains(second, "Acme.Second released in 2.0.0") || strings.Contains(second, "Acme.First") || firstFeed.Load() != 1 || secondFeed.Load() != 1 {
+		t.Fatalf("second consumer: %s; feeds %d/%d", second, firstFeed.Load(), secondFeed.Load())
+	}
+	if annotate("first", "core") != first || scans != 1 || firstFeed.Load() != 1 {
+		t.Fatal("annotation/discovery was not cached")
 	}
 }

@@ -62,6 +62,14 @@ manifest cursors; `rig stack status` shows the same chain. See the
 [stack dependency guide](../../site/rig/stack.md#stack-topic-dependencies) for
 recording edges, publishing statuses, and enabling scheduled refresh.
 
+`rig stack released app lib --package Acme.Lib` verifies NuGet commit ancestry
+and previews package pin and simple stack guard edits. `--apply` requires a clean
+tree and interactive confirmation; `-n` previews. See [stackspaces](../../site/rig/stack.md).
+
+Transitive package migrations verify a published delivery dependency with
+`--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
+release discovery; ordinary status performs no additional registry checks.
+
 The default manifest home is a small seed repo shared by local setup and CI.
 First publication to an existing seed requires matching root files. If they
 differ, set up from that seed in a fresh directory and reconcile the root edits.
@@ -149,11 +157,3 @@ default-setter) preserve comments via the JSONC editor.
 The remaining ergonomics tail (`[suggest]` completion, menu project-pickers,
 `setup`/`self-update`, the interactive `default` verb, test-class fuzzy match)
 is tracked in [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).
-
-`rig stack released app lib --package Acme.Lib` verifies NuGet commit ancestry
-and previews package pin and simple stack guard edits. `--apply` requires a clean
-tree and interactive confirmation; `-n` previews. See [stackspaces](../../site/rig/stack.md).
-
-Transitive package migrations verify a published delivery dependency with
-`--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
-release discovery; ordinary status performs no additional registry checks.

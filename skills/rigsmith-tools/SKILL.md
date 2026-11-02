@@ -126,6 +126,7 @@ rig stack seed [dir]                    # export root files, or retry configured
 rig stack seed --publish acme/rigstack-app@main   # opt in and publish root-only commits
 rig stack ci --manifest rig.stack.jsonc --member app  # isolated committed-checkout CI
 rig stack ci-guard app/App.csproj       # observed .NET build warning policy
+rig stack released <member> <sibling> --package <id>  # verify release and preview migration
 rig stack deps [--publish]              # check topic dependencies; optionally post statuses
 rig stack home [pointer-file]           # read a member's .rig-stack reference
 rig stack status                       # each repo's cursor vs its upstream tip
@@ -298,6 +299,21 @@ do not work around it.
 
 Full guide: <https://rigsmith.dev/rig/stack>.
 
+### Return to packages
+
+For returning .NET stack members to packages, preview with
+`rig stack released <member> <sibling> --package Acme.Lib [--version 2.0.0]`.
+Require repository commit ancestry proof; missing evidence is not a release.
+`--apply` is interactive and clean-tree only; `-n` previews. Explicitly attribute
+StackOnlyWarning IDs with `--warning`; review all refused rewrites and build
+with UseStackSources=false. The command creates no PR.
+
+For a transitive stack sibling, use --via-package/--via-version to verify a
+published direct package delivers the verified sibling minimum in all nuspec
+framework groups. Publish the sibling, then migrate/publish its consumer, then
+the application. A failed delivery proof must leave guards in place. Use
+`rig stack status --releases` to opt into discovery; default status skips it.
+
 ## changerig — changesets (the changelog source of truth)
 
 When a change is user-facing, record it **in the same PR**:
@@ -429,16 +445,3 @@ enforces:
 - "record this change", "bump the version", "update the changelog" → **changerig**
 - "publish", "cut a release", "tag" → **shiprig**
 - "sync my Claude setup", "make a worktree", "set up the guard" → **clauderig** / `rig worktree`
-
-For returning .NET stack members to packages, preview with
-`rig stack released <member> <sibling> --package Acme.Lib [--version 2.0.0]`.
-Require repository commit ancestry proof; missing evidence is not a release.
-`--apply` is interactive and clean-tree only; `-n` previews. Explicitly attribute
-StackOnlyWarning IDs with `--warning`; review all refused rewrites and build
-with UseStackSources=false. The command creates no PR.
-
-For a transitive stack sibling, use --via-package/--via-version to verify a
-published direct package delivers the verified sibling minimum in all nuspec
-framework groups. Publish the sibling, then migrate/publish its consumer, then
-the application. A failed delivery proof must leave guards in place. Use
-`rig stack status --releases` to opt into discovery; default status skips it.

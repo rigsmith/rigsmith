@@ -40,7 +40,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack rm <repo>                    remove a repo: manifest, tree and overlay\n" +
 			"  rig stack seed [dir]                   export root files; --publish updates the manifest home\n" +
 			"  rig stack home [pointer-file]          read a member seed pointer\n" +
-			"  rig stack released <member> <sibling>   check NuGet releases; --apply returns to packages\n" +
+			"  rig stack released <member> <sibling>  check NuGet releases; --apply returns to packages\n" +
 			"  rig stack deps                         topic PR dependencies and cursor inclusion\n" +
 			"  rig stack status                       cursor vs upstream, per repo; --releases checks NuGet\n" +
 			"  rig stack pull [repo]                  merge new upstream commits (all by default)\n" +
