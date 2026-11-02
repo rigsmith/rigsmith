@@ -121,6 +121,45 @@ it runs no project commands and restores no build cache. Do not reuse a
 self-hosted workspace between these jobs. Environment scrubbing of `*_TOKEN`
 and `*_PAT` in build children is defense in depth, not a sandbox: arbitrary
 upstream code can leave files behind, which is why the separate runner matters.
+Private seeds require Git credentials in **both** jobs. Checkout uses
+`persist-credentials: false`, and `GITHUB_TOKEN` alone does not configure Git:
+configure a read-only Git credential helper in the build job, and independently
+configure Git access to reload the seed on the fresh publish runner. Missing
+build-job seed credentials fail setup before a report; missing publish-job seed
+credentials fail seed reload before any publication. Never give the build job
+a home write token. See [private seed access](https://rigsmith.dev/rig/stack#one-manifest-home).
+
+For workflow-token PR creation, enable Settings → Actions → General →
+**Allow GitHub Actions to create and approve pull requests**, or supply a token
+with home PR write access. `pull-requests: write` alone does not override that
+repository policy. If PR creation is denied after branch creation, the summary
+names this setting and warns that a `rig-canary/` branch may remain. The next
+run updates that same stable branch and retries PR creation.
+
+The publish API token must also read every upstream for ancestry comparisons;
+Git fetch credentials do not grant API access. Public upstreams work with the
+example token; private upstreams in another repository require a suitable
+publish-only token with upstream read and home contents/PR/issue write access.
+Missing API access skips that result with a summary and success status; other
+results still proceed. Invalid ancestry is a hard error, checked across all
+available results before publication writes. Missing token skips publication.
+Each result's publication success or failure appears in the summary; a failed
+PR or issue does not stop later results.
+
+Setup and configured command outcomes are separate. Filesystem errors,
+materialization, manifest parsing, tool lookup, `git init`, `rig stack init`
+and `rig stack wire` failures are **inconclusive**: the command fails before
+writing a report, so the workflow skips publication and preserves existing
+PRs/issues. Cancellation or failure to start a command is also inconclusive.
+Only a configured `--build` or `--test` process exiting non-zero produces red.
+This deliberately includes deterministic import/filter/wiring failures at a
+new tip in the inconclusive category: init/wire expose no typed distinction
+between transport/engine trouble and source incompatibility. Rig does not
+classify arbitrary diagnostics by text or blame a member on that evidence.
+Inspect the failed phase and reproduce locally; a future typed setup diagnostic
+could support narrower attribution. Isolation setup errors likewise abort the
+whole run without a partial report.
+
 The report is attacker-controlled: upstream code can replace `Green`, member
 selection and attribution. The publisher cannot verify that a build ran, passed,
 or tested these exact commits. PR bodies say "reported green by the build job";

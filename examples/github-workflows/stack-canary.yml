@@ -30,6 +30,11 @@ jobs:
           GONOSUMDB: ''
           GOPRIVATE: ''
         run: go install github.com/rigsmith/rigsmith/cmd/rig@vX.Y.Z
+      # Private seed/upstreams: configure READ-ONLY Git credentials here.
+      # persist-credentials:false means checkout did not install a Git helper;
+      # GITHUB_TOKEN alone does not authenticate stackCISeed's Git clone.
+      # Missing seed access fails setup and produces no report/publication.
+      # See https://rigsmith.dev/rig/stack#one-manifest-home.
       - name: Test upstream tips
         run: rig stack canary --seed acme/rigstack-app@main --build 'rig build' --test 'rig test' --report canary.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -45,6 +50,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Enable Settings > Actions > General > "Allow GitHub Actions to create
+      # and approve pull requests", or use a token with home PR write access.
+      # Denial may leave a rig-canary/ branch; summary explains the setting,
+      # and the next run reuses the branch and retries creating the PR.
       pull-requests: write
       issues: write
     steps:
@@ -67,7 +76,15 @@ jobs:
         with:
           name: canary-report
           path: report
+      # Private seed: configure Git credentials independently on THIS runner
+      # to reload it. Missing Git access fails before any publication.
+      # See https://rigsmith.dev/rig/stack#one-manifest-home.
       - name: Publish cursor updates or failure issue
         env:
+          # Must read every upstream for compare validation, as well as write
+          # the home. A private cross-repository upstream needs a suitable
+          # publish-only token; Git fetch access alone is insufficient.
+          # Missing API access skips that result with a summary, continuing
+          # others. Missing token skips all publication. Invalid ancestry fails.
           GITHUB_TOKEN: ${{ github.token }}
         run: rig stack canary --seed acme/rigstack-app@main --publish report/canary.json

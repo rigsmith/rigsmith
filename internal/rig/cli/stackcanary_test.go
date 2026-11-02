@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -283,6 +284,27 @@ func TestStackCanaryFlow(t *testing.T) {
 			t.Fatalf("report %s error %v", b, e)
 		}
 	}
+	for _, phase := range []string{"init", "wire"} {
+		original := stackCanaryRun
+		stackCanaryRun = func(ctx context.Context, root, program string, args ...string) error {
+			if len(args) == 2 && args[0] == "stack" && args[1] == phase {
+				return fmt.Errorf("simulated setup failure")
+			}
+			return original(ctx, root, program, args...)
+		}
+		report := filepath.Join(t.TempDir(), "inconclusive.json")
+		c := newStackCanaryCmd()
+		c.SetArgs([]string{"--seed", bare, "--allowed-hosts", srv.addr, "--report", report})
+		err := c.Execute()
+		stackCanaryRun = original
+		if err == nil || !strings.Contains(err.Error(), "inconclusive") {
+			t.Fatalf("setup must fail job: %v", err)
+		}
+		if _, err = os.Stat(report); !os.IsNotExist(err) {
+			t.Fatal("setup failure wrote a report")
+		}
+	}
+
 }
 
 func TestStackCanaryRejectsForkNetworkCommit(t *testing.T) {
@@ -373,5 +395,154 @@ func TestStackCanaryHelpAlignment(t *testing.T) {
 	}
 	if column < 0 {
 		t.Fatal("no stack help entries")
+	}
+}
+
+func canaryReviewSeed(t *testing.T) (string, string, []byte) {
+	t.Helper()
+	dir := t.TempDir()
+	mustGitStack(t, dir, "init", "-q", "-b", "main")
+	mustGitStack(t, dir, "config", "user.name", "test")
+	mustGitStack(t, dir, "config", "user.email", "test@localhost")
+	data := []byte(fmt.Sprintf(`{"repos":{"app":{"upstream":"github.com/acme/app","fork":"github.com/acme/app"},"core":{"upstream":"github.com/acme/core","fork":"github.com/acme/core"}},"lastSync":{"app":%q,"core":%q}}`, strings.Repeat("a", 40), strings.Repeat("a", 40)))
+	if err := os.WriteFile(filepath.Join(dir, "rig.stack.jsonc"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, dir, "add", ".")
+	mustGitStack(t, dir, "commit", "-qm", "seed")
+	return dir, strings.TrimSpace(mustGitStack(t, dir, "rev-parse", "HEAD")), data
+}
+
+func TestStackCanaryBuildOutcomes(t *testing.T) {
+	home, _, data := canaryReviewSeed(t)
+	for _, phase := range []string{"init", "wire", "build", "test", "start", "green"} {
+		t.Run(phase, func(t *testing.T) {
+			oldRun, oldExe := stackCanaryRun, stackCIExecutable
+			t.Cleanup(func() { stackCanaryRun = oldRun; stackCIExecutable = oldExe })
+			stackCIExecutable = func() (string, error) { return "rig", nil }
+			stackCanaryRun = func(ctx context.Context, dir, program string, args ...string) error {
+				if program == "rig" && args[1] == phase {
+					return fmt.Errorf("simulated network/setup failure")
+				}
+				if program == "bash" && phase == "start" {
+					return fmt.Errorf("cannot start shell")
+				}
+				if program == "bash" && args[len(args)-1] == phase {
+					return &exec.ExitError{}
+				}
+				return nil
+			}
+			green, err := stackCanaryBuild(context.Background(), t.TempDir(), home, data, nil, "build", "test")
+			inconclusive := phase == "init" || phase == "wire" || phase == "start"
+			if (err != nil) != inconclusive || green != (phase == "green") {
+				t.Fatalf("phase %s green=%v error=%v", phase, green, err)
+			}
+		})
+	}
+}
+
+func TestStackCanarySeparatePublicationContinues(t *testing.T) {
+	for _, failure := range []string{"comparison", "PR"} {
+		t.Run(failure, func(t *testing.T) {
+			home, base, _ := canaryReviewSeed(t)
+			bare := filepath.Join(t.TempDir(), "seed.git")
+			mustGitStack(t, home, "clone", "--bare", home, bare)
+			t.Setenv("GIT_CONFIG_COUNT", "1")
+			t.Setenv("GIT_CONFIG_KEY_0", "url."+filepath.ToSlash(bare)+".insteadOf")
+			t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/acme/home.git")
+			to := strings.Repeat("b", 40)
+			r := stackCanaryReport{Base: base}
+			for _, n := range []string{"app", "core"} {
+				r.Results = append(r.Results, stackCanaryResult{Green: true, Changes: []stackCanaryChange{{Member: n, From: strings.Repeat("a", 40), To: to}}})
+			}
+			prCalls := 0
+			refCreates, refUpdates := 0, 0
+			refs := map[string]bool{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+				p := q.URL.Path
+				if strings.Contains(p, "/compare/") {
+					if failure == "comparison" && strings.Contains(p, "/acme/app/") {
+						w.WriteHeader(403)
+						return
+					}
+					status := "ahead"
+					if strings.Contains(p, "refs/heads/") {
+						status = "behind"
+					}
+					json.NewEncoder(w).Encode(map[string]any{"status": status, "commits": []any{map[string]string{"sha": to}}})
+					return
+				}
+				if q.Method == "GET" && (strings.HasSuffix(p, "/issues") || strings.HasSuffix(p, "/pulls")) {
+					w.Write([]byte(`[]`))
+					return
+				}
+				if strings.HasSuffix(p, "/pulls") && q.Method == "POST" {
+					prCalls++
+					if failure == "PR" && prCalls == 1 {
+						w.WriteHeader(403)
+						return
+					}
+				}
+				if q.Method == "POST" && strings.HasSuffix(p, "/git/refs") {
+					var payload struct{ Ref string }
+					json.NewDecoder(q.Body).Decode(&payload)
+					refs[payload.Ref] = true
+					refCreates++
+				}
+				if q.Method == "PATCH" && strings.Contains(p, "/git/refs/heads/") {
+					refUpdates++
+				}
+				if q.Method == "GET" && strings.Contains(p, "/git/ref/heads/") {
+					key := "refs/heads/" + strings.SplitN(p, "/git/ref/heads/", 2)[1]
+					if !refs[key] {
+						w.WriteHeader(404)
+						return
+					}
+					w.Write([]byte(`{"object":{"sha":"existing"}}`))
+					return
+				}
+				w.Write([]byte(`{"sha":"seed","tree":{"sha":"tree"}}`))
+			}))
+			defer srv.Close()
+			t.Setenv("GITHUB_API_URL", srv.URL)
+			t.Setenv("GITHUB_TOKEN", "test")
+			file := filepath.Join(t.TempDir(), "report.json")
+			b, _ := json.Marshal(r)
+			if err := os.WriteFile(file, b, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var summary bytes.Buffer
+			c := newStackCanaryCmd()
+			c.SetOut(&summary)
+			c.SetArgs([]string{"--seed", "acme/home@main", "--publish", file})
+			if err := c.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			expected := 2
+			if failure == "comparison" {
+				expected = 1
+			}
+			if prCalls != expected {
+				t.Fatalf("lost later result: PR calls %d", prCalls)
+			}
+			if !strings.Contains(summary.String(), "app: publication") || !strings.Contains(summary.String(), "core: publication reconciled") {
+				t.Fatal(summary.String())
+			}
+			if failure == "PR" && (!strings.Contains(summary.String(), "Allow GitHub Actions to create and approve pull requests") || len(refs) != 2) {
+				t.Fatalf("missing branch/permission guidance: %s refs %v", summary.String(), refs)
+			}
+			if failure == "PR" {
+				c = newStackCanaryCmd()
+				c.SetOut(&summary)
+				c.SetArgs([]string{"--seed", "acme/home@main", "--publish", file})
+				if err := c.Execute(); err != nil {
+					t.Fatal(err)
+				}
+				if refCreates != 2 || refUpdates != 2 {
+					t.Fatalf("retry did not reuse branches: creates %d updates %d", refCreates, refUpdates)
+				}
+			}
+
+		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -75,7 +76,7 @@ func newStackCanaryCmd() *cobra.Command {
 		if e = os.WriteFile(filepath.Join(home, "rig.stack.jsonc"), data, 0600); e != nil {
 			return e
 		}
-		m, src, e := loadStackManifest(home)
+		m, _, e := loadStackManifest(home)
 		if e != nil {
 			return e
 		}
@@ -150,63 +151,28 @@ func newStackCanaryCmd() *cobra.Command {
 			if len(parts) != 3 || parts[0] != "github.com" || branch == "" {
 				return fmt.Errorf("publication requires a GitHub owner/repo@branch home")
 			}
-			// Verify ranges with the upstream API, never trust artifact-supplied commit lists.
+			available := make([]bool, len(r.Results))
+			var summary strings.Builder
 			for i := range r.Results {
-				for j := range r.Results[i].Changes {
-					ch := &r.Results[i].Changes[j]
-					upstream := strings.SplitN(m.Repos[ch.Member].Upstream, "/", 2)
-					if len(upstream) != 2 || upstream[0] != "github.com" {
-						return fmt.Errorf("publication requires GitHub upstreams")
-					}
-					// GitHub resolves SHAs across a fork network. Advancing the
-					// cursor alone does not prove membership in upstream's branch.
-					var membership struct{ Status string }
-					tracked := url.PathEscape("refs/heads/" + m.branch(ch.Member))
-					// Compare branch...target: behind means the target trails upstream.
-					endpoint := "/repos/" + upstream[1] + "/compare/" + tracked + "..." + ch.To
-					if e = api.request(ctx, "GET", endpoint, nil, &membership); e != nil {
-						return fmt.Errorf("cannot verify tracked upstream branch: %w", e)
-					}
-					if membership.Status != "behind" && membership.Status != "identical" {
-						return fmt.Errorf("cursor target is not on the tracked upstream branch")
-					}
-					ch.Commits = nil
-					for page := 1; page <= 100; page++ {
-						var compare struct {
-							Status  string
-							Commits []struct{ SHA string }
-						}
-						endpoint := fmt.Sprintf("/repos/%s/compare/%s...%s?per_page=100&page=%d", upstream[1], ch.From, ch.To, page)
-						if e = api.request(ctx, "GET", endpoint, nil, &compare); e != nil {
-							return stackCanarySummary(cmd.OutOrStdout(), "Cannot read upstream comparison; publication skipped. Check repository permissions.")
-						}
-						if compare.Status != "ahead" {
-							return fmt.Errorf("upstream range must advance cursor")
-						}
-						for _, commit := range compare.Commits {
-							if !stackIsSHA(commit.SHA) {
-								return fmt.Errorf("invalid upstream commit")
-							}
-							ch.Commits = append(ch.Commits, commit.SHA)
-						}
-						if len(compare.Commits) < 100 {
-							break
-						}
-						if page == 100 {
-							return fmt.Errorf("upstream range exceeds 10000 commits; reconcile seed manually")
-						}
-					}
-
+				available[i], e = stackCanaryValidateResult(ctx, api, m, &r.Results[i])
+				if e != nil {
+					return e
+				}
+				if !available[i] {
+					fmt.Fprintf(&summary, "Canary %s: publication skipped; upstream comparison unavailable. Check publish token read access to every upstream.\n", stackCanaryMembers(r.Results[i]))
 				}
 			}
 			// Rebuild each manifest from the original bytes; no artifact-supplied file is copied.
-			for _, result := range r.Results {
+			for i, result := range r.Results {
+				if !available[i] {
+					continue
+				}
 				if e = os.WriteFile(filepath.Join(home, "rig.stack.jsonc"), data, 0600); e != nil {
 					return e
 				}
-				m, src, e = loadStackManifest(home)
-				if e != nil {
-					return e
+				m, src, err := loadStackManifest(home)
+				if err != nil {
+					return err
 				}
 				for _, ch := range result.Changes {
 					m.LastSync[ch.Member] = ch.To
@@ -219,10 +185,12 @@ func newStackCanaryCmd() *cobra.Command {
 					return e
 				}
 				if e = stackCanaryPublish(ctx, api, parts[1]+"/"+parts[2], branch, base, updated, result); e != nil {
-					return stackCanarySummary(cmd.OutOrStdout(), "Canary publication unavailable; check home permissions. No build result was changed.")
+					fmt.Fprintf(&summary, "Canary %s: publication unavailable; check home contents/issues/PR permissions. If PR creation failed, enable \"Allow GitHub Actions to create and approve pull requests\" or use a token with PR write access. A rig-canary/ branch may remain; the next run reuses it.\n", stackCanaryMembers(result))
+					continue
 				}
+				fmt.Fprintf(&summary, "Canary %s: publication reconciled.\n", stackCanaryMembers(result))
 			}
-			return nil
+			return stackCanarySummary(cmd.OutOrStdout(), strings.TrimSpace(summary.String()))
 		}
 		if dryRun {
 			fmt.Fprintln(cmd.OutOrStdout(), "Would resolve upstream tips, build, test and write a canary report")
@@ -268,20 +236,33 @@ func newStackCanaryCmd() *cobra.Command {
 			changes = append(changes, stackCanaryChange{n, m.cursor(n), tip, strings.Fields(string(b))})
 		}
 		r := stackCanaryReport{Base: base}
-		run := func(ch []stackCanaryChange) bool { return stackCanaryBuild(ctx, tmp, home, data, ch, build, test) }
+		run := func(ch []stackCanaryChange) (bool, error) {
+			return stackCanaryBuild(ctx, tmp, home, data, ch, build, test)
+		}
 		if len(changes) > 0 {
 			if mode == "separate" {
 				for _, ch := range changes {
 					single := []stackCanaryChange{ch}
-					r.Results = append(r.Results, stackCanaryResult{Changes: single, Green: run(single)})
+					green, err := run(single)
+					if err != nil {
+						return err
+					}
+					r.Results = append(r.Results, stackCanaryResult{Changes: single, Green: green})
 				}
 			} else {
-				green := run(changes)
+				green, err := run(changes)
+				if err != nil {
+					return err
+				}
 				var failures []string
 				if !green && isolate && len(changes) > 1 {
 					for _, ch := range changes {
 						single := []stackCanaryChange{ch}
-						if !run(single) {
+						singleGreen, err := run(single)
+						if err != nil {
+							return err
+						}
+						if !singleGreen {
 							failures = append(failures, ch.Member)
 						}
 					}
@@ -327,20 +308,20 @@ func stackCanaryEnv() []string {
 	return env
 }
 
-func stackCanaryBuild(ctx context.Context, tmp, home string, data []byte, changes []stackCanaryChange, build, test string) bool {
+func stackCanaryBuild(ctx context.Context, tmp, home string, data []byte, changes []stackCanaryChange, build, test string) (bool, error) {
 	root, e := os.MkdirTemp(tmp, "build-")
 	if e != nil {
-		return false
+		return false, e
 	}
-	if stackCIMaterialize(ctx, home, root) != nil {
-		return false
+	if e = stackCIMaterialize(ctx, home, root); e != nil {
+		return false, e
 	}
-	if os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600) != nil {
-		return false
+	if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
+		return false, e
 	}
 	m, _, e := loadStackManifest(root)
 	if e != nil {
-		return false
+		return false, e
 	}
 	tips := map[string]string{}
 	for _, ch := range changes {
@@ -356,7 +337,7 @@ func stackCanaryBuild(ctx context.Context, tmp, home string, data []byte, change
 			sha = tips[n]
 		}
 		if !stackIsSHA(sha) {
-			return false
+			return false, fmt.Errorf("canary setup: member %s has no full cursor", n)
 		}
 		r.UpstreamBranch = ""
 		r.Branch = ""
@@ -366,26 +347,41 @@ func stackCanaryBuild(ctx context.Context, tmp, home string, data []byte, change
 	}
 	b, e := json.MarshalIndent(m, "", "  ")
 	if e != nil {
-		return false
+		return false, e
 	}
-	if os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), b, 0600) != nil {
-		return false
+	if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), b, 0600); e != nil {
+		return false, e
 	}
 	exe, e := stackCIExecutable()
 	if e != nil {
-		return false
+		return false, e
 	}
-	run := func(exe string, args ...string) bool {
-		p := exec.CommandContext(ctx, exe, args...)
-		p.Dir = root
-		p.Env = append(stackCanaryEnv(), "RIG_STACK_CI_VERIFIED=1", "GIT_AUTHOR_NAME=rig", "GIT_AUTHOR_EMAIL=rig@localhost", "GIT_COMMITTER_NAME=rig", "GIT_COMMITTER_EMAIL=rig@localhost")
-		if e := p.Run(); e != nil {
-			fmt.Fprintf(os.Stderr, "Canary subprocess failed (%s): %v\n", filepath.Base(exe), e)
-			return false
+	run := func(program string, args ...string) error { return stackCanaryRun(ctx, root, program, args...) }
+	for _, phase := range []struct {
+		name, program string
+		args          []string
+	}{
+		{"git init", "git", []string{"init", "-q"}},
+		{"stack init", exe, []string{"stack", "init"}},
+		{"stack wire", exe, []string{"stack", "wire"}},
+	} {
+		if err := run(phase.program, phase.args...); err != nil {
+			return false, fmt.Errorf("canary setup %s failed; outcome inconclusive (check credentials, network, engine and source compatibility): %w", phase.name, err)
 		}
-		return true
 	}
-	return run("git", "init", "-q") && run(exe, "stack", "init") && run(exe, "stack", "wire") && run("bash", "-eo", "pipefail", "-c", build) && run("bash", "-eo", "pipefail", "-c", test)
+	for _, command := range []string{build, test} {
+		if err := run("bash", "-eo", "pipefail", "-c", command); err != nil {
+			if ctx.Err() != nil {
+				return false, fmt.Errorf("canary cancelled: %w", ctx.Err())
+			}
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
+				return false, nil
+			}
+			return false, fmt.Errorf("cannot start canary command: %w", err)
+		}
+	}
+	return true, nil
 }
 
 func stackCanaryPublish(ctx context.Context, a stackDepsAPI, repo, baseBranch, base string, manifest []byte, r stackCanaryResult) error {
@@ -507,4 +503,70 @@ func stackCanaryText(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// API unavailability skips this result; invalid ancestry remains a hard error.
+func stackCanaryValidateResult(ctx context.Context, api stackDepsAPI, m *stackManifest, result *stackCanaryResult) (bool, error) {
+	for j := range result.Changes {
+		ch := &result.Changes[j]
+		upstream := strings.SplitN(m.Repos[ch.Member].Upstream, "/", 2)
+		if len(upstream) != 2 || upstream[0] != "github.com" {
+			return false, fmt.Errorf("publication requires GitHub upstreams")
+		}
+		// GitHub resolves SHAs across a fork network. Advancing the
+		// cursor alone does not prove membership in upstream's branch.
+		var membership struct{ Status string }
+		tracked := url.PathEscape("refs/heads/" + m.branch(ch.Member))
+		// Compare branch...target: behind means the target trails upstream.
+		endpoint := "/repos/" + upstream[1] + "/compare/" + tracked + "..." + ch.To
+		if e := api.request(ctx, "GET", endpoint, nil, &membership); e != nil {
+			return false, nil
+		}
+		if membership.Status != "behind" && membership.Status != "identical" {
+			return false, fmt.Errorf("cursor target is not on the tracked upstream branch")
+		}
+		ch.Commits = nil
+		for page := 1; page <= 100; page++ {
+			var compare struct {
+				Status  string
+				Commits []struct{ SHA string }
+			}
+			endpoint := fmt.Sprintf("/repos/%s/compare/%s...%s?per_page=100&page=%d", upstream[1], ch.From, ch.To, page)
+			if e := api.request(ctx, "GET", endpoint, nil, &compare); e != nil {
+				return false, nil
+			}
+			if compare.Status != "ahead" {
+				return false, fmt.Errorf("upstream range must advance cursor")
+			}
+			for _, commit := range compare.Commits {
+				if !stackIsSHA(commit.SHA) {
+					return false, fmt.Errorf("invalid upstream commit")
+				}
+				ch.Commits = append(ch.Commits, commit.SHA)
+			}
+			if len(compare.Commits) < 100 {
+				break
+			}
+			if page == 100 {
+				return false, fmt.Errorf("upstream range exceeds 10000 commits; reconcile seed manually")
+			}
+		}
+
+	}
+	return true, nil
+}
+
+func stackCanaryMembers(result stackCanaryResult) string {
+	var names []string
+	for _, ch := range result.Changes {
+		names = append(names, stackCanaryText(ch.Member))
+	}
+	return strings.Join(names, ", ")
+}
+
+var stackCanaryRun = func(ctx context.Context, root, program string, args ...string) error {
+	p := exec.CommandContext(ctx, program, args...)
+	p.Dir = root
+	p.Env = append(stackCanaryEnv(), "RIG_STACK_CI_VERIFIED=1", "GIT_AUTHOR_NAME=rig", "GIT_AUTHOR_EMAIL=rig@localhost", "GIT_COMMITTER_NAME=rig", "GIT_COMMITTER_EMAIL=rig@localhost")
+	return p.Run()
 }
