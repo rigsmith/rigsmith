@@ -1661,7 +1661,7 @@ func newStackSendCmd() *cobra.Command {
 			if fromBranch != "" {
 				// topicCommit, captured with the tree that was pushed — not a fresh
 				// read, which could have moved in between.
-				if err := stackRememberProposal(src, m, name, fromBranch, branch, topicCommit); err != nil {
+				if err := stackRememberProposal(src, m, name, fromBranch, branch, topicCommit, cmd.OutOrStdout()); err != nil {
 					return fmt.Errorf("%s reached %s:%s, but recording where it went failed: %w\npropose it again to record it — the push already happened, so re-sending is a no-op on the fork", fromBranch, r.Fork, branch, err)
 				}
 			}

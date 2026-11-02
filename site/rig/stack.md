@@ -1267,15 +1267,18 @@ Manifests with no dependency edges make no API or credential lookups.
 `stack status` prints its member and topic output before checking dependencies;
 the optional dependency report has a two-second total budget. Unavailable or
 timed-out lookups are shown as **could not check**.
-Propose upstream members first: a new proposal records the already-proposed
-members of that topic in `proposals[prefix][topic].dependsOn` (an array of
+Propose upstream members first: a new proposal skips any inferred edge that
+would create a dependency cycle and prints one line explaining why. Other already-proposed
+members of that topic are recorded in `proposals[prefix][topic].dependsOn` (an array of
 member prefixes). Re-proposing preserves these edges; edit the array to change
 direction or backfill older proposals. Each dependency must merge upstream and
 its `lastSync` cursor must include the API-reported merge commit. `rig stack status` displays the same chain
 from the local manifest. Older records without `dependsOn` have no dependencies.
 Blank or unknown member names, self-dependencies, and dependency cycles within
 a topic are rejected when loading the manifest, before any status can be
-published. Cycle errors name the topic and the member chain to correct.
+published. Cycle errors name the manifest file, topic, and member chain, and tell you to
+edit `proposals[member][topic].dependsOn` to remove or reverse an edge before
+retrying.
 
 `rig stack deps --publish` posts the `stack dependencies` commit status to
 current PR **head** SHAs only in `GITHUB_REPOSITORY`, which must match a

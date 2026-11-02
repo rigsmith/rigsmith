@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -221,30 +223,48 @@ func (m *stackManifest) ownedNames() []string {
 // the fork — the one thing about an in-flight fix that the repository cannot be
 // asked. Written beside the cursors, and read back by `status` so "where is that
 // fix" is something you look at rather than remember.
-func stackRememberProposal(src *cfgfind.Source, m *stackManifest, prefix, topic, branch, commit string) error {
-	if m.Proposals == nil {
-		m.Proposals = map[string]map[string]stackProposal{}
-	}
-	if m.Proposals[prefix] == nil {
-		m.Proposals[prefix] = map[string]stackProposal{}
-	}
+func stackRememberProposal(src *cfgfind.Source, m *stackManifest, prefix, topic, branch, commit string, out io.Writer) error {
 	old, exists := m.Proposals[prefix][topic]
+	candidate := *m
+	candidate.Proposals = maps.Clone(m.Proposals)
+	if candidate.Proposals == nil {
+		candidate.Proposals = map[string]map[string]stackProposal{}
+	}
+	candidate.Proposals[prefix] = maps.Clone(m.Proposals[prefix])
+	if candidate.Proposals[prefix] == nil {
+		candidate.Proposals[prefix] = map[string]stackProposal{}
+	}
 	deps := old.DependsOn
 	if !exists {
 		for _, name := range m.names() {
-			if name != prefix {
-				if _, ok := m.Proposals[name][topic]; ok {
-					deps = append(deps, name)
-				}
+			if name == prefix {
+				continue
 			}
+			if _, ok := m.Proposals[name][topic]; !ok {
+				continue
+			}
+			edge := stackProposal{Branch: branch, Commit: commit, DependsOn: append(slices.Clone(deps), name)}
+			candidate.Proposals[prefix][topic] = edge
+			if err := candidate.validateProposalCycles(); err != nil {
+				fmt.Fprintf(out, "%s: skipped inferred dependsOn %s for topic %s because it would create a dependency cycle\n", prefix, name, topic)
+				continue
+			}
+			deps = edge.DependsOn
 		}
 	}
 	want := stackProposal{Branch: branch, Commit: commit, DependsOn: deps}
 	if old.Branch == want.Branch && old.Commit == want.Commit && slices.Equal(old.DependsOn, want.DependsOn) {
-		return nil // nothing to write, and no commit to make out of nothing
+		return nil
 	}
-	m.Proposals[prefix][topic] = want
-	return stackWriteManifestMap(src, "proposals", m.Proposals)
+	candidate.Proposals[prefix][topic] = want
+	if err := candidate.validate(); err != nil {
+		return fmt.Errorf("recording proposal %q for topic %q would make the manifest invalid: %w", prefix, topic, err)
+	}
+	if err := stackWriteManifestMap(src, "proposals", candidate.Proposals); err != nil {
+		return err
+	}
+	m.Proposals = candidate.Proposals
+	return nil
 }
 
 // stackWriteManifestMap replaces one machine-written top-level map in the
@@ -547,7 +567,7 @@ func (m *stackManifest) validateProposalCycles() error {
 			case 1:
 				start := slices.Index(path, member)
 				cycle := append(append([]string{}, path[start:]...), member)
-				return fmt.Errorf("dependsOn cycle for topic %q: %s", topic, strings.Join(cycle, " -> "))
+				return fmt.Errorf("dependsOn cycle for topic %q: %s — edit proposals[member][topic].dependsOn to remove or reverse an edge in this chain, then retry", topic, strings.Join(cycle, " -> "))
 			case 2:
 				return nil
 			}
