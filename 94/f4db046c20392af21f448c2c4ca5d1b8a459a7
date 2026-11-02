@@ -1,0 +1,23 @@
+core/ecosystem/gomod/gomod_test.go
+  s_1c8c2abfc17a88::t_bfa7a79d55d18a 559-571
+core/ecosystem/gomod/gomod.go
+  s_1c8c2abfc17a88::t_bfa7a79d55d18a 134
+.changeset/quiet-foxes-wade.md
+  s_1c8c2abfc17a88::t_bfa7a79d55d18a 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "94f4db046c20392af21f448c2c4ca5d1b8a459a7",
+  "prompts": {},
+  "sessions": {
+    "s_1c8c2abfc17a88": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19c94-9a87-70d1-a177-8c0bfd360624",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
