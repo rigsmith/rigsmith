@@ -1,0 +1,52 @@
+internal/rig/cli/stack.go
+  s_c99c7d1f2bd4e8::t_2b675220eafdc6 45,278,282,393,397
+internal/rig/cli/stackreleaseddelivery_test.go
+  s_c99c7d1f2bd4e8::t_27b0c58ce996e3 4,10-11,33,80-103
+  s_c99c7d1f2bd4e8::t_97d557faa5b8a6 1-3,5-9,12-32,34-79,104-105
+.changeset/jolly-shrimp-dance.md
+  s_c99c7d1f2bd4e8::t_c759d3385b3118 7
+docs/STACK-DESIGN.md
+  s_c99c7d1f2bd4e8::t_27b0c58ce996e3 1330-1331,1334-1355,1391-1393,1396-1400
+internal/rig/cli/stackreleaseddelivery.go
+  s_c99c7d1f2bd4e8::t_2b675220eafdc6 4-8,10,14-15,20-24,29-59,62-70,79-98,101-110,114-170
+  s_c99c7d1f2bd4e8::t_27b0c58ce996e3 16-17,71-78
+  s_c99c7d1f2bd4e8::t_553bc3f6f41b56 1-3,9,11-13,18-19,25-28,60-61,99-100,111-113,171
+internal/rig/cli/stackreleasedstatus.go
+  s_c99c7d1f2bd4e8::t_2b675220eafdc6 1-48
+internal/rig/cli/stackdeps.go
+  s_c99c7d1f2bd4e8::t_2b675220eafdc6 161,203-204,234,238-250
+README.md
+  s_c99c7d1f2bd4e8::t_c759d3385b3118 197-200
+internal/rig/cli/stackreleasedstatus_test.go
+  s_c99c7d1f2bd4e8::t_97d557faa5b8a6 1-64,66-74,78-81,101-102
+  s_c99c7d1f2bd4e8::t_27b0c58ce996e3 65,75-77,82-100
+skills/rigsmith-tools/SKILL.md
+  s_c99c7d1f2bd4e8::t_27b0c58ce996e3 439-444
+internal/rig/cli/stackreleased.go
+  s_c99c7d1f2bd4e8::t_553bc3f6f41b56 134,137
+  s_c99c7d1f2bd4e8::t_2b675220eafdc6 150-151,174-176,186-191
+site/rig/verbs.md
+  s_c99c7d1f2bd4e8::t_27b0c58ce996e3 485-489
+site/rig/stack.md
+  s_c99c7d1f2bd4e8::t_27b0c58ce996e3 1419,1430-1439
+cmd/rig/README.md
+  s_c99c7d1f2bd4e8::t_c759d3385b3118 156-159
+internal/rig/cli/stackreleasede2e_test.go
+  s_c99c7d1f2bd4e8::t_8c67af7f6e374f 4,6-9,13,22-97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "fea314afd4bdfa2f9fc0b0be09be883fbcd9693e",
+  "prompts": {},
+  "sessions": {
+    "s_c99c7d1f2bd4e8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199eb-1f73-7e23-aab8-61b3fe8e36b9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
