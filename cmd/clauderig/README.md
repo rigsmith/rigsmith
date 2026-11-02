@@ -159,3 +159,12 @@ A surviving mutant is not automatically a bad test — many are equivalent
 (`m[k] = true` → `false` changes nothing where the map is checked for presence).
 Confirm by hand: make the *semantic* change the comment warns about, and check
 whether a test names the property.
+
+
+Claude hook writes preserve unrelated handlers, including commands that merely mention
+`clauderig`. Ownership requires the exact event, matcher and installer-shaped command;
+only explicitly known historical plans are migrated or removed. Unknown lookalikes
+are reported with their command and left untouched. Project/local install, uninstall
+and doctor fixes refuse settings symlinks escaping the resolved repository or targeting
+global settings; symlinked checkout paths remain supported. Malformed hook structures
+are refused, JSON numbers retain their precision, and diagnostic controls are escaped.

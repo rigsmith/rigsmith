@@ -255,7 +255,15 @@ func checkGlobalHooks(env Env) Result {
 		}}
 }
 
-func checkProjectGuard(env Env) Result {
+func checkProjectGuard(env Env) (result Result) {
+	defer func() {
+		for _, path := range []string{env.ProjectSettings, env.LocalSettings} {
+			if notice := hooks.Candidates(path); notice != "" {
+				result.Detail += "; " + notice
+			}
+		}
+	}()
+
 	proj, _ := hooks.Status(env.ProjectSettings)
 	local, _ := hooks.Status(env.LocalSettings)
 	if contains(proj, "PreToolUse") || contains(local, "PreToolUse") {
@@ -271,6 +279,9 @@ func checkProjectGuard(env Env) Result {
 				Detail:   "installed (" + where + ") but out of date — it does not cover every tool it should",
 				FixLabel: "update the guard hook (" + where + " settings.json)",
 				Fix: func(ctx context.Context) error {
+					if err := hooks.ValidateProject(env.RepoRoot, settings); err != nil {
+						return err
+					}
 					_, _, err := hooks.InstallOrUpdate(settings, hooks.GuardPlans())
 					return err
 				}}
@@ -280,6 +291,9 @@ func checkProjectGuard(env Env) Result {
 	return Result{ID: "guard-hook", Name: "guard hook", Status: Warn, Detail: "not installed in this repo",
 		FixLabel: "install project guard (.claude/settings.json)",
 		Fix: func(ctx context.Context) error {
+			if err := hooks.ValidateProject(env.RepoRoot, env.ProjectSettings); err != nil {
+				return err
+			}
 			_, err := hooks.Install(env.ProjectSettings, hooks.GuardPlans())
 			return err
 		}}

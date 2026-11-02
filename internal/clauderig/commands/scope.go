@@ -112,21 +112,31 @@ func scopeInstall(c *cobra.Command, sp scopeSpec) error {
 	if err != nil {
 		return err
 	}
+	if sp.guide {
+		for _, p := range []string{settingsFile, guideFile, filepath.Join(root, ".gitignore")} {
+			if err := hooks.ValidateProject(root, p); err != nil {
+				return err
+			}
+		}
+	}
+	if notice := hooks.Candidates(settingsFile); notice != "" {
+		fmt.Fprintln(out, notice)
+	}
 	added, err := hooks.Install(settingsFile, sp.plans)
 	if err != nil {
 		return err
 	}
 	if len(added) == 0 {
-		fmt.Fprintf(out, "%s hooks already installed %s\n", DimStyle.Render("•"), DimStyle.Render(settingsFile))
+		fmt.Fprintf(out, "%s hooks already installed %s\n", DimStyle.Render("•"), DimStyle.Render(hooks.Display(settingsFile)))
 	} else {
-		fmt.Fprintf(out, "%s hooks: %s %s\n", OkStyle.Render("✓"), strings.Join(added, ", "), DimStyle.Render(settingsFile))
+		fmt.Fprintf(out, "%s hooks: %s %s\n", OkStyle.Render("✓"), strings.Join(added, ", "), DimStyle.Render(hooks.Display(settingsFile)))
 	}
 	if sp.guide {
 		act, err := claudemd.InstallAll(guideFile)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "%s guide %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(guideFile))
+		fmt.Fprintf(out, "%s guide %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(hooks.Display(guideFile)))
 	}
 	// A local settings file is personal — keep it out of version control.
 	if sp.scope == settings.Local {
@@ -134,7 +144,7 @@ func scopeInstall(c *cobra.Command, sp scopeSpec) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "%s gitignore %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(filepath.Join(root, ".gitignore")))
+		fmt.Fprintf(out, "%s gitignore %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(hooks.Display(filepath.Join(root, ".gitignore"))))
 	}
 	if sp.scope == settings.Project {
 		fmt.Fprintln(out, DimStyle.Render("  commit .claude/settings.json to share it; Claude Code will ask to trust the hook"))
@@ -145,6 +155,9 @@ func scopeInstall(c *cobra.Command, sp scopeSpec) error {
 // ensureLocalIgnored makes sure .claude/settings.local.json is gitignored, unless
 // an existing pattern already covers it. Returns what it did for reporting.
 func ensureLocalIgnored(ctx context.Context, root string) (string, error) {
+	if err := hooks.ValidateProject(root, filepath.Join(root, ".gitignore")); err != nil {
+		return "", err
+	}
 	const entry = ".claude/settings.local.json"
 	if repo, err := gitrepo.Open(ctx, root); err == nil && repo.IsIgnored(ctx, entry) {
 		return "already ignored", nil
@@ -166,25 +179,35 @@ func ensureLocalIgnored(ctx context.Context, root string) (string, error) {
 
 func scopeUninstall(c *cobra.Command, sp scopeSpec) error {
 	out := c.OutOrStdout()
-	_, settingsFile, guideFile, err := scopePaths(c.Context(), sp)
+	root, settingsFile, guideFile, err := scopePaths(c.Context(), sp)
 	if err != nil {
 		return err
+	}
+	if sp.guide {
+		for _, p := range []string{settingsFile, guideFile} {
+			if err := hooks.ValidateProject(root, p); err != nil {
+				return err
+			}
+		}
+	}
+	if notice := hooks.Candidates(settingsFile); notice != "" {
+		fmt.Fprintln(out, notice)
 	}
 	removed, err := hooks.Uninstall(settingsFile)
 	if err != nil {
 		return err
 	}
 	if len(removed) > 0 {
-		fmt.Fprintf(out, "%s hooks: removed %s %s\n", OkStyle.Render("✓"), strings.Join(removed, ", "), DimStyle.Render(settingsFile))
+		fmt.Fprintf(out, "%s hooks: removed %s %s\n", OkStyle.Render("✓"), strings.Join(removed, ", "), DimStyle.Render(hooks.Display(settingsFile)))
 	} else {
-		fmt.Fprintf(out, "%s no hooks %s\n", DimStyle.Render("•"), DimStyle.Render(settingsFile))
+		fmt.Fprintf(out, "%s no hooks %s\n", DimStyle.Render("•"), DimStyle.Render(hooks.Display(settingsFile)))
 	}
 	if sp.guide {
 		act, err := claudemd.UninstallAll(guideFile)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "%s guide %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(guideFile))
+		fmt.Fprintf(out, "%s guide %s %s\n", OkStyle.Render("✓"), act, DimStyle.Render(hooks.Display(guideFile)))
 	}
 	return nil
 }
@@ -195,14 +218,17 @@ func scopeStatus(c *cobra.Command, sp scopeSpec) error {
 	if err != nil {
 		return err
 	}
+	if notice := hooks.Candidates(settingsFile); notice != "" {
+		fmt.Fprintln(out, notice)
+	}
 	present, err := hooks.Status(settingsFile)
 	if err != nil {
 		return err
 	}
 	if len(present) > 0 {
-		fmt.Fprintf(out, "%s hooks: %s %s\n", OkStyle.Render("✓"), strings.Join(present, ", "), DimStyle.Render(settingsFile))
+		fmt.Fprintf(out, "%s hooks: %s %s\n", OkStyle.Render("✓"), strings.Join(present, ", "), DimStyle.Render(hooks.Display(settingsFile)))
 	} else {
-		fmt.Fprintf(out, "%s no hooks %s\n", DimStyle.Render("—"), DimStyle.Render(settingsFile))
+		fmt.Fprintf(out, "%s no hooks %s\n", DimStyle.Render("—"), DimStyle.Render(hooks.Display(settingsFile)))
 	}
 	if sp.guide {
 		ok, err := claudemd.AllPresent(guideFile)
@@ -210,9 +236,9 @@ func scopeStatus(c *cobra.Command, sp scopeSpec) error {
 			return err
 		}
 		if ok {
-			fmt.Fprintf(out, "%s guide present %s\n", OkStyle.Render("✓"), DimStyle.Render(guideFile))
+			fmt.Fprintf(out, "%s guide present %s\n", OkStyle.Render("✓"), DimStyle.Render(hooks.Display(guideFile)))
 		} else {
-			fmt.Fprintf(out, "%s guide absent %s\n", DimStyle.Render("—"), DimStyle.Render(guideFile))
+			fmt.Fprintf(out, "%s guide absent %s\n", DimStyle.Render("—"), DimStyle.Render(hooks.Display(guideFile)))
 		}
 	}
 	return nil

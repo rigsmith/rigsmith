@@ -219,3 +219,12 @@ theirs:
 
 Independently: the release engine is a faithful port of **net-changesets**, which
 is itself a .NET port of [changesets](https://github.com/changesets/changesets).
+
+
+Claude hook writes preserve unrelated handlers, including commands that merely mention
+`clauderig`. Ownership requires the exact event, matcher and installer-shaped command;
+only explicitly known historical plans are migrated or removed. Unknown lookalikes
+are reported with their command and left untouched. Project/local install, uninstall
+and doctor fixes refuse settings symlinks escaping the resolved repository or targeting
+global settings; symlinked checkout paths remain supported. Malformed hook structures
+are refused, JSON numbers retain their precision, and diagnostic controls are escaped.
