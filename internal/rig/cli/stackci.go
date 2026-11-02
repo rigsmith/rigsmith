@@ -45,7 +45,7 @@ func newStackCICmd() *cobra.Command {
 	var strict bool
 	var tip bool
 	var cacheHistory bool
-	c := &cobra.Command{Use: "ci", Short: "Build and test a checkout or topic PR heads inside a stackspace", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nRebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Use --topic to replace every topic proposal member with its open PR head.\nTopic heads must come from declared fork/upstream repositories; use read-only\ncredentials and no secrets. Commands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "ci", Short: "Build and test a checkout or topic PR heads inside a stackspace", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nRebuilds a committed manifest in a temporary directory, replaces one member\nwith the committed CI checkout tree, wires sibling sources, then runs build\nand test from that member. Use --topic to replace every topic proposal member with its open PR head.\nTopic heads must come from declared fork/upstream repositories; use read-only\ncredentials and no secrets. Topic mode removes token environment variables\nand refuses persisted checkout HTTP extraheaders (persist-credentials: false).\nCommands use bash. Prints resolved commits and\nstep results; appends them to GITHUB_STEP_SUMMARY when set. Exit codes:\n10 setup, 11 wire, 12 build, 13 test. The checkout is never modified. Hosts must be allowed by --allowed-hosts;\n--cache-history=false disables trusted bundle reuse. LFS members are refused. CI uses the built-in checksum-pinned josh engine.\nUse --guard-project for the build-step warning guard; --strict keeps guarded\nwarnings fatal. The test command runs separately under its own build policy.\nGuard the test project, then use dotnet test <project> --no-build to reuse it.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "Comma-separated allowed fork/upstream hosts")
 	_ = c.RegisterFlagCompletionFunc("allowed-hosts", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -65,6 +65,14 @@ func newStackCICmd() *cobra.Command {
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		if dryRun {
 			return fmt.Errorf("--dry-run is not supported for stack ci")
+		}
+		var topicAPI stackDepsAPI
+		if topic != "" {
+			var err error
+			topicAPI, err = stackTopicAPI()
+			if err != nil {
+				return &stackCIError{"setup", 10, err}
+			}
 		}
 		resolved := map[string]string{}
 		results := map[string]string{}
@@ -109,6 +117,11 @@ func newStackCICmd() *cobra.Command {
 		checkout, e := stackRoot(cmd.Context())
 		if e != nil {
 			return step("setup", 10, func() error { return e })
+		}
+		if topic != "" {
+			if e := stackTopicCheckCheckout(cmd.Context(), checkout); e != nil {
+				return step("setup", 10, func() error { return e })
+			}
 		}
 		var temp, root, exe, reportPath string
 		defer func() {
@@ -205,7 +218,7 @@ func newStackCICmd() *cobra.Command {
 				if tip {
 					return fmt.Errorf("--topic cannot be combined with --upstream-tip")
 				}
-				heads, e = stackTopicHeads(cmd.Context(), m, topic, stackDepsClient())
+				heads, e = stackTopicHeads(cmd.Context(), m, topic, topicAPI)
 				if e != nil {
 					return e
 				}

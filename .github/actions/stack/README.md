@@ -40,6 +40,12 @@ so run it in each member and rerun after sibling heads move. Topic mode disables
 shared caches in the action and cannot combine with upstream-tip. See the
 [stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
 cursor and provenance semantics. No merge train is installed.
+Topic mode captures the API token and removes token variables before starting
+children; it refuses persisted checkout HTTP extraheaders. Use
+`persist-credentials: false`. A PR-owned manifest is contributor-controlled
+policy; use a reviewed immutable policy checkout for an independent allowlist.
+Copy the [topic workflow](../../../examples/github-workflows/stack-topic.yml)
+for a job named `stack topic` with that separate manifest source.
 
 `guard-project` replaces the build command with `rig stack ci-guard` for that
 member-relative .NET project. New warnings in member code fail except for

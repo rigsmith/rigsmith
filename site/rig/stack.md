@@ -1354,13 +1354,33 @@ Topic builds execute code from **all** participating PR heads, including other
 people's commits in declared forks. Declaring a repository does not make its
 contributors trusted. Use ordinary `pull_request`, `contents: read`, no secrets,
 checkout `persist-credentials: false`, and an isolated disposable runner. The
-read-only GitHub token is used for metadata and remains accessible to build
-code; do not pass a privileged PAT or secrets. Fork-origin jobs use the same
-head allowlist and may fail for inaccessible private repositories. Topic CI
-refuses `pull_request_target`. Treat the workflow, action, allowed hosts and
-manifest repository declarations as reviewed trust policy: a PR-edited manifest
-is not an independent authorization boundary. Never use this job where a PR can
-widen those declarations and gain credentials or a privileged runner.
+GitHub token is captured for in-process metadata lookups only. Before any
+child processes run, topic CI removes token environment variables (including
+`GITHUB_TOKEN`, `GH_TOKEN`, enterprise variants, Actions tokens and PAT variables).
+Build, test, init, wire and guard children inherit that scrubbed environment.
+Topic mode also refuses HTTP extraheaders visible in the checkout's Git config,
+without logging their values; set checkout `persist-credentials: false`.
+This is credential hygiene, not a sandbox: use no secrets or privileged PATs,
+and no runner with reusable credentials in files or credential helpers.
+Fork-origin jobs use the same checks and may fail for inaccessible private repos.
+Topic CI refuses `pull_request_target`.
+
+The source of the manifest determines the authority of the repository allowlist
+and proposal set. With `--manifest`, the file comes from the selected checkout's
+committed HEAD. If that checkout is the triggering PR, the contributor controls
+both declarations and which other heads are tested. Matching a declared fork
+therefore means consistency with that manifest, not independent authorization.
+A same-repository PR does not make this policy trustworthy or justify stronger
+permissions. API metadata identifies a PR head; it does not authorize its code.
+Trust reviewed workflow/action code for execution policy and a separately
+reviewed, immutable manifest checkout for repository declarations and topic
+membership. Use the [topic workflow example](https://github.com/rigsmith/rigsmith/blob/main/examples/github-workflows/stack-topic.yml)
+to check out a pinned policy repository as the manifest source while selecting
+the member explicitly; all tested code still comes from resolved PR heads.
+Publish updated proposal records to that policy repository before running CI.
+When seed-based topic CI is available, prefer a reviewed seed pinned to an
+immutable commit as that trust source; do not take its URL/ref from PR data.
+The current `--manifest` implementation needs no dependency on seed support.
 
 ### Stack topic dependencies
 

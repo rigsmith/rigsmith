@@ -395,6 +395,9 @@ so run it in each member and rerun after sibling heads move. Topic mode disables
 shared caches in the action and cannot combine with upstream-tip. See the
 [stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
 cursor and provenance semantics. No merge train is installed.
+Topic CI removes token environment variables before children run and refuses
+persisted checkout HTTP extraheaders; set `persist-credentials: false`. Use a
+reviewed immutable manifest checkout for an independently trusted proposal set.
 
 Stack CI defaults to `--allowed-hosts github.com`; explicitly list other trusted
 fork/upstream hosts with `--allowed-hosts` (the action input is `allowed-hosts`).

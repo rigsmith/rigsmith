@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -88,6 +90,48 @@ func stackTopicApply(ctx context.Context, root string, m *stackManifest, heads m
 			return err
 		}
 		resolved[n] = sha
+	}
+	return nil
+}
+
+// Capture API authentication before removing token variables from the process.
+// All subsequent children (including Git, init, wire and guards) inherit the
+// scrubbed environment; only the in-process metadata client retains the token.
+func stackTopicAPI() (stackDepsAPI, error) {
+	api := stackDepsClient()
+	if api.token == "" {
+		for _, name := range []string{"GH_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_ENTERPRISE_TOKEN"} {
+			if api.token = os.Getenv(name); api.token != "" {
+				break
+			}
+		}
+	}
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(name)
+		if strings.HasSuffix(upper, "_TOKEN") || strings.HasSuffix(upper, "_PAT") || upper == "SYSTEM_ACCESSTOKEN" {
+			if err := os.Unsetenv(name); err != nil {
+				return api, fmt.Errorf("cannot remove topic credential environment variable %s", name)
+			}
+		}
+	}
+	return api, nil
+}
+
+func stackTopicCheckCheckout(ctx context.Context, checkout string) error {
+	// Names only: neither the credential nor Git's diagnostics may enter logs.
+	// Include inherited config too; a global extraheader is equally accessible.
+	p := exec.CommandContext(ctx, "git", "config", "--name-only", "--get-regexp", `^http\..*extraheader$`)
+	p.Dir = checkout
+	names, err := p.Output()
+	if len(names) != 0 {
+		return fmt.Errorf("topic CI refuses persisted HTTP extraheaders; set actions/checkout persist-credentials: false and remove stored credentials")
+	}
+	if err != nil {
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			return fmt.Errorf("cannot inspect checkout credentials for topic CI")
+		}
 	}
 	return nil
 }

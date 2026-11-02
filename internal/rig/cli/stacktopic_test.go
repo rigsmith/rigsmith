@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func TestStackTopicHeads(t *testing.T) {
@@ -174,6 +176,9 @@ func TestStackTopicCIFlow(t *testing.T) {
 		m.Proposals[n] = map[string]stackProposal{"topic": {Branch: "stack/topic"}}
 	}
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer topic-api-fixture" {
+			t.Error("API token missing")
+		}
 		n := "app"
 		if strings.Contains(r.URL.Path, "/lib/") {
 			n = "lib"
@@ -188,7 +193,9 @@ func TestStackTopicCIFlow(t *testing.T) {
 	t.Setenv("GITHUB_EVENT_NAME", "pull_request")
 	t.Setenv("STACK_FORK_PR", "true")
 	t.Setenv("GITHUB_API_URL", api.URL)
-	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "topic-api-fixture")
+	t.Setenv("GH_TOKEN", "topic-gh-fixture")
+	t.Setenv("ACTIONS_RUNTIME_TOKEN", "topic-runtime-fixture")
 	checkout := filepath.Join(work, "app")
 	data, _ := json.Marshal(m)
 	os.WriteFile(filepath.Join(checkout, "rig.stack.jsonc"), data, 0644)
@@ -209,7 +216,7 @@ func TestStackTopicCIFlow(t *testing.T) {
 	provenance := filepath.Join(work, "provenance.json")
 	t.Setenv("RIG_STACK_PROVENANCE", provenance)
 	c := newStackCICmd()
-	c.SetArgs([]string{"--topic", "topic", "--manifest", "rig.stack.jsonc", "--member", "app", "--allowed-hosts", srv.addr, "--build", "test -f topic-head && test -f ../lib/topic-head", "--test", "test -f topic-head && test -f ../lib/topic-head"})
+	c.SetArgs([]string{"--topic", "topic", "--manifest", "rig.stack.jsonc", "--member", "app", "--allowed-hosts", srv.addr, "--build", "test -z \"${GITHUB_TOKEN}${GH_TOKEN}${ACTIONS_RUNTIME_TOKEN}\" && test -f topic-head && test -f ../lib/topic-head", "--test", "test -z \"${GITHUB_TOKEN}${GH_TOKEN}${ACTIONS_RUNTIME_TOKEN}\" && test -f topic-head && test -f ../lib/topic-head"})
 	if err := c.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -230,4 +237,81 @@ func TestStackTopicCIFlow(t *testing.T) {
 
 func stackTopicFileURL(path string) string {
 	return (&url.URL{Scheme: "file", Path: "/" + strings.TrimPrefix(filepath.ToSlash(path), "/")}).String()
+}
+
+func TestStackTopicPersistedCredentials(t *testing.T) {
+	dir := t.TempDir()
+	mustGitStack(t, dir, "init", "-q")
+	mustGitStack(t, dir, "config", "http.https://github.com/.extraheader", "AUTHORIZATION: bearer do-not-log-this")
+	chdir(t, dir)
+	c := newStackCICmd()
+	c.SetArgs([]string{"--topic", "topic", "--manifest", "rig.stack.jsonc"})
+	err := c.Execute()
+	if err == nil || !strings.Contains(err.Error(), "persist-credentials: false") {
+		t.Fatalf("expected persisted credential refusal: %v", err)
+	}
+	if strings.Contains(err.Error(), "do-not-log-this") {
+		t.Fatal("credential leaked in refusal")
+	}
+}
+
+func TestStackTopicAPIRemovesChildTokens(t *testing.T) {
+	names := []string{"GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "SYSTEM_ACCESSTOKEN", "AZURE_DEVOPS_EXT_PAT"}
+	for _, name := range names {
+		t.Setenv(name, "fixture-secret")
+	}
+	api, err := stackTopicAPI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if api.token != "fixture-secret" {
+		t.Fatal("metadata client lost authentication")
+	}
+	for _, name := range names {
+		if _, ok := os.LookupEnv(name); ok {
+			t.Fatalf("%s would be inherited by a child", name)
+		}
+	}
+}
+
+func TestStackTopicWorkflow(t *testing.T) {
+	data, err := os.ReadFile("../../../examples/github-workflows/stack-topic.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Permissions map[string]string
+		Jobs        map[string]struct {
+			Name  string
+			Steps []struct {
+				Uses string
+				With map[string]string
+			}
+		}
+	}
+	if err = yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	if len(workflow.Permissions) != 1 || workflow.Permissions["contents"] != "read" {
+		t.Fatal("topic workflow requires only read-only contents")
+	}
+	job := workflow.Jobs["stack-topic"]
+	if job.Name != "stack topic" {
+		t.Fatal("missing shared check name")
+	}
+	checkout, topic := false, false
+	for _, step := range job.Steps {
+		if strings.HasPrefix(step.Uses, "actions/checkout@") {
+			checkout = true
+			if step.With["persist-credentials"] != "false" || step.With["repository"] != "acme/stack-policy" || step.With["ref"] != "${{ vars.STACK_POLICY_SHA }}" {
+				t.Fatal("checkout must use independently pinned policy without persisted credentials")
+			}
+		}
+		if step.Uses == "./.github/actions/stack" {
+			topic = step.With["topic"] != "" && step.With["member"] != ""
+		}
+	}
+	if !checkout || !topic {
+		t.Fatal("missing topic action or trusted checkout")
+	}
 }
