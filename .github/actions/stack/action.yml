@@ -4,6 +4,9 @@ inputs:
   manifest:
     description: Path to a committed rig.stack.jsonc (required).
     required: true
+  topic:
+    description: Apply all open proposal PR heads in this manifest topic (read-only token, no secrets).
+    default: ''
   member:
     description: Member prefix; otherwise match origin URL.
     default: ''
@@ -59,7 +62,7 @@ runs:
         RIG_REPO: rigsmith/rigsmith
       run: bash "$GITHUB_ACTION_PATH/install-rig.sh"
     - name: Restore josh binaries and object history
-      if: ${{ inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
+      if: ${{ inputs.topic == '' && inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
       id: history
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -73,7 +76,7 @@ runs:
         restore-keys: |
           stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-
     - name: Restore package downloads
-      if: ${{ inputs.cache-packages == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
+      if: ${{ inputs.topic == '' && inputs.cache-packages == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -92,6 +95,8 @@ runs:
       shell: bash
       env:
         STACK_MANIFEST: ${{ inputs.manifest }}
+        GITHUB_TOKEN: ${{ inputs.topic != '' && github.token || '' }}
+        STACK_TOPIC: ${{ inputs.topic }}
         STACK_MEMBER: ${{ inputs.member }}
         STACK_BUILD: ${{ inputs.build }}
         STACK_TEST: ${{ inputs.test }}
@@ -103,7 +108,7 @@ runs:
         STACK_TIP: ${{ inputs.upstream-tip }}
         STACK_ALLOWED_HOSTS: ${{ inputs.allowed-hosts }}
         RIG_STACK_CI_VERIFIED: '1'
-        RIG_STACK_CACHE: ${{ inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && format('{0}/stack-history', runner.temp) || '' }}
+        RIG_STACK_CACHE: ${{ inputs.topic == '' && inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) && format('{0}/stack-history', runner.temp) || '' }}
         RIG_STACK_CACHE_REPORT: ${{ runner.temp }}/stack-cache-report
         RIG_STACK_PROVENANCE: ${{ runner.temp }}/stack-provenance.json
         STACK_DEPENDENCIES: ${{ inputs.dependencies }}
@@ -133,6 +138,7 @@ runs:
           *) echo 'strict must be exactly true or false' >&2; exit 1 ;;
         esac
         args=(stack ci --cache-history="$STACK_CACHE_HISTORY" --allowed-hosts "$STACK_ALLOWED_HOSTS" --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
+        if [[ -n "$STACK_TOPIC" ]]; then args+=(--topic "$STACK_TOPIC"); fi
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
         if [[ -n "$STACK_GUARD_PROJECT" ]]; then args+=(--guard-project "$STACK_GUARD_PROJECT"); fi

@@ -1322,6 +1322,46 @@ action guards do not change GitHub's cache access policy or erase existing
 self-hosted runner files. Real hosted fork behavior is unverified locally; see
 the action README for the confidentiality and trust limits.
 
+### Testing a complete topic
+
+Use `rig stack ci --topic reader-fix --manifest stack/rig.stack.jsonc --member app`
+(or action input `topic: reader-fix`) to test all recorded proposals in that
+topic together. Commit the same proposals block in each member's CI manifest.
+Every recorded PR must resolve and be open; missing, closed, ambiguous or known
+conflicting PRs fail setup rather than silently reducing the set. One PR is valid.
+The selected member must participate. `--upstream-tip` cannot be combined with
+`--topic`; `-n` refuses as for ordinary CI.
+
+Each participating member uses its exact PR head tree, fetched read-only from
+its declared fork or upstream. Other head repositories are refused even on an
+allowed host. Nonparticipating members retain their manifest cursors. A cursor
+remains the upstream import baseline, not the PR head or a claim of ancestry.
+A PR based behind that cursor replaces the tree wholesale, including older
+files; no merge or rebase onto the cursor is implied. Known API merge conflicts
+fail setup; unknown mergeability does not establish merge readiness. Raw-tree
+materialization preserves the existing LFS, submodule and escaping-symlink
+refusals. Summary and provenance identify each applied head and repository.
+Shared history and package caches are disabled by the action in topic mode.
+
+Name the calling workflow job `stack topic`. Its check belongs only to the
+triggering PR; each participating PR needs its own run covering the same set.
+There are no cross-repository writes, automatic fan-out, or reruns when a sibling
+head moves. Compare recorded SHAs and rerun each job after changes. Dependency
+status publication still writes only to `GITHUB_REPOSITORY`. Merge-train
+scheduling is deferred.
+
+Topic builds execute code from **all** participating PR heads, including other
+people's commits in declared forks. Declaring a repository does not make its
+contributors trusted. Use ordinary `pull_request`, `contents: read`, no secrets,
+checkout `persist-credentials: false`, and an isolated disposable runner. The
+read-only GitHub token is used for metadata and remains accessible to build
+code; do not pass a privileged PAT or secrets. Fork-origin jobs use the same
+head allowlist and may fail for inaccessible private repositories. Topic CI
+refuses `pull_request_target`. Treat the workflow, action, allowed hosts and
+manifest repository declarations as reviewed trust policy: a PR-edited manifest
+is not an independent authorization boundary. Never use this job where a PR can
+widen those declarations and gain credentials or a privileged runner.
+
 ### Stack topic dependencies
 
 `rig stack deps --manifest rig.stack.jsonc` checks the committed `proposals`

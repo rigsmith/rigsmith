@@ -24,11 +24,12 @@ type stackDepsAPI struct {
 	client      *http.Client
 }
 type stackDepsPR struct {
-	Number   int     `json:"number"`
-	State    string  `json:"state"`
-	MergedAt *string `json:"merged_at"`
-	MergeSHA string  `json:"merge_commit_sha"`
-	Head     struct {
+	Mergeable *bool   `json:"mergeable"`
+	Number    int     `json:"number"`
+	State     string  `json:"state"`
+	MergedAt  *string `json:"merged_at"`
+	MergeSHA  string  `json:"merge_commit_sha"`
+	Head      struct {
 		SHA  string `json:"sha"`
 		Ref  string `json:"ref"`
 		Repo struct {

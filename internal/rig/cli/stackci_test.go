@@ -520,7 +520,7 @@ func TestStackCIActionForkCachePolicy(t *testing.T) {
 			if step.Name == "Restore package downloads" {
 				input = "cache-packages"
 			}
-			want := "${{ inputs." + input + " == 'true' && " + guard + " }}"
+			want := "${{ inputs.topic == '' && inputs." + input + " == 'true' && " + guard + " }}"
 			if step.If != want {
 				t.Fatalf("%s must gate both restore and post-save on trusted repo: %q", step.Name, step.If)
 			}
@@ -532,7 +532,7 @@ func TestStackCIActionForkCachePolicy(t *testing.T) {
 			}
 			seen[step.Name] = true
 		case "Rebuild, wire, build and test":
-			want := "${{ inputs.cache-history == 'true' && " + guard + " && format('{0}/stack-history', runner.temp) || '' }}"
+			want := "${{ inputs.topic == '' && inputs.cache-history == 'true' && " + guard + " && format('{0}/stack-history', runner.temp) || '' }}"
 			if step.Env["RIG_STACK_CACHE"] != want {
 				t.Fatalf("fork jobs must receive an empty bundle cache: %q", step.Env["RIG_STACK_CACHE"])
 			}

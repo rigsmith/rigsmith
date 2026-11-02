@@ -31,6 +31,16 @@ in CI. Restored josh binaries are hashed again before execution.
 instead of committed sibling cursors. `build` and `test` default to `rig build`
 and `rig test` and run from the member prefix with bash; empty skips a command.
 
+`--topic <name>` (action input `topic`) tests every open proposal PR head in
+that manifest topic together. Missing, closed, untrusted or known conflicting
+PRs fail setup. Head repositories must match declared fork/upstream repositories.
+Use read-only `pull_request` jobs without secrets: code from every participating
+PR runs. Name the job `stack topic`; the check covers only its triggering PR,
+so run it in each member and rerun after sibling heads move. Topic mode disables
+shared caches in the action and cannot combine with upstream-tip. See the
+[stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
+cursor and provenance semantics. No merge train is installed.
+
 `guard-project` replaces the build command with `rig stack ci-guard` for that
 member-relative .NET project. New warnings in member code fail except for
 explicit stack-only declarations and existing warning tolerances. In a stack,

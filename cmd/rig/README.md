@@ -67,6 +67,8 @@ First publication to an existing seed requires matching root files. If they
 differ, set up from that seed in a fresh directory and reconcile the root edits.
 See [Stackspaces](../../site/rig/stack.md) for publishing, setup, member pointers, early `RigStackAvailable_<id>` availability properties, source build signals, evaluation timing, and the observed CI warning guard (`rig stack ci-guard <project>`).
 
+`rig stack ci --topic <name>` tests all recorded topic PR heads together; see [stack CI](https://rigsmith.dev/rig/stack#testing-a-complete-topic).
+
 ## Verbs
 
 | Verb | What |
