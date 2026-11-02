@@ -291,6 +291,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack rm <repo>` | Remove a repo — manifest entry, directory and overlay redirects; refuses while it holds unsent or uncommitted work, or files git ignores (`--force` overrides); `--keep-tree` keeps the directory, and needs a clean one even with `--force` |
 | `stack seed [dir] [--publish <seed>]` | With --publish, publish root-only commits to a manifest home; with no arguments, retry the configured home. Unsent member work is refused unless --force overrides the reconstruction check. A directory and --publish cannot be combined. Local publication requires a bare home. With a directory, export the root files as a small repo (conventionally `rigstack-<name>`, suggested outside enclosing repositories); `stack init` on a clone of it rebuilds every member at its recorded cursor, or from the fork branch it was last proposed to while that branch still exists; refuses while a member holds unsent commits (`--force`) |
 | `stack home [pointer-file]` | Read a member’s single-reference .rig-stack pointer (default .rig-stack) |
+| `stack canary` | Test upstream tips; required `--seed`, `--allowed-hosts`, `--members`, `--mode batch` or `--mode separate`, `--isolate`, `--build`, `--test`, `--report`; `--publish` validates tracked upstream ancestry and reconciles reported build outcomes into cursor PRs or failure issues on a fresh trusted runner; `-n` previews |
 | `stack deps` | Read `--manifest <path>` or `--seed <ref>` (exclusive); `--allowed-hosts <hosts>` restricts seed hosts; check topic PR dependencies against upstream merge states and manifest cursors; `--publish` posts statuses only in `GITHUB_REPOSITORY` |
 | `stack released <member> <sibling> --package <id>` | Verify NuGet release ancestry and package delivery; preview pin and guard edits, or use `--apply` on a clean tree with interactive confirmation. `-n` previews only |
 | `stack status` | Each repo's cursor against its upstream, whether it holds work that has not left — all of which `propose` would send — and, listed under it, each `stack-pr-*` topic in flight with the fork branch its pull request is on, `not proposed yet`, whether the branch has moved since, and whether a pull left it behind; `--releases` opts into NuGet release annotations under the shared short deadline |
@@ -404,6 +405,9 @@ the action without embedding tokens in workflow inputs.
 The summary and provenance artifact record the sanitized seed and resolved commit.
 Topic dependency reporting also reads the seed, using
 `rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
+
+`rig stack canary` provides scheduled cursor updates through separate build
+and publication jobs; see [Stackspaces](./stack#scheduled-upstream-canary).
 
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.
