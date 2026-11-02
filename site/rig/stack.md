@@ -1352,7 +1352,8 @@ scheduling is deferred.
 
 Topic builds execute code from **all** participating PR heads, including other
 people's commits in declared forks. Declaring a repository does not make its
-contributors trusted. Use ordinary `pull_request`, `contents: read`, no secrets,
+contributors trusted. Use ordinary `pull_request`, `contents: read`,
+`pull-requests: read`, no secrets,
 checkout `persist-credentials: false`, and an isolated disposable runner. The
 GitHub token is captured for in-process metadata lookups only. Before any
 child processes run, topic CI removes token environment variables (including
@@ -1364,6 +1365,13 @@ This is credential hygiene, not a sandbox: use no secrets or privileged PATs,
 and no runner with reusable credentials in files or credential helpers.
 Fork-origin jobs use the same checks and may fail for inaccessible private repos.
 Topic CI refuses `pull_request_target`.
+
+Topic mode also needs `pull-requests: read` alongside `contents: read` to
+read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
+does not gain access to private sibling repositories from these permissions.
+Private sibling PRs need separately authorized metadata access; without it,
+lookups are unavailable ("could not check") and topic setup fails rather than
+testing a reduced set. Do not expose a broader token to PR build commands.
 
 The source of the manifest determines the authority of the repository allowlist
 and proposal set. With `--manifest`, the file comes from the selected checkout's

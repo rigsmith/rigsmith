@@ -195,6 +195,12 @@ so run it in each member and rerun after sibling heads move. Topic mode disables
 shared caches in the action and cannot combine with upstream-tip. See the
 [stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
 cursor and provenance semantics. No merge train is installed.
+Topic mode also needs `pull-requests: read` alongside `contents: read` to
+read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
+does not gain access to private sibling repositories from these permissions.
+Private sibling PRs need separately authorized metadata access; without it,
+lookups are unavailable ("could not check") and topic setup fails rather than
+testing a reduced set. Do not expose a broader token to PR build commands.
 Topic CI removes token environment variables before children run and refuses
 persisted checkout HTTP extraheaders; set `persist-credentials: false`. Use a
 reviewed immutable manifest checkout for an independently trusted proposal set.

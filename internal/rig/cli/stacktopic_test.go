@@ -292,8 +292,8 @@ func TestStackTopicWorkflow(t *testing.T) {
 	if err = yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if len(workflow.Permissions) != 1 || workflow.Permissions["contents"] != "read" {
-		t.Fatal("topic workflow requires only read-only contents")
+	if len(workflow.Permissions) != 2 || workflow.Permissions["contents"] != "read" || workflow.Permissions["pull-requests"] != "read" {
+		t.Fatal("topic workflow requires read-only contents and pull requests")
 	}
 	job := workflow.Jobs["stack-topic"]
 	if job.Name != "stack topic" {

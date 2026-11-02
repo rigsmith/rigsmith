@@ -2,6 +2,7 @@ name: Stack topic
 on: [pull_request, workflow_dispatch]
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   stack-topic:
     name: stack topic
@@ -35,6 +36,8 @@ jobs:
           dependencies: 'false' # This job's check reports only on the triggering PR.
           test: rig test
 
+# The job token reads private PR metadata only in its own repository. Private
+# siblings need separately authorized metadata access; unavailable lookups fail setup.
 # All topic PR code runs without secrets on a disposable runner. Never use
 # pull_request_target. Each member needs its own run; rerun when any head moves.
 # Updating STACK_POLICY_SHA requires reviewed proposal records in the policy repo.
