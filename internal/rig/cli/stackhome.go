@@ -203,12 +203,6 @@ func stackPublishHomeToWithPolicy(ctx context.Context, repo *gitrepo.Repo, m *st
 		}
 		return fmt.Errorf("seed is pinned; publication requires a branch")
 	}
-	if dryRun {
-		if len(out) > 0 {
-			fmt.Fprintf(out[0], "would publish committed manifest, README and root overlays to %s (branch %s)\n", ghrepo.SafeRemote(remote), branch)
-		}
-		return nil
-	}
 	if dirty, err := repo.Dirty(ctx); err != nil {
 		return err
 	} else if dirty {
@@ -230,6 +224,12 @@ func stackPublishHomeToWithPolicy(ctx context.Context, repo *gitrepo.Repo, m *st
 				fmt.Fprintf(out[0], "warning: manifest home cannot reconstruct all local member work: %v; publishing recorded cursors and proposals only\n", problem)
 			}
 		}
+	}
+	if dryRun {
+		if len(out) > 0 {
+			fmt.Fprintf(out[0], "would publish committed manifest, README and root overlays to %s (branch %s)\n", ghrepo.SafeRemote(remote), branch)
+		}
+		return nil
 	}
 	dir, err := os.MkdirTemp("", "rig-stack-home-")
 	if err != nil {

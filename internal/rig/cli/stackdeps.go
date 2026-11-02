@@ -246,10 +246,13 @@ func stackDepsDescription(s string) string {
 func newStackDepsCmd() *cobra.Command {
 	var manifest string
 	var publish bool
-	c := &cobra.Command{Use: "deps", Short: "Check topic PR dependencies against upstream cursors", Long: "Reads committed proposal records, resolves PRs through the GitHub API, and\nchecks API merge commits against upstream cursors. Uses GITHUB_TOKEN (or local gh/git credentials) and\nGITHUB_API_URL. --publish posts only to GITHUB_REPOSITORY PR head SHAs; denied writes warn.\nPending and unavailable dependencies remain non-green. Rerun after merges\nand committed cursor bumps; no automatic sweep is installed.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "deps", Short: "Check topic PR dependencies against upstream cursors", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nReads committed proposal records, resolves PRs through the GitHub API, and\nchecks API merge commits against upstream cursors. Uses GITHUB_TOKEN (or local gh/git credentials) and\nGITHUB_API_URL. --publish posts only to GITHUB_REPOSITORY PR head SHAs; denied writes warn.\nPending and unavailable dependencies remain non-green. Rerun after merges\nand committed cursor bumps; no automatic sweep is installed.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&manifest, "manifest", "rig.stack.jsonc", "Committed manifest path")
 	c.Flags().BoolVar(&publish, "publish", false, "Publish commit statuses (optional statuses: write permission)")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
+		if dryRun {
+			return fmt.Errorf("--dry-run is not supported for stack deps")
+		}
 		root, err := stackRoot(cmd.Context())
 		if err != nil {
 			return err

@@ -9,7 +9,8 @@ description: >
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code
   setup, finding or reopening a past Claude Code session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home,
-  setting up a seed locally or in CI, or reading a member's .rig-stack pointer —
+  setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, topic PR dependencies,
+  or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
@@ -123,6 +124,9 @@ workspace root names the repos.
 rig stack setup [seed]                  # explicit seed opts into a manifest home; no arg preserves config
 rig stack seed [dir]                    # export root files, or retry configured home publication with no dir
 rig stack seed --publish acme/rigstack-app@main   # opt in and publish root-only commits
+rig stack ci --manifest rig.stack.jsonc --member app  # isolated committed-checkout CI
+rig stack ci-guard app/App.csproj       # observed .NET build warning policy
+rig stack deps [--publish]              # check topic dependencies; optionally post statuses
 rig stack home [pointer-file]           # read a member's .rig-stack reference
 rig stack status                       # each repo's cursor vs its upstream tip
 rig stack pull [repo]                  # take upstream's new commits (all repos by default)
@@ -172,6 +176,52 @@ git top level, or directories that match its `repos` keys. If so:
   someone is about to build or pack that branch outside the stackspace, that
   note is the answer to the failure they are about to hit. Do not treat it as
   an error: it is the normal shape of a stackspace proposal.
+
+### CI and source-aware code
+
+Use `ci` to build/test a committed member checkout against sibling sources in a
+temporary stackspace; keep plain-clone CI too. `--manifest` selects a committed
+manifest, `--member` selects the prefix (otherwise origin matching), `--build`
+and `--test` run bash commands from it. `--upstream-tip` opts out of recorded
+cursors; `--cache-history=false` disables trusted history reuse. Exit codes are
+10 setup, 11 wire, 12 build, 13 test.
+
+Use `ci-guard <project.csproj>` for an observed .NET build: the member's own new
+warnings fail except declared stack-only warnings or existing tolerances;
+sibling warnings remain visible and non-fatal unless `--strict`. Unattributed
+NU/MSB infrastructure warnings fail closed. `ci --guard-project` replaces only
+the build step; the separate test command has its own build policy. Guard the
+test project and use `dotnet test <project> --no-build` with matching outputs.
+
+Use `deps` to check committed topic `dependsOn` edges after proposals, merges or
+cursor updates. `--publish` posts statuses only to PR head SHAs in
+`GITHUB_REPOSITORY` (a member upstream). Pending/unavailable dependencies are
+reported without failing the command; denied writes warn. It installs no sweep.
+
+For .NET source-only APIs, use compile-time `#if STACK_ACME_CORE`: this assembly
+includes that sibling's source directly or transitively. `RigStackSource_*`
+properties exist only in targets after `RigStackSourceSignals`.
+`RigStackAvailable_*` is early and stack-wide, suitable for project-file
+conditions; it must never guard source-only APIs. `-p:UseStackSources=false`
+disables swaps and all these signals. `RIGSTACK001` is a hard failure when SDK
+reference preparation loses candidates: update rig or use a compatible SDK;
+do not suppress it and silently omit guarded code/tests. See
+[source signals](https://rigsmith.dev/rig/stack#source-signals-from-the-net-overlay)
+for naming, conditional-reference limits and incremental/no-build behavior.
+
+The local composite at `.github/actions/stack/` accepts `manifest`, `member`,
+`rig-version`, `rig-sha256`, `allowed-hosts`, `build`, `test`, `guard-project`,
+`strict`, `dependencies`, `upstream-tip`, `cache-history`, and `cache-packages`.
+Pin rig and reviewed action SHAs. Use ordinary `pull_request`, read-only contents,
+and checkout `persist-credentials: false`; never execute PR code under
+`pull_request_target`. Optional status publication needs `statuses: write`.
+See [action inputs and cache policy](https://github.com/rigsmith/rigsmith/tree/main/.github/actions/stack)
+and [CI guidance](https://github.com/rigsmith/rigsmith/blob/main/docs/GITHUB-ACTIONS.md).
+
+Dry runs: `ci`, `ci-guard`, `deps` (even without `--publish`), setup writers and
+offline seed exports refuse `-n`; `home` is read-only. Seed publication previews
+without cloning/pushing, retaining local safety checks. See the
+[dry-run contract](https://rigsmith.dev/rig/verbs) before previewing other verbs.
 
 ### Four different things called "branch"
 

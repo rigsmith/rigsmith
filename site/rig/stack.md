@@ -766,8 +766,9 @@ again for the preview. Commit counts are omitted because upstream objects need
 not be present locally. Merge conflicts and replacement safety checks require a
 real pull. `wire -n` reports current wiring without writing; `doctor --fix -n`
 reports the engine installation it would attempt. `init`, `add`, `rm`, `setup`,
+`ci`, `ci-guard`, `deps` (including `--publish`),
 and offline seed directory exports refuse `--dry-run` before making changes.
-Seed publication supports a dry-run preview without cloning or pushing. `status` and plain `doctor`
+Seed publication supports a dry-run preview without cloning or pushing. `home`, `status` and plain `doctor`
 are read-only; `propose`, `push`, and `pack` retain their existing previews.
 
 A [pinned](./configuration#stack) project has nothing to take: its tag was
