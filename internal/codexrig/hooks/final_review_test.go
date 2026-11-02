@@ -317,3 +317,67 @@ func TestInstallKeepsSiblingIndicesAndUninstallReportsMoves(t *testing.T) {
 		t.Fatalf("silent trust-key move: %s", out.String())
 	}
 }
+
+func TestInstallRemovesLegacySiblingWhenExactExists(t *testing.T) {
+	for _, legacyFirst := range []bool{false, true} {
+		for _, separateGroups := range []bool{false, true} {
+			for _, keepUnrelated := range []bool{false, true} {
+				t.Run(fmt.Sprintf("legacyFirst=%v/separateGroups=%v/unrelated=%v", legacyFirst, separateGroups, keepUnrelated), func(t *testing.T) {
+					scope := GlobalScope(t.TempDir())
+					installFixture(t, scope)
+					editFixture(t, scope, func(doc map[string]any) {
+						commands := []string{"codexrig sync --hook", "codexrig sync"}
+						if legacyFirst {
+							commands[0], commands[1] = commands[1], commands[0]
+						}
+						var groups, handlers []any
+						for _, command := range commands {
+							h := map[string]any{"type": "command", "command": command}
+							if separateGroups {
+								groups = append(groups, map[string]any{"hooks": []any{h}})
+							} else {
+								handlers = append(handlers, h)
+							}
+						}
+						if keepUnrelated {
+							h := map[string]any{"type": "command", "command": "acme backup"}
+							if separateGroups {
+								groups = append(groups, map[string]any{"hooks": []any{h}})
+							} else {
+								handlers = append(handlers, h)
+							}
+						}
+						if !separateGroups {
+							groups = append(groups, map[string]any{"hooks": handlers})
+						}
+						doc["hooks"].(map[string]any)["Stop"] = groups
+					})
+					_, updated, err := InstallScope(scope)
+					if err != nil || len(updated) != 1 || updated[0] != "Stop" {
+						t.Fatalf("legacy repair: updated=%v err=%v", updated, err)
+					}
+					exact, unrelated := 0, 0
+					for _, h := range readSnapshot(scope).hooks {
+						switch h.info.Command {
+						case "codexrig sync":
+							t.Fatal("legacy sibling remains")
+						case "codexrig sync --hook":
+							exact++
+						case "acme backup":
+							unrelated++
+						}
+					}
+					if exact != 1 || (keepUnrelated && unrelated != 1) || CanInstall(scope) {
+						t.Fatalf("repair did not converge: exact=%d unrelated=%d", exact, unrelated)
+					}
+					if !keepUnrelated {
+						drifted, err := Drift(scope.path, scope.Plans())
+						if err != nil || len(drifted) != 0 {
+							t.Fatalf("repaired hook still drifts: %v %v", drifted, err)
+						}
+					}
+				})
+			}
+		}
+	}
+}

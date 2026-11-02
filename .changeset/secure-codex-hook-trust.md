@@ -13,3 +13,5 @@ After upgrading, `codexrig doctor` checks hooks Codex lists from the current wor
 Reject invalid project scopes before classification and guard uninstall as well as install. Keep other tools' handler indices stable where possible, report unavoidable trust-key moves, refuse malformed shapes and preserve large numbers. Surface Codex warnings and distinguish future listing compatibility from raw-file hazards, without recommending revocation for unknown listing metadata.
 
 A malformed hooks file in one scope does not suppress trusted-lookalike diagnostics in other scopes. Keep parse and symlink errors separate from lookalike repair advice, and repair unsupported matcher keys on recognized sync hooks so reinstall and trust agree.
+
+When a current hook already exists, reinstall removes its recognized legacy sibling instead of creating a duplicate command, preserving unrelated handlers.

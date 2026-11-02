@@ -145,6 +145,11 @@ func knownCommand(event Event, command string, plan Plan) bool {
 	return command == plan.Command || (event == Stop && plan.Command == "codexrig sync --hook" && command == "codexrig sync")
 }
 
+func matchesPlanMatcher(g map[string]any, p Plan) bool {
+	matcher, present := g["matcher"]
+	return (p.Matcher == "" && !present) || (p.Matcher != "" && matcher == p.Matcher)
+}
+
 func prepareInstall(doc map[string]any, plans []Plan) (added, updated []string) {
 	hooksAny, _ := doc["hooks"].(map[string]any)
 	if hooksAny == nil {
@@ -154,12 +159,24 @@ func prepareInstall(doc map[string]any, plans []Plan) (added, updated []string) 
 		raw, _ := hooksAny[string(p.Event)].([]any)
 		var kept []any
 		exact, changed := false, false
+		// Find current handlers first, including ones after a legacy sibling.
+		for _, rawGroup := range raw {
+			g, _ := rawGroup.(map[string]any)
+			if !matchesPlanMatcher(g, p) || fieldIssue(g, "matcher", "hooks") != "" {
+				continue
+			}
+			hs, _ := g["hooks"].([]any)
+			for _, rawHandler := range hs {
+				h, _ := rawHandler.(map[string]any)
+				if h["type"] == "command" && h["command"] == p.Command && fieldIssue(h, "type", "command") == "" {
+					exact = true
+				}
+			}
+		}
 		for _, rawGroup := range raw {
 			g, _ := rawGroup.(map[string]any)
 			hs, _ := g["hooks"].([]any)
-			rawMatcher, matcherPresent := g["matcher"]
-			matcher, matcherIsString := rawMatcher.(string)
-			matcherExact := (p.Matcher == "" && !matcherPresent) || (p.Matcher != "" && matcherIsString && matcher == p.Matcher)
+			matcherExact := matchesPlanMatcher(g, p)
 			var handlers []any
 			for _, rawHandler := range hs {
 				h, _ := rawHandler.(map[string]any)
@@ -170,7 +187,7 @@ func prepareInstall(doc map[string]any, plans []Plan) (added, updated []string) 
 				if repairable && matcherExact && command == p.Command {
 					exact = true
 					handlers = append(handlers, rawHandler)
-				} else if repairable && (matcherExact || len(hs) == 1) {
+				} else if repairable && !exact && (matcherExact || len(hs) == 1) {
 					h["command"] = p.Command
 					if p.Matcher == "" {
 						delete(g, "matcher")
