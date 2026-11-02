@@ -1,0 +1,38 @@
+docs/STACK-DESIGN.md
+  s_84db7dfa26c0c1::t_b6152cb6eac796 992-993,997-998,1005
+.github/actions/stack/README.md
+  s_84db7dfa26c0c1::t_b6152cb6eac796 13-14,20,53
+.github/actions/stack/action.yml
+  s_84db7dfa26c0c1::t_b6152cb6eac796 85,101
+skills/rigsmith-tools/SKILL.md
+  s_84db7dfa26c0c1::t_b6152cb6eac796 225
+internal/rig/cli/stackhome.go
+  s_84db7dfa26c0c1::t_598e4b5559f7aa 131-132
+  s_84db7dfa26c0c1::t_b6152cb6eac796 134-136
+internal/rig/cli/stackhome_test.go
+  s_84db7dfa26c0c1::t_b44acd0947e5ec 928-940
+internal/rig/cli/stackmanifest.go
+  s_84db7dfa26c0c1::t_b6152cb6eac796 632-640
+  s_84db7dfa26c0c1::t_598e4b5559f7aa 630-631
+internal/rig/cli/stackciseed_test.go
+  s_84db7dfa26c0c1::t_b6152cb6eac796 92,189-211,213-218,220-223,226-247
+  s_84db7dfa26c0c1::t_b44acd0947e5ec 250-262
+.changeset/gentle-foxes-race.md
+  s_84db7dfa26c0c1::t_b44acd0947e5ec 1-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e3c62bba8b30fe94e4580f11c4eee35ed2eff58c",
+  "prompts": {},
+  "sessions": {
+    "s_84db7dfa26c0c1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199b4-6306-70a1-9300-4c399f94a202",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
