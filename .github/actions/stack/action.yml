@@ -196,6 +196,9 @@ runs:
         STACK_ALLOWED_HOSTS: ${{ inputs.allowed-hosts }}
         GITHUB_TOKEN: ${{ github.token }}
       run: |
+        if [[ -z "${STACK_MANIFEST:-}" && -z "${STACK_SEED:-}" || -n "${STACK_MANIFEST:-}" && -n "${STACK_SEED:-}" ]]; then
+          echo 'exactly one of manifest or seed is required' >&2; exit 10
+        fi
         args=(stack deps --publish)
         if [[ -n "${STACK_SEED:-}" ]]; then
           args+=(--seed "$STACK_SEED" --allowed-hosts "$STACK_ALLOWED_HOSTS")
