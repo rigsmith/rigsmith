@@ -1,0 +1,60 @@
+internal/rig/cli/stack.go
+  s_c99c7d1f2bd4e8::t_9d2d89e9124977 35-51
+  s_c99c7d1f2bd4e8::t_6afff1bf3bf890 59
+skills/rigsmith-tools/SKILL.md
+  s_c99c7d1f2bd4e8::t_540547e5d24213 432-438
+internal/rig/cli/stackreleasededit.go
+  s_c99c7d1f2bd4e8::t_540547e5d24213 123,134-139,143-148,150,169,181,194-201
+  s_c99c7d1f2bd4e8::t_c429cc76962446 117,157,237,279
+  s_c99c7d1f2bd4e8::t_6afff1bf3bf890 1-13,16-113,115-116,118-122,124-133,140-142,149,151-156,175-180,182-193,202,211-212,220,222-236,238-278,280-281,285-317,319-325
+  s_c99c7d1f2bd4e8::t_9d2d89e9124977 14-15,114,213-219,318
+  s_c99c7d1f2bd4e8::t_cf6c62b9b43aef 158-168,170-174,203-210,221,282-284
+cmd/rig/README.md
+  s_c99c7d1f2bd4e8::t_ca71387ff2d306 152-155
+internal/rig/cli/testdata/stackreleased-rewrite.json
+  s_c99c7d1f2bd4e8::t_ca71387ff2d306 49-72
+  s_c99c7d1f2bd4e8::t_740dcd1701d1f2 1-48,73-74
+site/rig/stack.md
+  s_c99c7d1f2bd4e8::t_540547e5d24213 1411-1429
+.changeset/jolly-shrimp-dance.md
+  s_c99c7d1f2bd4e8::t_540547e5d24213 1-7
+site/rig/verbs.md
+  s_c99c7d1f2bd4e8::t_540547e5d24213 480-484
+internal/rig/cli/stackreleasede2e_test.go
+  s_c99c7d1f2bd4e8::t_740dcd1701d1f2 1-53
+internal/rig/cli/stackreleased_test.go
+  s_c99c7d1f2bd4e8::t_740dcd1701d1f2 6,10,49-64,67
+  s_c99c7d1f2bd4e8::t_9d2d89e9124977 137-144
+  s_c99c7d1f2bd4e8::t_beefbb7a6814d7 1-5,7-9,11-48,65-66,68-85
+  s_c99c7d1f2bd4e8::t_cf6c62b9b43aef 86-93
+  s_c99c7d1f2bd4e8::t_ca71387ff2d306 94-136
+docs/STACK-DESIGN.md
+  s_c99c7d1f2bd4e8::t_540547e5d24213 1300-1383
+README.md
+  s_c99c7d1f2bd4e8::t_540547e5d24213 193-196
+internal/rig/cli/stackreleased.go
+  s_c99c7d1f2bd4e8::t_beefbb7a6814d7 228-255
+  s_c99c7d1f2bd4e8::t_6afff1bf3bf890 4-13,15-17,24-40,44-88,90-130,134-135,149-151,154-193,195-226
+  s_c99c7d1f2bd4e8::t_9d2d89e9124977 138-148
+  s_c99c7d1f2bd4e8::t_98b4ea2b91fe68 1-3,14,18-23,41-43,131-133,227
+  s_c99c7d1f2bd4e8::t_cf6c62b9b43aef 89,136,152-153
+  s_c99c7d1f2bd4e8::t_c429cc76962446 137,194
+internal/rig/cli/stackdeps.go
+  s_c99c7d1f2bd4e8::t_beefbb7a6814d7 203-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2c796ef71fb58874df92692e5f2c0ca826a36fa7",
+  "prompts": {},
+  "sessions": {
+    "s_c99c7d1f2bd4e8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a199eb-1f73-7e23-aab8-61b3fe8e36b9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
