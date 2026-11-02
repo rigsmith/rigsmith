@@ -683,3 +683,12 @@ New commits remain individual; IDs can change when reparented after a squash.
 If rig cannot find a safe tree boundary, pull and reconcile or propose the diff
 for review. Never bypass the ancestry refusal or force the upstream branch.
 Removing/re-adding a member does not reset unsent work and needs no reset flag.
+
+
+Claude hook writes preserve unrelated handlers, including commands that merely mention
+`clauderig`. Ownership requires the exact event, matcher and installer-shaped command;
+only explicitly known historical plans are migrated or removed. Unknown lookalikes
+are reported with their command and left untouched. Project/local install, uninstall
+and doctor fixes refuse settings symlinks escaping the resolved repository or targeting
+global settings; symlinked checkout paths remain supported. Malformed hook structures
+are refused, JSON numbers retain their precision, and diagnostic controls are escaped.

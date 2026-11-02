@@ -171,7 +171,7 @@ func TestCheckProjectGuard_FlagsAndFixesAStaleHook(t *testing.T) {
 			}
 			// An older release's matcher: no Monitor.
 			if _, err := hooks.Install(stale, []hooks.Plan{{
-				Event: "PreToolUse", Matcher: "Edit|Write|Bash", Command: "clauderig guard",
+				Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard",
 			}}); err != nil {
 				t.Fatal(err)
 			}
@@ -484,4 +484,34 @@ func TestRun_RestrictedAppearsInEnvironment(t *testing.T) {
 		}
 	}
 	t.Fatalf("restricted mode check missing from environment section: %+v", sections[0].Results)
+}
+
+func TestHardeningDoctorFixRefusesSymlinks(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, stale := range []bool{false, true} {
+		root := t.TempDir()
+		outside := t.TempDir()
+		target := filepath.Join(outside, "settings.json")
+		if stale {
+			_, err := hooks.Install(target, []hooks.Plan{{Event: "PreToolUse", Matcher: "Edit|Write|NotebookEdit|Bash|EnterWorktree|ExitWorktree", Command: "clauderig guard"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			os.WriteFile(target, []byte(`{}`), 0644)
+		}
+		before, _ := os.ReadFile(target)
+		os.Symlink(outside, filepath.Join(root, ".claude"))
+		got := checkProjectGuard(Env{RepoRoot: root, ProjectSettings: filepath.Join(root, ".claude", "settings.json"), LocalSettings: filepath.Join(root, ".claude", "settings.local.json")})
+		if got.Fix == nil {
+			t.Fatal("missing fix")
+		}
+		if err := got.Fix(context.Background()); err == nil {
+			t.Fatal("fix followed escaping link")
+		}
+		after, _ := os.ReadFile(target)
+		if string(before) != string(after) {
+			t.Fatal("outside file changed")
+		}
+	}
 }
