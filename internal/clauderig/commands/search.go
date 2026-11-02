@@ -391,7 +391,7 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 				r.path = p
 			}
 		}
-		r.when = sessions.SessionTime(r.activity(), r.meta, r.path)
+		r.when = sessions.SessionTime(r.activity(), r.meta, r.led.End, r.path)
 		r.cwd = resolveCwd(me, r)
 		_, inLive := livePaths[r.id]
 		_, inRepo := repoPaths[r.id]
@@ -399,11 +399,8 @@ func searchSessions(out, errw io.Writer, me config.Machine, targets []search.Tar
 		r.inRepo = r.hitTargets[repoTarget] || inRepo
 		r.present = r.path != "" || r.cliLive || r.inRepo
 		// A ledger-only session has no sidecar and no transcript to stat, so its
-		// date and project come from the row sync wrote before the body aged out.
+		// date (resolved above) and project come from the row sync wrote before the body aged out.
 		if r.hasLed {
-			if r.when.IsZero() {
-				r.when = r.led.End
-			}
 			if r.cwd == "" && r.led.Cwd != "" {
 				r.cwd = sessions.ResolvePath(me, r.led.Cwd)
 			}

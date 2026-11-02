@@ -175,8 +175,9 @@ and drifts the same way.
 `recent` dates each session by the **newest timestamped record** in its own
 transcript. That is content, not metadata, so it survives every copy, sync and
 restore. A session with no timestamped record at all — `~/.claude` holds a few
-stub files that never held a conversation — is still listed, but marked `~`, so
-its date is never mistaken for the real thing.
+stub files that never held a conversation — falls back to Desktop sidecar metadata,
+then the ledger, then file mtime. These fallback dates are marked `~`, so
+they are never mistaken for transcript dates.
 
 ### "I remember what it said"
 
