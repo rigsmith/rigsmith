@@ -245,10 +245,15 @@ func stackDepsDescription(s string) string {
 }
 
 func newStackDepsCmd() *cobra.Command {
-	var manifest string
+	var manifest, seed, allowedHosts string
 	var publish bool
-	c := &cobra.Command{Use: "deps", Short: "Check topic PR dependencies against upstream cursors", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nReads committed proposal records, resolves PRs through the GitHub API, and\nchecks API merge commits against upstream cursors. Uses GITHUB_TOKEN (or local gh/git credentials) and\nGITHUB_API_URL. --publish posts only to GITHUB_REPOSITORY PR head SHAs; denied writes warn.\nPending and unavailable dependencies remain non-green. Rerun after merges\nand committed cursor bumps; no automatic sweep is installed.", Args: cobra.NoArgs}
+	c := &cobra.Command{Use: "deps", Short: "Check topic PR dependencies against upstream cursors", Long: "--dry-run is not supported; this command refuses it before making changes.\n\nReads committed proposal records from --manifest (default: rig.stack.jsonc) or --seed, resolves PRs through the GitHub API, and\nchecks API merge commits against upstream cursors. Uses GITHUB_TOKEN (or local gh/git credentials) and\nGITHUB_API_URL. --publish posts only to GITHUB_REPOSITORY PR head SHAs; denied writes warn.\nPending and unavailable dependencies remain non-green. Rerun after merges\nand committed cursor bumps; no automatic sweep is installed.", Args: cobra.NoArgs}
 	c.Flags().StringVar(&manifest, "manifest", "rig.stack.jsonc", "Committed manifest path")
+	c.Flags().StringVar(&seed, "seed", "", "Manifest seed; exclusive with --manifest")
+	c.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "Comma-separated allowed seed hosts")
+	_ = c.RegisterFlagCompletionFunc("seed", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	})
 	c.Flags().BoolVar(&publish, "publish", false, "Publish commit statuses (optional statuses: write permission)")
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		if dryRun {
@@ -258,23 +263,31 @@ func newStackDepsCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		p := manifest
-		if !filepath.IsAbs(p) {
-			p = filepath.Join(root, p)
-		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		data, err := stackCIGit(cmd.Context(), root, "show", "HEAD:"+filepath.ToSlash(rel))
-		if err != nil {
-			return err
+		if cmd.Flags().Changed("seed") && (seed == "" || cmd.Flags().Changed("manifest")) {
+			return fmt.Errorf("--seed requires a reference and is exclusive with --manifest")
 		}
 		temp, err := os.MkdirTemp("", "rig-stack-deps-")
 		if err != nil {
 			return err
 		}
 		defer os.RemoveAll(temp)
+		var data []byte
+		if seed != "" {
+			data, _, err = stackCISeed(cmd.Context(), root, filepath.Join(temp, "seed"), seed, allowedHosts)
+		} else {
+			p := manifest
+			if !filepath.IsAbs(p) {
+				p = filepath.Join(root, p)
+			}
+			rel, e := filepath.Rel(root, p)
+			if e != nil {
+				return e
+			}
+			data, err = stackCIGit(cmd.Context(), root, "show", "HEAD:"+filepath.ToSlash(rel))
+		}
+		if err != nil {
+			return err
+		}
 		if err = os.WriteFile(filepath.Join(temp, "rig.stack.jsonc"), data, 0600); err != nil {
 			return err
 		}

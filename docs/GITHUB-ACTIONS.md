@@ -110,6 +110,20 @@ release makes no `ui/` tag, so only the CLI build runs. The composite
 
 ## Stackspace member CI
 
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Topic dependency reporting also reads the seed, using
+`rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
+
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.
 Keep this job alongside the plain-clone matrix. The self-contained composite is
@@ -125,6 +139,12 @@ so run it in each member and rerun after sibling heads move. Topic mode disables
 shared caches in the action and cannot combine with upstream-tip. See the
 [stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
 cursor and provenance semantics. No merge train is installed.
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
 Topic mode also needs `pull-requests: read` alongside `contents: read` to
 read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
 does not gain access to private sibling repositories from these permissions.
@@ -133,7 +153,10 @@ lookups are unavailable ("could not check") and topic setup fails rather than
 testing a reduced set. Do not expose a broader token to PR build commands.
 Topic CI removes token environment variables before children run and refuses
 persisted checkout HTTP extraheaders; set `persist-credentials: false`. Use a
-reviewed immutable manifest checkout for an independently trusted proposal set.
+reviewed immutable seed (`--seed acme/stack-policy@<full-commit-sha>`, action
+input `seed`) for an independently trusted proposal set. Topic tokens are scrubbed
+before seed cloning too; use a public seed or separately prefetched local seed
+for private policy, with preparation credentials removed before the build.
 
 For stack builds use ordinary `pull_request`, no secrets, `contents: read`, and
 checkout `persist-credentials: false`. Do not use `pull_request_target` to execute

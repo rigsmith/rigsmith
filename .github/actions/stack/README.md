@@ -1,5 +1,31 @@
 # Stackspace CI action
 
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs. Credential-bearing seed
+URLs are rejected with redacted diagnostics. Seed references containing `?` or `#`
+are rejected in the reference you supply, including local paths, without echoing
+them; use configured Git credentials. Characters inherited from the current
+directory when resolving a relative local path remain valid.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Topic dependency reporting also reads the seed, using
+`rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
+
+Seed-mode history and package caches use a hash of the seed reference plus the
+workflow run ID, attempt, job ID and matrix index. Restore prefixes still reuse earlier caches, while
+each run can save newly fetched bundles and packages even when a seed branch
+moves. This avoids fetching the seed twice before the build merely to compute
+a content hash. Manifest mode retains content-based keys. Fork PRs skip both
+caches. An empty `hashFiles('')` returns an empty string rather than an error;
+it provides no seed cursor identity.
+
 Intended final home: `rigsmith/stack-action`, which is not published yet.
 Until publication, copy this entire directory into your member repository and
 use the local path. It has no relative dependencies outside this directory.
@@ -26,7 +52,7 @@ per attempt. Curl retries transfer timeouts with `--retry`; checksum mismatches 
 built-in version and source-pinned per-platform SHA256; custom pins are refused
 in CI. Restored josh binaries are hashed again before execution.
 
-`manifest` is required.
+Exactly one of `manifest` or `seed` is required.
 `member` defaults to matching origin URL. `upstream-tip: 'true'` selects tips
 instead of committed sibling cursors. `build` and `test` default to `rig build`
 and `rig test` and run from the member prefix with bash; empty skips a command.
@@ -40,6 +66,12 @@ so run it in each member and rerun after sibling heads move. Topic mode disables
 shared caches in the action and cannot combine with upstream-tip. See the
 [stack guide](https://rigsmith.dev/rig/stack#testing-a-complete-topic) for trust,
 cursor and provenance semantics. No merge train is installed.
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
 Topic mode also needs `pull-requests: read` alongside `contents: read` to
 read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
 does not gain access to private sibling repositories from these permissions.
@@ -51,7 +83,10 @@ children; it refuses persisted checkout HTTP extraheaders. Use
 `persist-credentials: false`. A PR-owned manifest is contributor-controlled
 policy; use a reviewed immutable policy checkout for an independent allowlist.
 Copy the [topic workflow](../../../examples/github-workflows/stack-topic.yml)
-for a job named `stack topic` with that separate manifest source.
+for a job named `stack topic` using an immutable `seed` pin and reviewed action
+code. Topic CI strips tokens before the seed clone; the API token is not a
+clone credential. Use a public seed or separately prefetch a private seed to a
+local path, removing preparation credentials before running topic code.
 
 `guard-project` replaces the build command with `rig stack ci-guard` for that
 member-relative .NET project. New warnings in member code fail except for

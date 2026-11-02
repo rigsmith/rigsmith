@@ -981,8 +981,37 @@ conditional references still depend on the configuration MSBuild builds.
 the checkout. Manifest mode reads the committed manifest from checkout HEAD,
 normalizes sibling imports to exact cursors (ignoring proposal branches), and
 uses the existing init import path. Tip mode drops cursor and tag/commit pins.
-Seed support is deferred until the separate setup seed work merges. This verb
-requires `--manifest` and exposes no seed input.
+Exactly one of `--manifest` or `--seed` is required. Seed mode shares
+`stackSeedReference` parsing with setup but clones without checkout into a
+separate temporary directory and reads only HEAD:rig.stack.jsonc. It removes
+origin before use and never adopts or publishes a home. This avoids setup's
+engine, overlay, commit and home side effects; the fused root remains remote-free
+for `stackCIGuardPush`. Seed files and hooks are never materialized.
+Git uses configured credentials; diagnostics suppress raw clone output and
+seed references use SafeRemote in errors, summary and provenance. Shared seed
+validation rejects `?` and `#` in user-written reference forms (including local
+paths) before path resolution, without echoing them, including
+for setup, deps and home publication; configured homes are revalidated before
+retry hints. Resolved absolute local remotes retain characters inherited from
+the current directory, including when loaded from home configuration. Setup
+removes its new clone if validation or home adoption fails, restoring the empty
+destination; once adopted, later engine/member failures retain it for retry.
+Rejected references never reach CI output or provenance. Seed hosts
+obey the member allowlist. Private-seed failures explain fork PR access and
+exit setup (10). Provenance stores reference and resolved commit under _seed, which is reserved
+and rejected as a member name during manifest validation.
+Member pointers remain discoverable via `stack home`, but CI requires explicit
+selection so a checkout cannot silently change the workflow's manifest source.
+
+`stack deps --seed` uses the same read-only loader and host allowlist, leaving
+dependency evaluation and publication policy unchanged. The action dispatches
+the same source to CI and dependency reporting. Seed-mode cache keys contain a
+hash of the seed reference plus run ID, attempt, job ID and matrix index; broad restore prefixes reuse
+old entries while unique keys allow updated bundles/packages to be saved.
+This avoids an extra seed fetch before cache restore; it deliberately trades
+exact cache hits for continuing cache refresh. Manifest mode keeps content keys.
+Empty hashFiles patterns are ignored (an empty-only pattern returns an empty
+string), so they cannot represent seed cursors. Fork guards remain on both caches.
 
 The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
 `git cat-file --batch` bytes under the manifest prefix. This bypasses archive
@@ -1020,9 +1049,11 @@ that commit symlinks. Members without symlinks need no such privilege.
 
 ### Testing a complete topic
 
-Use `rig stack ci --topic reader-fix --manifest stack/rig.stack.jsonc --member app`
-(or action input `topic: reader-fix`) to test all recorded proposals in that
-topic together. Commit the same proposals block in each member's CI manifest.
+Use `rig stack ci --topic reader-fix --seed acme/stack-policy@<full-commit-sha> --member app`
+(or action inputs `topic` and `seed`) to test all recorded proposals in that
+topic together. Publish the proposal set to a reviewed seed and pin the same
+seed commit in each member's job. `--manifest` remains available for a committed
+checkout manifest; its trust depends on who controls that checkout.
 Every recorded PR must resolve and be open; missing, closed, ambiguous or known
 conflicting PRs fail setup rather than silently reducing the set. One PR is valid.
 The selected member must participate. `--upstream-tip` cannot be combined with
@@ -1062,6 +1093,13 @@ and no runner with reusable credentials in files or credential helpers.
 Fork-origin jobs use the same checks and may fail for inaccessible private repos.
 Topic CI refuses `pull_request_target`.
 
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
+
 Topic mode also needs `pull-requests: read` alongside `contents: read` to
 read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
 does not gain access to private sibling repositories from these permissions.
@@ -1079,12 +1117,22 @@ permissions. API metadata identifies a PR head; it does not authorize its code.
 Trust reviewed workflow/action code for execution policy and a separately
 reviewed, immutable manifest checkout for repository declarations and topic
 membership. Use the [topic workflow example](../examples/github-workflows/stack-topic.yml)
-to check out a pinned policy repository as the manifest source while selecting
-the member explicitly; all tested code still comes from resolved PR heads.
-Publish updated proposal records to that policy repository before running CI.
-When seed-based topic CI is available, prefer a reviewed seed pinned to an
-immutable commit as that trust source; do not take its URL/ref from PR data.
-The current `--manifest` implementation needs no dependency on seed support.
+to load `--seed acme/stack-policy@<full-commit-sha>` as the recommended
+independent policy source, with an explicitly selected member. The example
+also checks out reviewed action code separately. All tested member code comes
+from resolved PR heads. Publish updated proposal records to the seed before
+running CI; do not derive the seed URL/ref from PR data. Full SHA pins are
+fetched explicitly, rather than interpreted as branch names.
+
+Token scrubbing happens before seed parsing or cloning, as well as before
+init, wire, build and test. The captured job token is only for API metadata;
+it is never forwarded to the seed clone. Use a public seed or a separately
+prefetched local seed for private policy. Fetch private seeds in an isolated
+trusted preparation step and remove credentials before topic CI; do not leave
+persistent extraheaders, helpers or reusable credentials on the build runner.
+An unavailable private seed fails setup, without falling back to the checkout's
+manifest. Ordinary non-topic seed mode retains its configured Git credential
+behavior.
 
 ### CI cache and trust boundaries
 
@@ -1095,8 +1143,8 @@ history. Its key hashes source URL, exact cursor, prefix filter and engine
 version. A hit fetches locally into the fresh fused repository and skips proxy
 startup, upstream fetch and filtering. It never saves fused commits. Outer
 Actions cache restore prefixes retain unchanged member bundles across manifest
-changes and seed josh's host caches for changed members. Package download keys
-include the entire manifest's immutable sibling cursors (which identify all
+changes and seed josh's host caches for changed members. In manifest mode,
+package download keys include the entire manifest's immutable sibling cursors (which identify all
 lockfiles/pins transitively) plus checkout lockfiles. No build outputs are cached.
 Only consumed member hits enter the reported hit rate.
 

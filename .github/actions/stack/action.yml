@@ -2,10 +2,13 @@ name: Stackspace CI
 description: Build and test the checkout against sibling sources in a temporary stackspace.
 inputs:
   manifest:
-    description: Path to a committed rig.stack.jsonc (required).
-    required: true
+    description: Path to a committed rig.stack.jsonc; exclusive with seed.
+    default: ''
   topic:
     description: Apply all open proposal PR heads in this manifest topic (read-only token, no secrets).
+    default: ''
+  seed:
+    description: Manifest seed (owner/repo@ref, URL or local path); exactly one of seed or manifest is required.
     default: ''
   member:
     description: Member prefix; otherwise match origin URL.
@@ -61,6 +64,16 @@ runs:
         INPUT_RIG_SHA256: ${{ inputs.rig-sha256 }}
         RIG_REPO: rigsmith/rigsmith
       run: bash "$GITHUB_ACTION_PATH/install-rig.sh"
+    - id: cache-source
+      name: Identify seed cache namespace
+      shell: bash
+      env:
+        STACK_SEED: ${{ inputs.seed }}
+      run: |
+        # Hash the reference so credentials or URL punctuation never enter keys.
+        if [[ -n "$STACK_SEED" ]]; then
+          printf 'seed=%s\n' "$(printf '%s' "$STACK_SEED" | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+        fi
     - name: Restore josh binaries and object history
       if: ${{ inputs.topic == '' && inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
       id: history
@@ -72,7 +85,7 @@ runs:
           ~/Library/Caches/rigsmith/josh
           ~/AppData/Local/rigsmith/josh
           ${{ runner.temp }}/stack-history
-        key: stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-${{ hashFiles(inputs.manifest) }}
+        key: stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}-{3}-{4}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt, github.job, strategy.job-index) || hashFiles(inputs.manifest) }}
         restore-keys: |
           stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-
     - name: Restore package downloads
@@ -85,15 +98,17 @@ runs:
           ~/go/pkg/mod
           ~/.cargo/registry
           ~/.cargo/git
+        # Seed keys advance each run/attempt so partial restores can save updates.
         # Cursors in the manifest cover every sibling's lockfiles and pins;
         # checkout hashes cover lockfile edits in the selected PR.
-        key: stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.manifest, '**/*lock*', '**/go.sum', '**/global.json', '**/Directory.Packages.props', '**/NuGet.config', '**/rust-toolchain*') }}
+        key: stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}-{3}-{4}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt, github.job, strategy.job-index) || hashFiles(inputs.manifest, '**/*lock*', '**/go.sum', '**/global.json', '**/Directory.Packages.props', '**/NuGet.config', '**/rust-toolchain*') }}
         restore-keys: |
           stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-
     - id: run
       name: Rebuild, wire, build and test
       shell: bash
       env:
+        STACK_SEED: ${{ inputs.seed }}
         STACK_MANIFEST: ${{ inputs.manifest }}
         GITHUB_TOKEN: ${{ inputs.topic != '' && github.token || '' }}
         STACK_TOPIC: ${{ inputs.topic }}
@@ -137,9 +152,13 @@ runs:
           true|false) ;;
           *) echo 'strict must be exactly true or false' >&2; exit 1 ;;
         esac
+        if [[ -z "$STACK_MANIFEST" && -z "$STACK_SEED" || -n "$STACK_MANIFEST" && -n "$STACK_SEED" ]]; then
+          echo 'exactly one of manifest or seed is required' >&2; exit 10
+        fi
         args=(stack ci --cache-history="$STACK_CACHE_HISTORY" --allowed-hosts "$STACK_ALLOWED_HOSTS" --member "$STACK_MEMBER" --build "$STACK_BUILD" --test "$STACK_TEST")
         if [[ -n "$STACK_TOPIC" ]]; then args+=(--topic "$STACK_TOPIC"); fi
         if [[ -n "$STACK_MANIFEST" ]]; then args+=(--manifest "$STACK_MANIFEST"); fi
+        if [[ -n "$STACK_SEED" ]]; then args+=(--seed "$STACK_SEED"); fi
         if [[ "$STACK_TIP" == true ]]; then args+=(--upstream-tip); fi
         if [[ -n "$STACK_GUARD_PROJECT" ]]; then args+=(--guard-project "$STACK_GUARD_PROJECT"); fi
         if [[ "$STACK_STRICT" == true ]]; then args+=(--strict); fi
@@ -175,13 +194,24 @@ runs:
         path: ${{ runner.temp }}/stack-provenance.json
         if-no-files-found: ignore
     - name: Report topic dependencies
-      if: ${{ always() && steps.install.outcome == 'success' && inputs.dependencies == 'true' }}
+      if: ${{ always() && steps.install.outcome == 'success' && inputs.topic == '' && inputs.dependencies == 'true' }}
       shell: bash
       env:
         STACK_MANIFEST: ${{ inputs.manifest }}
+        STACK_SEED: ${{ inputs.seed }}
+        STACK_ALLOWED_HOSTS: ${{ inputs.allowed-hosts }}
         GITHUB_TOKEN: ${{ github.token }}
       run: |
-        if rig stack deps --manifest "$STACK_MANIFEST" --publish; then
+        if [[ -z "${STACK_MANIFEST:-}" && -z "${STACK_SEED:-}" || -n "${STACK_MANIFEST:-}" && -n "${STACK_SEED:-}" ]]; then
+          echo 'exactly one of manifest or seed is required' >&2; exit 10
+        fi
+        args=(stack deps --publish)
+        if [[ -n "${STACK_SEED:-}" ]]; then
+          args+=(--seed "$STACK_SEED" --allowed-hosts "$STACK_ALLOWED_HOSTS")
+        else
+          args+=(--manifest "$STACK_MANIFEST")
+        fi
+        if rig "${args[@]}"; then
           :
         else
           status=$?

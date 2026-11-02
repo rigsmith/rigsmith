@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -144,6 +146,7 @@ func TestStackTopicTogether(t *testing.T) {
 }
 
 func TestStackTopicCIFlow(t *testing.T) {
+	stackTopicPreserveTokens(t)
 	if os.Getenv("RIG_STACK_E2E") == "" {
 		t.Skip("set RIG_STACK_E2E=1")
 	}
@@ -233,6 +236,59 @@ func TestStackTopicCIFlow(t *testing.T) {
 			t.Fatal(records)
 		}
 	}
+
+	// The reviewed seed supplies policy independently of the PR checkout.
+	seedDir := filepath.Join(work, "seed-source")
+	mustGitStack(t, work, "init", seedDir)
+	mustGitStack(t, seedDir, "config", "user.name", "test")
+	mustGitStack(t, seedDir, "config", "user.email", "test@example.com")
+	policy, _ := json.Marshal(m)
+	os.WriteFile(filepath.Join(seedDir, "rig.stack.jsonc"), policy, 0600)
+	mustGitStack(t, seedDir, "add", ".")
+	mustGitStack(t, seedDir, "commit", "-qm", "reviewed topic policy")
+	pin := strings.TrimSpace(mustGitStack(t, seedDir, "rev-parse", "HEAD"))
+	// A moving tip must not replace the pinned proposal set.
+	os.WriteFile(filepath.Join(seedDir, "rig.stack.jsonc"), []byte("{}"), 0600)
+	mustGitStack(t, seedDir, "commit", "-qam", "unreviewed policy")
+	bare := filepath.Join(work, "policy.git")
+	mustGitStack(t, work, "clone", "--bare", seedDir, bare)
+	mustGitStack(t, checkout, "rm", "rig.stack.jsonc")
+	mustGitStack(t, checkout, "commit", "-qm", "manifest lives in seed")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url."+stackTopicFileURL(bare)+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/acme/stack-policy.git")
+	t.Setenv("GITHUB_TOKEN", "topic-api-fixture")
+	t.Setenv("GH_TOKEN", "topic-gh-fixture")
+	oldSeedGit := stackCISeedGit
+	stackCISeedGit = func(ctx context.Context, dir string, args ...string) (string, error) {
+		for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN", "ACTIONS_RUNTIME_TOKEN"} {
+			if os.Getenv(name) != "" {
+				return "", fmt.Errorf("seed child would inherit %s", name)
+			}
+		}
+		return oldSeedGit(ctx, dir, args...)
+	}
+	t.Cleanup(func() { stackCISeedGit = oldSeedGit })
+	c = newStackCICmd()
+	c.SetArgs([]string{"--topic", "topic", "--seed", "acme/stack-policy@" + pin, "--member", "app", "--allowed-hosts", srv.addr + ",github.com", "--build", "test -z \"${GITHUB_TOKEN}${GH_TOKEN}\" && test -f topic-head && test -f ../lib/topic-head", "--test", "test -z \"${GITHUB_TOKEN}${GH_TOKEN}\" && test -f topic-head && test -f ../lib/topic-head"})
+	if err := c.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(data, &records); err != nil {
+		t.Fatal(err)
+	}
+	if records["_seed"]["commit"] != pin {
+		t.Fatal("seed pin not respected", records)
+	}
+	for n, pr := range heads {
+		if records[n]["commit"] != pr.Head.SHA {
+			t.Fatal("seed topic head not applied", records)
+		}
+	}
 }
 
 func stackTopicFileURL(path string) string {
@@ -240,6 +296,7 @@ func stackTopicFileURL(path string) string {
 }
 
 func TestStackTopicPersistedCredentials(t *testing.T) {
+	stackTopicPreserveTokens(t)
 	dir := t.TempDir()
 	mustGitStack(t, dir, "init", "-q")
 	mustGitStack(t, dir, "config", "http.https://github.com/.extraheader", "AUTHORIZATION: bearer do-not-log-this")
@@ -256,6 +313,7 @@ func TestStackTopicPersistedCredentials(t *testing.T) {
 }
 
 func TestStackTopicAPIRemovesChildTokens(t *testing.T) {
+	stackTopicPreserveTokens(t)
 	names := []string{"GITHUB_TOKEN", "GH_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_ID_TOKEN_REQUEST_TOKEN", "SYSTEM_ACCESSTOKEN", "AZURE_DEVOPS_EXT_PAT"}
 	for _, name := range names {
 		t.Setenv(name, "fixture-secret")
@@ -299,19 +357,49 @@ func TestStackTopicWorkflow(t *testing.T) {
 	if job.Name != "stack topic" {
 		t.Fatal("missing shared check name")
 	}
-	checkout, topic := false, false
+	checkout, policyCheckout, topic := false, false, false
 	for _, step := range job.Steps {
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			checkout = true
-			if step.With["persist-credentials"] != "false" || step.With["repository"] != "acme/stack-policy" || step.With["ref"] != "${{ vars.STACK_POLICY_SHA }}" {
-				t.Fatal("checkout must use independently pinned policy without persisted credentials")
+			if step.With["persist-credentials"] != "false" {
+				t.Fatal("checkout must not persist credentials")
+			}
+			if step.With["repository"] == "acme/stack-policy" {
+				policyCheckout = step.With["ref"] == "${{ vars.STACK_POLICY_SHA }}" && step.With["path"] == ".stack-policy"
 			}
 		}
-		if step.Uses == "./.github/actions/stack" {
-			topic = step.With["topic"] != "" && step.With["member"] != ""
+		if step.Uses == "./.stack-policy/.github/actions/stack" {
+			topic = step.With["topic"] != "" && step.With["member"] != "" && step.With["seed"] == "acme/stack-policy@${{ vars.STACK_POLICY_SHA }}" && step.With["manifest"] == ""
 		}
 	}
-	if !checkout || !topic {
+	if !checkout || !policyCheckout || !topic {
 		t.Fatal("missing topic action or trusted checkout")
+	}
+}
+
+func stackTopicPreserveTokens(t *testing.T) {
+	t.Helper()
+	for _, entry := range os.Environ() {
+		name, value, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(name)
+		if strings.HasSuffix(upper, "_TOKEN") || strings.HasSuffix(upper, "_PAT") || upper == "SYSTEM_ACCESSTOKEN" {
+			t.Setenv(name, value)
+		}
+	}
+}
+
+func TestStackTopicTokenTestIsolation(t *testing.T) {
+	t.Setenv("NPM_TOKEN", "ambient-fixture")
+	t.Run("scrub", func(t *testing.T) {
+		stackTopicPreserveTokens(t)
+		if _, err := stackTopicAPI(); err != nil {
+			t.Fatal(err)
+		}
+		if os.Getenv("NPM_TOKEN") != "" {
+			t.Fatal("ambient token was not scrubbed")
+		}
+	})
+	if os.Getenv("NPM_TOKEN") != "ambient-fixture" {
+		t.Fatal("test leaked token removal to later tests")
 	}
 }

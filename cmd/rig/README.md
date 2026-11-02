@@ -47,7 +47,8 @@ See [source signals](../../site/rig/stack.md#source-signals-from-the-net-overlay
 and preview limitations. SDK changes that erase reference candidates fail with
 `RIGSTACK001` instead of silently dropping guarded code or tests.
 
-`rig stack ci` builds a member checkout with sibling sources in a temporary
+`rig stack ci` requires exactly one of `--seed acme/rigstack-app@main` or
+`--manifest stack/rig.stack.jsonc` and builds a member checkout with sibling sources in a temporary
 stackspace. Its action verifies release downloads and reports trusted history
 cache reuse and commit/filter provenance; `cache-history: 'false'` disables
 bundle reuse. See [stack CI](../../site/rig/stack.md#testing-a-member-pr-in-its-stackspace) for the read-only,

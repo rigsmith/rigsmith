@@ -1257,6 +1257,20 @@ informational notes, not blocking problems; non-writable members are left alone.
 conditional references still depend on the configuration MSBuild builds.
 
 ## Testing a member PR in its stackspace
+Use `seed: acme/rigstack-app@main` (CLI `--seed acme/rigstack-app@main`)
+to read the committed manifest from its home, or `manifest` / `--manifest`
+to read it from checkout HEAD. Exactly one is required. Seed references use the
+same owner/repo@ref, URL, scp and local-path syntax as `stack setup`.
+CI never infers this input from a member's `.rig-stack` pointer: workflows
+explicitly choose their manifest source. Origin matching still selects the member.
+The seed host must be in `allowed-hosts`; local paths have no host.
+Private seeds use configured Git credentials and may be unavailable to fork PRs;
+fetch failures name the seed and exit at setup (10). Configure credentials outside
+the action without embedding tokens in workflow inputs.
+The summary and provenance artifact record the sanitized seed and resolved commit.
+Topic dependency reporting also reads the seed, using
+`rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
+
 
 Keep the plain-clone matrix to test released dependencies, and add a separate
 stackspace job to test sibling source changes. Copy the self-contained
@@ -1288,7 +1302,7 @@ For other CI, install pinned rig and run
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test 'rig test'`.
 The verb prints resolved commits and test output, appending phase results and
 commits to `GITHUB_STEP_SUMMARY` when present. Exit codes distinguish setup (10),
-wire (11), build (12), and test (13). Seed support follows in a later change.
+wire (11), build (12), and test (13). Seed mode uses the same reconstruction path.
 
 Stack CI defaults to `--allowed-hosts github.com`; explicitly list other trusted
 fork/upstream hosts with `--allowed-hosts` (the action input is `allowed-hosts`).
@@ -1324,9 +1338,11 @@ the action README for the confidentiality and trust limits.
 
 ### Testing a complete topic
 
-Use `rig stack ci --topic reader-fix --manifest stack/rig.stack.jsonc --member app`
-(or action input `topic: reader-fix`) to test all recorded proposals in that
-topic together. Commit the same proposals block in each member's CI manifest.
+Use `rig stack ci --topic reader-fix --seed acme/stack-policy@<full-commit-sha> --member app`
+(or action inputs `topic` and `seed`) to test all recorded proposals in that
+topic together. Publish the proposal set to a reviewed seed and pin the same
+seed commit in each member's job. `--manifest` remains available for a committed
+checkout manifest; its trust depends on who controls that checkout.
 Every recorded PR must resolve and be open; missing, closed, ambiguous or known
 conflicting PRs fail setup rather than silently reducing the set. One PR is valid.
 The selected member must participate. `--upstream-tip` cannot be combined with
@@ -1366,6 +1382,13 @@ and no runner with reusable credentials in files or credential helpers.
 Fork-origin jobs use the same checks and may fail for inaccessible private repos.
 Topic CI refuses `pull_request_target`.
 
+The scrubbing guarantee applies to `rig stack ci --topic` and its Git, seed,
+init, wire, guard, build and test subprocesses. The action skips its later
+`rig stack deps --publish` step for topic runs so it cannot reintroduce a token
+on that runner after untrusted code executes. Non-topic dependency reporting
+still receives `GITHUB_TOKEN`; run any required topic dependency publication
+in a separate fresh trusted metadata-only job.
+
 Topic mode also needs `pull-requests: read` alongside `contents: read` to
 read private PR metadata in the job's own repository. A job's `GITHUB_TOKEN`
 does not gain access to private sibling repositories from these permissions.
@@ -1383,16 +1406,27 @@ permissions. API metadata identifies a PR head; it does not authorize its code.
 Trust reviewed workflow/action code for execution policy and a separately
 reviewed, immutable manifest checkout for repository declarations and topic
 membership. Use the [topic workflow example](https://github.com/rigsmith/rigsmith/blob/main/examples/github-workflows/stack-topic.yml)
-to check out a pinned policy repository as the manifest source while selecting
-the member explicitly; all tested code still comes from resolved PR heads.
-Publish updated proposal records to that policy repository before running CI.
-When seed-based topic CI is available, prefer a reviewed seed pinned to an
-immutable commit as that trust source; do not take its URL/ref from PR data.
-The current `--manifest` implementation needs no dependency on seed support.
+to load `--seed acme/stack-policy@<full-commit-sha>` as the recommended
+independent policy source, with an explicitly selected member. The example
+also checks out reviewed action code separately. All tested member code comes
+from resolved PR heads. Publish updated proposal records to the seed before
+running CI; do not derive the seed URL/ref from PR data. Full SHA pins are
+fetched explicitly, rather than interpreted as branch names.
+
+Token scrubbing happens before seed parsing or cloning, as well as before
+init, wire, build and test. The captured job token is only for API metadata;
+it is never forwarded to the seed clone. Use a public seed or a separately
+prefetched local seed for private policy. Fetch private seeds in an isolated
+trusted preparation step and remove credentials before topic CI; do not leave
+persistent extraheaders, helpers or reusable credentials on the build runner.
+An unavailable private seed fails setup, without falling back to the checkout's
+manifest. Ordinary non-topic seed mode retains its configured Git credential
+behavior.
 
 ### Stack topic dependencies
 
-`rig stack deps --manifest rig.stack.jsonc` checks the committed `proposals`
+`rig stack deps --manifest rig.stack.jsonc` (or `--seed acme/rigstack-app@main`,
+exclusive with `--manifest`; `--allowed-hosts` applies to seed fetches) checks the committed `proposals`
 records through the GitHub API, using `GITHUB_TOKEN` and `GITHUB_API_URL`.
 Without a token, local runs reuse stack's gh-first, git-helper-second credentials.
 Manifests with no dependency edges make no API or credential lookups.

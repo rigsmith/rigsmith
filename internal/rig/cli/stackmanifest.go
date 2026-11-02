@@ -627,9 +627,17 @@ func stackValidBranchPrefix(prefix, where string) error {
 	return nil
 }
 
-// stackValidPrefix rejects the keys that would escape their own directory —
-// the one rule, shared with the release tools that read the manifest.
-func stackValidPrefix(name string) error { return corestack.ValidPrefix(name) }
+// stackValidPrefix shares path validation with release tools and reserves the
+// metadata key used by CI provenance.
+func stackValidPrefix(name string) error {
+	if err := corestack.ValidPrefix(name); err != nil {
+		return err
+	}
+	if name == "_seed" {
+		return fmt.Errorf("stack repo %q is reserved for seed provenance", name)
+	}
+	return nil
+}
 
 // stackSpec is the cfgfind spec for the stack manifest: a dedicated rig.stack.jsonc/.json
 // at the stackspace root, or a `stack` key inline in .rig.json.
@@ -783,7 +791,8 @@ const stackManifestTemplate = `{
   // and still leave as an ordinary pull request to each project.
   //
   // Publish the root files with rig stack seed --publish acme/rigstack-app@main.
-  // Fresh machines and CI use rig stack setup acme/rigstack-app@main.
+  // Fresh machines use rig stack setup acme/rigstack-app@main.
+  // CI uses rig stack ci --seed acme/rigstack-app@main.
   //
   // Uncomment the block below, point it at your repos, then run
   //     rig stack init

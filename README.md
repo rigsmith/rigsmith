@@ -81,7 +81,8 @@ rig stack push my-app --dry-run             # what would go — target, branch, 
 ```
 
 
-`rig stack ci` builds a member checkout with sibling sources in a temporary
+`rig stack ci` requires exactly one of `--seed acme/rigstack-app@main` or
+`--manifest stack/rig.stack.jsonc` and builds a member checkout with sibling sources in a temporary
 stackspace. Its action verifies release downloads and reports trusted history
 cache reuse and commit/filter provenance; `cache-history: 'false'` disables
 bundle reuse. See [stack CI](site/rig/stack.md#testing-a-member-pr-in-its-stackspace) for the read-only,

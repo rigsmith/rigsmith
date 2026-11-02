@@ -73,7 +73,7 @@ func TestStackCIReplaceCheckout(t *testing.T) {
 func TestStackCIValidation(t *testing.T) {
 	c := newStackCICmd()
 	c.SetArgs([]string{})
-	if e := c.Execute(); e == nil || !strings.Contains(e.Error(), "--manifest is required") {
+	if e := c.Execute(); e == nil || !strings.Contains(e.Error(), "exactly one of --manifest or --seed is required") {
 		t.Fatalf("%v", e)
 	}
 }
@@ -126,6 +126,41 @@ func stackCIFlow(t *testing.T, failures bool) {
 		if e := c.Execute(); e != nil {
 			t.Fatal(e)
 		}
+		seedDir := filepath.Join(work, "seed-source")
+		mustGitStack(t, work, "init", seedDir)
+		mustGitStack(t, seedDir, "config", "user.name", "test")
+		mustGitStack(t, seedDir, "config", "user.email", "t@t")
+		data, err := os.ReadFile(filepath.Join(checkout, "rig.stack.jsonc"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(seedDir, "rig.stack.jsonc"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, seedDir, "add", ".")
+		mustGitStack(t, seedDir, "commit", "-qm", "seed manifest")
+		bare := filepath.Join(work, "seed.git")
+		mustGitStack(t, work, "clone", "--bare", seedDir, bare)
+		// The checkout no longer has a manifest; only the seed can supply it.
+		mustGitStack(t, checkout, "rm", "rig.stack.jsonc")
+		mustGitStack(t, checkout, "commit", "-qm", "use seed")
+		seedCmd := newStackCICmd()
+		seedCmd.SetArgs([]string{"--seed", bare, "--allowed-hosts", srv.addr, "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt && test ! -f rig.stack.jsonc", "--test", "test -f only-in-pr"})
+		// Exercise origin auto-matching independently of the local clone URL.
+		mustGitStack(t, checkout, "remote", "set-url", "origin", "http://"+srv.spec("acme/app"))
+		if err = seedCmd.Execute(); err != nil {
+			t.Fatal(err)
+		}
+		provenance, err := os.ReadFile(filepath.Join(work, "provenance.json"))
+		if err != nil || !strings.Contains(string(provenance), "_seed") || !strings.Contains(string(provenance), bare) {
+			t.Fatalf("seed provenance: %s %v", provenance, err)
+		}
+		// Restore the manifest for the remaining manifest-mode assertions.
+		if err = os.WriteFile(filepath.Join(checkout, "rig.stack.jsonc"), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, checkout, "add", ".")
+		mustGitStack(t, checkout, "commit", "-qm", "restore manifest")
 		out, _ := os.ReadFile(summary)
 		if !strings.Contains(string(out), "test: passed") {
 			t.Fatal(string(out))
@@ -139,7 +174,7 @@ func stackCIFlow(t *testing.T, failures bool) {
 		if err != nil || strings.Count(string(cacheReport), "\tcache\t") != 2 {
 			t.Fatalf("repeat run did not reuse both members: %s %v", cacheReport, err)
 		}
-		provenance, err := os.ReadFile(filepath.Join(work, "provenance.json"))
+		provenance, err = os.ReadFile(filepath.Join(work, "provenance.json"))
 		if err != nil || !strings.Contains(string(provenance), ":prefix=lib") {
 			t.Fatalf("provenance: %s %v", provenance, err)
 		}
@@ -604,7 +639,7 @@ func TestStackCIActionGuardProject(t *testing.T) {
 	}
 	project := "tests/Acme App Tests/Acme App Tests.csproj"
 	p := exec.Command("bash", "-euo", "pipefail", "-c", stackCIActionScript(t, "Rebuild, wire, build and test"))
-	p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR=false", "STACK_GUARD_PROJECT="+project, "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
+	p.Env = append(stackCIActionDefaultEnv(t), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "STACK_FORK_PR=false", "STACK_GUARD_PROJECT="+project, "STACK_MANIFEST=rig.stack.jsonc", "RIG_STACK_CACHE_REPORT="+filepath.Join(dir, "report"), "RIG_STACK_PROVENANCE="+filepath.Join(dir, "provenance"))
 	output, err := p.CombinedOutput()
 	if err != nil {
 		t.Fatalf("action run failed: %v %s", err, output)
