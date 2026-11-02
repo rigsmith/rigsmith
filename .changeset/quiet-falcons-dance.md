@@ -1,4 +1,5 @@
 ---
+type: docs
 "github.com/rigsmith/rigsmith": patch
 ---
 
