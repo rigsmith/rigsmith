@@ -155,3 +155,52 @@ func TestStackPushPlanning(t *testing.T) {
 		}
 	})
 }
+
+func TestStackRestoreRefCancelledContext(t *testing.T) {
+	ctx := context.Background()
+	repo, err := gitrepo.Init(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo.Dir, "file"), []byte("content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Commit(ctx, "original"); err != nil {
+		t.Fatal(err)
+	}
+	original, err := repo.RevParse(ctx, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree, err := repo.RevParse(ctx, "HEAD^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := repo.CommitTree(ctx, tree, original, "temporary filtered head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, prior string }{
+		{"delete temporary ref", ""},
+		{"restore existing ref", original},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const ref = "refs/rigsmith/push/app"
+			if err := repo.SetRef(ctx, ref, filtered); err != nil {
+				t.Fatal(err)
+			}
+			canceled, cancel := context.WithCancel(ctx)
+			cancel()
+			if err := stackRestoreRef(canceled, repo, ref, tc.prior); err != nil {
+				t.Fatalf("cleanup failed after command cancellation: %v", err)
+			}
+			if tc.prior == "" {
+				if refExists(t, repo.Dir, ref) {
+					t.Fatal("temporary ref survived cancellation")
+				}
+			} else if got, err := repo.RevParse(ctx, ref); err != nil || got != original {
+				t.Fatalf("existing ref not restored: got %s, error %v", got, err)
+			}
+		})
+	}
+}

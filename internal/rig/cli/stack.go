@@ -1920,6 +1920,8 @@ func newStackPushCmd() *cobra.Command {
 // stackRestoreRef puts ref back to what it held before a dry run wrote it:
 // prior, or nothing at all when there was nothing.
 func stackRestoreRef(ctx context.Context, repo *gitrepo.Repo, ref, prior string) error {
+	// Cleanup must still restore the ref when the command was canceled.
+	ctx = context.WithoutCancel(ctx)
 	if prior != "" {
 		return repo.SetRef(ctx, ref, prior)
 	}
