@@ -16,6 +16,16 @@ and the shared engine under `core/`:
 | [`cmd/codexrig/`](cmd/codexrig/) | `codexrig` | The same idea for the Codex CLI: sync `config.toml`, `AGENTS.md`, skills, prompts and rules across machines via a private git repo, with cross-OS path correction (including the absolute paths Codex writes as TOML table KEYS), TOML-aware field-level redaction, and several Codex logins side by side, each in its own `CODEX_HOME`. Session rollouts are opt-in and are never rewritten. See [docs/CODEXRIG-DESIGN.md](docs/CODEXRIG-DESIGN.md). |
 | [`cmd/brewrig/`](cmd/brewrig/) | `brewrig` | Keep several machines on the same Homebrew software — and the same versions of it. Each machine publishes what it deliberately installed (`installed_on_request`, not the dependency closure) to a private git repo; the union is installed everywhere. It never uninstalls to make machines match: the one exception is a package you deliberately removed elsewhere, offered one prompt at a time. darwin/linux only — Homebrew has no Windows. See [docs/BREWRIG-DESIGN.md](docs/BREWRIG-DESIGN.md). |
 
+`codexrig global trust` and `codexrig project trust` approve only exact current
+codexrig commands in the requested scope. Both show every approved, refused, or left-alone
+command, also with `--json`; outdated commands require reinstalling, and foreign
+hooks require review in Codex itself.
+Global trust approves only sync hooks; project trust approves only the guard.
+After upgrading, `codexrig doctor` checks hooks Codex lists from the current
+working directory, including inline or nested legacy approvals; it does not
+scan approvals in other repositories. Unrelated hooks have no trust warning; missing sync hooks
+still warn and offer installation.
+
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`) and offline seed directory exports refuse dry-run; seed publication previews without cloning or pushing; `wire` and `doctor --fix` report without writing. `ci`, `ci-guard`, and `deps` (including `--publish`) refuse dry-run; `home` is read-only.
 
 `rig stack ci --topic <name>` tests all recorded topic PR heads together; see [stack CI](https://rigsmith.dev/rig/stack#testing-a-complete-topic).

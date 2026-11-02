@@ -8,7 +8,7 @@ description: >
   several logins side by side), and brewrig (Homebrew packages and versions across machines). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code or Codex CLI
-  setup, switching or running a different Codex login, keeping two Macs' Homebrew
+  setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies,
@@ -555,6 +555,38 @@ After any `codexrig global install` or `codexrig project install`, run the match
 for user hooks and installed project hooks. For untrusted project hooks it warns
 and points to `codexrig project trust`, without offering a fix. A clean doctor
 run without the app server is not proof that hooks are trusted.
+
+Trust is scoped to the installer's full plan: global approves only the two sync
+hooks; project approves only the guard with the current `guard.Matcher()` tool
+matcher. Cross-scope commands, changed matchers, unknown fields (including
+`commandWindows`), and execution-field overrides are lookalikes, not ours.
+Project trust/install/uninstall refuse symlinks escaping the resolved repo or targeting
+global hooks. A marker never authorizes trust. Exact matches need no prompt.
+
+After an upgrade, run `codexrig doctor`: a previously approved lookalike can be
+STILL TRUSTED and keep running. Doctor covers only the current working directory's Codex listing, not every
+repository. Trusted inline/nested/other-scope lookalikes in that listing fail
+doctor; trust exits
+non-zero and prints exact manual revocation steps. Stop Codex, remove the
+reported `trusted_hash` entry, review/remove the hook, restart and rerun doctor.
+Managed approval needs its administrator. Do not suggest an override or a revoke
+verb; neither exists. Safe reinstall preserves unrelated handlers and only
+repairs recognized current/legacy commands. Arbitrary lookalikes need manual
+review; no-op fixes are suppressed. Unrelated hooks have no trust row, but a
+machine missing sync hooks still warns and offers installation.
+
+Human hook metadata is terminal-escaped; JSON preserves original strings and
+uses arrays, never null lists. All in-scope refusals/lookalikes/existing unsafe
+approvals cause non-zero exit; unrelated-only/empty scopes succeed. Reports
+include later hooks after write failures. Disabled and unlisted hooks must not
+be described as running. File snapshots must agree with the listing and remain
+unchanged before writes; command/key/CurrentHash always use one listing, without
+a refreshed hash. Codex's incomplete hashing and non-atomic write API remain an
+upstream boundary, not a reason to loosen raw-field validation. Unknown future
+listing metadata means update codexrig, without revocation advice. Listing
+warnings are always surfaced. Invalid project scopes are refused before any
+hook classification. Repairs preserve sibling indices where possible and
+report unavoidable trust-key moves for review/re-approval.
 
 **Sessions are opt-in.** Enable them during `init` (or with `init --sessions`),
 or run `codexrig config set syncSessions true`. Do not tell someone their Codex

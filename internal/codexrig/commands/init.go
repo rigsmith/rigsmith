@@ -98,8 +98,7 @@ func NewInitCmd() *cobra.Command {
 				if herr != nil {
 					return herr
 				}
-				path := home + "/" + hooks.FileName
-				added, updated, ierr := hooks.Install(path, hooks.SyncPlans())
+				added, updated, ierr := hooks.InstallScope(hooks.GlobalScope(home), out)
 				if ierr != nil {
 					return ierr
 				}

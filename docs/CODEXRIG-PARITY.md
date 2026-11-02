@@ -123,7 +123,7 @@ Not parity, but worth recording — they came out of Codex being different.
 | | |
 |---|---|
 | **Path-key rewriting** | Codex addresses settings by absolute path in table keys. Nothing in clauderig does this because nothing in Claude Code needs it. |
-| **Hook trust** | `hooks trust` asks Codex for the hash and writes it through Codex's own config API. Claude Code has no trust gate. |
+| **Hook trust** | Global may approve only SyncPlans; project only GuardPlans with the current guard matcher. Full raw fields, reported fields, source, event and handler indices are validated against one listing. Unknown fields and escaping project symlinks fail closed. Human output escapes controls; JSON keeps exact strings. All in-scope refusals and STILL TRUSTED lookalikes exit non-zero; unrelated-only scopes succeed. Doctor fails for unsafe existing approval from any source Codex lists at the current working directory, including inline/nested hooks; it does not scan other repos. Invalid project scopes are refused before classification. Warnings and schema compatibility are surfaced separately. Safe reinstall preserves unrelated handlers and suppresses no-op fixes. Claude Code has no trust gate. |
 | **A codec seam** | JSON and TOML behind one interface, rather than a suffix test. This is the extraction the assessment asked for, done in the vendor that forced it. |
 | **A portability verdict for MCP servers** | Which servers will work elsewhere, and what each one needs on arrival. |
 | **Sessions as an explicit choice** | With every surface saying which mode the machine is in, so nobody assumes their conversations are backed up when they are not. |

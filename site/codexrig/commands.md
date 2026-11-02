@@ -58,15 +58,79 @@ authenticate".
 | Command | What it does |
 |---|---|
 | `codexrig global install` | The backup hooks, in your own Codex home. |
-| `codexrig global trust` | Record them as trusted, so Codex runs them. |
+| `codexrig global trust [--json]` | Trust exact current codexrig commands from your Codex home's `hooks.json`. |
 | `codexrig global status` | Installed? Up to date? Trusted? |
 | `codexrig project install` | The branch guard, in this repository's `.codex/`. |
-| `codexrig project trust` | Same, for the repository's hooks. |
+| `codexrig project trust [--json]` | Trust exact current codexrig commands from this repository's `.codex/hooks.json`. |
 
 Install and trust are separate because they are different acts: one writes a
 file, the other tells Codex to trust a file. `trust` asks Codex for the hash
 rather than computing one, and makes the edit through Codex so `config.toml`
 keeps its own formatting.
+
+Trust is a security boundary. Global scope may approve only `SessionStart:
+codexrig pull` and `Stop: codexrig sync --hook` in the selected Codex home's
+`hooks.json`. Project scope may approve only `PreToolUse: codexrig guard`, with
+the current `guard.Matcher()` tool list, in this repository's `.codex/hooks.json`.
+A backup command in a project file, or a guard command in the global file, is a
+lookalike for that scope. A marker substring never grants approval.
+
+Commands, case-sensitive events, matcher, handler type, and all hook fields must
+match what that scope's installer writes. Unknown fields, `commandWindows`,
+explicit timeout/status-message overrides, and other execution options fail
+closed even when Codex omits them from its listing. Project trust, install and uninstall
+refuse hooks resolving outside the resolved repo or to the global hooks file.
+Symlinked repo roots and macOS `/var` aliases remain supported. Parent traversal
+and ambiguous literal-backslash paths are refused.
+
+Trust reports approvals, failures and unlisted handlers. Exact healthy hooks
+from the other scope are omitted from text and retained under JSON `outside`. Human output escapes control characters in hook
+text, paths, events and matchers. JSON preserves the strings and returns arrays
+(including empty arrays) in `trusted`, `already`, `lookalikes`, `foreign`,
+`outside`, `refused`, `stillTrusted`, `incompatible`, and `warnings`. Unrelated hooks are left alone. A refusal,
+lookalike or write failure in the requested scope, or unsafe existing approval
+from any source in the listing, makes the command exit non-zero; unrelated-only and empty scopes exit zero.
+Later hooks are still classified after a failed write. Exact matches need no
+prompt. A missing source path fails closed with an update-Codex hint.
+
+**After upgrading, run `codexrig doctor`.** An old version may already have
+approved a lookalike. Doctor probes from the current working directory in the
+selected Codex home. This is not a machine-wide audit: approvals in other
+repositories are not seen. Any trusted marker-bearing hook in that listing
+that is not exact in its own permitted file says **STILL TRUSTED**, including
+inline `config.toml` hooks and nested sources. It makes doctor fail and trust
+exit non-zero, even outside the requested scope. Refusing a new approval does not
+revoke an old one. Stop Codex and follow the reported instructions: remove
+`trusted_hash` from the exact `[hooks.state."<reported key>"]` table in the
+reported Codex home's `config.toml`, review/remove the handler, restart Codex,
+and rerun doctor. Managed approvals require the policy administrator.
+There is no automatic revocation, revoke verb, or trust-anyway flag.
+
+Reinstall repairs only recognized current commands and the known legacy Stop
+command (`codexrig sync`). It preserves unrelated handlers, including siblings
+in the same group. Arbitrary marker-bearing commands and unknown fields require
+manual review; doctor offers an install repair only if it would change something.
+A global file with only unrelated hooks still warns that backup hooks are missing
+and offers installation, but has no trust row. Unrelated hooks beside healthy
+codexrig hooks do not alter their health. Disabled hooks are reported as disabled;
+if Codex does not list an installed handler, trust is explicitly unknown. Codex
+listing warnings are surfaced even alongside successfully listed hooks. An
+unknown future listing field fails closed with an update-codexrig hint, without
+revocation advice; this differs from an unknown field in the raw hooks file.
+Invalid project scopes are refused before classifying any hooks.
+
+Install replaces recognized commands in place when possible. If uninstall or a
+repair must move another handler to a new trust-key index, the output names
+that handler and the changed keys for review/re-approval. Malformed hooks
+document shapes are refused, and large numbers survive rewrites unchanged.
+
+The raw file is snapshotted before the listing and checked unchanged before
+writes. Its handler indices, source, command, event and matcher must agree with
+the one Codex listing whose key and `CurrentHash` are recorded. codexrig never
+fetches a newer hash to approve an older command. This is not an atomic
+transaction with Codex: post-check edits and Codex's own hash coverage still
+require upstream enforcement. In Codex 0.166.0 on macOS, `commandWindows` did not
+change the listing or hash; the raw-field refusal is therefore mandatory.
 
 ## Sessions
 

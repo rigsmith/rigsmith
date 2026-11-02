@@ -8,6 +8,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,8 @@ func Fixable(s []Section) []Result                   { return coredoctor.Fixable
 // it once so the checks stay free of discovery logic — and so the same checks
 // can be run from somewhere that is not a terminal.
 type Env struct {
+	Cwd        string
+	Output     io.Writer // receives commands approved or refused by a trust fix
 	Version    string
 	Config     *config.Config
 	Machine    config.Machine
@@ -78,6 +81,7 @@ func NewEnv(ctx context.Context, version string) Env {
 		e.HooksPath = filepath.Join(e.CodexHome, hooks.FileName)
 	}
 	if cwd, err := os.Getwd(); err == nil {
+		e.Cwd = cwd
 		if repo, err := gitrepo.Open(ctx, cwd); err == nil {
 			e.RepoRoot, _ = repo.Toplevel(ctx)
 		}
@@ -336,55 +340,109 @@ func hookChecks(ctx context.Context, env Env) []Result {
 	return hookChecksWithProbe(ctx, env, appserver.Available(), hooks.Check)
 }
 
-func hookChecksWithProbe(ctx context.Context, env Env, available bool, check func(context.Context, string, string) ([]appserver.HookInfo, error)) []Result {
-	out, present := userHookChecks(env)
-
-	if env.RepoRoot != "" {
-		projectPath := filepath.Join(env.RepoRoot, ".codex", hooks.FileName)
-		if got, gerr := hooks.Status(projectPath); gerr == nil && len(got) > 0 {
-			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: OK, Detail: strings.Join(got, ", ")})
-		} else {
-			out = append(out, Result{
-				ID: "project-guard", Name: "repo guard", Status: Info,
-				Detail: "not installed in this repository",
-				Hint:   "`codexrig project install` keeps code changes off a base branch",
-			})
-		}
-	}
+func hookChecksWithProbe(ctx context.Context, env Env, available bool, check func(context.Context, string, string, ...hooks.Scope) (hooks.CheckResult, error)) []Result {
+	out, installed := userHookChecks(env)
+	globalPresent := installed.HasCandidates()
 	projectPresent := false
 	if env.RepoRoot != "" {
-		got, err := hooks.Status(filepath.Join(env.RepoRoot, ".codex", hooks.FileName))
-		projectPresent = err == nil && len(got) > 0
+		path := filepath.Join(env.RepoRoot, ".codex", hooks.FileName)
+		status, err := hooks.Status(path, hooks.ProjectScope(env.RepoRoot, env.CodexHome))
+		projectPresent = status.HasCandidates()
+		switch {
+		case err != nil:
+			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: Warn, Detail: hooks.Display(err.Error())})
+		case len(status.Lookalikes) > 0:
+			r := Result{ID: "project-guard", Name: "repo guard", Status: Warn,
+				Detail:   "lookalike or out of date, reinstall: " + describeHookCommands(status.Lookalikes),
+				Hint:     "Run `codexrig project install`, review the result, then `codexrig project trust`",
+				FixLabel: "reinstall the project guard",
+				Fix: func(context.Context) error {
+					_, _, err := hooks.InstallScope(hooks.ProjectScope(env.RepoRoot, env.CodexHome), env.Output)
+					return err
+				},
+			}
+			if !hooks.CanInstall(hooks.ProjectScope(env.RepoRoot, env.CodexHome)) {
+				r.Fix = nil
+				r.FixLabel = ""
+				r.Hint = "Review lookalikes manually in the hooks file; the safe installer cannot repair them."
+			}
+			out = append(out, r)
+		case len(status.Ours) > 0:
+			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: OK, Detail: hooks.Display(strings.Join(status.Events(), ", "))})
+		case len(status.Foreign) > 0:
+			// A repository with only somebody else's hooks has no codexrig state to diagnose.
+		default:
+			out = append(out, Result{ID: "project-guard", Name: "repo guard", Status: Info,
+				Detail: "not installed in this repository", Hint: "`codexrig project install` keeps code changes off a base branch"})
+		}
 	}
-	if len(present) > 0 || projectPresent {
-		cwd := env.CodexHome
-		if projectPresent {
+	if globalPresent || projectPresent || available {
+		home := env.CodexHome
+		if home == "" && env.HooksPath != "" {
+			home = filepath.Dir(env.HooksPath)
+		}
+		cwd := env.Cwd
+		if cwd == "" {
 			cwd = env.RepoRoot
 		}
-		var ours []appserver.HookInfo
+		if cwd == "" {
+			cwd = home
+		}
+		var checked hooks.CheckResult
 		var probeErr error
 		if available {
 			probe, cancel := context.WithTimeout(ctx, 25*time.Second)
-			ours, probeErr = check(probe, "", cwd)
+			var scopes []hooks.Scope
+			if globalHookScope(env).Validate() == nil {
+				scopes = append(scopes, globalHookScope(env))
+			}
+			if env.RepoRoot != "" && hooks.ProjectScope(env.RepoRoot, env.CodexHome).Validate() == nil {
+				scopes = append(scopes, hooks.ProjectScope(env.RepoRoot, env.CodexHome))
+			}
+			if len(scopes) > 0 {
+				checked, probeErr = check(probe, home, cwd, scopes...)
+			}
 			cancel()
 		}
-		if len(present) > 0 {
-			out = append(out, hookTrustResult(env, false, available, ours, probeErr))
+		if globalPresent {
+			out = append(out, hookTrustResult(env, false, available, checked, probeErr))
 		}
 		if projectPresent {
-			out = append(out, hookTrustResult(env, true, available, ours, probeErr))
+			out = append(out, hookTrustResult(env, true, available, checked, probeErr))
+		}
+		covered := func(h appserver.HookInfo) bool {
+			return (globalPresent && (h.SourcePath == "" || globalHookScope(env).References(h.SourcePath))) || (projectPresent && (h.SourcePath == "" || hooks.ProjectScope(env.RepoRoot, env.CodexHome).References(h.SourcePath)))
+		}
+		for _, h := range checked.StillTrusted {
+			if !covered(h) {
+				out = append(out, Result{ID: "other-hook-trust", Name: "other hooks still trusted", Status: Fail, Detail: "STILL TRUSTED from " + hooks.Display(h.SourcePath) + ": " + hooks.Display(h.Command), Hint: hooks.Display(hooks.RevokeHint(home, h))})
+			}
+		}
+		for _, h := range checked.Incompatible {
+			if !covered(h) {
+				out = append(out, Result{ID: "hook-compatibility", Name: "Codex hook compatibility", Status: Warn, Detail: hooks.Display(h.ValidationIssue), Hint: "Update codexrig; no trust was changed or revocation recommended."})
+			}
+		}
+		if len(checked.Warnings) > 0 {
+			warnings := make([]string, len(checked.Warnings))
+			for i, w := range checked.Warnings {
+				warnings[i] = hooks.Display(w)
+			}
+			out = append(out, Result{ID: "hook-warnings", Name: "Codex hook warnings", Status: Warn, Detail: strings.Join(warnings, "\n")})
 		}
 	}
 
 	return out
 }
 
-func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo, probeErr error) Result {
+func hookTrustResult(env Env, project, available bool, checked hooks.CheckResult, probeErr error) Result {
 	r := Result{ID: "hook-trust", Name: "hooks trusted", Status: Warn}
 	cwd, command := env.CodexHome, "codexrig global trust"
+	scope := globalHookScope(env)
 	if project {
 		r.ID, r.Name = "project-hook-trust", "repo hooks trusted"
 		cwd, command = env.RepoRoot, "codexrig project trust"
+		scope = hooks.ProjectScope(env.RepoRoot, env.CodexHome)
 	}
 	if !available {
 		r.Status = Info
@@ -392,18 +450,28 @@ func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo
 		return r
 	}
 	if probeErr != nil {
-		r.Detail = "could not ask Codex: " + probeErr.Error()
+		r.Detail = "could not ask Codex: " + hooks.Display(probeErr.Error())
 		return r
 	}
 	var untrusted []string
+	var disabled []string
 	seen := false
-	for _, h := range ours {
-		if projectHookPath(env.RepoRoot, h.SourcePath) != project {
+	for _, h := range checked.Ours {
+		if !scope.References(h.SourcePath) {
 			continue
 		}
 		seen = true
+		if h.Trusted() && !h.Enabled {
+			disabled = append(disabled, hooks.Display(h.EventName))
+		}
 		if !h.Trusted() {
-			untrusted = append(untrusted, h.EventName)
+			untrusted = append(untrusted, hooks.Display(h.EventName))
+		}
+	}
+	var lookalikes []appserver.HookInfo
+	for _, h := range checked.Lookalikes {
+		if scope.References(h.SourcePath) {
+			lookalikes = append(lookalikes, h)
 		}
 	}
 	if len(untrusted) > 0 {
@@ -416,49 +484,108 @@ func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo
 		// Repository hooks require deliberate trust outside doctor --fix.
 		if !project {
 			r.FixLabel = "record these hooks as trusted"
-			r.Fix = func(c context.Context) error { _, err := hooks.Trust(c, "", cwd); return err }
+			r.Fix = func(c context.Context) error {
+				res, err := hooks.Trust(c, env.CodexHome, cwd, scope)
+				hooks.WriteTrustResult(env.Output, res)
+				return err
+			}
 		}
+	} else if len(disabled) > 0 {
+		r.Status, r.Detail = Warn, "trusted but disabled: "+strings.Join(disabled, ", ")
+		r.Hint = "Enable these hooks in Codex after reviewing them"
 	} else if seen {
 		r.Status, r.Detail = OK, "Codex will run them"
-	} else {
-		r.Detail = "Codex did not report the installed hooks"
+	} else if len(lookalikes) == 0 && !hasScopedDiagnostics(scope, checked) {
+		// Callers only request this row when the file has current hooks or lookalikes.
+		r.Detail = "Codex did not report the installed codexrig hooks or lookalikes"
 	}
+	if len(lookalikes) > 0 {
+		if r.Status == OK {
+			r.Status = Warn
+		}
+		if r.Detail != "" {
+			r.Detail += "\n"
+		}
+		r.Detail += "lookalike or out of date: " + describeHookCommands(lookalikes)
+		r.Hint += "\nReinstall outdated codexrig hooks; review lookalikes in Codex itself."
+	}
+	for _, h := range checked.Unreported {
+		if scope.References(h.SourcePath) {
+			if r.Status != Fail {
+				r.Status = Warn
+			}
+			r.Detail += "\ntrust unknown: Codex did not list " + hooks.Display(h.EventName) + ": " + hooks.Display(h.Command)
+		}
+	}
+	for _, h := range checked.StillTrusted {
+		if h.SourcePath == "" || scope.References(h.SourcePath) {
+			r.Status = Fail
+			r.Fix = nil
+			r.FixLabel = ""
+			r.Detail += "\nSTILL TRUSTED: Codex has approved this hook; codexrig did not approve it today: " + hooks.Display(h.Command)
+			r.Hint += "\n" + hooks.Display(hooks.RevokeHint(env.CodexHome, h))
+		}
+	}
+	for _, h := range checked.Incompatible {
+		if scope.References(h.SourcePath) {
+			if r.Status != Fail {
+				r.Status = Warn
+			}
+			r.Fix = nil
+			r.FixLabel = ""
+			r.Detail += "\n" + hooks.Display(h.ValidationIssue)
+			r.Hint += "\nUpdate codexrig; no revocation is recommended for an unrecognised listing field."
+		}
+	}
+	r.Detail = strings.TrimSpace(r.Detail)
+	r.Hint = strings.TrimSpace(r.Hint)
 	return r
 }
 
-// Codex's source enum is not a stable scope contract. Use the file it loaded,
-// resolving symlinks so macOS /var and /private/var spellings compare equally.
-func projectHookPath(repo, source string) bool {
-	if repo == "" || source == "" {
-		return false
-	}
-	normalize := func(path string) string {
-		path = filepath.Clean(filepath.FromSlash(strings.ReplaceAll(path, `\`, "/")))
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			path = resolved
+func hasScopedDiagnostics(scope hooks.Scope, checked hooks.CheckResult) bool {
+	for _, list := range [][]appserver.HookInfo{checked.StillTrusted, checked.Incompatible, checked.Unreported} {
+		for _, h := range list {
+			if h.SourcePath == "" || scope.References(h.SourcePath) {
+				return true
+			}
 		}
-		return path
 	}
-	root := normalize(filepath.Join(repo, ".codex"))
-	rel, err := filepath.Rel(root, normalize(source))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	return false
 }
 
-func userHookChecks(env Env) ([]Result, []string) {
+func globalHookScope(env Env) hooks.Scope {
+	home := env.CodexHome
+	if home == "" && env.HooksPath != "" {
+		home = filepath.Dir(env.HooksPath)
+	}
+	return hooks.GlobalScope(home)
+}
+
+func describeHookCommands(list []appserver.HookInfo) string {
+	var details []string
+	for _, h := range list {
+		text := hooks.Display(h.EventName) + ": " + hooks.Display(h.Command)
+		if h.ValidationIssue != "" {
+			text += " (" + hooks.Display(h.ValidationIssue) + ")"
+		}
+		details = append(details, text)
+	}
+	return strings.Join(details, "; ")
+}
+
+func userHookChecks(env Env) ([]Result, hooks.CheckResult) {
 	var out []Result
 	if env.HooksPath == "" {
-		return out, nil
+		return out, hooks.CheckResult{}
 	}
-	present, err := hooks.Status(env.HooksPath)
+	installed, err := hooks.Status(env.HooksPath, globalHookScope(env))
 	if err != nil {
-		return append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: err.Error()}), nil
+		return append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: hooks.Display(err.Error())}), hooks.CheckResult{}
 	}
+
 	want := hooks.SyncPlans()
-	// By event name, not by count. Status lists every event with a codexrig
-	// command, and a stale one offsetting a missing one made len(present) >=
-	// len(want) read as OK with a sync hook absent.
 	have := map[string]bool{}
-	for _, ev := range present {
+	for _, ev := range installed.Events() {
 		have[ev] = true
 	}
 	var missing []string
@@ -468,40 +595,53 @@ func userHookChecks(env Env) ([]Result, []string) {
 		}
 	}
 	switch {
-	case len(present) == 0:
-		out = append(out, Result{
-			ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: "not installed",
-			FixLabel: "install the sync hooks into your Codex home",
-			Fix: func(context.Context) error {
-				_, _, err := hooks.Install(env.HooksPath, want)
+	case len(installed.Lookalikes) > 0:
+		detail := "lookalike or out of date, reinstall: " + describeHookCommands(installed.Lookalikes)
+		if len(missing) > 0 {
+			detail += "; missing current hooks: " + strings.Join(missing, ", ")
+		}
+		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: detail,
+			Hint:     "Run `codexrig global install`, review the result, then `codexrig global trust`",
+			FixLabel: "reinstall the sync hooks", Fix: func(context.Context) error {
+				_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
+				return err
+			},
+		})
+	case len(installed.Ours) == 0:
+		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: "not installed",
+			FixLabel: "install the sync hooks into your Codex home", Fix: func(context.Context) error {
+				_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
 				return err
 			},
 		})
 	case len(missing) > 0:
-		out = append(out, Result{
-			ID: "user-hooks", Name: "sync hooks", Status: Warn,
-			Detail:   "missing: " + strings.Join(missing, ", "),
-			FixLabel: "install the missing sync hooks",
-			Fix: func(context.Context) error {
-				_, _, err := hooks.Install(env.HooksPath, want)
+		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: "missing: " + strings.Join(missing, ", "),
+			FixLabel: "install the missing sync hooks", Fix: func(context.Context) error {
+				_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
 				return err
 			},
 		})
 	default:
-		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: OK, Detail: strings.Join(present, ", ")})
+		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: OK, Detail: hooks.Display(strings.Join(installed.Events(), ", "))})
 	}
-
-	if drifted, derr := hooks.Drift(env.HooksPath, want); derr == nil && len(drifted) > 0 {
-		out = append(out, Result{
-			ID: "hook-drift", Name: "hook commands", Status: Warn,
-			Detail:   "out of date: " + strings.Join(drifted, ", "),
-			FixLabel: "bring the hook commands up to date",
-			Fix: func(context.Context) error {
-				_, _, err := hooks.Install(env.HooksPath, want)
-				return err
-			},
-		})
+	if len(installed.Lookalikes) == 0 {
+		if drifted, derr := hooks.Drift(env.HooksPath, want); derr == nil && len(drifted) > 0 {
+			out = append(out, Result{ID: "hook-drift", Name: "hook commands", Status: Warn, Detail: "out of date, reinstall: " + strings.Join(drifted, ", "),
+				FixLabel: "bring the hook commands up to date", Fix: func(context.Context) error {
+					_, _, err := hooks.InstallScope(globalHookScope(env), env.Output)
+					return err
+				},
+			})
+		}
 	}
-
-	return out, present
+	for i := range out {
+		if !hooks.CanInstall(globalHookScope(env)) {
+			out[i].Fix = nil
+			out[i].FixLabel = ""
+			if len(installed.Lookalikes) > 0 {
+				out[i].Hint = "Review lookalikes manually in the hooks file; the safe installer cannot repair them."
+			}
+		}
+	}
+	return out, installed
 }
