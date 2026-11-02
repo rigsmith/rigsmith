@@ -128,15 +128,15 @@ func stackPublishAfterPull(ctx context.Context, repo *gitrepo.Repo, m *stackMani
 }
 
 // Credentials belong in Git's credential helper, never persisted in the home URL.
-// Reject query/fragment components too: they can carry secrets that SafeRemote
-// (which handles userinfo) does not redact.
+// Reject query/fragment characters in every spelling, including local paths:
+// they can carry secrets that SafeRemote (which handles userinfo) does not redact.
 func stackValidateHomeRemote(remote string) error {
+	if strings.ContainsAny(remote, "?#") {
+		return fmt.Errorf("seed references must not contain query or fragment characters (? or #); configure Git credentials separately")
+	}
 	u, err := url.Parse(remote)
 	if strings.Contains(remote, "://") && (err != nil || u.Scheme == "" || (u.Host == "" && u.Scheme != "file") || (u.Scheme == "file" && u.Path == "")) {
 		return fmt.Errorf("invalid seed URL")
-	}
-	if strings.Contains(remote, "://") && strings.ContainsAny(remote, "?#") {
-		return fmt.Errorf("seed URLs must not contain a query or fragment; configure Git credentials separately")
 	}
 	if err == nil && u.User != nil {
 		_, password := u.User.Password()

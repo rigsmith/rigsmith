@@ -10,14 +10,14 @@ The seed host must be in `allowed-hosts`; local paths have no host.
 Private seeds use configured Git credentials and may be unavailable to fork PRs;
 fetch failures name the seed and exit at setup (10). Configure credentials outside
 the action without embedding tokens in workflow inputs. Credential-bearing seed
-URLs are rejected with redacted diagnostics. Seed URLs with query or fragment
-components are also rejected without echoing them; use configured Git credentials.
+URLs are rejected with redacted diagnostics. Seed references containing `?` or `#`
+are rejected in every form, including local paths, without echoing them; use configured Git credentials.
 The summary and provenance artifact record the sanitized seed and resolved commit.
 Topic dependency reporting also reads the seed, using
 `rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
 
 Seed-mode history and package caches use a hash of the seed reference plus the
-workflow run ID and attempt. Restore prefixes still reuse earlier caches, while
+workflow run ID, attempt, job ID and matrix index. Restore prefixes still reuse earlier caches, while
 each run can save newly fetched bundles and packages even when a seed branch
 moves. This avoids fetching the seed twice before the build merely to compute
 a content hash. Manifest mode retains content-based keys. Fork PRs skip both
@@ -50,7 +50,7 @@ per attempt. Curl retries transfer timeouts with `--retry`; checksum mismatches 
 built-in version and source-pinned per-platform SHA256; custom pins are refused
 in CI. Restored josh binaries are hashed again before execution.
 
-`manifest` is required.
+Exactly one of `manifest` or `seed` is required.
 `member` defaults to matching origin URL. `upstream-tip: 'true'` selects tips
 instead of committed sibling cursors. `build` and `test` default to `rig build`
 and `rig test` and run from the member prefix with bash; empty skips a command.

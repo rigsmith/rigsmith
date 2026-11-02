@@ -89,7 +89,7 @@ func TestStackCIActionSeedCacheKeys(t *testing.T) {
 		if strings.HasPrefix(step.Uses, "actions/cache@") {
 			caches++
 			key := step.With["key"]
-			for _, part := range []string{"inputs.seed != '' && format('seed-{0}-{1}-{2}'", "steps.cache-source.outputs.seed", "github.run_id", "github.run_attempt", "|| hashFiles(inputs.manifest"} {
+			for _, part := range []string{"inputs.seed != '' && format('seed-{0}-{1}-{2}-{3}-{4}'", "steps.cache-source.outputs.seed", "github.run_id", "github.run_attempt", "github.job", "strategy.job-index", "|| hashFiles(inputs.manifest"} {
 				if !strings.Contains(key, part) {
 					t.Fatalf("%s missing %s: %s", step.Name, part, key)
 				}
@@ -186,62 +186,79 @@ func TestStackCIActionSeedDependencies(t *testing.T) {
 func TestStackCISeedRejectsURLSecrets(t *testing.T) {
 	root := rmStackspace(t, rmManifest)
 	chdir(t, root)
-	for _, suffix := range []string{"?token=query-secret", "#fragment-secret", "?", "#"} {
-		t.Run(suffix[:1]+strings.TrimPrefix(suffix[1:], "token="), func(t *testing.T) {
-			seed := "https://github.com/acme/seed.git" + suffix
-			for _, mode := range []string{"ci", "deps", "setup", "publish"} {
-				t.Run(mode, func(t *testing.T) {
-					dir := t.TempDir()
-					summary := filepath.Join(dir, "summary")
-					provenance := filepath.Join(dir, "provenance")
-					t.Setenv("GITHUB_STEP_SUMMARY", summary)
-					t.Setenv("RIG_STACK_PROVENANCE", provenance)
-					var out bytes.Buffer
-					c := newStackCICmd()
-					args := []string{"--seed", seed}
-					switch mode {
-					case "deps":
-						c = newStackDepsCmd()
-					case "setup":
-						c = newStackSetupCmd()
-						args = []string{seed}
-					case "publish":
-						c = newStackSeedCmd()
-						args = []string{"--publish", seed}
-					}
-					c.SetArgs(args)
-					c.SetOut(&out)
-					c.SetErr(&out)
-					err := c.Execute()
-					if err == nil || !strings.Contains(err.Error(), "query or fragment") {
-						t.Fatalf("missing URL rejection: %v", err)
-					}
-					if mode == "ci" {
-						code, ok := StackCIExitCode(err)
-						if !ok || code != 10 {
-							t.Fatalf("setup exit: %v", err)
+	for _, base := range []string{"https://github.com/acme/seed.git", "acme/seed", "acme/seed.git", "git@github.com:acme/seed.git", "./seed.git", filepath.Join(root, "seed.git")} {
+		for _, suffix := range []string{"?token=query-secret", "#fragment-secret", "?", "#"} {
+			t.Run(base+suffix[:1], func(t *testing.T) {
+				seed := base + suffix
+				for _, mode := range []string{"ci", "deps", "setup", "publish"} {
+					t.Run(mode, func(t *testing.T) {
+						dir := t.TempDir()
+						summary := filepath.Join(dir, "summary")
+						provenance := filepath.Join(dir, "provenance")
+						t.Setenv("GITHUB_STEP_SUMMARY", summary)
+						t.Setenv("RIG_STACK_PROVENANCE", provenance)
+						var out bytes.Buffer
+						c := newStackCICmd()
+						args := []string{"--seed", seed}
+						switch mode {
+						case "deps":
+							c = newStackDepsCmd()
+						case "setup":
+							c = newStackSetupCmd()
+							args = []string{seed}
+						case "publish":
+							c = newStackSeedCmd()
+							args = []string{"--publish", seed}
 						}
-					}
-					texts := []string{err.Error(), out.String()}
-					for _, path := range []string{summary, provenance} {
-						b, e := os.ReadFile(path)
-						if e != nil && !os.IsNotExist(e) {
-							t.Fatal(e)
+						c.SetArgs(args)
+						c.SetOut(&out)
+						c.SetErr(&out)
+						err := c.Execute()
+						if err == nil || !strings.Contains(err.Error(), "query or fragment") {
+							t.Fatalf("missing URL rejection: %v", err)
 						}
-						texts = append(texts, string(b))
-					}
-					for _, text := range texts {
-						for _, secret := range []string{"query-secret", "fragment-secret", seed} {
-							if strings.Contains(text, secret) {
-								t.Fatal("seed URL leaked into diagnostics or artifacts")
+						if mode == "ci" {
+							code, ok := StackCIExitCode(err)
+							if !ok || code != 10 {
+								t.Fatalf("setup exit: %v", err)
 							}
 						}
-					}
-					if _, e := os.Stat(provenance); !os.IsNotExist(e) {
-						t.Fatalf("invalid seed wrote provenance: %v", e)
-					}
-				})
-			}
-		})
+						texts := []string{err.Error(), out.String()}
+						for _, path := range []string{summary, provenance} {
+							b, e := os.ReadFile(path)
+							if e != nil && !os.IsNotExist(e) {
+								t.Fatal(e)
+							}
+							texts = append(texts, string(b))
+						}
+						for _, text := range texts {
+							for _, secret := range []string{"query-secret", "fragment-secret", seed} {
+								if strings.Contains(text, secret) {
+									t.Fatal("seed URL leaked into diagnostics or artifacts")
+								}
+							}
+						}
+						if _, e := os.Stat(provenance); !os.IsNotExist(e) {
+							t.Fatalf("invalid seed wrote provenance: %v", e)
+						}
+					})
+				}
+			})
+		}
+	}
+}
+
+func TestStackCIReservedSeedMember(t *testing.T) {
+	root := t.TempDir()
+	writeStackManifest(t, root, `{"repos":{"_seed":{"upstream":"github.com/acme/app","fork":"github.com/you/app"}}}`)
+	if _, _, err := loadStackManifest(root); err == nil || !strings.Contains(err.Error(), "reserved for seed provenance") {
+		t.Fatalf("reserved member accepted: %v", err)
+	}
+	// Preserve the core prefix errors and other underscore names.
+	if err := stackValidPrefix("../app"); err == nil || !strings.Contains(err.Error(), "single directory") {
+		t.Fatalf("prefix validation: %v", err)
+	}
+	if err := stackValidPrefix("_app"); err != nil {
+		t.Fatal(err)
 	}
 }

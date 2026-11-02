@@ -222,7 +222,7 @@ The local composite at `.github/actions/stack/` accepts `seed` or `manifest` (ex
 `rig-version`, `rig-sha256`, `allowed-hosts`, `build`, `test`, `guard-project`,
 `strict`, `dependencies`, `upstream-tip`, `cache-history`, and `cache-packages`.
 Seed-mode history/package keys include a hash of the seed reference and the
-run ID/attempt so partial restores can save updated bundles; both caches remain
+run ID/attempt and job ID/matrix index so partial restores can save updated bundles; both caches remain
 disabled for fork PRs. Dependency reporting accepts the seed too.
 Pin rig and reviewed action SHAs. Use ordinary `pull_request`, read-only contents,
 and checkout `persist-credentials: false`; never execute PR code under

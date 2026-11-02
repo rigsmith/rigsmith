@@ -82,7 +82,7 @@ runs:
           ~/Library/Caches/rigsmith/josh
           ~/AppData/Local/rigsmith/josh
           ${{ runner.temp }}/stack-history
-        key: stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt) || hashFiles(inputs.manifest) }}
+        key: stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}-{3}-{4}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt, github.job, strategy.job-index) || hashFiles(inputs.manifest) }}
         restore-keys: |
           stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-
     - name: Restore package downloads
@@ -98,7 +98,7 @@ runs:
         # Seed keys advance each run/attempt so partial restores can save updates.
         # Cursors in the manifest cover every sibling's lockfiles and pins;
         # checkout hashes cover lockfile edits in the selected PR.
-        key: stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt) || hashFiles(inputs.manifest, '**/*lock*', '**/go.sum', '**/global.json', '**/Directory.Packages.props', '**/NuGet.config', '**/rust-toolchain*') }}
+        key: stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}-{3}-{4}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt, github.job, strategy.job-index) || hashFiles(inputs.manifest, '**/*lock*', '**/go.sum', '**/global.json', '**/Directory.Packages.props', '**/NuGet.config', '**/rust-toolchain*') }}
         restore-keys: |
           stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-
     - id: run

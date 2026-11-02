@@ -627,9 +627,17 @@ func stackValidBranchPrefix(prefix, where string) error {
 	return nil
 }
 
-// stackValidPrefix rejects the keys that would escape their own directory —
-// the one rule, shared with the release tools that read the manifest.
-func stackValidPrefix(name string) error { return corestack.ValidPrefix(name) }
+// stackValidPrefix shares path validation with release tools and reserves the
+// metadata key used by CI provenance.
+func stackValidPrefix(name string) error {
+	if err := corestack.ValidPrefix(name); err != nil {
+		return err
+	}
+	if name == "_seed" {
+		return fmt.Errorf("stack repo %q is reserved for seed provenance", name)
+	}
+	return nil
+}
 
 // stackSpec is the cfgfind spec for the stack manifest: a dedicated rig.stack.jsonc/.json
 // at the stackspace root, or a `stack` key inline in .rig.json.

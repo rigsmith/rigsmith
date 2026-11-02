@@ -925,3 +925,16 @@ func TestStackHomeRejectsURLSecrets(t *testing.T) {
 		mustGitStack(t, root, "config", "--unset", "rig.stackHomeURL")
 	}
 }
+
+func TestStackHomeRejectsExistingLocalQueryCharacters(t *testing.T) {
+	// Even an existing legal filename is rejected: seed references have one
+	// portable grammar, so existence cannot turn a secret-bearing input valid.
+	path := filepath.Join(t.TempDir(), "seed#fragment-secret")
+	if err := os.Mkdir(path, 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := stackSeedReference(path)
+	if err == nil || strings.Contains(err.Error(), "fragment-secret") {
+		t.Fatalf("local reference rejection: %v", err)
+	}
+}

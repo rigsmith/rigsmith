@@ -989,18 +989,20 @@ engine, overlay, commit and home side effects; the fused root remains remote-fre
 for `stackCIGuardPush`. Seed files and hooks are never materialized.
 Git uses configured credentials; diagnostics suppress raw clone output and
 seed references use SafeRemote in errors, summary and provenance. Shared seed
-validation rejects URL query/fragment components without echoing them, including
+validation rejects `?` and `#` in all reference forms (including local paths)
+without echoing them, including
 for setup, deps and home publication; configured homes are revalidated before
 retry hints. Rejected references never reach CI output or provenance. Seed hosts
 obey the member allowlist. Private-seed failures explain fork PR access and
-exit setup (10). Provenance stores reference and resolved commit under _seed.
+exit setup (10). Provenance stores reference and resolved commit under _seed, which is reserved
+and rejected as a member name during manifest validation.
 Member pointers remain discoverable via `stack home`, but CI requires explicit
 selection so a checkout cannot silently change the workflow's manifest source.
 
 `stack deps --seed` uses the same read-only loader and host allowlist, leaving
 dependency evaluation and publication policy unchanged. The action dispatches
 the same source to CI and dependency reporting. Seed-mode cache keys contain a
-hash of the seed reference plus run ID and attempt; broad restore prefixes reuse
+hash of the seed reference plus run ID, attempt, job ID and matrix index; broad restore prefixes reuse
 old entries while unique keys allow updated bundles/packages to be saved.
 This avoids an extra seed fetch before cache restore; it deliberately trades
 exact cache hits for continuing cache refresh. Manifest mode keeps content keys.
