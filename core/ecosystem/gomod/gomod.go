@@ -131,7 +131,7 @@ func (a *Adapter) Discover(ctx context.Context, req plugin.DiscoverRequest) (plu
 		}
 		mod, ver := parseModule(string(content))
 		if mod == "" {
-			return fmt.Errorf("parse %s: missing or unrecognized module directive", path)
+			return nil
 		}
 		all = append(all, parsed{path: path, module: mod, version: ver, require: parseRequires(string(content))})
 		modules[mod] = true

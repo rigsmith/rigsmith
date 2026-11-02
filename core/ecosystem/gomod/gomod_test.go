@@ -556,11 +556,19 @@ func TestDiscoverLineEndingsToWork(t *testing.T) {
 
 func TestDiscoverMalformedModule(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "lib", "go.mod")
-	writeFile(t, path, "go 1.26\n")
-	_, err := New().Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
-	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "module directive") {
-		t.Fatalf("error = %v", err)
+	writeFile(t, filepath.Join(root, "testdata", "bad", "go.mod"), "go 1.26\n")
+	writeFile(t, filepath.Join(root, "lib", "go.mod"), "module example.com/lib\n\ngo 1.26\n")
+	a := New()
+	got, err := a.Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Packages) != 1 || got.Packages[0].Name != "example.com/lib" {
+		t.Fatalf("packages = %+v, want only the good sibling", got.Packages)
+	}
+	detected, err := a.Detect(context.Background(), root)
+	if err != nil || !detected {
+		t.Fatalf("Detect = %v, %v; want true, nil", detected, err)
 	}
 }
 
