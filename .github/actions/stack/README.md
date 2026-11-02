@@ -11,7 +11,9 @@ Private seeds use configured Git credentials and may be unavailable to fork PRs;
 fetch failures name the seed and exit at setup (10). Configure credentials outside
 the action without embedding tokens in workflow inputs. Credential-bearing seed
 URLs are rejected with redacted diagnostics. Seed references containing `?` or `#`
-are rejected in every form, including local paths, without echoing them; use configured Git credentials.
+are rejected in the reference you supply, including local paths, without echoing
+them; use configured Git credentials. Characters inherited from the current
+directory when resolving a relative local path remain valid.
 The summary and provenance artifact record the sanitized seed and resolved commit.
 Topic dependency reporting also reads the seed, using
 `rig stack deps --seed <ref> --allowed-hosts github.com --publish`.

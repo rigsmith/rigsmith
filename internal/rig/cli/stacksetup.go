@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/rigsmith/rigsmith/core/gitrepo"
@@ -35,11 +37,27 @@ func newStackSetupCmd() *cobra.Command {
 			"An optional seed (owner/repo@ref, URL or local path) is cloned into the current empty directory.\n" +
 			"Only an explicit seed opts into home publication; no-argument setup leaves remotes and home configuration unchanged.",
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (result error) {
 			if dryRun {
 				return fmt.Errorf("--dry-run is not supported for stack setup")
 			}
 			ctx, out := cmd.Context(), cmd.OutOrStdout()
+			var unadoptedClone string
+			defer func() {
+				if unadoptedClone == "" {
+					return
+				}
+				entries, err := os.ReadDir(unadoptedClone)
+				if err != nil {
+					result = errors.Join(result, err)
+					return
+				}
+				for _, entry := range entries {
+					if err := os.RemoveAll(filepath.Join(unadoptedClone, entry.Name())); err != nil {
+						result = errors.Join(result, fmt.Errorf("cleaning failed seed setup: %w", err))
+					}
+				}
+			}()
 			if len(args) == 1 {
 				remote, ref, err := stackSeedReference(args[0])
 				if err != nil {
@@ -49,6 +67,13 @@ func newStackSetupCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
+				entries, err := os.ReadDir(cwd)
+				if err != nil {
+					return err
+				}
+				if len(entries) != 0 {
+					return fmt.Errorf("seed setup requires an empty directory")
+				}
 				clone := []string{"clone"}
 				if ref != "" {
 					clone = append(clone, "--branch", ref)
@@ -57,6 +82,9 @@ func newStackSetupCmd() *cobra.Command {
 				if _, err := stackHomeGit(ctx, cwd, clone...); err != nil {
 					return err
 				}
+				// Until home adoption succeeds, failures must leave the original
+				// empty directory ready for a corrected setup invocation.
+				unadoptedClone = cwd
 			}
 
 			root, err := stackRoot(ctx)
@@ -103,6 +131,7 @@ func newStackSetupCmd() *cobra.Command {
 
 				}
 			}
+			unadoptedClone = ""
 			// What is already dirty is the user's, and stays theirs. Everything
 			// setup goes on to produce is the difference against this.
 			before, err := repo.DirtyPaths(ctx)

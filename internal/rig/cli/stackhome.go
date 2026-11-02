@@ -23,6 +23,9 @@ import (
 // URLs, scp remotes and local paths retain git's normal spelling.
 func stackSeedReference(s string) (remote, ref string, err error) {
 	s = strings.TrimSpace(s)
+	if strings.ContainsAny(s, "?#") {
+		return "", "", fmt.Errorf("seed references must not contain query or fragment characters (? or #); configure Git credentials separately")
+	}
 	if err := stackValidateHomeRemote(s); err != nil {
 		return "", "", err
 	}
@@ -128,9 +131,12 @@ func stackPublishAfterPull(ctx context.Context, repo *gitrepo.Repo, m *stackMani
 }
 
 // Credentials belong in Git's credential helper, never persisted in the home URL.
-// Reject query/fragment characters in every spelling, including local paths:
-// they can carry secrets that SafeRemote (which handles userinfo) does not redact.
+// User-written references are checked before path resolution. Absolute local
+// remotes may inherit ?/# from the working directory and have no URL components.
 func stackValidateHomeRemote(remote string) error {
+	if filepath.IsAbs(remote) {
+		return nil
+	}
 	if strings.ContainsAny(remote, "?#") {
 		return fmt.Errorf("seed references must not contain query or fragment characters (? or #); configure Git credentials separately")
 	}

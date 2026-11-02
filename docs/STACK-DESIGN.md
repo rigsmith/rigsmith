@@ -989,10 +989,14 @@ engine, overlay, commit and home side effects; the fused root remains remote-fre
 for `stackCIGuardPush`. Seed files and hooks are never materialized.
 Git uses configured credentials; diagnostics suppress raw clone output and
 seed references use SafeRemote in errors, summary and provenance. Shared seed
-validation rejects `?` and `#` in all reference forms (including local paths)
-without echoing them, including
+validation rejects `?` and `#` in user-written reference forms (including local
+paths) before path resolution, without echoing them, including
 for setup, deps and home publication; configured homes are revalidated before
-retry hints. Rejected references never reach CI output or provenance. Seed hosts
+retry hints. Resolved absolute local remotes retain characters inherited from
+the current directory, including when loaded from home configuration. Setup
+removes its new clone if validation or home adoption fails, restoring the empty
+destination; once adopted, later engine/member failures retain it for retry.
+Rejected references never reach CI output or provenance. Seed hosts
 obey the member allowlist. Private-seed failures explain fork PR access and
 exit setup (10). Provenance stores reference and resolved commit under _seed, which is reserved
 and rejected as a member name during manifest validation.

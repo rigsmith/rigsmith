@@ -233,3 +233,110 @@ func TestStackSetupSeparatesPinFromBranchName(t *testing.T) {
 		})
 	}
 }
+
+func TestStackSetupLocalSeedUnderHashDirectory(t *testing.T) {
+	source := rmStackspace(t, rmManifest)
+	parent := filepath.Join(t.TempDir(), "workspace#local")
+	if err := os.Mkdir(parent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	parent, err = filepath.EvalSymlinks(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(parent, "stack")
+	mustGitStack(t, parent, "clone", source, root)
+	mustGitStack(t, root, "config", "user.name", "test")
+	mustGitStack(t, root, "config", "user.email", "t@t")
+	seed := filepath.Join(parent, "seed.git")
+	mustGitStack(t, parent, "init", "--bare", "--initial-branch=main", seed)
+	chdir(t, root)
+	publish := newStackSeedCmd()
+	publish.SetArgs([]string{"--publish", "../seed.git", "--force"})
+	if err := publish.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if got := stackHomeConfig(context.Background(), root, "URL"); got != seed {
+		t.Fatalf("stored home: %q", got)
+	}
+	// Retrying uses the stored absolute remote, rather than the original input.
+	retry := newStackSeedCmd()
+	retry.SetArgs([]string{"--force"})
+	if err := retry.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, parent)
+	remote, _, err := stackSeedReference("./seed.git")
+	if err != nil || remote != seed {
+		t.Fatalf("relative reference: %q %v", remote, err)
+	}
+	if _, _, err := stackCISeed(context.Background(), parent, filepath.Join(t.TempDir(), "ci-seed"), "./seed.git", "github.com"); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(parent, "checkout")
+	if err := os.Mkdir(dest, 0755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dest)
+	probeStackSetup(t, "../seed.git")
+	if got := stackHomeConfig(context.Background(), dest, "URL"); got != seed {
+		t.Fatalf("adopted home: %q", got)
+	}
+}
+
+func TestStackSetupCleansCloneAfterConfigurationFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Git configuration fault injection uses a POSIX wrapper")
+	}
+	ctx := context.Background()
+	root := rmStackspace(t, rmManifest)
+	repo, err := gitrepo.Open(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := filepath.Join(t.TempDir(), "seed")
+	if _, err := stackSeed(ctx, repo, m, seed, false); err != nil {
+		t.Fatal(err)
+	}
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := t.TempDir()
+	// Inject a configuration failure after Git has successfully cloned.
+	script := "#!/bin/sh\nif [ \"$3\" = config ] && [ \"$5\" = rig.stackHomeURL ]; then echo 'injected configuration failure' >&2; exit 1; fi\nexec \"$RIG_TEST_REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIG_TEST_REAL_GIT", realGit)
+	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
+	dest := t.TempDir()
+	chdir(t, dest)
+	cmd := newStackSetupCmd()
+	cmd.SetArgs([]string{seed})
+	err = cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "injected configuration failure") {
+		t.Fatalf("configuration error: %v", err)
+	}
+	entries, err := os.ReadDir(dest)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed setup left clone contents: %v %v", entries, err)
+	}
+	// An existing destination is never cleaned.
+	if err := os.WriteFile(filepath.Join(dest, "keep"), []byte("mine"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd = newStackSetupCmd()
+	cmd.SetArgs([]string{seed})
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("nonempty destination accepted")
+	}
+	if data, err := os.ReadFile(filepath.Join(dest, "keep")); err != nil || string(data) != "mine" {
+		t.Fatal("existing destination changed")
+	}
+}
