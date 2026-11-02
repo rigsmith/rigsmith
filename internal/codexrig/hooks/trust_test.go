@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -288,6 +289,9 @@ func TestTrustEscapingSymlinksFailClosed(t *testing.T) {
 	if !scope.Contains(windows) {
 		t.Fatal("Windows separators rejected")
 	}
+	if os.PathSeparator == '\\' {
+		return // Backslashes cannot be literal filename characters on Windows.
+	}
 	literal := filepath.Join(repo, `literal\hooks.json`)
 	if err := os.WriteFile(literal, []byte("{}"), 0600); err != nil {
 		t.Fatal(err)
@@ -315,7 +319,7 @@ func TestTrustStillTrustedLookalikeFails(t *testing.T) {
 		}
 		var out bytes.Buffer
 		WriteTrustResult(&out, res)
-		for _, text := range []string{"STILL TRUSTED", "did not approve it today", "remove trusted_hash", c.hooks[0].Key, "config.toml"} {
+		for _, text := range []string{"STILL TRUSTED", "did not approve it today", "remove trusted_hash", "hooks.state." + strconv.Quote(c.hooks[0].Key), "config.toml"} {
 			if !strings.Contains(out.String(), text) {
 				t.Fatalf("missing %q: %s", text, out.String())
 			}
@@ -402,10 +406,7 @@ func TestTrustTerminalRefusalCannotBeForged(t *testing.T) {
 }
 
 func TestTrustDisplayEscapesEveryHookField(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "repo\x1b]52;c;YWJj\a")
-	if err := os.Mkdir(root, 0700); err != nil {
-		t.Fatal(err)
-	}
+	root := t.TempDir()
 	scope := ProjectScope(root, t.TempDir())
 	installFixture(t, scope)
 	editFixture(t, scope, func(doc map[string]any) {
@@ -416,13 +417,18 @@ func TestTrustDisplayEscapesEveryHookField(t *testing.T) {
 		delete(hs, "PreToolUse")
 	})
 	c := listedFixture(t, scope)
+	// A reported source is untrusted text, even on systems whose filesystem
+	// rejects control characters in filenames.
+	reported := c.hooks[0]
+	reported.SourcePath += "\x1b]52;c;YWJj\a"
+	c.hooks = append(c.hooks, reported)
 	result, err := TrustWithClient(context.Background(), c, "", scope)
 	if err == nil {
 		t.Fatal("modified event and matcher accepted")
 	}
 	var out bytes.Buffer
 	WriteTrustResult(&out, result)
-	if strings.ContainsAny(out.String(), "\x1b\a\r") || strings.Contains(out.String(), "\ntrusted forged") {
+	if strings.ContainsAny(out.String(), "\x1b\a\r") || strings.Contains(out.String(), "\ntrusted forged") || !strings.Contains(out.String(), Display(reported.SourcePath)) {
 		t.Fatalf("unsafe hook metadata: %q", out.String())
 	}
 }

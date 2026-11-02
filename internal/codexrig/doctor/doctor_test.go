@@ -157,11 +157,18 @@ func TestHookDoctorFixOnlyTrustsGlobalInsideRepo(t *testing.T) {
 		KeyPath string `json:"keyPath"`
 		Value   string `json:"value"`
 	}
-	if err := json.Unmarshal(lines[0], &write); err != nil {
-		t.Fatal(err)
+	wantKeys := map[string]bool{
+		"hooks.state." + strconv.Quote(global.Key) + ".trusted_hash": true,
+		"hooks.state." + strconv.Quote(start.Key) + ".trusted_hash":  true,
 	}
-	if write.Value != global.CurrentHash || !strings.Contains(write.KeyPath, globalPath) {
-		t.Fatalf("wrong approval: %s", writes)
+	for _, line := range lines {
+		if err := json.Unmarshal(line, &write); err != nil {
+			t.Fatal(err)
+		}
+		if write.Value != global.CurrentHash || !wantKeys[write.KeyPath] {
+			t.Fatalf("wrong approval: %s", writes)
+		}
+		delete(wantKeys, write.KeyPath)
 	}
 	for _, text := range []string{"trusted stop", global.Command, "outside requested scope", project.Command, foreign.Command, "left alone"} {
 		if !strings.Contains(report.String(), text) {
