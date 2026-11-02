@@ -115,6 +115,7 @@ func stackEngine(ctx context.Context, m *stackManifest, cmd *cobra.Command) (str
 }
 
 func newStackInitCmd() *cobra.Command {
+	var checkoutMember string
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Scaffold the stack manifest, or import its repos into the stackspace",
@@ -150,6 +151,9 @@ func newStackInitCmd() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "wrote %s — fill in the repos, then run `rig stack init` again to import them\n", p)
 				return nil
 			}
+			if checkoutMember != "" && m.Repos[checkoutMember] == nil {
+				return fmt.Errorf("unknown checkout member %s", checkoutMember)
+			}
 			repo, err := gitrepo.Open(ctx, root)
 			if err != nil {
 				return fmt.Errorf("run `git init` first — the stackspace itself is an ordinary git repo")
@@ -182,6 +186,9 @@ func newStackInitCmd() *cobra.Command {
 			// recorded, not at upstream's tip, so it comes back as it was left.
 			names, rebuild := []string{}, map[string]bool{}
 			for _, name := range m.names() {
+				if stackInitSkipMember(name, checkoutMember) {
+					continue
+				}
 				switch {
 				case m.cursor(name) == "":
 					names = append(names, name)
@@ -242,6 +249,8 @@ func newStackInitCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&checkoutMember, "ci-checkout-member", "", "Member supplied separately by stack CI")
+	_ = cmd.Flags().MarkHidden("ci-checkout-member")
 	return cmd
 }
 
@@ -2344,4 +2353,9 @@ func stackAskSend(m *stackManifest, name, branch string) (string, string, error)
 		return name, "", err
 	}
 	return name, strings.TrimSpace(branch), nil
+}
+
+// Skip before consulting the cursor: CI supplies this tree independently.
+func stackInitSkipMember(name, checkoutMember string) bool {
+	return name == checkoutMember
 }

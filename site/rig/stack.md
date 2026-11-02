@@ -1400,6 +1400,13 @@ Topic dependency reporting also reads the seed, using
 `rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
 
 
+Outside topic mode, the selected member comes only from checkout HEAD: its upstream
+is never fetched and its manifest cursor is not required, including with
+`--upstream-tip`. Private selected members therefore need no token. Siblings still
+need accessible upstreams. Topic mode skips the selected member’s initial upstream
+import, then fetches its exact recorded PR head (the checkout may be a synthetic
+merge commit).
+
 Keep the plain-clone matrix to test released dependencies, and add a separate
 stackspace job to test sibling source changes. Copy the self-contained
 `.github/actions/stack/` directory from rigsmith into your member repository:

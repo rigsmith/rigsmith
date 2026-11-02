@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +14,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -90,6 +94,11 @@ func stackCIFlow(t *testing.T, failures bool) {
 	if e != nil || stackJoshInstalled(bin) != nil {
 		t.Fatal("install pinned josh before running E2E")
 	}
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GIT_TERMINAL_PROMPT", "0")
+	t.Setenv("GIT_ASKPASS", "")
+	t.Setenv("SSH_ASKPASS", "")
 	work := t.TempDir()
 	srv := newGitServer(t, filepath.Join(work, "srv"))
 	srv.seed(t, "acme/app", "app")
@@ -98,10 +107,22 @@ func stackCIFlow(t *testing.T, failures bool) {
 	mustGitStack(t, work, "clone", "--depth=1", "--branch=main", "file://"+srv.path("acme/app"), checkout)
 	mustGitStack(t, checkout, "config", "user.name", "test")
 	mustGitStack(t, checkout, "config", "user.email", "t@t")
-	a, _ := stackCIGit(context.Background(), srv.path("acme/app"), "rev-parse", "main")
+	var contacts atomic.Int32
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		contacts.Add(1)
+		http.Error(w, "selected upstream must never be contacted", http.StatusUnauthorized)
+	}))
+	defer denied.Close()
+	allowed := srv.addr + "," + strings.TrimPrefix(denied.URL, "http://")
+	defer func() {
+		if contacts.Load() != 0 {
+			t.Errorf("selected upstream contacted %d times", contacts.Load())
+		}
+	}()
+	a := []byte(strings.Repeat("a", 40))
 	b, _ := stackCIGit(context.Background(), srv.path("acme/lib"), "rev-parse", "main")
 	os.WriteFile(filepath.Join(checkout, "only-in-pr"), []byte("checkout commit"), 0644)
-	writeStackManifest(t, checkout, fmt.Sprintf(`{"repos":{"app":{"upstream":%q,"fork":%q},"lib":{"upstream":%q,"fork":%q}},"lastSync":{"app":%q,"lib":%q}}`, srv.spec("acme/app"), srv.spec("acme/app"), srv.spec("acme/lib"), srv.spec("acme/lib"), strings.TrimSpace(string(a)), strings.TrimSpace(string(b))))
+	writeStackManifest(t, checkout, fmt.Sprintf(`{"repos":{"app":{"upstream":%q,"fork":%q},"lib":{"upstream":%q,"fork":%q}},"lastSync":{"app":%q,"lib":%q}}`, strings.TrimPrefix(denied.URL, "http://")+"/acme/private", srv.spec("acme/app"), srv.spec("acme/lib"), srv.spec("acme/lib"), strings.TrimSpace(string(a)), strings.TrimSpace(string(b))))
 	mustGitStack(t, checkout, "add", ".")
 	mustGitStack(t, checkout, "commit", "-qm", "checkout-only PR")
 	exe := filepath.Join(work, "rig")
@@ -122,9 +143,21 @@ func stackCIFlow(t *testing.T, failures bool) {
 	var c *cobra.Command
 	if !failures {
 		c = newStackCICmd()
-		c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt", "--test", "test -f only-in-pr"})
+		var commits bytes.Buffer
+		c.SetOut(&commits)
+		c.SetArgs([]string{"--allowed-hosts", allowed, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt", "--test", "test -f only-in-pr"})
 		if e := c.Execute(); e != nil {
 			t.Fatal(e)
+		}
+		provenanceData, err := os.ReadFile(filepath.Join(work, "provenance.json"))
+		sha := strings.TrimSpace(mustGitStack(t, checkout, "rev-parse", "HEAD"))
+		if err != nil || !strings.Contains(string(provenanceData), `"source": "checkout"`) || !strings.Contains(string(provenanceData), sha) || !strings.Contains(commits.String(), "app "+sha) {
+			t.Fatalf("checkout provenance: %s %v", provenanceData, err)
+		}
+		tipCmd := newStackCICmd()
+		tipCmd.SetArgs([]string{"--upstream-tip", "--allowed-hosts", allowed, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt", "--test", "test -f only-in-pr"})
+		if err := tipCmd.Execute(); err != nil {
+			t.Fatal(err)
 		}
 		seedDir := filepath.Join(work, "seed-source")
 		mustGitStack(t, work, "init", seedDir)
@@ -145,7 +178,7 @@ func stackCIFlow(t *testing.T, failures bool) {
 		mustGitStack(t, checkout, "rm", "rig.stack.jsonc")
 		mustGitStack(t, checkout, "commit", "-qm", "use seed")
 		seedCmd := newStackCICmd()
-		seedCmd.SetArgs([]string{"--seed", bare, "--allowed-hosts", srv.addr, "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt && test ! -f rig.stack.jsonc", "--test", "test -f only-in-pr"})
+		seedCmd.SetArgs([]string{"--seed", bare, "--allowed-hosts", allowed, "--build", "test -f only-in-pr && test -f ../lib/src/lib.txt && test ! -f rig.stack.jsonc", "--test", "test -f only-in-pr"})
 		// Exercise origin auto-matching independently of the local clone URL.
 		mustGitStack(t, checkout, "remote", "set-url", "origin", "http://"+srv.spec("acme/app"))
 		if err = seedCmd.Execute(); err != nil {
@@ -166,13 +199,13 @@ func stackCIFlow(t *testing.T, failures bool) {
 			t.Fatal(string(out))
 		}
 		c = newStackCICmd()
-		c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "true", "--test", "true"})
+		c.SetArgs([]string{"--allowed-hosts", allowed, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "true", "--test", "true"})
 		if err := c.Execute(); err != nil {
 			t.Fatal(err)
 		}
 		cacheReport, err := os.ReadFile(report)
-		if err != nil || strings.Count(string(cacheReport), "\tcache\t") != 2 {
-			t.Fatalf("repeat run did not reuse both members: %s %v", cacheReport, err)
+		if err != nil || strings.Count(string(cacheReport), "\tcache\t") != 1 {
+			t.Fatalf("repeat run did not reuse the sibling: %s %v", cacheReport, err)
 		}
 		provenance, err = os.ReadFile(filepath.Join(work, "provenance.json"))
 		if err != nil || !strings.Contains(string(provenance), ":prefix=lib") {
@@ -182,17 +215,32 @@ func stackCIFlow(t *testing.T, failures bool) {
 			t.Fatalf("missing honest cache provenance: %s", provenance)
 		}
 		c = newStackCICmd()
-		c.SetArgs([]string{"--cache-history=false", "--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "true", "--test", "true"})
+		c.SetArgs([]string{"--cache-history=false", "--allowed-hosts", allowed, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", "true", "--test", "true"})
 		if err := c.Execute(); err != nil {
 			t.Fatal(err)
 		}
 		cacheReport, err = os.ReadFile(report)
-		if err != nil || strings.Contains(string(cacheReport), "\tcache\t") || strings.Count(string(cacheReport), "\tfetched\t") != 2 {
+		if err != nil || strings.Contains(string(cacheReport), "\tcache\t") || strings.Count(string(cacheReport), "\tfetched\t") != 1 {
 			t.Fatalf("cache disabled: %s %v", cacheReport, err)
 		}
 		status, _ := stackCIGit(context.Background(), checkout, "status", "--porcelain")
 		if len(status) != 0 {
 			t.Fatalf("checkout modified: %s", status)
+		}
+		manifestData, err := os.ReadFile(filepath.Join(checkout, "rig.stack.jsonc"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifestData = bytes.ReplaceAll(manifestData, []byte(srv.spec("acme/lib")), []byte(srv.spec("acme/missing")))
+		if err := os.WriteFile(filepath.Join(checkout, "rig.stack.jsonc"), manifestData, 0600); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, checkout, "add", ".")
+		mustGitStack(t, checkout, "commit", "-qm", "unavailable sibling")
+		failed := newStackCICmd()
+		failed.SetArgs([]string{"--cache-history=false", "--allowed-hosts", allowed, "--manifest", "rig.stack.jsonc", "--member", "app"})
+		if err := failed.Execute(); err == nil || !strings.Contains(err.Error(), "importing lib") || !strings.Contains(err.Error(), "private upstreams may be unavailable to fork PRs") {
+			t.Fatalf("missing sibling diagnostic: %v", err)
 		}
 		return
 	}
@@ -201,7 +249,7 @@ func stackCIFlow(t *testing.T, failures bool) {
 		code        int
 	}{{"false", "true", 12}, {"true", "false", 13}} {
 		c := newStackCICmd()
-		c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", tc.build, "--test", tc.test})
+		c.SetArgs([]string{"--allowed-hosts", allowed, "--manifest", "rig.stack.jsonc", "--member", "app", "--build", tc.build, "--test", tc.test})
 		e := c.Execute()
 		var ce *stackCIError
 		if !errors.As(e, &ce) || ce.ExitCode() != tc.code {
@@ -212,7 +260,7 @@ func stackCIFlow(t *testing.T, failures bool) {
 	os.WriteFile(wrapper, []byte("#!/bin/bash\nif [[ $2 == wire ]]; then exit 7; fi\nexec "+exe+" \"$@\"\n"), 0755)
 	stackCIExecutable = func() (string, error) { return wrapper, nil }
 	c = newStackCICmd()
-	c.SetArgs([]string{"--allowed-hosts", srv.addr, "--manifest", "rig.stack.jsonc", "--member", "app"})
+	c.SetArgs([]string{"--allowed-hosts", allowed, "--manifest", "rig.stack.jsonc", "--member", "app"})
 	e = c.Execute()
 	var ce *stackCIError
 	if !errors.As(e, &ce) || ce.ExitCode() != 11 {
@@ -656,5 +704,18 @@ func TestStackCIActionGuardProject(t *testing.T) {
 	}
 	if found != 1 {
 		t.Fatalf("want one --guard-project argument: %q", args)
+	}
+}
+
+func TestStackInitSkipCICheckout(t *testing.T) {
+	for _, tc := range []struct {
+		name, selected string
+		want           bool
+	}{
+		{"app", "app", true}, {"lib", "app", false}, {"app", "", false},
+	} {
+		if got := stackInitSkipMember(tc.name, tc.selected); got != tc.want {
+			t.Fatalf("skip(%q,%q)=%v", tc.name, tc.selected, got)
+		}
 	}
 }
