@@ -15,7 +15,7 @@ description: >
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
-allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(codexrig:*), Bash(codexrig-dev:*), Bash(brewrig:*), Bash(brewrig-dev:*), Bash(command -v:*), Bash(which:*)
+allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
 ---
 
 # rigsmith tools
