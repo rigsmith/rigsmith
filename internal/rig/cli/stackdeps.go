@@ -200,6 +200,9 @@ func stackDepsReport(ctx context.Context, m *stackManifest, a stackDepsAPI, out 
 					continue
 				}
 				text, ready := a.dependency(ctx, m.Repos[dep], p, m.cursor(dep))
+				if ready {
+					text += stackReleaseStatus(ctx, m, a, member, dep)
+				}
 				if !ready {
 					state = "pending"
 				}

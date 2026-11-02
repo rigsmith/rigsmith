@@ -1,0 +1,74 @@
+[
+  {
+    "Name": "plain",
+    "In": "#if STACK_X\na();\n#endif\n",
+    "Want": "a();\n",
+    "Refuse": false
+  },
+  {
+    "Name": "else",
+    "In": "#if STACK_X\na();\n#else\nb();\n#endif\n",
+    "Want": "a();\n",
+    "Refuse": false
+  },
+  {
+    "Name": "nested",
+    "In": "#if FOO\n#if STACK_X\na();\n#endif\n#endif\n",
+    "Want": "#if FOO\na();\n#endif\n",
+    "Refuse": false
+  },
+  {
+    "Name": "compound",
+    "In": "#if STACK_X && FOO\na();\n#endif\n",
+    "Want": "",
+    "Refuse": true
+  },
+  {
+    "Name": "elif",
+    "In": "#if STACK_X\na();\n#elif FOO\nb();\n#endif\n",
+    "Want": "",
+    "Refuse": true
+  },
+  {
+    "Name": "string",
+    "In": "var s = @\"\n#if STACK_X\n\";",
+    "Want": "",
+    "Refuse": true
+  },
+  {
+    "Name": "comment",
+    "In": "/*\n#if STACK_X\n*/",
+    "Want": "",
+    "Refuse": true
+  },
+  {
+    "Name": "crlf-bom",
+    "In": "\ufeff#if STACK_X\r\na();\r\n#else\r\nb();\r\n#endif\r\n",
+    "Want": "\ufeffa();\r\n",
+    "Refuse": false
+  },
+  {
+    "Name": "raw-string",
+    "In": "var s = \"\"\"\n#if STACK_X\n\"\"\";",
+    "Want": "",
+    "Refuse": true
+  },
+  {
+    "Name": "line-comment",
+    "In": "// #if STACK_X\n",
+    "Want": "",
+    "Refuse": true
+  },
+  {
+    "Name": "character",
+    "In": "#if STACK_X\nvar c = 'x';\n#endif\n",
+    "Want": "",
+    "Refuse": true
+  },
+  {
+    "Name": "unbalanced",
+    "In": "#if STACK_X\na();\n",
+    "Want": "",
+    "Refuse": true
+  }
+]

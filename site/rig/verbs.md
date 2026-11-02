@@ -477,3 +477,8 @@ curate the set live:
 
 Exclusions are written to `.rig.json`'s [`exclude`](./configuration) globs and
 match against the project's full name, short name, and repo-relative path.
+
+`rig stack released <member> <sibling> --package Acme.Lib` checks NuGet release
+commit ancestry. `--version` selects a release, `--feed` selects a flat-container
+feed, `--warning` explicitly attributes warning IDs, and `--apply` edits a clean
+working tree after interactive confirmation. `-n` previews only. See [stackspaces](./stack).

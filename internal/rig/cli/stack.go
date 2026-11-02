@@ -32,22 +32,23 @@ func newStackCmd() *cobra.Command {
 			"and leave one project at a time: `send` puts a prefix's changes on your\n" +
 			"fork as a PR-ready branch, and `push` fast-forwards a project you own with\n" +
 			"its history. Neither leaves any trace that the stackspace exists.\n\n" +
-			"  rig stack ci-guard <project>        build with observed warning guard\n" +
-			"  rig stack ci                        build and test a member checkout with sibling sources\n" +
-			"  rig stack setup [seed]              clone a manifest home; engine, members, overlay\n" +
-			"  rig stack init                      scaffold the manifest / import the repos\n" +
-			"  rig stack add [upstream]            add a repo and import it (asks if not given)\n" +
-			"  rig stack rm <repo>                 remove a repo: manifest, tree and overlay\n" +
-			"  rig stack seed [dir]                export root files; --publish updates the manifest home\n" +
-			"  rig stack home [pointer-file]       read a member seed pointer\n" +
-			"  rig stack deps                      topic PR dependencies and cursor inclusion\n" +
-			"  rig stack status                    cursor vs upstream, per repo\n" +
-			"  rig stack pull [repo]               merge new upstream commits (all by default)\n" +
-			"  rig stack propose [repo] [branch]   a branch on your fork, prefixed stack/ (asks)\n" +
-			"  rig stack push [repo]               fast-forward a repo you own, history intact\n" +
-			"  rig stack wire                      write the build overlay for the members\n" +
-			"  rig stack pack [repo]               build a member's packages here, where the overlay applies\n" +
-			"  rig stack doctor                    engine + manifest checks (--fix installs josh)",
+			"  rig stack ci-guard <project>           build with observed warning guard\n" +
+			"  rig stack ci                           build and test a member checkout with sibling sources\n" +
+			"  rig stack setup [seed]                 clone a manifest home; engine, members, overlay\n" +
+			"  rig stack init                         scaffold the manifest / import the repos\n" +
+			"  rig stack add [upstream]               add a repo and import it (asks if not given)\n" +
+			"  rig stack rm <repo>                    remove a repo: manifest, tree and overlay\n" +
+			"  rig stack seed [dir]                   export root files; --publish updates the manifest home\n" +
+			"  rig stack home [pointer-file]          read a member seed pointer\n" +
+			"  rig stack released <member> <sibling>   check NuGet releases; --apply returns to packages\n" +
+			"  rig stack deps                         topic PR dependencies and cursor inclusion\n" +
+			"  rig stack status                       cursor vs upstream, per repo\n" +
+			"  rig stack pull [repo]                  merge new upstream commits (all by default)\n" +
+			"  rig stack propose [repo] [branch]      a branch on your fork, prefixed stack/ (asks)\n" +
+			"  rig stack push [repo]                  fast-forward a repo you own, history intact\n" +
+			"  rig stack wire                         write the build overlay for the members\n" +
+			"  rig stack pack [repo]                  build a member's packages here, where the overlay applies\n" +
+			"  rig stack doctor                       engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -55,7 +56,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackReleasedCmd(), newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 

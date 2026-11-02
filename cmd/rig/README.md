@@ -149,3 +149,7 @@ default-setter) preserve comments via the JSONC editor.
 The remaining ergonomics tail (`[suggest]` completion, menu project-pickers,
 `setup`/`self-update`, the interactive `default` verb, test-class fuzzy match)
 is tracked in [../docs/FEATURE-PARITY.md](../docs/FEATURE-PARITY.md).
+
+`rig stack released app lib --package Acme.Lib` verifies NuGet commit ancestry
+and previews package pin and simple stack guard edits. `--apply` requires a clean
+tree and interactive confirmation; `-n` previews. See [stackspaces](../../site/rig/stack.md).

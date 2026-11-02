@@ -429,3 +429,10 @@ enforces:
 - "record this change", "bump the version", "update the changelog" → **changerig**
 - "publish", "cut a release", "tag" → **shiprig**
 - "sync my Claude setup", "make a worktree", "set up the guard" → **clauderig** / `rig worktree`
+
+For returning .NET stack members to packages, preview with
+`rig stack released <member> <sibling> --package Acme.Lib [--version 2.0.0]`.
+Require repository commit ancestry proof; missing evidence is not a release.
+`--apply` is interactive and clean-tree only; `-n` previews. Explicitly attribute
+StackOnlyWarning IDs with `--warning`; review all refused rewrites and build
+with UseStackSources=false. The command creates no PR.

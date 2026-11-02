@@ -1408,3 +1408,22 @@ not proof that a fusion warning was held back. This remains unconfirmed against
 a real stack or the reference member's platform matrix. Runtime warning
 log-message patterns are not implemented; eligibility uses MSBuild diagnostic
 codes and observed NuGet events only.
+
+## Return to packages after a release
+
+Run `rig stack released app lib --package Acme.Lib` to check NuGet repository
+commit metadata against all recorded sibling proposals and its upstream cursor.
+Use `--version 2.0.0` for one version or `--feed <flat-container-url>` for another
+feed. The default checks up to 20 newest stable versions. Missing metadata says
+“can't tell”; feed failures say “can't check”. Dates and version names are never
+containment evidence. Status annotates merged dependencies when release proof
+fits its existing short network budget.
+
+Add `--apply` to bump literal PackageReference or central PackageVersion pins
+and remove simple STACK_ACME_LIB guards, keeping their guarded branch. Apply
+requires a clean tree and interactive confirmation; `-n` previews. Complex
+guards, files containing strings/comments, source/availability conditions and
+unattributed StackOnlyWarning declarations are listed for manual review.
+Use `--warning ACME0001` only after identifying that declaration as belonging to
+this package. Floating versions and conditional pins require manual work.
+Review and build with stack sources off before committing. No PR is opened.

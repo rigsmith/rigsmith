@@ -190,3 +190,7 @@ theirs:
 
 Independently: the release engine is a faithful port of **net-changesets**, which
 is itself a .NET port of [changesets](https://github.com/changesets/changesets).
+
+For .NET stackspaces, `rig stack released app lib --package Acme.Lib` checks
+published NuGet commit ancestry and previews a return to packages. `--apply`
+edits a clean tree after confirmation. See [the stack guide](site/rig/stack.md).
