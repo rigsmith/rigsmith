@@ -84,6 +84,10 @@ rig stack propose some-lib read-timeout --dry-run   # what would go to your fork
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```
 
+Owned-member push compares content with upstream, so squash/rebase merges already
+containing the work leave nothing to push. New commits remain separate on a safe
+upstream base; ambiguous history is refused. Push verifies fast-forward ancestry locally
+and never forces an update. `--dry-run` uses the same delivery plan.
 
 `rig stack ci` requires exactly one of `--seed acme/rigstack-app@main` or
 `--manifest stack/rig.stack.jsonc` and builds a member checkout with sibling sources in a temporary

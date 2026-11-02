@@ -38,6 +38,11 @@ rig stack push my-app --dry-run      # the target, branch and commits that would
 rig stack seed ../rigstack-acme      # portable seed; the menu suggests a path outside enclosing repos
 ```
 
+Owned-member push compares content with upstream, so squash/rebase merges already
+containing the work leave nothing to push. New commits remain separate on a safe
+upstream base; ambiguous history is refused. Push verifies fast-forward ancestry locally
+and never forces an update. `--dry-run` uses the same delivery plan.
+
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`) and offline seed directory exports refuse dry-run; seed publication previews without cloning or pushing; `wire` and `doctor --fix` report without writing. `ci`, `ci-guard`, and `deps` (including `--publish`) refuse dry-run; `home` is read-only.
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their

@@ -1662,3 +1662,35 @@ rewrite fixtures preserve exact bytes, including BOM/CRLF. The gated
 RIG_STACK_E2E=1 fixture packs a local NuGet library, rewrites a consumer, then
 builds it with UseStackSources=false. Hosted GitHub and private-feed integration
 remain unverified.
+
+## Push after squash/rebase delivery (2026-11-02)
+
+The inverse-filter identity assumption in the original push design does not
+hold after upstream squash-merges a proposal. Josh may retain the pre-squash
+line even after pull imports an identical tree. Both delivery verbs now use
+`stackDeliveryUnsent` to compare the member tree with the upstream tip tree.
+Equal content means no unsent work, independently of commit identity.
+
+For differing trees, ordinary descendant filtered history is retained. Otherwise
+push requires an exact upstream-tree match on the filtered first-parent line
+and reparents each subsequent linear, nonempty commit individually on upstream.
+This keeps authors, committers and complete messages, rather than silently
+squashing owned history; SHA identities change and signatures are stripped
+because their signed ancestry changed. A merge in that replay range is refused.
+No matching boundary means refusal, not patch-equivalence guessing: partial
+squashes and overlapping upstream edits must not silently discard local work.
+
+Member removal deletes its prefix, so filtering can produce remove/cursor
+commits, despite manifest-only edits normally disappearing. A restored tree
+matches upstream; following new work is rebuilt past that matching boundary
+when administrative remove/cursor history is present. Such operations are not
+member changes to export. This needs no reset flag.
+
+Before preview and again immediately before writing, push verifies that the
+planned commit descends from the observed upstream tip, regardless of the
+server's receive policy. The final write is a plain non-force push. Both verbs
+share the unsent decision, so status needs no disagreement warning; push may
+still refuse an ambiguous history that propose can present as a reviewable diff.
+Dry run restores the temporary filtered ref even on planning errors; it does
+not move HEAD, manifest, cursor or remote. Git objects and filter caches may be
+created while planning, as they were before.
