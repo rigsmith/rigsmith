@@ -31,6 +31,7 @@ func NewDoctorCmd(version string) *cobra.Command {
 			// repair is allowed to take as long as it takes.
 			ctx, cancel := context.WithTimeout(cmd.Context(), 40*time.Second)
 			env := doctor.NewEnv(ctx, version)
+			env.Output = out
 			sections := doctor.Run(ctx, env)
 			cancel()
 

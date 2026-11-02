@@ -42,14 +42,14 @@ func TestInstalledHooksAreSeenAndTrustedByCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, h := range before {
+	for _, h := range before.Ours {
 		t.Logf("before: %-14s trust=%-10s cmd=%q", h.EventName, h.TrustStatus, h.Command)
 	}
-	if len(before) != 2 {
-		t.Fatalf("codex saw %d of our hooks, want 2 — the file shape is wrong", len(before))
+	if len(before.Ours) != 2 {
+		t.Fatalf("codex saw %d of our hooks, want 2 — the file shape is wrong", len(before.Ours))
 	}
 
-	res, err := Trust(ctx, home, cwd)
+	res, err := Trust(ctx, home, cwd, GlobalScope(home))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestInstalledHooksAreSeenAndTrustedByCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, h := range after {
+	for _, h := range after.Ours {
 		t.Logf("after:  %-14s trust=%-10s", h.EventName, h.TrustStatus)
 		if !h.Trusted() {
 			t.Errorf("%s is still %s after Trust", h.EventName, h.TrustStatus)

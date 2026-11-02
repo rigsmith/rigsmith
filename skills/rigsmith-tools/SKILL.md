@@ -8,7 +8,7 @@ description: >
   several logins side by side), and brewrig (Homebrew packages and versions across machines). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code or Codex CLI
-  setup, switching or running a different Codex login, keeping two Macs' Homebrew
+  setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies,
@@ -555,6 +555,19 @@ After any `codexrig global install` or `codexrig project install`, run the match
 for user hooks and installed project hooks. For untrusted project hooks it warns
 and points to `codexrig project trust`, without offering a fix. A clean doctor
 run without the app server is not proof that hooks are trusted.
+
+Trust is limited to exact current codexrig commands **and their events**, from
+the requested scope's hooks file (normalized paths, including symlinks). A
+`codexrig` substring or comment is not ownership. Global trust never approves
+project hooks, and project trust never approves global hooks. Guard matchers
+may vary, but the command must match exactly. Outdated commands or paths from
+another machine require the matching `install` before `trust`. Review foreign
+hooks through Codex itself; do not suggest an override flag. Exact current
+commands need no prompt, including global trust through `doctor --fix`.
+`trust` prints every approval and refusal with the exact command; `--json`
+returns the same decisions and refusal next steps. Nothing eligible exits
+non-zero. Never replace a validated listing's hash with one fetched later:
+command, key, and `CurrentHash` must come from the same Codex listing.
 
 **Sessions are opt-in.** Enable them during `init` (or with `init --sessions`),
 or run `codexrig config set syncSessions true`. Do not tell someone their Codex

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,12 +126,20 @@ func scopeCmd(name string, aliases []string, short, long string,
 				"silent.\n\n" +
 				"This asks Codex for that hash and hands it back, rather than computing one,\n" +
 				"and makes the edit through Codex so config.toml keeps its own formatting.\n" +
-				"It is you trusting a file, which is why it is a separate command.",
+				"Only exact current codexrig commands in this scope are approved, without a prompt.\n" +
+				"Every command approved or refused is printed (also with --json). Foreign or\n" +
+				"outdated commands are refused: reinstall outdated hooks, and review foreign\n" +
+				"hooks through Codex itself. Nothing eligible means a non-zero exit.",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return trustScope(cmd, pathOf)
 			},
 		},
 	)
+	for _, child := range cmd.Commands() {
+		if child.Name() == "trust" {
+			child.Flags().Bool("json", false, "print commands approved and refused as JSON")
+		}
+	}
 	return cmd
 }
 
@@ -179,6 +188,7 @@ func statusScope(cmd *cobra.Command, pathOf func(context.Context) (string, error
 	}
 	if len(present) == 0 {
 		fmt.Fprintf(out, "%s\n", DimStyle.Render("not installed — `codexrig "+cmd.Parent().Name()+" install`"))
+		printTrustState(cmd, path)
 		return nil
 	}
 	fmt.Fprintf(out, "%s %s\n", OkStyle.Render("installed"), strings.Join(present, ", "))
@@ -193,27 +203,38 @@ func statusScope(cmd *cobra.Command, pathOf func(context.Context) (string, error
 	}
 	// Ask Codex whether it will actually run them, since that is the question
 	// somebody checking status is really asking.
-	printTrustState(cmd, filepath.Dir(path))
+	printTrustState(cmd, path)
 	return nil
 }
 
-func printTrustState(cmd *cobra.Command, cwd string) {
+func printTrustState(cmd *cobra.Command, path string) {
 	out := cmd.OutOrStdout()
 	if !appserverAvailable() {
 		return
 	}
-	ours, err := hooks.Check(cmd.Context(), "", cwd)
+	check, err := hooks.Check(cmd.Context(), "", filepath.Dir(path))
 	if err != nil {
 		fmt.Fprintf(out, "  %s\n", DimStyle.Render("could not ask Codex whether it will run them: "+err.Error()))
 		return
 	}
+	scope := commandHookScope(cmd, path)
+	for _, h := range check.Foreign {
+		if scope.Contains(h.SourcePath) {
+			fmt.Fprintf(out, "  foreign or out of date %s: %s\n    Reinstall outdated hooks; review foreign hooks in Codex itself.\n", h.EventName, h.Command)
+		}
+	}
 	var untrusted []string
-	for _, h := range ours {
+	seen := 0
+	for _, h := range check.Ours {
+		if !scope.Contains(h.SourcePath) {
+			continue
+		}
+		seen++
 		if !h.Trusted() {
 			untrusted = append(untrusted, h.EventName)
 		}
 	}
-	if len(untrusted) == 0 && len(ours) > 0 {
+	if len(untrusted) == 0 && seen > 0 {
 		fmt.Fprintf(out, "  %s\n", OkStyle.Render("trusted — Codex will run them"))
 		return
 	}
@@ -224,7 +245,6 @@ func printTrustState(cmd *cobra.Command, cwd string) {
 }
 
 func trustScope(cmd *cobra.Command, pathOf func(context.Context) (string, error)) error {
-	out := cmd.OutOrStdout()
 	path, err := pathOf(cmd.Context())
 	if err != nil {
 		return err
@@ -232,21 +252,25 @@ func trustScope(cmd *cobra.Command, pathOf func(context.Context) (string, error)
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("nothing installed at %s yet", path)
 	}
-	res, err := hooks.Trust(cmd.Context(), "", filepath.Dir(path))
-	if err != nil {
-		return err
+	res, trustErr := hooks.Trust(cmd.Context(), "", filepath.Dir(path), commandHookScope(cmd, path))
+	return printScopeTrustResult(cmd, res, trustErr)
+}
+
+func commandHookScope(cmd *cobra.Command, path string) hooks.Scope {
+	if cmd.Parent().Name() == "project" {
+		return hooks.ProjectScope(filepath.Dir(filepath.Dir(path)))
 	}
-	if len(res.Trusted) > 0 {
-		fmt.Fprintf(out, "%s %s\n", OkStyle.Render("trusted"), strings.Join(res.Trusted, ", "))
+	return hooks.GlobalScope(filepath.Dir(path))
+}
+
+func printScopeTrustResult(cmd *cobra.Command, res hooks.TrustResult, trustErr error) error {
+	asJSON, _ := cmd.Flags().GetBool("json")
+	if asJSON {
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(res); err != nil {
+			return err
+		}
+	} else {
+		hooks.WriteTrustResult(cmd.OutOrStdout(), res)
 	}
-	if len(res.Already) > 0 {
-		fmt.Fprintf(out, "%s %s\n", DimStyle.Render("already trusted:"), strings.Join(res.Already, ", "))
-	}
-	if len(res.Trusted) == 0 && len(res.Already) == 0 {
-		fmt.Fprintln(out, DimStyle.Render("Codex reported no codexrig hooks here"))
-	}
-	if len(res.Foreign) > 0 {
-		fmt.Fprintf(out, "  %s\n", DimStyle.Render("left alone (not codexrig's): "+strings.Join(res.Foreign, ", ")))
-	}
-	return nil
+	return trustErr
 }

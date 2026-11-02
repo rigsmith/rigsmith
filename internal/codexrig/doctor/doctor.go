@@ -8,6 +8,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,6 +50,7 @@ func Fixable(s []Section) []Result                   { return coredoctor.Fixable
 // it once so the checks stay free of discovery logic — and so the same checks
 // can be run from somewhere that is not a terminal.
 type Env struct {
+	Output     io.Writer // receives commands approved or refused by a trust fix
 	Version    string
 	Config     *config.Config
 	Machine    config.Machine
@@ -336,7 +338,7 @@ func hookChecks(ctx context.Context, env Env) []Result {
 	return hookChecksWithProbe(ctx, env, appserver.Available(), hooks.Check)
 }
 
-func hookChecksWithProbe(ctx context.Context, env Env, available bool, check func(context.Context, string, string) ([]appserver.HookInfo, error)) []Result {
+func hookChecksWithProbe(ctx context.Context, env Env, available bool, check func(context.Context, string, string) (hooks.CheckResult, error)) []Result {
 	out, present := userHookChecks(env)
 
 	if env.RepoRoot != "" {
@@ -352,39 +354,46 @@ func hookChecksWithProbe(ctx context.Context, env Env, available bool, check fun
 		}
 	}
 	projectPresent := false
-	if env.RepoRoot != "" {
-		got, err := hooks.Status(filepath.Join(env.RepoRoot, ".codex", hooks.FileName))
-		projectPresent = err == nil && len(got) > 0
+	globalPresent := len(present) > 0
+	if env.HooksPath != "" {
+		_, err := os.Stat(env.HooksPath)
+		globalPresent = globalPresent || err == nil
 	}
-	if len(present) > 0 || projectPresent {
+	if env.RepoRoot != "" {
+		_, err := os.Stat(filepath.Join(env.RepoRoot, ".codex", hooks.FileName))
+		projectPresent = err == nil
+	}
+	if globalPresent || projectPresent {
 		cwd := env.CodexHome
 		if projectPresent {
 			cwd = env.RepoRoot
 		}
-		var ours []appserver.HookInfo
+		var checked hooks.CheckResult
 		var probeErr error
 		if available {
 			probe, cancel := context.WithTimeout(ctx, 25*time.Second)
-			ours, probeErr = check(probe, "", cwd)
+			checked, probeErr = check(probe, "", cwd)
 			cancel()
 		}
-		if len(present) > 0 {
-			out = append(out, hookTrustResult(env, false, available, ours, probeErr))
+		if globalPresent {
+			out = append(out, hookTrustResult(env, false, available, checked, probeErr))
 		}
 		if projectPresent {
-			out = append(out, hookTrustResult(env, true, available, ours, probeErr))
+			out = append(out, hookTrustResult(env, true, available, checked, probeErr))
 		}
 	}
 
 	return out
 }
 
-func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo, probeErr error) Result {
+func hookTrustResult(env Env, project, available bool, checked hooks.CheckResult, probeErr error) Result {
 	r := Result{ID: "hook-trust", Name: "hooks trusted", Status: Warn}
 	cwd, command := env.CodexHome, "codexrig global trust"
+	scope := hooks.GlobalScope(env.CodexHome)
 	if project {
 		r.ID, r.Name = "project-hook-trust", "repo hooks trusted"
 		cwd, command = env.RepoRoot, "codexrig project trust"
+		scope = hooks.ProjectScope(env.RepoRoot)
 	}
 	if !available {
 		r.Status = Info
@@ -397,8 +406,8 @@ func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo
 	}
 	var untrusted []string
 	seen := false
-	for _, h := range ours {
-		if projectHookPath(env.RepoRoot, h.SourcePath) != project {
+	for _, h := range checked.Ours {
+		if !scope.Contains(h.SourcePath) {
 			continue
 		}
 		seen = true
@@ -416,32 +425,27 @@ func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo
 		// Repository hooks require deliberate trust outside doctor --fix.
 		if !project {
 			r.FixLabel = "record these hooks as trusted"
-			r.Fix = func(c context.Context) error { _, err := hooks.Trust(c, "", cwd); return err }
+			r.Fix = func(c context.Context) error {
+				res, err := hooks.Trust(c, env.CodexHome, cwd, scope)
+				hooks.WriteTrustResult(env.Output, res)
+				return err
+			}
 		}
 	} else if seen {
 		r.Status, r.Detail = OK, "Codex will run them"
 	} else {
 		r.Detail = "Codex did not report the installed hooks"
 	}
-	return r
-}
-
-// Codex's source enum is not a stable scope contract. Use the file it loaded,
-// resolving symlinks so macOS /var and /private/var spellings compare equally.
-func projectHookPath(repo, source string) bool {
-	if repo == "" || source == "" {
-		return false
-	}
-	normalize := func(path string) string {
-		path = filepath.Clean(filepath.FromSlash(strings.ReplaceAll(path, `\`, "/")))
-		if resolved, err := filepath.EvalSymlinks(path); err == nil {
-			path = resolved
+	for _, h := range checked.Foreign {
+		if scope.Contains(h.SourcePath) {
+			if r.Status == OK {
+				r.Status = Warn
+			}
+			r.Detail += "\nforeign or out of date " + h.EventName + ": " + h.Command
+			r.Hint += "\nReinstall outdated codexrig hooks; review foreign hooks in Codex itself."
 		}
-		return path
 	}
-	root := normalize(filepath.Join(repo, ".codex"))
-	rel, err := filepath.Rel(root, normalize(source))
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+	return r
 }
 
 func userHookChecks(env Env) ([]Result, []string) {
@@ -454,9 +458,8 @@ func userHookChecks(env Env) ([]Result, []string) {
 		return append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: err.Error()}), nil
 	}
 	want := hooks.SyncPlans()
-	// By event name, not by count. Status lists every event with a codexrig
-	// command, and a stale one offsetting a missing one made len(present) >=
-	// len(want) read as OK with a sync hook absent.
+	// By event name, not by count: an exact guard hook must not offset a
+	// missing sync hook. Status also rejects stale and foreign commands.
 	have := map[string]bool{}
 	for _, ev := range present {
 		have[ev] = true

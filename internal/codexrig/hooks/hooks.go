@@ -34,10 +34,9 @@ import (
 	"strings"
 )
 
-// Marker is the substring that identifies a hook as codexrig's. Ownership is
-// structural rather than a comment: a group whose command names this binary is
-// ours to update and to remove, and everything else in the file is somebody
-// else's and is left exactly alone.
+// Marker locates candidate groups for install/update/removal, including stale
+// commands. It is NOT an identity or trust check: Matches validates current
+// command/event pairs before any trust is recorded or reported.
 //
 // It is "codexrig" rather than "rig", which would also match clauderig's
 // commands and every rig binary on the machine.
@@ -211,7 +210,7 @@ func Uninstall(path string) ([]string, error) {
 	return removed, save(path, doc)
 }
 
-// Status reports which events carry a codexrig hook.
+// Status reports which events carry an exact current codexrig hook.
 func Status(path string) ([]string, error) {
 	doc, err := load(path)
 	if err != nil {
@@ -222,7 +221,7 @@ func Status(path string) ([]string, error) {
 	for key, v := range hooksAny {
 		raw, _ := v.([]any)
 		for _, g := range raw {
-			if groupIsOurs(g) {
+			if currentGroup(Event(key), g) {
 				present = append(present, key)
 				break
 			}
@@ -230,6 +229,21 @@ func Status(path string) ([]string, error) {
 	}
 	sort.Strings(present)
 	return present, nil
+}
+
+func currentGroup(event Event, raw any) bool {
+	g, _ := raw.(map[string]any)
+	matcher, _ := g["matcher"].(string)
+	hs, _ := g["hooks"].([]any)
+	for _, rawHandler := range hs {
+		h, _ := rawHandler.(map[string]any)
+		typ, _ := h["type"].(string)
+		command, _ := h["command"].(string)
+		if matchesCommand(wireEvent(event), matcher, typ, command) {
+			return true
+		}
+	}
+	return false
 }
 
 // Drift reports events whose installed codexrig hook no longer matches the plan.

@@ -59,6 +59,21 @@ from the repository. Untrusted project hooks warn with `codexrig project trust`
 and require that explicit trust command. `doctor --fix` never grants project hook
 trust. An unavailable app server reports that trust was not checked.
 
+**Trust approves only exact current codexrig command/event pairs in the requested
+hooks file.** Source paths are normalized and symlinks resolved; Codex's source
+enum is not used as a scope contract. A marker in a shell comment cannot grant
+trust. Guard matchers may vary without loosening command matching. Old commands
+and paths from another machine require reinstalling before trusting. Foreign
+hooks must be reviewed in Codex itself, with no override flag. Exact matches
+remain non-interactive, including `doctor --fix` for global hooks.
+
+`global trust` and `project trust` print every command approved or refused;
+`--json` carries the same decisions, reasons, and next steps. Nothing eligible
+means a non-zero exit. Partial successes are reported even if a later write
+fails. The command and `CurrentHash` are taken from the same Codex listing, so a
+later file edit never receives a newly fetched hash from an earlier approval.
+Codex owns the binding between a command and its hash, and trust invalidation.
+
 **Codex writes absolute paths as TABLE KEYS**, not only as values:
 `[projects."/Users/someone/Git/thing"]`. Claude Code does not, so a path rewriter
 ported from clauderig walks only values and leaves every one of those spelled for

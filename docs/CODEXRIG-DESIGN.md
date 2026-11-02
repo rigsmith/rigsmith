@@ -193,6 +193,23 @@ computing one — the hash is Codex's opinion about a file, not ours — and mak
 the edit *through* Codex's own `config/value/write`, so `config.toml` keeps
 whatever formatting Codex keeps instead of surviving a TOML round trip.
 
+Trust authorization uses exact command/event pairs from the current `SyncPlans`
+and `GuardPlans`, never the maintenance marker used to locate stale groups for
+reinstallation. Guard matchers may vary because they are selection data, not
+shell text. Outdated commands must be reinstalled before trust can be recorded;
+foreign commands belong in Codex's own approval flow, with no override here.
+The explicit global or project scope identifies one normalized hooks file,
+resolving symlinks and Windows separators. Discovery cwd and Codex's `Source`
+enum cannot authorize a scope. Check and status share the exact identity test.
+
+Every approval and refusal includes the command in text and JSON output. Doctor
+can approve only exact global hooks, and shows its decisions without requiring
+interactive input. The validated command, trust key, and `CurrentHash` come from
+one listing; codexrig never refreshes a hash after validating the command. This
+relies on Codex binding each reported command to that hash and rejecting stale
+trust after a file change. An internally inconsistent Codex listing cannot be
+detected by this client without an independent hashing contract.
+
 All three facts are pinned by a gated live test that installs hooks into a
 temporary `CODEX_HOME`, asks a real `codex app-server` whether it can see them,
 trusts them, and asks again. Nothing but a running Codex can notice when one of

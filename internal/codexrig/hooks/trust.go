@@ -3,112 +3,204 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"io"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/internal/codexrig/appserver"
 )
 
-// A hook Codex has not been told to trust does not run. It does not error and it
-// does not warn — `hooks/list` simply reports trustStatus "untrusted" — which
-// makes an installed-but-untrusted hook the quietest possible way for a backup
-// tool to stop backing anything up.
-//
-// The trust record lives in config.toml as
-//
-//	[hooks.state."<abs hooks.json path>:<snake_event>:<group>:<handler>"]
-//	trusted_hash = "sha256:…"
-//
-// and both halves are Codex's: it decides the key, and it decides what the hash
-// is of. So Trust asks — it reads the hash Codex reports and hands it straight
-// back, and it makes the edit THROUGH Codex so config.toml keeps whatever
-// formatting Codex keeps rather than surviving a TOML round trip of ours.
-//
-// This is still the user granting trust to a file, so it is never automatic:
-// `hooks install` prints what to run, and this only happens when somebody runs
-// it.
-
-// TrustResult is what Trust did.
-type TrustResult struct {
-	Trusted []string // event names now trusted
-	Already []string // event names that already were
-	// Foreign names hooks that are not codexrig's. Reported rather than
-	// touched: trusting somebody else's hook is not this command's business.
-	Foreign []string
+// Scope identifies exactly one hooks file, independently of Codex's unstable
+// Source enum. Construct it with GlobalScope or ProjectScope; a zero scope
+// matches nothing.
+type Scope struct {
+	path string
+	name string
 }
 
-// Trust records codexrig's hooks as trusted in Codex's config.
-//
-// home is the Codex home to act on (empty = the machine's own), and cwd is the
-// directory Codex resolves project hooks from — the app-server uses its own
-// working directory and ignores a cwd parameter.
-func Trust(ctx context.Context, home, cwd string) (TrustResult, error) {
-	var out TrustResult
+func GlobalScope(home string) Scope { return hookScope(home, "global") }
+func ProjectScope(repo string) Scope {
+	if repo == "" {
+		return Scope{}
+	}
+	return hookScope(filepath.Join(repo, ".codex"), "project")
+}
+
+func hookScope(dir, name string) Scope {
+	if dir == "" {
+		return Scope{}
+	}
+	return Scope{path: filepath.Join(dir, FileName), name: name}
+}
+
+// Contains resolves symlinks (including macOS /var aliases) and accepts Windows
+// separators. Only the requested file is eligible, never adjacent hook files.
+func (s Scope) Contains(source string) bool {
+	return s.path != "" && source != "" && normalizeHookPath(s.path) == normalizeHookPath(source)
+}
+
+func normalizeHookPath(path string) string {
+	path = filepath.Clean(filepath.FromSlash(strings.ReplaceAll(path, `\`, "/")))
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	if runtime.GOOS == "windows" {
+		path = strings.ToLower(path)
+	}
+	return path
+}
+
+// CheckResult keeps foreign commands visible without identifying them as ours.
+type CheckResult struct {
+	Ours    []appserver.HookInfo `json:"ours"`
+	Foreign []appserver.HookInfo `json:"foreign"`
+}
+
+// Refusal includes the exact command Codex reported and how to proceed.
+type Refusal struct {
+	appserver.HookInfo
+	Reason   string `json:"reason"`
+	NextStep string `json:"nextStep"`
+}
+
+type TrustResult struct {
+	Trusted []appserver.HookInfo `json:"trusted"`
+	Already []appserver.HookInfo `json:"already"`
+	Foreign []Refusal            `json:"foreign"`
+	Outside []Refusal            `json:"outside"`
+	Refused []Refusal            `json:"refused"`
+}
+
+// Matches compares the command and its event against today's installer plans.
+// A guard matcher is user-selectable and is data, not shell command text. Old
+// commands and commands from another machine are deliberately not grandfathered
+// in: reinstall first. The wire event is camelCase, unlike the file event.
+func Matches(h appserver.HookInfo) bool {
+	return matchesCommand(h.EventName, h.Matcher, h.HandlerType, h.Command)
+}
+
+func wireEvent(event Event) string {
+	if event == "" {
+		return ""
+	}
+	return strings.ToLower(string(event[:1])) + string(event[1:])
+}
+
+func matchesCommand(event, matcher, handlerType, command string) bool {
+	if handlerType != "command" {
+		return false
+	}
+	plans := append(SyncPlans(), GuardPlans(matcher)...)
+	for _, p := range plans {
+		if event == wireEvent(p.Event) && command == p.Command && matcher == p.Matcher {
+			return true
+		}
+	}
+	return false
+}
+
+type trustClient interface {
+	ListHooks(context.Context) ([]appserver.HookInfo, error)
+	WriteConfig(context.Context, string, any) error
+}
+
+// Trust records only exact current codexrig commands in the explicit scope.
+// cwd controls discovery, not authorization: Codex may list both scopes there.
+func Trust(ctx context.Context, home, cwd string, scope Scope) (TrustResult, error) {
 	client, err := appserver.Start(ctx, home, cwd)
 	if err != nil {
-		return out, err
+		return TrustResult{}, err
 	}
 	defer client.Close()
+	return trust(ctx, client, scope)
+}
 
+func trust(ctx context.Context, client trustClient, scope Scope) (TrustResult, error) {
+	var out TrustResult
 	list, err := client.ListHooks(ctx)
 	if err != nil {
 		return out, err
 	}
 	for _, h := range list {
-		if !strings.Contains(h.Command, Marker) {
-			if !h.Trusted() {
-				out.Foreign = append(out.Foreign, h.EventName)
-			}
+		if !scope.Contains(h.SourcePath) {
+			out.Outside = append(out.Outside, Refusal{h, "outside requested scope", "Use the trust command for that scope; review foreign hooks in Codex itself."})
+			continue
+		}
+		if !Matches(h) {
+			out.Foreign = append(out.Foreign, Refusal{h, "foreign or out of date", "Review foreign hooks in Codex itself. For an outdated codexrig hook, run `codexrig " + scope.name + " install`, then trust again."})
 			continue
 		}
 		if h.Trusted() {
-			out.Already = append(out.Already, h.EventName)
+			out.Already = append(out.Already, h)
 			continue
 		}
-		if h.CurrentHash == "" {
-			return out, fmt.Errorf("codex reported no hash for the %s hook, so there is nothing to record", h.EventName)
+		if h.CurrentHash == "" || h.Key == "" {
+			out.Refused = append(out.Refused, Refusal{h, "Codex reported no hash or trust key", "Update Codex and retry; no trust was recorded for this hook."})
+			continue
 		}
-		// The key is Codex's own, quoted as a single TOML key: it contains
-		// slashes, dots and colons, none of which may be read as path
-		// separators in the dotted keyPath.
-		// Escaped as a TOML basic string: Codex closes the quoted segment on an
-		// unescaped quote and consumes the next character after an unescaped
-		// backslash, so a key holding either would address a different key —
-		// or fail — and the hook would stay untrusted. Backslash first.
-		keyPath := trustKeyPath(h.Key)
-		if err := client.WriteConfig(ctx, keyPath, h.CurrentHash); err != nil {
-			return out, fmt.Errorf("recording trust for the %s hook: %w", h.EventName, err)
+		// Command, key and hash come from the SAME listing. Never reread the
+		// file or fetch a newer hash after validating this command. A later file
+		// change must not receive its new hash from this approval.
+		if err := client.WriteConfig(ctx, trustKeyPath(h.Key), h.CurrentHash); err != nil {
+			out.Refused = append(out.Refused, Refusal{h, "could not record trust: " + err.Error(), "Retry the trust command after resolving the Codex error."})
+			return out, fmt.Errorf("recording trust for %s: %w", h.EventName, err)
 		}
-		out.Trusted = append(out.Trusted, h.EventName)
+		out.Trusted = append(out.Trusted, h)
+	}
+	if len(out.Trusted)+len(out.Already) == 0 {
+		return out, fmt.Errorf("no current codexrig hooks could be trusted in the requested scope; run `codexrig %s install`, then trust again; review foreign hooks in Codex itself", scope.name)
 	}
 	return out, nil
 }
 
-// Check reports how Codex currently sees codexrig's hooks, without changing
-// anything.
-func Check(ctx context.Context, home, cwd string) ([]appserver.HookInfo, error) {
+// Check uses exactly the same identity check as Trust, without writing anything.
+// Callers classify both lists by Scope.Contains before reporting on a scope.
+func Check(ctx context.Context, home, cwd string) (CheckResult, error) {
 	client, err := appserver.Start(ctx, home, cwd)
 	if err != nil {
-		return nil, err
+		return CheckResult{}, err
 	}
 	defer client.Close()
 	list, err := client.ListHooks(ctx)
 	if err != nil {
-		return nil, err
+		return CheckResult{}, err
 	}
-	var ours []appserver.HookInfo
-	for _, h := range list {
-		if strings.Contains(h.Command, Marker) {
-			ours = append(ours, h)
-		}
-	}
-	return ours, nil
+	return classify(list), nil
 }
 
-// trustKeyPath addresses a hook's trusted_hash in Codex's config. The key is
-// Codex's own, quoted as one TOML basic-string segment: it holds slashes, dots
-// and colons that must not read as path separators, and a backslash or quote
-// inside it has to be escaped or Codex closes the segment early — addressing a
-// different key, or failing, and leaving the hook untrusted. Backslash first.
+func classify(list []appserver.HookInfo) CheckResult {
+	var out CheckResult
+	for _, h := range list {
+		if Matches(h) {
+			out.Ours = append(out.Ours, h)
+		} else {
+			out.Foreign = append(out.Foreign, h)
+		}
+	}
+	return out
+}
+
+// WriteTrustResult is shared by trust and doctor --fix, including partial writes.
+func WriteTrustResult(w io.Writer, result TrustResult) {
+	if w == nil {
+		return
+	}
+	for _, h := range result.Trusted {
+		fmt.Fprintf(w, "trusted %s from %s: %s\n", h.EventName, h.SourcePath, h.Command)
+	}
+	for _, h := range result.Already {
+		fmt.Fprintf(w, "already trusted %s from %s: %s\n", h.EventName, h.SourcePath, h.Command)
+	}
+	for _, refusals := range [][]Refusal{result.Foreign, result.Outside, result.Refused} {
+		for _, r := range refusals {
+			fmt.Fprintf(w, "refused %s from %s: %s\n  %s; %s\n", r.EventName, r.SourcePath, r.Command, r.Reason, r.NextStep)
+		}
+	}
+}
+
+// trustKeyPath quotes Codex's key as one TOML basic-string segment. Backslashes
+// must be escaped before quotes so neither can redirect the config write.
 func trustKeyPath(key string) string {
 	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(key)
 	return `hooks.state."` + escaped + `".trusted_hash`

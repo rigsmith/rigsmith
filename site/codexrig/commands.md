@@ -58,15 +58,41 @@ authenticate".
 | Command | What it does |
 |---|---|
 | `codexrig global install` | The backup hooks, in your own Codex home. |
-| `codexrig global trust` | Record them as trusted, so Codex runs them. |
+| `codexrig global trust [--json]` | Trust exact current codexrig commands from your Codex home's `hooks.json`. |
 | `codexrig global status` | Installed? Up to date? Trusted? |
 | `codexrig project install` | The branch guard, in this repository's `.codex/`. |
-| `codexrig project trust` | Same, for the repository's hooks. |
+| `codexrig project trust [--json]` | Trust exact current codexrig commands from this repository's `.codex/hooks.json`. |
 
 Install and trust are separate because they are different acts: one writes a
 file, the other tells Codex to trust a file. `trust` asks Codex for the hash
 rather than computing one, and makes the edit through Codex so `config.toml`
 keeps its own formatting.
+
+Trust is a security boundary: a command merely containing `codexrig` is never
+enough. The command and event must match the current installer, and the source
+file must match the requested scope after resolving symlinks and normalizing
+path separators. Guard matchers may differ; the guard command must still match
+exactly. Global trust cannot approve project hooks, even when `CODEX_HOME` is
+inside the repository. Project trust cannot approve global hooks.
+
+Every approved, already trusted, and refused command is shown verbatim, with its
+source and event. `--json` returns the same decisions in `trusted`, `already`,
+`foreign`, `outside`, and `refused` lists, including reasons and next steps for
+refusals. If no current hook in the requested scope can be trusted (or is already
+trusted), the command exits non-zero. Other eligible hooks can still be approved
+when one is refused. Exact matches work without a prompt.
+
+Old commands, including commands with paths from another machine, are refused.
+Run the matching `global install` or `project install`, review the result, then
+trust again. Review foreign hooks in Codex itself; there is no override flag.
+Status and doctor name foreign or outdated commands instead of treating them as
+codexrig's. `doctor --fix` can trust only exact global hooks and prints its
+decisions; project trust remains deliberate.
+
+The command, key, and hash come from one Codex listing. codexrig records that
+reported hash, never a separately refreshed hash after validating the command.
+Codex remains responsible for binding the reported command to its hash and for
+invalidating trust when a hook changes.
 
 ## Sessions
 
