@@ -1,0 +1,27 @@
+internal/codexrig/account/account_test.go
+  s_501ed8b2a621e3::t_ec16576dfd006c 837,850,866-867
+internal/codexrig/commands/account_contract_test.go
+  s_501ed8b2a621e3::t_ec16576dfd006c 6-7,181-222
+internal/codexrig/account/switch.go
+  s_501ed8b2a621e3::t_ec16576dfd006c 150
+internal/codexrig/commands/account_switch.go
+  s_501ed8b2a621e3::t_ec16576dfd006c 29-34,87-88,90-93
+skills/rigsmith-tools/SKILL.md
+  s_501ed8b2a621e3::t_ec16576dfd006c 497-499,540,554-557
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "35a7aff82ec7bfc50714b7e932d46e060534d153",
+  "prompts": {},
+  "sessions": {
+    "s_501ed8b2a621e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19d0a-3868-7d12-a9f4-dcfdd9c3eaae",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
