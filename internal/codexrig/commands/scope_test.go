@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -83,7 +84,12 @@ func TestScopeTrustSelectsExplicitScope(t *testing.T) {
 		if _, _, err := hooks.Install(other, hooks.SyncPlans()); err != nil {
 			t.Fatal(err)
 		}
-		client := &scopeFakeClient{list: append(scopeListing(t, path), scopeListing(t, other)...)}
+		listed := scopeListing(t, path)
+		wantKeys := map[string]bool{}
+		for _, h := range listed {
+			wantKeys["hooks.state."+strconv.Quote(h.Key)+".trusted_hash"] = true
+		}
+		client := &scopeFakeClient{list: append(listed, scopeListing(t, other)...)}
 		var out bytes.Buffer
 		cmd.SetOut(&out)
 		if err := trustScope(cmd, func(context.Context) (string, error) { return path, nil }, client); err != nil {
@@ -93,9 +99,10 @@ func TestScopeTrustSelectsExplicitScope(t *testing.T) {
 			t.Fatalf("project=%v wrote=%+v output=%s", project, client.writes, out.String())
 		}
 		for _, key := range client.writes {
-			if !strings.Contains(key, path) || strings.Contains(key, other) {
+			if !wantKeys[key] {
 				t.Fatalf("scope leaked: %s home=%s", key, home)
 			}
+			delete(wantKeys, key)
 		}
 	}
 }
