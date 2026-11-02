@@ -6,8 +6,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-
-	"github.com/rigsmith/rigsmith/core/semver"
 )
 
 type stackReleaseDependency struct {
@@ -26,41 +24,41 @@ type stackReleaseDependencies struct {
 
 // NuGet bare versions are inclusive minima, unlike npm exact-version syntax.
 // Unknown/floating/unbounded-lower ranges cannot prove a minimum.
-func stackReleaseMinimum(raw string) (semver.Version, bool) {
+func stackReleaseMinimum(raw string) (stackNugetVersion, bool) {
 	s := strings.TrimSpace(raw)
 	if strings.HasPrefix(s, "[") || strings.HasPrefix(s, "(") {
 		if len(s) < 3 || (s[len(s)-1] != ']' && s[len(s)-1] != ')') {
-			return semver.Version{}, false
+			return stackNugetVersion{}, false
 		}
 		body := s[1 : len(s)-1]
 		parts := strings.Split(body, ",")
 		if len(parts) == 1 {
 			if s[0] != '[' || s[len(s)-1] != ']' {
-				return semver.Version{}, false
+				return stackNugetVersion{}, false
 			}
-			return semver.Parse(strings.TrimSpace(body))
+			return stackParseNugetVersion(strings.TrimSpace(body))
 		}
 		if len(parts) != 2 {
-			return semver.Version{}, false
+			return stackNugetVersion{}, false
 		}
-		low, ok := semver.Parse(strings.TrimSpace(parts[0]))
+		low, ok := stackParseNugetVersion(strings.TrimSpace(parts[0]))
 		if !ok {
 			return low, false
 		}
 		upper := strings.TrimSpace(parts[1])
 		if upper != "" {
-			high, ok := semver.Parse(upper)
-			if !ok || semver.Compare(low, high) > 0 || semver.Compare(low, high) == 0 && (s[0] != '[' || s[len(s)-1] != ']') {
+			high, ok := stackParseNugetVersion(upper)
+			if !ok || stackCompareNuget(low, high) > 0 || stackCompareNuget(low, high) == 0 && (s[0] != '[' || s[len(s)-1] != ']') {
 				return low, false
 			}
 		}
 		return low, true
 	}
-	return semver.Parse(s)
+	return stackParseNugetVersion(s)
 }
 
 func (d stackReleaseDependencies) delivers(pkg, version string) bool {
-	needed, ok := semver.Parse(version)
+	needed, ok := stackParseNugetVersion(version)
 	if !ok {
 		return false
 	}
@@ -77,7 +75,7 @@ func (d stackReleaseDependencies) delivers(pkg, version string) bool {
 					return false
 				}
 				low, ok := stackReleaseMinimum(dep.Version)
-				if !ok || semver.Compare(low, needed) < 0 {
+				if !ok || stackCompareNuget(low, needed) < 0 {
 					return false
 				}
 				found = true
@@ -144,17 +142,18 @@ func stackReleaseDelivery(ctx context.Context, a stackDepsAPI, links []stackLink
 		if err := stackReleaseGet(ctx, a.client, base+"/index.json", &index, false); err != nil {
 			return "", "", "", err
 		}
-		versions = nil
-		for i := len(index.Versions) - 1; i >= 0 && len(versions) < 20; i-- {
-			if !strings.Contains(index.Versions[i], "-") {
-				versions = append(versions, index.Versions[i])
-			}
+		var err error
+		versions, err = stackReleaseCandidates(index.Versions)
+		if err != nil {
+			return "", "", "", err
 		}
 	}
 	for _, v := range versions {
-		if !stackReleaseFixedVersion.MatchString(v) {
+		parsed, ok := stackParseNugetVersion(v)
+		if !ok {
 			return "", "", "", fmt.Errorf("invalid delivery version")
 		}
+		v = parsed.normalized()
 		var spec struct {
 			Metadata struct {
 				Dependencies stackReleaseDependencies `xml:"dependencies"`

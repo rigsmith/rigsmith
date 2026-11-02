@@ -76,19 +76,19 @@ func stackReleaseVersion(ctx context.Context, a stackDepsAPI, m *stackManifest, 
 		if err := stackReleaseGet(ctx, a.client, base+"/index.json", &index, false); err != nil {
 			return "", err
 		}
-		versions = nil
-		// NuGet flat container orders versions ascending. Bound all work.
-		for i := len(index.Versions) - 1; i >= 0 && len(versions) < 20; i-- {
-			if !strings.Contains(index.Versions[i], "-") {
-				versions = append(versions, index.Versions[i])
-			}
+		var err error
+		versions, err = stackReleaseCandidates(index.Versions)
+		if err != nil {
+			return "", err
 		}
 	}
 	unknown := false
 	for _, v := range versions {
-		if !stackReleaseFixedVersion.MatchString(v) {
+		parsed, ok := stackParseNugetVersion(v)
+		if !ok {
 			return "", fmt.Errorf("invalid version")
 		}
+		v = parsed.normalized()
 		var spec struct {
 			Metadata struct {
 				Repository struct {
@@ -134,7 +134,12 @@ func newStackReleasedCmd() *cobra.Command {
 	var pkg, version, feed, via, viaVersion string
 	var apply bool
 	var warnings []string
-	c := &cobra.Command{Use: "released <member> <sibling>", Short: "Check NuGet release ancestry and prepare a return to packages", Long: "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\n--apply requires a clean tree and interactive confirmation. Transitive siblings require a published direct package dependency minimum in every framework group.\n--via-package/--via-version select that delivery release. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only. No commits, pushes or PRs are created.", Args: cobra.ExactArgs(2)}
+	c := &cobra.Command{
+		Use:   "released <member> <sibling>",
+		Short: "Check NuGet release ancestry and prepare a return to packages",
+		Long:  "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\n--apply requires a clean tree and interactive confirmation. Transitive siblings require a published direct package dependency minimum in every framework group.\n--via-package/--via-version select that delivery release. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only. No commits, pushes or PRs are created.",
+		Args:  cobra.ExactArgs(2),
+	}
 	c.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		root, err := stackRoot(cmd.Context())
 		if err != nil {

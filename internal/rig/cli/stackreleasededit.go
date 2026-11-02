@@ -11,8 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/rigsmith/rigsmith/core/semver"
 )
 
 type stackReleaseEdit struct {
@@ -112,7 +110,6 @@ func stackReleaseRewrite(data []byte, symbol string) ([]byte, string) {
 }
 
 var stackReleaseVersionAttr = regexp.MustCompile(`([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*("[^"]*"|'[^']*')`)
-var stackReleaseFixedVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
 
 func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]byte, bool, []string) {
 	d := xml.NewDecoder(bytes.NewReader(data))
@@ -202,9 +199,9 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 			continue
 		}
 		if current != "" {
-			old, ok1 := semver.Parse(current)
-			next, ok2 := semver.Parse(version)
-			if !ok1 || !ok2 || semver.Compare(old, next) > 0 {
+			old, ok1 := stackParseNugetVersion(current)
+			next, ok2 := stackParseNugetVersion(version)
+			if !ok1 || !ok2 || stackCompareNuget(old, next) > 0 {
 				notes = append(notes, "unsafe package version: floating, unsupported or downgrade")
 				continue
 			}
@@ -217,7 +214,8 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 				break
 			}
 		}
-		if conditional || !stackReleaseFixedVersion.MatchString(current) || loc == nil {
+		_, literal := stackParseNugetVersion(current)
+		if conditional || !literal || loc == nil {
 			notes = append(notes, "nonliteral, conditional or centrally managed reference; review manually")
 			continue
 		}

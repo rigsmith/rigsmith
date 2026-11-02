@@ -1405,10 +1405,20 @@ and .vs directories are skipped; symlinks are not followed.
 Version edits use XML token offsets, preserving surrounding bytes, comments,
 BOM and line endings. Literal Version attributes on PackageReference and central
 PackageVersion items (including Directory.Packages.props) can be updated.
-Floating versions, unsupported four-part version comparisons, downgrades,
+Floating versions, unsupported version syntax, downgrades,
 conditional references and nested version metadata refuse guard edits. A
 versionless self-closing PackageReference can use an updated central pin; no
-literal pin means no migration. RigStackSource_* and RigStackAvailable_*
+literal pin means no migration. All version comparisons use NuGet's four numeric
+components (absent components are zero: 1.0 equals 1.0.0.0), followed by
+case-insensitive prerelease identifier ordering; metadata does not affect
+precedence. Numeric components and numeric prerelease labels must fit a nonnegative 32-bit
+integer; overflow labels are refused rather than assuming SemVer ordering.
+This matches the supported subset of [NuGet's version comparer](https://github.com/NuGet/NuGet.Client/blob/dev/src/NuGet.Core/NuGet.Versioning/VersionComparer.cs). Unknown
+syntax and ambiguous legacy prerelease labels fail closed. Delivery minima,
+range bounds, candidate sorting and downgrade protection share this parser.
+Feed requests use normalized versions, preserving nonzero revisions. The release
+containment check itself remains commit ancestry, never numeric precedence.
+RigStackSource_* and RigStackAvailable_*
 conditions are listed and never rewritten.
 
 StackOnlyWarning carries no package identity. Explicit `--warning ACME0001`
