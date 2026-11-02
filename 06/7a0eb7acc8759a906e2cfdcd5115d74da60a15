@@ -1,0 +1,29 @@
+internal/clauderig/hooks/hardening_test.go
+  s_966b46ece8767a::t_7bd783cb0702d2 18-20,22-24,26-28,30-35,44-46,60-63,74-77,83-89
+  s_966b46ece8767a::t_de2d650713143a 5,100-112,114-168
+  s_966b46ece8767a::t_12acb1d0cff020 113
+internal/clauderig/commands/hooks_hardening_test.go
+  s_966b46ece8767a::t_7bd783cb0702d2 26,28-30,35-37,50-53,63-65
+site/clauderig/index.md
+  s_966b46ece8767a::t_7bd783cb0702d2 82-83
+internal/clauderig/hooks/scope.go
+  s_966b46ece8767a::t_7bd783cb0702d2 6,73-75,88-113
+internal/clauderig/doctor/doctor_test.go
+  s_966b46ece8767a::t_7bd783cb0702d2 501-510,519-521
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "067a0eb7acc8759a906e2cfdcd5115d74da60a15",
+  "prompts": {},
+  "sessions": {
+    "s_966b46ece8767a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19e2b-cf67-7a33-8215-374b0bea5734",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
