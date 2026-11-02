@@ -826,3 +826,33 @@ func (r *Repo) ArchiveTar(ctx context.Context, rev string, paths []string) ([]by
 	}
 	return out, nil
 }
+
+// ReparentCommit preserves a linear commit's tree, author, committer and message
+// on a new parent. Signatures cannot survive changed ancestry and are omitted.
+func (r *Repo) ReparentCommit(ctx context.Context, commit, parent string) (string, error) {
+	raw, err := runGit(ctx, r.Dir, "cat-file", "commit", commit)
+	if err != nil {
+		return "", err
+	}
+	headers, message, ok := strings.Cut(raw, "\n\n")
+	if !ok {
+		return "", fmt.Errorf("invalid commit %s", commit)
+	}
+	var kept []string
+	skip := false
+	for _, line := range strings.Split(headers, "\n") {
+		if strings.HasPrefix(line, " ") {
+			if !skip {
+				kept = append(kept, line)
+			}
+			continue
+		}
+		skip = strings.HasPrefix(line, "parent ") || strings.HasPrefix(line, "gpgsig ") || strings.HasPrefix(line, "gpgsig-sha256 ") || strings.HasPrefix(line, "mergetag ")
+		if !skip {
+			kept = append(kept, line)
+		}
+	}
+	kept = append(kept[:1], append([]string{"parent " + parent}, kept[1:]...)...)
+	out, err := runGitStdin(ctx, r.Dir, strings.Join(kept, "\n")+"\n\n"+message, nil, "hash-object", "-t", "commit", "-w", "--stdin")
+	return strings.TrimSpace(out), err
+}

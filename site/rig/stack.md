@@ -631,6 +631,22 @@ not appear at all. It works by running the exact inverse of the filter the repo
 was imported with, so the history you share with upstream comes back as its own
 commits and yours sit on top as a fast-forward.
 
+`push` and `propose` use the same upstream-tree comparison: a squash or rebase
+merge containing the member's entire tree leaves nothing to send. After a
+squash, new commits are kept individually and reparented on upstream when an
+exact matching tree provides a safe boundary. Their authors, committers and
+messages survive; changed parents require new commit IDs and invalidate old
+signatures. Ordinary fast-forward history keeps its existing IDs.
+
+If no exact boundary exists, or replay would cross a merge, push refuses and
+names the commits. Pull and reconcile the member, or use `propose` to review the
+remaining diff. A partial squash never makes a differing tree count as sent.
+Before pushing, rig verifies ancestry against a freshly read upstream tip;
+it never forces an update. Dry runs use the same planner and ancestry check.
+Removing and re-adding a member is not an upstream deletion: administrative
+remove/cursor history is excluded when rebuilding from the restored tree.
+No reset flag is needed.
+
 Pushing also brings the result back into the stackspace before it returns. The
 commit that leaves is necessarily a different object from the one that produced
 it — the same content, under a different prefix, with different parents — so the
