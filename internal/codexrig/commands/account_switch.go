@@ -90,6 +90,11 @@ func newAccountSwitchCmdWithSwap(swap func(*account.Store, account.Account, acco
 				if res.Switched {
 					fmt.Fprintf(prose, "%s %s\n", OkStyle.Render("Switched to"), a.Title())
 					fmt.Fprintf(prose, "%s\n", WarnStyle.Render(err.Error()))
+					doc.Message = err.Error()
+					if asJSON {
+						return writeJSON(out, doc)
+					}
+					return nil
 				}
 				if errors.Is(err, account.ErrCodexBusy) {
 					fmt.Fprintf(prose, "%s\n", ErrStyle.Render("Refusing to switch: Codex is running."))

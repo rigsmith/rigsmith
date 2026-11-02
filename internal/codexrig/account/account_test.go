@@ -942,8 +942,14 @@ func TestSwitchDisplacedSaveAndWriteFailure(t *testing.T) {
 				return nil, nil
 			}
 			res, err := s.Switch(a, SwitchOptions{})
-			if err == nil || res.Switched || !strings.Contains(err.Error(), "displaced credential could not be stored") || !strings.Contains(err.Error(), res.Backup) {
+			if err == nil || res.Switched != (failure == "active") || !strings.Contains(err.Error(), "displaced credential could not be stored") || !strings.Contains(err.Error(), res.Backup) {
 				t.Fatalf("result=%+v error=%v", res, err)
+			}
+			if failure == "active" {
+				got, readErr := ReadLive()
+				if readErr != nil || string(got) != string(target) || !strings.Contains(err.Error(), "`list` may show the wrong active account until the next switch") {
+					t.Fatalf("completed write not reported correctly: %+v %v read=%v", res, err, readErr)
+				}
 			}
 			backup, err := os.ReadFile(res.Backup)
 			if err != nil || string(backup) != string(live) {

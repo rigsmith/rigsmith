@@ -122,7 +122,7 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (res SwitchResult, retErr 
 
 	var displacedErr error
 	defer func() {
-		if displacedErr != nil && retErr != nil && !res.Switched {
+		if displacedErr != nil {
 			retErr = errors.Join(retErr, fmt.Errorf("the displaced credential could not be stored back under %s: %w (a copy is at %s)", res.From, displacedErr, res.Backup))
 		}
 	}()
@@ -157,12 +157,9 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (res SwitchResult, retErr 
 	if err := WriteLive(target); err != nil {
 		return res, err
 	}
-	if err := s.SetActive(a.ID); err != nil {
-		return res, fmt.Errorf("switched the credential but could not record it as active: %w", err)
-	}
 	res.Switched = true
-	if displacedErr != nil {
-		return res, fmt.Errorf("switched, but the displaced credential could not be stored back under %s: %w (a copy is at %s)", res.From, displacedErr, res.Backup)
+	if err := s.SetActive(a.ID); err != nil {
+		return res, fmt.Errorf("switched the credential but could not record it as active: %w — `list` may show the wrong active account until the next switch", err)
 	}
 	return res, nil
 }
