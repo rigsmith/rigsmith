@@ -3,11 +3,13 @@ name: rigsmith-tools
 description: >
   Use the rigsmith CLI family — rig (convention-first dev launcher: build/test/run/
   format/lint/typecheck/coverage/kill/worktree across .NET, Node, Go, Rust),
-  changerig (changesets), shiprig (releases/publish), and clauderig (sync Claude Code
-  config across machines + worktree/PR guard). Invoke whenever the work involves
+  changerig (changesets), shiprig (releases/publish), clauderig (sync Claude Code
+  config across machines + worktree/PR guard), codexrig (Codex CLI config sync +
+  several logins side by side), and brewrig (Homebrew packages and versions across machines). Invoke whenever the work involves
   building/testing/running/formatting a project, managing changesets or changelogs,
-  cutting or publishing a release, creating worktrees/branches, syncing Claude Code
-  setup, finding or reopening a past Claude Code session, or working across several
+  cutting or publishing a release, creating worktrees/branches, syncing Claude Code or Codex CLI
+  setup, switching or running a different Codex login, keeping two Macs' Homebrew
+  packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
@@ -28,6 +30,8 @@ runs the right native command, sharing one project-detection engine.
 | `changerig` (alias `changeset`) | changesets | recording a user-facing change, bumping versions, writing CHANGELOG |
 | `shiprig` | releases | publishing to registries, tagging, the release pipeline |
 | `clauderig` | Claude Code config sync + guard | syncing `~/.claude` across machines, worktree/PR discipline |
+| `codexrig` | Codex CLI config sync + accounts | syncing `~/.codex` across machines, running or switching Codex logins |
+| `brewrig` | Homebrew sync across machines | keeping two Macs on the same packages/versions, "what's installed on my other Mac" |
 
 **First, confirm they're installed:** `command -v rig`. If missing, install from a
 rigsmith checkout with `rig source-install` (stable binaries) or `rig dev-install`
@@ -474,6 +478,35 @@ is private. A manual copy leaks secrets and breaks paths across machines.
 "rigsmith tools" block in `CLAUDE.md`. This skill is the *deeper, on-demand*
 reference — they complement each other; keep them consistent if you edit one.
 
+### Finding a past session, and reopening it
+
+`~/.claude` holds this machine's Claude Code transcripts. Use clauderig to
+list or search local transcripts and the synced backup:
+
+```sh
+clauderig recent                 # newest first (24h; --since 7d, --cwd <text>, --account <alias>)
+clauderig recent -l              # full ids, plus resume commands per session
+clauderig search "<text>"        # by content, in local and synced sessions
+clauderig desktop main           # open or bring forward the plain Claude Desktop
+clauderig desktop open -i        # pick a recent local session, open it in Claude Desktop
+clauderig desktop open <profile> --session <id-or-text>
+```
+
+**Never date sessions by mtime.** Restores and copies can reset it, making
+"most recent chat" mean "most recently copied". `recent` reads the newest
+timestamped record inside each transcript, then sidecar metadata, and uses
+transcript mtime only as an approximate last resort when neither has a usable
+timestamp. Don't hand-roll an `ls -t` over `~/.claude/projects`.
+
+**`desktop open --session` does not import anything itself.** It hands Claude
+Desktop a `claude://resume?session=<uuid>` deep link and the app's own handler
+reads the transcript — so the transcript has to be in `~/.claude/projects` on this
+machine. A session living only in the synced repo must be `clauderig restore`d
+here first. With another Desktop instance open (including the plain app or an
+unmanaged profile), the command **refuses**: a deep link is routed by scheme
+rather than to a window, so the OS would pick which account receives the session.
+Quit the others, or pass `--anyway` when any recipient is acceptable.
+
 ### Worktree & PR discipline (the `clauderig guard` hook)
 
 In a repo with the guard installed (`clauderig project install`), a PreToolUse hook
@@ -483,6 +516,11 @@ enforces:
   move the session's working directory and scramble Claude Code chat history (keyed
   to the folder path). Use absolute paths, `git -C <dir> …`, or a subshell
   `(cd <dir> && …)` instead.
+- **Never give a subagent `isolation: "worktree"`, and never `git worktree add`
+  under `.claude/worktrees`** — both are denied. Those checkouts are invisible to
+  `rig worktree list` and nothing reaps them. Use `rig worktree new <branch>`. A
+  subagent without isolation is unaffected, and removing an existing hidden
+  worktree is allowed. `clauderig doctor` reports any it finds.
 - **Don't write code on `main`/`master`.** Run `rig worktree new <branch>` first — it
   makes a sibling checkout opened in a new VS Code window for review; this window
   stays put. Edit by absolute path, `git -C <worktree> …`, then push and open a PR.
@@ -491,9 +529,119 @@ enforces:
 - **Override** only when you must change code on base: `export CLAUDERIG_ALLOW_MAIN=1`
   or `touch .claude/allow-main`.
 
+## codexrig — sync Codex CLI setup + several Codex logins
+
+clauderig's sibling for the Codex CLI. Syncs the allowed setup under `~/.codex`
+(config.toml, AGENTS.md, skills, prompts, rules) to a
+**private** git repo with cross-OS path correction and secret stripping, and
+runs several Codex logins side by side.
+
+```sh
+codexrig init                    # wizard: private repo, machine name, hooks, sessions
+codexrig global trust            # required after installing global hooks — see below
+codexrig sync                    # capture → redact → rewrite config paths → commit → push
+codexrig restore                 # pull → resolve config paths for this machine → merge (keeps local secrets)
+codexrig status                  # state, including whether sessions are backed up
+codexrig doctor --fix            # health-check and repair supported issues
+codexrig recent -l               # recent sessions, with resume commands
+codexrig search "<text>"         # find a session by its contents
+codexrig mcp list                # which MCP servers survive a restore, and what each needs
+```
+
+**Hooks need trusting, and the failure is silent.** Codex will not run a hook
+until its hash is recorded in `config.toml`, and it says nothing when it declines.
+After any `codexrig global install` or `codexrig project install`, run the matching
+`trust`. `codexrig doctor` checks trust for global hooks only, and only when
+Codex's app server is available. A clean doctor run without the app server is
+not proof that hooks are trusted. Doctor checks project-hook installation but
+not project-hook trust: run `codexrig project trust` after `project install`;
+there is no doctor trust-check safety net for project hooks.
+
+**Sessions are opt-in.** Enable them during `init` (or with `init --sessions`),
+or run `codexrig config set syncSessions true`. Do not tell someone their Codex
+history is safe without checking `codexrig status`, which reports the mode.
+Cross-machine resume remains unproven; session backup is not a portability promise.
+
+### Several Codex logins
+
+```sh
+codexrig account add             # track the login you are signed in as
+codexrig account list            # what is tracked, which is live (--json for scripts)
+codexrig account run work        # start Codex as that login, in its own CODEX_HOME
+codexrig account switch personal # change which login a plain `codex` uses
+codexrig account prepare work    # ready that login's CODEX_HOME and print it without launching
+```
+
+`run` and `prepare` leave the machine-wide login alone; `switch` changes it and
+refuses while Codex is running by default. Use `prepare` when launching `codex`
+yourself, and stop if preparation fails:
+
+```sh
+codex_home=$(codexrig account prepare work) && CODEX_HOME="$codex_home" codex
+```
+
+**Never** copy `auth.json` between machines or accounts by hand — it is the whole
+login, it is never synced, and each machine runs `codex login` for itself.
+
+### What codexrig will not do
+
+- It does not translate working directories inside session rollouts. Live rollouts
+  are untouched; `redactTranscripts` can scrub secrets from staged copies, and
+  `chunkRollouts` can store them as parts. When a directory moved, use
+  `codex resume --cd <dir>`.
+- It does not add or remove MCP servers — `codex mcp` does that. `codexrig mcp`
+  only reports which ones will survive a restore.
+- `docs/CODEXRIG-PARITY.md` in the rigsmith repo lists what is built and what is
+  not; check it before promising a feature.
+
+## brewrig — keep several machines on the same Homebrew software
+
+darwin/linux only (Homebrew has no Windows).
+
+```sh
+brewrig init                  # wizard: name this machine, pick a private repo, first snapshot
+brewrig status                # missing here / outdated here / version skew between machines
+brewrig apply                 # install what's missing (-n to preview, -y to skip the install prompt)
+brewrig sync                  # publish this machine's inventory
+brewrig update                # brew update + upgrade, then publish the new versions
+brewrig skip <pkg>            # this machine deliberately doesn't want it (--cask for a cask)
+brewrig doctor --fix          # health-check; --fix re-clones a broken local clone
+```
+
+**It is not a shared Brewfile, and suggesting one is a regression.** Each machine
+publishes its own `machines/<name>.json` to a private repo; the union is derived. A
+single merged inventory is last-writer-wins and cannot distinguish "not installed
+there yet" from "deliberately removed there".
+
+**Read `status` as three separate problems with different fixes:**
+`missing` → `apply`; `outdated` → `update`; `skew` (machines on different
+versions of the same package) → `update` on whichever is behind. Status also
+shows removals proposed from other machines and packages skipped here. Outdated
+uses locally fetched Homebrew metadata; `update` refreshes it first. Do not claim
+machines match because their package lists match — check skew. For auto-updating
+casks, `update --greedy` also upgrades those casks (and may restart apps).
+
+**It never uninstalls just to make machines match.** The sole removal case is a
+package deliberately uninstalled elsewhere, offered one prompt at a time and
+never in a non-interactive run, even with `-y`. Do not expect `brewrig apply`
+piped to a log to remove anything, and never reach for `brew bundle --cleanup`
+to "finish the job".
+
+**Only formulae marked `installed_on_request`, plus installed casks, are
+published**, never the formula dependency closure and never `brew leaves`
+(which drops a tool the moment something else depends on it). A package listed
+as `already here as a dependency` is an adoption, not a download.
+
+Config is `~/.brewrig/config.json`; `BREWRIG_HOME` overrides the directory. Do
+not fake `$HOME` to test it — Homebrew's own output changes when HOME does, and
+it can silently stop reporting third-party tap formulae.
+
 ## Quick reference: which tool
 
 - "build / test / run / format it", "what is this repo" → **rig**
 - "record this change", "bump the version", "update the changelog" → **changerig**
 - "publish", "cut a release", "tag" → **shiprig**
 - "sync my Claude setup", "make a worktree", "set up the guard" → **clauderig** / `rig worktree`
+- "what was I working on", "find that chat", "reopen it in Desktop" → **clauderig** (`recent` / `search` / `desktop open`)
+- "sync my Codex setup", "run or switch Codex logins", "find or resume that Codex session" → **codexrig** (`recent -l` / `search` / `account`)
+- "sync Homebrew packages or versions", "what's installed on my other Mac" → **brewrig**

@@ -610,3 +610,58 @@ func TestDescribeAndConsolidate(t *testing.T) {
 		}
 	})
 }
+
+func TestList_SessionTimePrecedence(t *testing.T) {
+	record := time.Date(2026, 7, 1, 8, 0, 0, 0, time.UTC)
+	sidecar := record.Add(time.Hour)
+	end := record.Add(2 * time.Hour)
+	mtime := record.Add(30 * 24 * time.Hour)
+	for _, tt := range []struct {
+		name                    string
+		record, sidecar, ledger bool
+		end, want               time.Time
+	}{
+		{name: "sidecar beats ledger", sidecar: true, ledger: true, end: end, want: sidecar},
+		{name: "ledger beats restored mtime", ledger: true, end: end, want: end},
+		{name: "no ledger uses mtime", want: mtime},
+		{name: "zero ledger end uses mtime", ledger: true, want: mtime},
+		{name: "transcript beats all", record: true, sidecar: true, ledger: true, end: end, want: record},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			live, desk := t.TempDir(), t.TempDir()
+			id := "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa"
+			body := `{"type":"queue-operation"}` + "\n"
+			if tt.record {
+				body = turn("user", "example prompt", record.Format(time.RFC3339))
+			}
+			path := write(t, live, "projects/"+projectSlug+"/"+id+".jsonl", body)
+			if err := os.Chtimes(path, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+			if tt.sidecar {
+				writeSidecar(t, desk, "account", id, "Example session", sidecar.UnixMilli())
+			}
+			entries := map[string]ledger.Entry{}
+			if tt.ledger {
+				// Missing end fields decode to this same zero-valued End.
+				entries[id] = ledger.Entry{ID: id, End: tt.end}
+			}
+			rows, _ := List(Options{
+				Machine: testMachine(t.TempDir()),
+				Roots:   []session.Root{{Label: DesktopSource, Base: desk}},
+				Targets: []search.Target{{Label: CLISource, Dir: live}},
+				Scope:   Scope{Now: mtime.Add(time.Hour), Ledger: entries},
+			})
+			r, ok := rowByID(rows, id)
+			if !ok {
+				t.Fatal("session missing")
+			}
+			if !r.When.Equal(tt.want) {
+				t.Errorf("When = %s, want %s", r.When, tt.want)
+			}
+			if r.Approx != !tt.record {
+				t.Errorf("Approx = %v, want %v", r.Approx, !tt.record)
+			}
+		})
+	}
+}
