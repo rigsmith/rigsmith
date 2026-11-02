@@ -118,7 +118,7 @@ func TestHookChecksProjectTrust(t *testing.T) {
 				} else if r.Status != Warn {
 					t.Fatalf("%+v", r)
 				}
-				if mode == "untrusted" && (r.Fix == nil || !strings.Contains(r.Hint, "codexrig project trust")) {
+				if mode == "untrusted" && (r.Fix != nil || r.FixLabel != "" || !strings.Contains(r.Hint, "codexrig project trust")) {
 					t.Fatalf("missing remedy: %+v", r)
 				}
 				if mode == "unavailable" && !strings.Contains(r.Detail, "not checked") {
@@ -218,5 +218,50 @@ func TestHookChecksLiveSources(t *testing.T) {
 	}
 	if userCount != 2 || projectCount != 1 {
 		t.Fatalf("user=%d project=%d; want 2 and 1", userCount, projectCount)
+	}
+}
+
+func TestHookChecksProjectIndependentOfUserFile(t *testing.T) {
+	for _, mode := range []string{"empty", "malformed"} {
+		for _, available := range []bool{false, true} {
+			t.Run(mode+strconv.FormatBool(available), func(t *testing.T) {
+				repo := t.TempDir()
+				projectPath := filepath.Join(repo, ".codex", hooks.FileName)
+				if _, _, err := hooks.Install(projectPath, hooks.GuardPlans("Bash")); err != nil {
+					t.Fatal(err)
+				}
+				path := ""
+				if mode == "malformed" {
+					path = filepath.Join(t.TempDir(), hooks.FileName)
+					if err := os.WriteFile(path, []byte("{"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				calls := 0
+				results := hookChecksWithProbe(context.Background(), Env{RepoRoot: repo, HooksPath: path}, available, func(_ context.Context, _, cwd string) ([]appserver.HookInfo, error) {
+					calls++
+					if cwd != repo {
+						t.Fatalf("cwd=%q", cwd)
+					}
+					return []appserver.HookInfo{{SourcePath: projectPath, TrustStatus: "untrusted", EventName: "PreToolUse"}}, nil
+				})
+				found := false
+				for _, r := range results {
+					if r.ID == "project-hook-trust" {
+						found = true
+						want := Info
+						if available {
+							want = Warn
+						}
+						if r.Status != want || r.Fix != nil {
+							t.Fatalf("%+v", r)
+						}
+					}
+				}
+				if !found || (available && calls != 1) || (!available && calls != 0) {
+					t.Fatalf("missing project check: %+v calls=%d", results, calls)
+				}
+			})
+		}
 	}
 }

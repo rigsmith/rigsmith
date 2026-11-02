@@ -2,15 +2,18 @@ package account
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/rigsmith/rigsmith/internal/codexrig/appserver"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rigsmith/rigsmith/internal/codexrig/codexhome"
 )
@@ -859,6 +862,9 @@ func TestSwitchFinalScan(t *testing.T) {
 					if outcome == "busy" {
 						want = ErrCodexBusy
 					}
+					if saveFails && (err == nil || !strings.Contains(err.Error(), "displaced credential could not be stored") || !strings.Contains(err.Error(), res.Backup)) {
+						t.Fatalf("displaced failure hidden: %v", err)
+					}
 					if !errors.Is(err, want) || res.Switched || string(got) != string(live) {
 						t.Fatalf("result=%+v err=%v live changed=%v", res, err, string(got) != string(live))
 					}
@@ -887,5 +893,96 @@ func TestSwitchFinalScan(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSwitchDisplacedSaveAndWriteFailure(t *testing.T) {
+	s, home := sandbox(t)
+	target := fakeCred(t, "you@example.com", "A", "target", "pro")
+	a, _, err := s.CaptureLive(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := fakeCred(t, "other@example.com", "B", "other", "pro")
+	old, _, err := s.CaptureLive(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(codexhome.Auth(home), live, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(s.credPath(old.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(s.credPath(old.ID), 0700); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	s.scan = func(string) ([]Instance, error) {
+		calls++
+		if calls == 2 {
+			if err := os.Remove(codexhome.Auth(home)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(codexhome.Auth(home), 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil, nil
+	}
+	res, err := s.Switch(a, SwitchOptions{})
+	if err == nil || res.Switched || !strings.Contains(err.Error(), "displaced credential could not be stored") || !strings.Contains(err.Error(), res.Backup) {
+		t.Fatalf("result=%+v error=%v", res, err)
+	}
+	backup, err := os.ReadFile(res.Backup)
+	if err != nil || string(backup) != string(live) {
+		t.Fatalf("backup lost: %v", err)
+	}
+}
+
+func TestSwitchLiveFinalScanner(t *testing.T) {
+	if os.Getenv("CODEXRIG_LIVE_CODEX") == "" || !appserver.Available() {
+		t.Skip("needs codex and CODEXRIG_LIVE_CODEX=1")
+	}
+	s, home := sandbox(t)
+	target := fakeCred(t, "you@example.com", "A", "target", "pro")
+	a, _, err := s.CaptureLive(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := fakeCred(t, "other@example.com", "B", "other", "pro")
+	if err := os.WriteFile(codexhome.Auth(home), live, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	calls := 0
+	var client *appserver.Client
+	defer func() {
+		if client != nil {
+			client.Close()
+		}
+	}()
+	s.scan = func(h string) ([]Instance, error) {
+		calls++
+		if calls == 2 {
+			client, err = appserver.Start(ctx, home, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		instances, err := RunningInstancesScan(h)
+		if calls == 1 && len(instances) > 0 {
+			t.Skip("another non-isolated Codex is already running")
+		}
+		return instances, err
+	}
+	res, err := s.Switch(a, SwitchOptions{})
+	if !errors.Is(err, ErrCodexBusy) || calls != 2 || len(res.Blocking) == 0 || res.Switched {
+		t.Fatalf("result=%+v error=%v scans=%d", res, err, calls)
+	}
+	got, err := ReadLive()
+	if err != nil || string(got) != string(live) {
+		t.Fatalf("live credential changed: %v", err)
 	}
 }

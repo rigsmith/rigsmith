@@ -337,63 +337,7 @@ func hookChecks(ctx context.Context, env Env) []Result {
 }
 
 func hookChecksWithProbe(ctx context.Context, env Env, available bool, check func(context.Context, string, string) ([]appserver.HookInfo, error)) []Result {
-	var out []Result
-	if env.HooksPath == "" {
-		return out
-	}
-	present, err := hooks.Status(env.HooksPath)
-	if err != nil {
-		return append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: err.Error()})
-	}
-	want := hooks.SyncPlans()
-	// By event name, not by count. Status lists every event with a codexrig
-	// command, and a stale one offsetting a missing one made len(present) >=
-	// len(want) read as OK with a sync hook absent.
-	have := map[string]bool{}
-	for _, ev := range present {
-		have[ev] = true
-	}
-	var missing []string
-	for _, pl := range want {
-		if !have[string(pl.Event)] {
-			missing = append(missing, string(pl.Event))
-		}
-	}
-	switch {
-	case len(present) == 0:
-		out = append(out, Result{
-			ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: "not installed",
-			FixLabel: "install the sync hooks into your Codex home",
-			Fix: func(context.Context) error {
-				_, _, err := hooks.Install(env.HooksPath, want)
-				return err
-			},
-		})
-	case len(missing) > 0:
-		out = append(out, Result{
-			ID: "user-hooks", Name: "sync hooks", Status: Warn,
-			Detail:   "missing: " + strings.Join(missing, ", "),
-			FixLabel: "install the missing sync hooks",
-			Fix: func(context.Context) error {
-				_, _, err := hooks.Install(env.HooksPath, want)
-				return err
-			},
-		})
-	default:
-		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: OK, Detail: strings.Join(present, ", ")})
-	}
-
-	if drifted, derr := hooks.Drift(env.HooksPath, want); derr == nil && len(drifted) > 0 {
-		out = append(out, Result{
-			ID: "hook-drift", Name: "hook commands", Status: Warn,
-			Detail:   "out of date: " + strings.Join(drifted, ", "),
-			FixLabel: "bring the hook commands up to date",
-			Fix: func(context.Context) error {
-				_, _, err := hooks.Install(env.HooksPath, want)
-				return err
-			},
-		})
-	}
+	out, present := userHookChecks(env)
 
 	if env.RepoRoot != "" {
 		projectPath := filepath.Join(env.RepoRoot, ".codex", hooks.FileName)
@@ -469,8 +413,10 @@ func hookTrustResult(env Env, project, available bool, ours []appserver.HookInfo
 		}
 		r.Detail = "Codex is silently skipping: " + strings.Join(untrusted, ", ")
 		r.Hint = "Run `" + command + "`"
-		r.FixLabel = "record these hooks as trusted"
-		r.Fix = func(c context.Context) error { _, err := hooks.Trust(c, "", cwd); return err }
+		if !project {
+			r.FixLabel = "record these hooks as trusted"
+			r.Fix = func(c context.Context) error { _, err := hooks.Trust(c, "", cwd); return err }
+		}
 	} else if seen {
 		r.Status, r.Detail = OK, "Codex will run them"
 	} else {
@@ -495,4 +441,66 @@ func projectHookPath(repo, source string) bool {
 	root := normalize(filepath.Join(repo, ".codex"))
 	rel, err := filepath.Rel(root, normalize(source))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func userHookChecks(env Env) ([]Result, []string) {
+	var out []Result
+	if env.HooksPath == "" {
+		return out, nil
+	}
+	present, err := hooks.Status(env.HooksPath)
+	if err != nil {
+		return append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: err.Error()}), nil
+	}
+	want := hooks.SyncPlans()
+	// By event name, not by count. Status lists every event with a codexrig
+	// command, and a stale one offsetting a missing one made len(present) >=
+	// len(want) read as OK with a sync hook absent.
+	have := map[string]bool{}
+	for _, ev := range present {
+		have[ev] = true
+	}
+	var missing []string
+	for _, pl := range want {
+		if !have[string(pl.Event)] {
+			missing = append(missing, string(pl.Event))
+		}
+	}
+	switch {
+	case len(present) == 0:
+		out = append(out, Result{
+			ID: "user-hooks", Name: "sync hooks", Status: Warn, Detail: "not installed",
+			FixLabel: "install the sync hooks into your Codex home",
+			Fix: func(context.Context) error {
+				_, _, err := hooks.Install(env.HooksPath, want)
+				return err
+			},
+		})
+	case len(missing) > 0:
+		out = append(out, Result{
+			ID: "user-hooks", Name: "sync hooks", Status: Warn,
+			Detail:   "missing: " + strings.Join(missing, ", "),
+			FixLabel: "install the missing sync hooks",
+			Fix: func(context.Context) error {
+				_, _, err := hooks.Install(env.HooksPath, want)
+				return err
+			},
+		})
+	default:
+		out = append(out, Result{ID: "user-hooks", Name: "sync hooks", Status: OK, Detail: strings.Join(present, ", ")})
+	}
+
+	if drifted, derr := hooks.Drift(env.HooksPath, want); derr == nil && len(drifted) > 0 {
+		out = append(out, Result{
+			ID: "hook-drift", Name: "hook commands", Status: Warn,
+			Detail:   "out of date: " + strings.Join(drifted, ", "),
+			FixLabel: "bring the hook commands up to date",
+			Fix: func(context.Context) error {
+				_, _, err := hooks.Install(env.HooksPath, want)
+				return err
+			},
+		})
+	}
+
+	return out, present
 }

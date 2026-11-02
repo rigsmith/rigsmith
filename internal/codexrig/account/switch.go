@@ -50,8 +50,8 @@ type SwitchResult struct {
 //  6. store the displaced credential back under its own account, so its tokens
 //     stay current;
 //  7. write the new credential, then move the pointer.
-func (s *Store) Switch(a Account, opts SwitchOptions) (SwitchResult, error) {
-	res := SwitchResult{To: a.ID, ToEmail: a.Email}
+func (s *Store) Switch(a Account, opts SwitchOptions) (res SwitchResult, retErr error) {
+	res = SwitchResult{To: a.ID, ToEmail: a.Email}
 
 	machineHome, err := codexhome.Default()
 	if err != nil {
@@ -121,6 +121,11 @@ func (s *Store) Switch(a Account, opts SwitchOptions) (SwitchResult, error) {
 	}
 
 	var displacedErr error
+	defer func() {
+		if displacedErr != nil && retErr != nil && !res.Switched {
+			retErr = errors.Join(retErr, fmt.Errorf("the displaced credential could not be stored back under %s: %w (a copy is at %s)", res.From, displacedErr, res.Backup))
+		}
+	}()
 	if len(live) > 0 {
 		backup, err := s.BackupLive(live)
 		if err != nil {
