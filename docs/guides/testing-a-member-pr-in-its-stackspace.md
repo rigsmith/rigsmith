@@ -69,8 +69,9 @@ No separate josh step is needed: stack init installs the manifest/default pinned
 josh on demand before imports. Fresh-runner installation was reasoned through
 the existing installer call path, not exercised against hosted downloads.
 
-Pin external actions by full reviewed SHA after publication. Until then copy
-from a reviewed rigsmith commit. The action verifies rig release checksums and
+Pin external actions by full reviewed SHA, including
+`rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`.
+The action verifies rig release checksums and
 supports `rig-sha256` pinned independently in the workflow; release checksums do
 not defend against replacement of the whole release. `allowed-hosts` defaults
 to `github.com`. Both fork and upstream must match; opt in enterprise hosts
