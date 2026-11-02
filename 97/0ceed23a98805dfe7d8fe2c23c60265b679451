@@ -1,0 +1,64 @@
+internal/codexrig/commands/doctor.go
+  s_dea025a2011d2e::t_f80b25afe1c62c 34
+internal/codexrig/doctor/doctor.go
+  s_dea025a2011d2e::t_cb5540a9017658 363,366,378
+  s_dea025a2011d2e::t_acd27c26fb6dfe 357-361,364
+  s_dea025a2011d2e::t_677033e2475cd3 461-462
+  s_dea025a2011d2e::t_f80b25afe1c62c 11,53,341,371,375,379,382,389,392,396,409-410,428-432,439-445
+site/codexrig/commands.md
+  s_dea025a2011d2e::t_87c3c57730c9cc 61,64,71-95
+internal/codexrig/doctor/doctor_test.go
+  s_dea025a2011d2e::t_acd27c26fb6dfe 31-33,35-37,39-41,45-55,58-59,61-66,76-83,88-93,96-98,101-103,106-108,110-112,115-117,129-132,134-143,148-150
+  s_dea025a2011d2e::t_677033e2475cd3 154,429-435,442-449,453-456,460
+  s_dea025a2011d2e::t_f80b25afe1c62c 207,217,223,284,289,298-299,308,345-347,394,399,424
+  s_dea025a2011d2e::t_0e2a62e0e9da69 358-360,364-366,368-370
+  s_dea025a2011d2e::t_b503637d5f2c8e 4-5,9,17-18,20,23-30,34,38,42-44,56-57,60,67-75,84-87,94-95,99-100,104-105,109,113-114,118-123,125-128,133,144-147,151-152
+  s_dea025a2011d2e::t_f18a511c47daa7 124
+  s_dea025a2011d2e::t_6ee0fde562df7e 356-357,361-363,367,371-374
+  s_dea025a2011d2e::t_9e40f62ae053c1 436-441,450-452,457-459
+internal/codexrig/hooks/trust.go
+  s_dea025a2011d2e::t_f80b25afe1c62c 70-72
+  s_dea025a2011d2e::t_b4e21fdd9cce3d 6-8,14-66,68-69,73-79,92-93,95,97-110,113,116-117,119-120,126-131,135,138-140,142-147,149-152,157-159,162,167,169-173,175-197,202-203
+  s_dea025a2011d2e::t_9c9719d02a4df0 81-91,94,96
+internal/codexrig/hooks/hooks.go
+  s_dea025a2011d2e::t_9c9719d02a4df0 37-39,213,224,234-246
+internal/codexrig/hooks/trust_test.go
+  s_dea025a2011d2e::t_acd27c26fb6dfe 21-23,25,57,59,190-192
+  s_dea025a2011d2e::t_334403d4033498 1-20,24,26-56,58,60-189,193-213
+cmd/codexrig/README.md
+  s_dea025a2011d2e::t_87c3c57730c9cc 62-76
+internal/codexrig/hooks/live_test.go
+  s_dea025a2011d2e::t_f80b25afe1c62c 45,48-49,52,62
+.changeset/secure-codex-hook-trust.md
+  s_dea025a2011d2e::t_87c3c57730c9cc 1-7
+internal/codexrig/commands/scope_test.go
+  s_dea025a2011d2e::t_acd27c26fb6dfe 19-24,32-34,37-39,45-47,59-61,63-65,67-69
+  s_dea025a2011d2e::t_92a2ccf6440735 1-18,25-31,35-36,40-44,48-58,62,66,70-71
+docs/CODEXRIG-PARITY.md
+  s_dea025a2011d2e::t_87c3c57730c9cc 126
+README.md
+  s_dea025a2011d2e::t_677033e2475cd3 19-23
+docs/CODEXRIG-DESIGN.md
+  s_dea025a2011d2e::t_677033e2475cd3 196-212
+internal/codexrig/commands/scope.go
+  s_dea025a2011d2e::t_f80b25afe1c62c 5,129-132,138-142,191,206,210,215,220-225,227-232,237,255-261,263-273,275
+skills/rigsmith-tools/SKILL.md
+  s_dea025a2011d2e::t_d6c444ef939f0c 11
+  s_dea025a2011d2e::t_87c3c57730c9cc 559-571
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "970ceed23a98805dfe7d8fe2c23c60265b679451",
+  "prompts": {},
+  "sessions": {
+    "s_dea025a2011d2e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19d4c-86b7-7143-aeeb-d6d196df9fa9",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
