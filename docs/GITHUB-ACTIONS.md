@@ -121,8 +121,8 @@ Private seeds use configured Git credentials and may be unavailable to fork PRs;
 fetch failures name the seed and exit at setup (10). Configure credentials outside
 the action without embedding tokens in workflow inputs.
 The summary and provenance artifact record the sanitized seed and resolved commit.
-Seed mode skips the action's topic dependency reporting, which requires a
-checkout manifest.
+Topic dependency reporting also reads the seed, using
+`rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
 
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.

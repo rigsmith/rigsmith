@@ -61,6 +61,16 @@ runs:
         INPUT_RIG_SHA256: ${{ inputs.rig-sha256 }}
         RIG_REPO: rigsmith/rigsmith
       run: bash "$GITHUB_ACTION_PATH/install-rig.sh"
+    - id: cache-source
+      name: Identify seed cache namespace
+      shell: bash
+      env:
+        STACK_SEED: ${{ inputs.seed }}
+      run: |
+        # Hash the reference so credentials or URL punctuation never enter keys.
+        if [[ -n "$STACK_SEED" ]]; then
+          printf 'seed=%s\n' "$(printf '%s' "$STACK_SEED" | git hash-object --stdin)" >> "$GITHUB_OUTPUT"
+        fi
     - name: Restore josh binaries and object history
       if: ${{ inputs.cache-history == 'true' && (!github.event.pull_request || github.event.pull_request.head.repo.full_name == github.repository) }}
       id: history
@@ -72,7 +82,7 @@ runs:
           ~/Library/Caches/rigsmith/josh
           ~/AppData/Local/rigsmith/josh
           ${{ runner.temp }}/stack-history
-        key: stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-${{ hashFiles(inputs.manifest) }}
+        key: stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt) || hashFiles(inputs.manifest) }}
         restore-keys: |
           stack-history-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.rig-version }}-
     - name: Restore package downloads
@@ -85,9 +95,10 @@ runs:
           ~/go/pkg/mod
           ~/.cargo/registry
           ~/.cargo/git
+        # Seed keys advance each run/attempt so partial restores can save updates.
         # Cursors in the manifest cover every sibling's lockfiles and pins;
         # checkout hashes cover lockfile edits in the selected PR.
-        key: stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles(inputs.manifest, '**/*lock*', '**/go.sum', '**/global.json', '**/Directory.Packages.props', '**/NuGet.config', '**/rust-toolchain*') }}
+        key: stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.seed != '' && format('seed-{0}-{1}-{2}', steps.cache-source.outputs.seed, github.run_id, github.run_attempt) || hashFiles(inputs.manifest, '**/*lock*', '**/go.sum', '**/global.json', '**/Directory.Packages.props', '**/NuGet.config', '**/rust-toolchain*') }}
         restore-keys: |
           stack-packages-v1-${{ runner.os }}-${{ runner.arch }}-
     - id: run
@@ -177,13 +188,21 @@ runs:
         path: ${{ runner.temp }}/stack-provenance.json
         if-no-files-found: ignore
     - name: Report topic dependencies
-      if: ${{ always() && steps.install.outcome == 'success' && inputs.manifest != '' && inputs.dependencies == 'true' }}
+      if: ${{ always() && steps.install.outcome == 'success' && inputs.dependencies == 'true' }}
       shell: bash
       env:
         STACK_MANIFEST: ${{ inputs.manifest }}
+        STACK_SEED: ${{ inputs.seed }}
+        STACK_ALLOWED_HOSTS: ${{ inputs.allowed-hosts }}
         GITHUB_TOKEN: ${{ github.token }}
       run: |
-        if rig stack deps --manifest "$STACK_MANIFEST" --publish; then
+        args=(stack deps --publish)
+        if [[ -n "${STACK_SEED:-}" ]]; then
+          args+=(--seed "$STACK_SEED" --allowed-hosts "$STACK_ALLOWED_HOSTS")
+        else
+          args+=(--manifest "$STACK_MANIFEST")
+        fi
+        if rig "${args[@]}"; then
           :
         else
           status=$?

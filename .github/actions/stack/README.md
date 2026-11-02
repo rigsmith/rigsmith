@@ -12,8 +12,16 @@ fetch failures name the seed and exit at setup (10). Configure credentials outsi
 the action without embedding tokens in workflow inputs. Credential-bearing seed
 URLs are rejected with redacted diagnostics.
 The summary and provenance artifact record the sanitized seed and resolved commit.
-Seed mode skips the action's topic dependency reporting, which requires a
-checkout manifest.
+Topic dependency reporting also reads the seed, using
+`rig stack deps --seed <ref> --allowed-hosts github.com --publish`.
+
+Seed-mode history and package caches use a hash of the seed reference plus the
+workflow run ID and attempt. Restore prefixes still reuse earlier caches, while
+each run can save newly fetched bundles and packages even when a seed branch
+moves. This avoids fetching the seed twice before the build merely to compute
+a content hash. Manifest mode retains content-based keys. Fork PRs skip both
+caches. An empty `hashFiles('')` returns an empty string rather than an error;
+it provides no seed cursor identity.
 
 Intended final home: `rigsmith/stack-action`, which is not published yet.
 Until publication, copy this entire directory into your member repository and

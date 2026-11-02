@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"go.yaml.in/yaml/v3"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,5 +64,121 @@ func TestStackCIActionSeed(t *testing.T) {
 		if tc.valid && tc.seed != "" && !strings.Contains(string(out), "--seed\n"+tc.seed) {
 			t.Fatalf("seed not passed: %s", out)
 		}
+	}
+}
+
+func TestStackCIActionSeedCacheKeys(t *testing.T) {
+	data, err := os.ReadFile("../../../.github/actions/stack/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action struct {
+		Runs struct {
+			Steps []struct {
+				ID, Name, Uses, If, Run string
+				With                    map[string]string
+				Env                     map[string]string
+			}
+		}
+	}
+	if err = yaml.Unmarshal(data, &action); err != nil {
+		t.Fatal(err)
+	}
+	caches := 0
+	for _, step := range action.Runs.Steps {
+		if strings.HasPrefix(step.Uses, "actions/cache@") {
+			caches++
+			key := step.With["key"]
+			for _, part := range []string{"inputs.seed != '' && format('seed-{0}-{1}-{2}'", "steps.cache-source.outputs.seed", "github.run_id", "github.run_attempt", "|| hashFiles(inputs.manifest"} {
+				if !strings.Contains(key, part) {
+					t.Fatalf("%s missing %s: %s", step.Name, part, key)
+				}
+			}
+			if step.With["restore-keys"] == "" || !strings.Contains(step.If, "github.event.pull_request.head.repo.full_name == github.repository") {
+				t.Fatalf("missing partial restore or fork guard: %+v", step)
+			}
+		}
+		if step.ID == "cache-source" {
+			if step.Env["STACK_SEED"] != "${{ inputs.seed }}" {
+				t.Fatal(step.Env)
+			}
+			// A moving seed reference has a stable namespace; run/attempt in each key
+			// above prevents exact hits from blocking subsequent saves.
+			var previous string
+			for _, seed := range []string{"acme/stack@main", "acme/stack@other"} {
+				output := filepath.Join(t.TempDir(), "output")
+				p := exec.Command("bash", "-euo", "pipefail", "-c", step.Run)
+				p.Env = append(os.Environ(), "STACK_SEED="+seed, "GITHUB_OUTPUT="+output)
+				if out, err := p.CombinedOutput(); err != nil {
+					t.Fatalf("%v: %s", err, out)
+				}
+				b, err := os.ReadFile(output)
+				if err != nil || !strings.HasPrefix(string(b), "seed=") || string(b) == previous {
+					t.Fatalf("namespace: %s %v", b, err)
+				}
+				previous = string(b)
+			}
+		}
+	}
+	if caches != 2 {
+		t.Fatalf("found %d cache steps", caches)
+	}
+}
+
+func TestStackDepsSeed(t *testing.T) {
+	work := t.TempDir()
+	source := filepath.Join(work, "source")
+	mustGitStack(t, work, "init", source)
+	mustGitStack(t, source, "config", "user.name", "test")
+	mustGitStack(t, source, "config", "user.email", "t@t")
+	writeStackManifest(t, source, `{"repos":{"app":{"upstream":"github.com/acme/app","fork":"github.com/you/app"}}}`)
+	mustGitStack(t, source, "add", ".")
+	mustGitStack(t, source, "commit", "-qm", "seed")
+	bare := filepath.Join(work, "seed.git")
+	mustGitStack(t, work, "clone", "--bare", source, bare)
+	checkout := filepath.Join(work, "checkout")
+	mustGitStack(t, work, "init", checkout)
+	chdir(t, checkout) // No checkout manifest or HEAD: the seed supplies it.
+	c := newStackDepsCmd()
+	c.SetArgs([]string{"--seed", bare})
+	var out bytes.Buffer
+	c.SetOut(&out)
+	if err := c.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"--seed", bare, "--manifest", "rig.stack.jsonc"},
+		{"--seed", "https://blocked.invalid/acme/stack.git"},
+		{"--seed", "https://you:secret-token@github.com/acme/stack.git"},
+	} {
+		c = newStackDepsCmd()
+		c.SetArgs(args)
+		c.SetOut(&out)
+		c.SetErr(&out)
+		err := c.Execute()
+		if err == nil || strings.Contains(err.Error(), "secret-token") || strings.Contains(out.String(), "secret-token") {
+			t.Fatalf("%v: %s", err, out.String())
+		}
+	}
+	remotes, err := stackCIGit(context.Background(), bare, "remote", "get-url", "origin")
+	if err != nil || strings.TrimSpace(string(remotes)) != source {
+		t.Fatalf("seed mutated: %s %v", remotes, err)
+	}
+}
+
+func TestStackCIActionSeedDependencies(t *testing.T) {
+	script := stackCIActionScript(t, "Report topic dependencies")
+	p := exec.Command("bash", "-euo", "pipefail", "-c", "rig() { printf '%s\\n' \"$@\"; };\n"+script)
+	p.Env = append(os.Environ(), "STACK_SEED=acme/stack@main", "STACK_MANIFEST=", "STACK_ALLOWED_HOSTS=github.com")
+	out, err := p.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--seed\nacme/stack@main\n--allowed-hosts\ngithub.com") || strings.Contains(string(out), "--manifest") {
+		t.Fatalf("seed dependency dispatch: %s %v", out, err)
+	}
+	data, err := os.ReadFile("../../../.github/actions/stack/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "inputs.manifest != ''") {
+		t.Fatal("dependency step excludes seed mode")
 	}
 }

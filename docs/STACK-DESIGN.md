@@ -994,6 +994,16 @@ exit setup (10). Provenance stores reference and resolved commit under _seed.
 Member pointers remain discoverable via `stack home`, but CI requires explicit
 selection so a checkout cannot silently change the workflow's manifest source.
 
+`stack deps --seed` uses the same read-only loader and host allowlist, leaving
+dependency evaluation and publication policy unchanged. The action dispatches
+the same source to CI and dependency reporting. Seed-mode cache keys contain a
+hash of the seed reference plus run ID and attempt; broad restore prefixes reuse
+old entries while unique keys allow updated bundles/packages to be saved.
+This avoids an extra seed fetch before cache restore; it deliberately trades
+exact cache hits for continuing cache refresh. Manifest mode keeps content keys.
+Empty hashFiles patterns are ignored (an empty-only pattern returns an empty
+string), so they cannot represent seed cursors. Fork guards remain on both caches.
+
 The member tree is enumerated with `git ls-tree HEAD` and materialized from raw
 `git cat-file --batch` bytes under the manifest prefix. This bypasses archive
 export-ignore/export-subst and checkout smudge/EOL filters, including the
@@ -1037,8 +1047,8 @@ history. Its key hashes source URL, exact cursor, prefix filter and engine
 version. A hit fetches locally into the fresh fused repository and skips proxy
 startup, upstream fetch and filtering. It never saves fused commits. Outer
 Actions cache restore prefixes retain unchanged member bundles across manifest
-changes and seed josh's host caches for changed members. Package download keys
-include the entire manifest's immutable sibling cursors (which identify all
+changes and seed josh's host caches for changed members. In manifest mode,
+package download keys include the entire manifest's immutable sibling cursors (which identify all
 lockfiles/pins transitively) plus checkout lockfiles. No build outputs are cached.
 Only consumed member hits enter the reported hit rate.
 
