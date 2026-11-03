@@ -1409,7 +1409,7 @@ stackspace job to test sibling source changes with the published action:
     persist-credentials: false
 - uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
   with:
-    rig-version: vX.Y.Z # exact release containing stack ci; required
+    rig-version: v1.24.1 # exact rig release; required
     manifest: stack/rig.stack.jsonc
     member: app
     test: rig test

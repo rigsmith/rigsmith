@@ -36,7 +36,7 @@ This directory remains the source of truth and has no external relative dependen
     persist-credentials: false
 - uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
   with:
-    rig-version: vX.Y.Z # select an exact release containing stack ci
+    rig-version: v1.24.1 # exact rig release
     manifest: stack/rig.stack.jsonc
     member: app
     test: rig test
@@ -44,7 +44,10 @@ This directory remains the source of truth and has no external relative dependen
 
 Keep your plain-clone build matrix alongside this job. Install required language
 SDKs as usual. The checkout may be shallow. `rig-version` is required and must
-be an exact release tag. Installation verifies the archive against the release's
+be an exact release tag.
+The action pins no rig version itself: bump `rig-version` (and `rig-sha256`
+when set) to pick up rig fixes.
+Installation verifies the archive against the release's
 `checksums.txt` before extraction; all download and verification failures are
 fatal, including missing assets. Both downloads retry transient failures up to
 three times with a 30-second connection timeout and a 300-second total limit

@@ -15,7 +15,7 @@ is ready to copy after selecting a rig release containing `stack ci`.
     persist-credentials: false
 - uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
   with:
-    rig-version: vX.Y.Z # exact release containing stack ci
+    rig-version: v1.24.1 # exact rig release
     manifest: stack/rig.stack.jsonc
     member: app
     test: dotnet test tests/App.Tests

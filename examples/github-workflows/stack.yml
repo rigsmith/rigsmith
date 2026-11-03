@@ -12,8 +12,8 @@ jobs:
           persist-credentials: false
       - uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
         with:
-          rig-version: vX.Y.Z # Replace with a release containing stack ci.
-          # Recommended: rig-sha256: <independently-trusted-platform-archive-sha256>
+          rig-version: v1.24.1 # exact rig release
+          # Recommended: rig-sha256: <independently-trusted-v1.24.1-platform-archive-sha256>
           allowed-hosts: github.com
           cache-history: 'true' # Fork PRs skip both caches regardless of inputs.
           cache-packages: 'true' # Set both cache inputs to 'false' for no shared caches.

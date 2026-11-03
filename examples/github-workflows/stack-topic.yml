@@ -28,8 +28,8 @@ jobs:
       # Install the SDKs needed by your member here, without secrets.
       - uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
         with:
-          rig-version: vX.Y.Z # Replace with a release containing topic CI.
-          # Recommended: rig-sha256: <independently-trusted-platform-archive-sha256>
+          rig-version: v1.24.1 # exact rig release
+          # Recommended: rig-sha256: <independently-trusted-v1.24.1-platform-archive-sha256>
           seed: acme/stack-policy@${{ vars.STACK_POLICY_SHA }}
           member: app # The PR heads come from the pinned seed's proposals.
           topic: reader-fix # Use the same topic and policy pin in each member repo.
