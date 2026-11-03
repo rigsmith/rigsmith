@@ -1717,7 +1717,8 @@ created while planning, as they were before.
 ## Scheduled release migration trust boundary
 
 `stack released --report <file>` serializes the release/delivery proof and exact
-migration contents without editing the source tree. `not yet` is successful for
+migration contents without editing the source tree. Report summaries go to
+stderr so stdout stays clean. `not yet` is successful for
 scheduled runs; missing evidence and feed failures remain errors. `--seed`
 reloads an unfused manifest home and reads shallow default branches, independently
 of any build checkout. NuGet-only discovery is built in and static.
@@ -1738,10 +1739,16 @@ run. Member symlinks, submodules and LFS are refused. The fresh publisher uses
 the Git data API to replace only independently derived files on the default
 branch tree. `rig-released/<sibling>` and a body marker identify one proposal
 per member/sibling. Branch lookup precedes PR creation, and re-runs update its
-title/body and reset the branch to one commit. Workflows serialize this namespace.
+title/body. A PR targeting a different base is refused before writes. An existing
+head with the intended tree and sole parent/base is retained; only a changed
+tree or base creates a new commit and moves the ref. Ref paths and head queries
+escape branch names, including allowed `#` characters. Workflows serialize this namespace.
 PR creation denied by repository policy may leave that deterministic branch;
 the summary names the Actions PR setting and retry reuses it, matching canary
-recovery. No destructive local rewrite is added. `--apply` remains clean-tree,
+recovery. Only write HTTP 403/404 responses use that successful summary path;
+read errors, transport failures, 5xx and other API failures return errors with
+diagnostics. HTTP status is retained without printing upstream response bodies.
+No destructive local rewrite is added. `--apply` remains clean-tree,
 interactive and confirm-first.
 
 The example calls rig directly, following the canary rather than adding a

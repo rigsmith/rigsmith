@@ -1701,6 +1701,7 @@ or executes member code. Do not share a self-hosted workspace across the jobs.
 member bases, checked release commit/version, direct or verified immediate
 transitive delivery, exact relative file paths and replacement contents, removed
 guards/warnings, and every manual-review note. It never changes source files.
+Human report summaries go to stderr, leaving stdout clean.
 Without `--seed`, report mode reads the local stackspace; publication requires a
 seed-backed report. A release not yet containing all recorded work, or a delivery
 package not yet requiring it, reports `not yet` and exits successfully. Missing
@@ -1723,7 +1724,10 @@ between jobs; no report content is used on that no-write path.
 
 One stable `rig-released/<sibling>` branch per member repository is rebuilt on
 its current default branch using the Git data API. The open PR is updated by
-head branch, never duplicated on a re-run. Its title names the direct package
+head branch, never duplicated on a re-run. An existing PR targeting another base
+branch is refused before any write. Identical tree/base pairs keep their existing
+head commit, preserving approvals and avoiding repeated CI; changed PR text is
+still updated. Its title names the direct package
 and version; the body records ancestry, delivery, every removed guard, remaining
 guards with reasons, and attributed warning removals. A human must review it
 and run package-mode checks. Serialize workflows, reserve this branch namespace,
@@ -1733,8 +1737,12 @@ local tree, merges the PR, or weakens `--apply`'s interactive confirmation.
 Enable Settings → Actions → General → **Allow GitHub Actions to create and
 approve pull requests**, or use a token with member PR write access. Denial is
 summarized with that setting; a branch may remain and the next run reuses it.
-Without `GITHUB_TOKEN`, publication is skipped with a summary. API/read failures
-before publication fail the check; API write failures give the permission summary.
+Without `GITHUB_TOKEN`, publication is skipped with a summary. Read failures,
+network failures, timeouts, 5xx responses and other API errors fail the check with
+a diagnostic. Only write denials (HTTP 403 or 404 on tree, commit, ref or PR
+creation/update) use the permission summary and exit successfully; its diagnostic
+includes the HTTP status. GitHub may conceal inaccessible write destinations
+with 404.
 
 Coverage uses fake NuGet/GitHub services and local bare repos, including exact
 edits, re-runs, stale ancestry, tampered artifacts, hand migration, permission

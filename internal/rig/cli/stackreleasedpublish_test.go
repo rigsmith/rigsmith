@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 )
 
 type releasedPublishFixture struct {
+	failMethod, failPath, prBase, headTree, headParent          string
+	failStatus, commits                                         int
 	sibling, pkg, via, deliveryMinimum                          string
 	omitPair                                                    bool
 	t                                                           *testing.T
@@ -27,7 +30,7 @@ type releasedPublishFixture struct {
 
 func newReleasedPublishFixture(t *testing.T) *releasedPublishFixture {
 	t.Helper()
-	f := &releasedPublishFixture{t: t, status: "ahead", sibling: "lib", pkg: "Acme.Lib", deliveryMinimum: "2.0.0", tree: map[string]string{}}
+	f := &releasedPublishFixture{t: t, status: "ahead", sibling: "lib", pkg: "Acme.Lib", deliveryMinimum: "2.0.0", prBase: "main", tree: map[string]string{}}
 	root := t.TempDir()
 	cursor := strings.Repeat("a", 40)
 	home := filepath.Join(root, "home")
@@ -80,6 +83,10 @@ func (f *releasedPublishFixture) serve(w http.ResponseWriter, q *http.Request) {
 	if q.Method != "GET" {
 		f.writes++
 	}
+	if q.Method == f.failMethod && p == f.failPath {
+		w.WriteHeader(f.failStatus)
+		return
+	}
 	switch {
 	case strings.HasSuffix(p, "/index.json"):
 		fmt.Fprint(w, `{"versions":["2.0.0"]}`)
@@ -107,11 +114,15 @@ func (f *releasedPublishFixture) serve(w http.ResponseWriter, q *http.Request) {
 			f.t.Errorf("unexpected head: %s", q.URL.RawQuery)
 		}
 		if f.pr {
-			fmt.Fprint(w, `[{"number":7}]`)
+			json.NewEncoder(w).Encode([]any{map[string]any{"number": 7, "base": map[string]string{"ref": f.prBase}, "title": f.title, "body": f.body}})
 		} else {
 			fmt.Fprint(w, `[]`)
 		}
 	case strings.Contains(p, "/git/commits/"):
+		if strings.HasSuffix(p, "/new-commit") {
+			json.NewEncoder(w).Encode(map[string]any{"tree": map[string]string{"sha": f.headTree}, "parents": []any{map[string]string{"sha": f.headParent}}})
+			return
+		}
 		fmt.Fprint(w, `{"tree":{"sha":"base-tree"}}`)
 	case strings.HasSuffix(p, "/git/trees"):
 		var payload struct {
@@ -133,10 +144,25 @@ func (f *releasedPublishFixture) serve(w http.ResponseWriter, q *http.Request) {
 		}
 		fmt.Fprint(w, `{"sha":"new-tree"}`)
 	case strings.HasSuffix(p, "/git/commits"):
+		var payload struct {
+			Tree    string
+			Parents []string
+		}
+		if err := json.NewDecoder(q.Body).Decode(&payload); err != nil {
+			f.t.Error(err)
+		}
+		if len(payload.Parents) != 1 {
+			f.t.Fatalf("invalid parents: %v", payload.Parents)
+		}
+		f.commits++
+		f.headTree, f.headParent = payload.Tree, payload.Parents[0]
 		fmt.Fprint(w, `{"sha":"new-commit"}`)
 	case strings.Contains(p, "/git/matching-refs/"):
+		if !strings.HasSuffix(p, "/heads/rig-released/"+f.sibling) {
+			f.t.Errorf("truncated ref lookup: %s", q.URL.String())
+		}
 		if f.ref {
-			fmt.Fprint(w, fmt.Sprintf(`[{"ref":"refs/heads/rig-released/%s"}]`, f.sibling))
+			json.NewEncoder(w).Encode([]any{map[string]any{"ref": "refs/heads/rig-released/" + f.sibling, "object": map[string]string{"sha": "new-commit"}}})
 		} else {
 			fmt.Fprint(w, `[]`)
 		}
@@ -145,6 +171,9 @@ func (f *releasedPublishFixture) serve(w http.ResponseWriter, q *http.Request) {
 		f.refCreates++
 		fmt.Fprint(w, `{}`)
 	case strings.Contains(p, "/git/refs/heads/"):
+		if !strings.HasSuffix(p, "/heads/rig-released/"+f.sibling) {
+			f.t.Errorf("truncated ref update: %s", q.URL.String())
+		}
 		f.refUpdates++
 		fmt.Fprint(w, `{}`)
 	case p == "/repos/acme/app/pulls" && q.Method == "POST":
@@ -213,11 +242,14 @@ func TestStackReleasedPublishExactAndRerun(t *testing.T) {
 		t.Fatal("report modified tree")
 	}
 	for i := 0; i < 2; i++ {
+		if i == 1 {
+			f.body += "stale text"
+		}
 		if _, err := f.run(true); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if f.opens != 1 || f.updates != 1 || f.refCreates != 1 || f.refUpdates != 1 {
+	if f.opens != 1 || f.updates != 1 || f.refCreates != 1 || f.refUpdates != 0 || f.commits != 1 {
 		t.Fatalf("not idempotent: %+v", f)
 	}
 	if len(f.tree) != 2 || f.tree["Code.cs"] != "Api.New();\n" {
@@ -339,7 +371,7 @@ func TestStackReleasedPublishPermissionDenied(t *testing.T) {
 	if _, err = f.run(true); err != nil {
 		t.Fatal(err)
 	}
-	if !f.pr || f.refCreates != 1 || f.refUpdates != 1 {
+	if !f.pr || f.refCreates != 1 || f.refUpdates != 0 || f.commits != 1 {
 		t.Fatalf("branch not recovered: %+v", f)
 	}
 }
@@ -440,5 +472,136 @@ func TestStackReleasedPublishTransitive(t *testing.T) {
 	f.writes = 0
 	if _, err = f.run(true); err == nil || f.writes != 0 {
 		t.Fatalf("unverified delivery accepted: %v", err)
+	}
+}
+
+func TestStackReleasedPublishFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, path string
+		status             int
+		permission         bool
+	}{
+		{"read500", "GET", "/pulls", 500, false},
+		{"read403", "GET", "/git/matching-refs/heads/rig-released/lib", 403, false},
+		{"read404", "GET", "/pulls", 404, false},
+		{"tree403", "POST", "/git/trees", 403, true},
+		{"commit403", "POST", "/git/commits", 403, true},
+		{"ref403", "POST", "/git/refs", 403, true},
+		{"pr404", "POST", "/pulls", 404, true},
+		{"write500", "POST", "/git/trees", 500, false},
+		{"write422", "POST", "/git/trees", 422, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newReleasedPublishFixture(t)
+			f.build()
+			f.failMethod, f.failPath, f.failStatus = tc.method, "/repos/acme/app"+tc.path, tc.status
+			out, err := f.run(true)
+			if tc.permission {
+				if err != nil || !strings.Contains(out, "Allow GitHub Actions to create and approve pull requests") || !strings.Contains(out, fmt.Sprintf("HTTP %d", tc.status)) {
+					t.Fatalf("missing permission summary: %s %v", out, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", tc.status)) || strings.Contains(out, "Allow GitHub Actions") {
+				t.Fatalf("failure hidden or misclassified: %s %v", out, err)
+			}
+			if tc.method == "GET" && f.writes != 0 {
+				t.Fatalf("read failure made %d writes", f.writes)
+			}
+		})
+	}
+}
+
+func TestStackReleasedPublishWrongBase(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	f.pr = true
+	f.ref = true
+	f.prBase = "release"
+	out, err := f.run(true)
+	if err == nil || !strings.Contains(err.Error(), `targets "release" instead of "main"`) || f.writes != 0 {
+		t.Fatalf("wrong-base PR modified: %s %v writes %d", out, err, f.writes)
+	}
+}
+
+func TestStackReleasedPublishChangedHead(t *testing.T) {
+	for _, change := range []string{"tree", "parent"} {
+		t.Run(change, func(t *testing.T) {
+			f := newReleasedPublishFixture(t)
+			f.build()
+			if _, err := f.run(true); err != nil {
+				t.Fatal(err)
+			}
+			if change == "tree" {
+				f.headTree = "old-tree"
+			} else {
+				f.headParent = "old-base"
+			}
+			if _, err := f.run(true); err != nil {
+				t.Fatal(err)
+			}
+			if f.opens != 1 || f.refCreates != 1 || f.refUpdates != 1 || f.commits != 2 {
+				t.Fatalf("changed head not reconciled: %+v", f)
+			}
+			if _, err := f.run(true); err != nil {
+				t.Fatal(err)
+			}
+			if f.refUpdates != 1 || f.commits != 2 || f.updates != 0 {
+				t.Fatalf("unchanged third run churned: %+v", f)
+			}
+		})
+	}
+}
+
+func TestStackReleasedPublishEscapedBranch(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	data, err := os.ReadFile(f.report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r stackReleasedReport
+	if err = json.Unmarshal(data, &r); err != nil {
+		t.Fatal(err)
+	}
+	f.sibling = "lib#suffix"
+	r.Sibling = f.sibling
+	if err = stackValidPrefix(f.sibling); err != nil {
+		t.Fatal("fixture key must be allowed:", err)
+	}
+	api := stackDepsClient()
+	for i := 0; i < 2; i++ {
+		if err = stackReleasedPublish(context.Background(), api, "acme/app", "main", r.Bases["app"], r); err != nil {
+			t.Fatal(err)
+		}
+		// Exercise PATCH as well as the matching-refs read and head query.
+		f.headTree = "old-tree"
+	}
+	if f.opens != 1 || f.refCreates != 1 || f.refUpdates != 1 {
+		t.Fatalf("escaped branch not reused: %+v", f)
+	}
+}
+
+func TestStackReleasedReportStreams(t *testing.T) {
+	for _, preview := range []bool{false, true} {
+		t.Run(fmt.Sprint(preview), func(t *testing.T) {
+			f := newReleasedPublishFixture(t)
+			old := dryRun
+			dryRun = preview
+			t.Cleanup(func() { dryRun = old })
+			var stdout, stderr bytes.Buffer
+			c := newStackReleasedCmd()
+			c.SetOut(&stdout)
+			c.SetErr(&stderr)
+			c.SetArgs([]string{"app", "lib", "--seed", "acme/home@main", "--package", "Acme.Lib", "--feed", f.feed, "--report", f.report})
+			if err := c.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			if stdout.Len() != 0 || !strings.Contains(stderr.String(), "release report") && !strings.Contains(stderr.String(), "Release report") {
+				t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+			_, err := os.Stat(f.report)
+			if preview && !os.IsNotExist(err) || !preview && err != nil {
+				t.Fatalf("preview=%v report stat: %v", preview, err)
+			}
+		})
 	}
 }

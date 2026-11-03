@@ -23,6 +23,13 @@ type stackDepsAPI struct {
 	base, token string
 	client      *http.Client
 }
+
+type stackDepsHTTPError struct{ status int }
+
+func (e *stackDepsHTTPError) Error() string {
+	return fmt.Sprintf("GitHub API HTTP %d (repository or permission may be unavailable)", e.status)
+}
+
 type stackDepsPR struct {
 	Mergeable *bool   `json:"mergeable"`
 	Number    int     `json:"number"`
@@ -86,7 +93,7 @@ func (a stackDepsAPI) request(ctx context.Context, method, path string, body, re
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GitHub API HTTP %d (repository or permission may be unavailable)", resp.StatusCode)
+		return &stackDepsHTTPError{status: resp.StatusCode}
 	}
 	if result != nil {
 		return json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(result)

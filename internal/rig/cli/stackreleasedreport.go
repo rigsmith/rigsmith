@@ -240,7 +240,7 @@ func stackReleasedReportCommand(cmd *cobra.Command, args []string, o stackReleas
 		return stackReleasedPublishCurrent(ctx, cmd, stackDepsClient(), root, m, fresh)
 	}
 	if dryRun {
-		return stackCanarySummary(cmd.OutOrStdout(), "Would write release report; no tree edits.")
+		return stackCanarySummary(cmd.ErrOrStderr(), "Would write release report; no tree edits.")
 	}
 	data, err := json.MarshalIndent(fresh, "", "  ")
 	if err != nil {
@@ -249,7 +249,7 @@ func stackReleasedReportCommand(cmd *cobra.Command, args []string, o stackReleas
 	if err = os.WriteFile(report, data, 0600); err != nil {
 		return err
 	}
-	return stackCanarySummary(cmd.OutOrStdout(), "Release report: "+fresh.Status+"; no tree edits.")
+	return stackCanarySummary(cmd.ErrOrStderr(), "Release report: "+fresh.Status+"; no tree edits.")
 }
 
 func stackReleasedValidate(reported, verified stackReleasedReport) error {
