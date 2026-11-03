@@ -1408,22 +1408,21 @@ import, then fetches its exact recorded PR head (the checkout may be a synthetic
 merge commit).
 
 Keep the plain-clone matrix to test released dependencies, and add a separate
-stackspace job to test sibling source changes. Copy the self-contained
-`.github/actions/stack/` directory from rigsmith into your member repository:
+stackspace job to test sibling source changes with the published action:
 
 ```yaml
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
   with:
     persist-credentials: false
-- uses: ./.github/actions/stack
+- uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
   with:
-    rig-version: vX.Y.Z # exact release containing stack ci; required
+    rig-version: v1.24.1 # exact rig release; required
     manifest: stack/rig.stack.jsonc
     member: app
     test: rig test
 ```
 
-`rigsmith/stack-action` is the intended name but is not published yet.
+Use `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0` (full SHA recommended; `@v1` moves).
 No separate josh step is needed. Install your project's language SDK as usual.
 The committed manifest supplies sibling cursors; `upstream-tip: 'true'` selects
 upstream tips instead. Commands run from the selected member prefix in a
@@ -1446,7 +1445,7 @@ composite verifies rig release checksums, supports a workflow-pinned `rig-sha256
 reuses cursor-keyed member histories and reports consumed cache hits and member
 commit/filter provenance. Use `pull_request` with `permissions: {contents: read}`,
 no secrets and checkout `persist-credentials: false`. Pin external action uses
-by full commit SHA; `rigsmith/stack-action` is not published yet.
+by full commit SHA, including `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`.
 
 Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
 should not trust restored filtered history. Cached bundles are not verified

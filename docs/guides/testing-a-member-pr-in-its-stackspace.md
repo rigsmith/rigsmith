@@ -4,9 +4,8 @@ Keep the plain-clone build matrix: it tests released sibling packages. Add a
 separate stackspace job to compile code and tests against sibling sources.
 The two jobs answer different questions and should both be required checks.
 
-The composite lives at `.github/actions/stack/` in rigsmith. The short name
-`rigsmith/stack-action` is the intended name but is not published yet. Copy that self-contained directory
-into your member repository to use the local path below. The workflow in
+Use the published composite `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`
+(full SHA recommended; `@v1` moves). The workflow in
 [examples/github-workflows/stack.yml](../../examples/github-workflows/stack.yml)
 is ready to copy after selecting a rig release containing `stack ci`.
 
@@ -14,9 +13,9 @@ is ready to copy after selecting a rig release containing `stack ci`.
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
   with:
     persist-credentials: false
-- uses: ./.github/actions/stack
+- uses: rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0
   with:
-    rig-version: vX.Y.Z # exact release containing stack ci
+    rig-version: v1.24.1 # exact rig release
     manifest: stack/rig.stack.jsonc
     member: app
     test: dotnet test tests/App.Tests
@@ -70,8 +69,9 @@ No separate josh step is needed: stack init installs the manifest/default pinned
 josh on demand before imports. Fresh-runner installation was reasoned through
 the existing installer call path, not exercised against hosted downloads.
 
-Pin external actions by full reviewed SHA after publication. Until then copy
-from a reviewed rigsmith commit. The action verifies rig release checksums and
+Pin external actions by full reviewed SHA, including
+`rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`.
+The action verifies rig release checksums and
 supports `rig-sha256` pinned independently in the workflow; release checksums do
 not defend against replacement of the whole release. `allowed-hosts` defaults
 to `github.com`. Both fork and upstream must match; opt in enterprise hosts

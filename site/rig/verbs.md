@@ -411,8 +411,8 @@ and publication jobs; see [Stackspaces](./stack#scheduled-upstream-canary).
 
 `rig stack ci --manifest stack/rig.stack.jsonc --member app --test "rig test"`
 builds the committed checkout against sibling sources in a temporary stackspace.
-Keep this job alongside the plain-clone matrix. The self-contained composite is
-`.github/actions/stack/`; `rigsmith/stack-action` is the intended name but is not published yet.
+Keep this job alongside the plain-clone matrix. The published composite is
+`rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0` (full SHA recommended; `@v1` moves).
 See [the guide](https://github.com/rigsmith/rigsmith/blob/main/docs/guides/testing-a-member-pr-in-its-stackspace.md) for a copyable workflow and other CI usage.
 
 `--topic <name>` (action input `topic`) tests every open proposal PR head in
@@ -450,7 +450,7 @@ composite verifies rig release checksums, supports a workflow-pinned `rig-sha256
 reuses cursor-keyed member histories and reports consumed cache hits and member
 commit/filter provenance. Use `pull_request` with `permissions: {contents: read}`,
 no secrets and checkout `persist-credentials: false`. Pin external action uses
-by full commit SHA; `rigsmith/stack-action` is not published yet.
+by full commit SHA, including `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`.
 
 Set action `cache-history: 'false'` (CLI `--cache-history=false`) for builds that
 should not trust restored filtered history. Cached bundles are not verified

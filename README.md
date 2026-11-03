@@ -99,6 +99,9 @@ containing the work leave nothing to push. New commits remain separate on a safe
 upstream base; ambiguous history is refused. Push verifies fast-forward ancestry locally
 and never forces an update. `--dry-run` uses the same delivery plan.
 
+For GitHub Actions, use `rigsmith/stack-action@fcae919e5eb7036b81b94ad2b5977d5a77648128 # v1.0.0`
+(full SHA recommended; `@v1` is the moving major tag).
+
 `rig stack ci` requires exactly one of `--seed acme/rigstack-app@main` or
 `--manifest stack/rig.stack.jsonc` and builds a member checkout with sibling sources in a temporary
 stackspace. Its action verifies release downloads and reports trusted history
