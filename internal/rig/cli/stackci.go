@@ -141,12 +141,16 @@ func newStackCICmd() *cobra.Command {
 			p := exec.CommandContext(cmd.Context(), exe, args...)
 			p.Dir = dir
 			p.Stdout = cmd.OutOrStdout()
-			p.Stderr = cmd.ErrOrStderr()
+			var diagnostics bytes.Buffer
+			p.Stderr = io.MultiWriter(cmd.ErrOrStderr(), &diagnostics)
 			p.Env = append(os.Environ(), "GIT_AUTHOR_NAME=rig CI", "GIT_AUTHOR_EMAIL=ci@localhost", "GIT_COMMITTER_NAME=rig CI", "GIT_COMMITTER_EMAIL=ci@localhost", "RIG_STACK_CI_VERIFIED=1", "RIG_STACK_CACHE_REPORT="+reportPath)
 			if !cacheHistory {
 				p.Env = append(p.Env, "RIG_STACK_CACHE=")
 			}
-			return p.Run()
+			if err := p.Run(); err != nil {
+				return fmt.Errorf("%w: %s", err, diagnostics.String())
+			}
+			return nil
 		}
 		e = step("setup", 10, func() error {
 			if (manifest == "") == (seed == "") {
@@ -252,7 +256,7 @@ func newStackCICmd() *cobra.Command {
 					r.UpstreamCommit = ""
 					r.UpstreamTag = ""
 					delete(m.LastSync, n)
-				} else if n != member || topic != "" {
+				} else if n != member {
 					if !stackIsSHA(m.cursor(n)) {
 						return fmt.Errorf("member %s has no full manifest cursor", n)
 					}
@@ -270,7 +274,7 @@ func newStackCICmd() *cobra.Command {
 			if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
 				return e
 			}
-			if e = run(root, "stack", "init"); e != nil {
+			if e = run(root, "stack", "init", "--ci-checkout-member", member); e != nil {
 				return fmt.Errorf("rebuilding members (private upstreams may be unavailable to fork PRs): %w", e)
 			}
 			m, _, e = loadStackManifest(root)
@@ -281,7 +285,9 @@ func newStackCICmd() *cobra.Command {
 				return err
 			}
 			for _, n := range m.names() {
-				resolved[n] = m.cursor(n)
+				if n != member {
+					resolved[n] = m.cursor(n)
+				}
 			}
 			sha := ""
 			if topic != "" {
@@ -329,7 +335,8 @@ func newStackCICmd() *cobra.Command {
 					filtered[parts[0]] = parts[2]
 				}
 			}
-			sources[member] = "fetched"
+			sources[member] = "checkout"
+			filtered[member] = ""
 			for n, pr := range heads {
 				sources[n] = "topic-head"
 				filtered[n] = ""
