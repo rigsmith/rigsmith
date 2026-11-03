@@ -41,6 +41,10 @@ func stackReleaseGet(ctx context.Context, client *http.Client, path string, resu
 }
 
 func stackReleaseVersion(ctx context.Context, a stackDepsAPI, m *stackManifest, sibling, pkg, version, feed string) (string, error) {
+	return stackReleaseVersionProof(ctx, a, m, sibling, pkg, version, feed, nil)
+}
+
+func stackReleaseVersionProof(ctx context.Context, a stackDepsAPI, m *stackManifest, sibling, pkg, version, feed string, commit *string) (string, error) {
 	r := m.Repos[sibling]
 	if r == nil {
 		return "", fmt.Errorf("unknown sibling %s", sibling)
@@ -121,6 +125,9 @@ func stackReleaseVersion(ctx context.Context, a stackDepsAPI, m *stackManifest, 
 			}
 		}
 		if included {
+			if commit != nil {
+				*commit = repo.Commit
+			}
 			return v, nil
 		}
 	}
@@ -131,14 +138,19 @@ func stackReleaseVersion(ctx context.Context, a stackDepsAPI, m *stackManifest, 
 }
 
 func newStackReleasedCmd() *cobra.Command {
-	var pkg, version, feed, via, viaVersion string
+	var pkg, version, feed, via, viaVersion, report, publish, seed string
 	var apply bool
 	var warnings []string
 	c := &cobra.Command{
 		Use:   "released <member> <sibling>",
 		Short: "Check NuGet release ancestry and prepare a return to packages",
-		Long:  "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\n--apply requires a clean tree and interactive confirmation. Transitive siblings require a published direct package dependency minimum in every framework group.\n--via-package/--via-version select that delivery release. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only. No commits, pushes or PRs are created.",
-		Args:  cobra.ExactArgs(2),
+		Long:  "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\n--apply requires a clean tree and interactive confirmation. Transitive siblings require a published direct package dependency minimum in every framework group.\n--via-package/--via-version select that delivery release. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only.\n--report writes read-only JSON (not yet released exits successfully). --seed reloads a trusted manifest home\nand member default branches. --publish verifies that report independently and proposes a PR, running no repository code.\nPublish requires --seed and trusted --package, --feed, --version, --via-* and --warning selections matching the report.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if publish != "" && len(args) == 0 {
+				return nil
+			}
+			return cobra.ExactArgs(2)(cmd, args)
+		},
 	}
 	c.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		root, err := stackRoot(cmd.Context())
@@ -158,7 +170,25 @@ func newStackReleasedCmd() *cobra.Command {
 	c.Flags().StringVar(&feed, "feed", stackNugetFeed, "NuGet flat-container base URL")
 	c.Flags().StringSliceVar(&warnings, "warning", nil, "Explicit warning IDs belonging to this package to remove")
 	c.Flags().BoolVar(&apply, "apply", false, "Apply reviewed edits locally (interactive, clean tree only)")
+	c.Flags().StringVar(&report, "report", "", "Write a read-only release report")
+	c.Flags().StringVar(&publish, "publish", "", "Verify and publish a release report as a review PR")
+	c.Flags().StringVar(&seed, "seed", "", "Trusted manifest home (owner/repo@branch) for scheduled reports/publication")
+	for _, name := range []string{"package", "via-package", "via-version", "version", "feed", "warning", "seed"} {
+		_ = c.RegisterFlagCompletionFunc(name, func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		})
+	}
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if publish != "" || report != "" {
+			if apply || publish != "" && report != "" {
+				return fmt.Errorf("--report, --publish and --apply are mutually exclusive")
+			}
+			return stackReleasedReportCommand(cmd, args, stackReleasedOptions{Package: pkg, Version: version, Feed: feed, Via: via, ViaVersion: viaVersion, Warnings: warnings}, seed, report, publish)
+		}
+		if seed != "" {
+			return fmt.Errorf("--seed requires --report or --publish")
+		}
+
 		root, err := stackRoot(cmd.Context())
 		if err != nil {
 			return err

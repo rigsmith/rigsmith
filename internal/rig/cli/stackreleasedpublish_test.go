@@ -1,0 +1,444 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type releasedPublishFixture struct {
+	sibling, pkg, via, deliveryMinimum                          string
+	omitPair                                                    bool
+	t                                                           *testing.T
+	feed, report, app, appBare                                  string
+	status                                                      string
+	denied                                                      bool
+	ref, pr                                                     bool
+	opens, updates, refCreates, refUpdates, comparisons, writes int
+	tree                                                        map[string]string
+	body, title                                                 string
+}
+
+func newReleasedPublishFixture(t *testing.T) *releasedPublishFixture {
+	t.Helper()
+	f := &releasedPublishFixture{t: t, status: "ahead", sibling: "lib", pkg: "Acme.Lib", deliveryMinimum: "2.0.0", tree: map[string]string{}}
+	root := t.TempDir()
+	cursor := strings.Repeat("a", 40)
+	home := filepath.Join(root, "home")
+	lib := filepath.Join(root, "lib")
+	f.app = filepath.Join(root, "app")
+	for _, dir := range []string{home, lib, f.app} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, dir, "init", "-q", "-b", "main")
+		mustGitStack(t, dir, "config", "user.name", "test")
+		mustGitStack(t, dir, "config", "user.email", "test@localhost")
+	}
+	write := func(dir, path, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(home, "rig.stack.jsonc", fmt.Sprintf(`{"repos":{"app":{"upstream":"github.com/acme/app","fork":"github.com/you/app"},"lib":{"upstream":"github.com/acme/lib","fork":"github.com/you/lib"}},"lastSync":{"app":%q,"lib":%q},"proposals":{"lib":{"topic":{"branch":"stack/topic"}}}}`, cursor, cursor))
+	write(lib, "Lib.csproj", `<Project><PropertyGroup><PackageId>Acme.Lib</PackageId><Version>1.0.0</Version></PropertyGroup></Project>`)
+	write(f.app, "App.csproj", `<Project><PropertyGroup><PackageId>Acme.App</PackageId><Version>1.0.0</Version></PropertyGroup><ItemGroup><PackageReference Include="Acme.Lib" Version="1.0.0" /><StackOnlyWarning Include="ACME0001" /></ItemGroup></Project>`)
+	write(f.app, "Code.cs", "#if STACK_ACME_LIB\nApi.New();\n#else\nApi.Old();\n#endif\n")
+	write(f.app, "Complex.cs", "#if STACK_ACME_LIB && OTHER\nApi.New();\n#endif\n")
+	// These would execute if the privileged job evaluated MSBuild or ran hooks.
+	write(f.app, ".rig.json", `{"build":"exit 99"}`)
+	for i, entry := range []struct{ name, dir string }{{"home", home}, {"lib", lib}, {"app", f.app}} {
+		mustGitStack(t, entry.dir, "add", ".")
+		mustGitStack(t, entry.dir, "commit", "-qm", "fixture")
+		bare := filepath.Join(root, entry.name+".git")
+		mustGitStack(t, entry.dir, "clone", "--bare", entry.dir, bare)
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i), "url."+filepath.ToSlash(bare)+".insteadOf")
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i), "https://github.com/acme/"+entry.name+".git")
+		if entry.name == "app" {
+			f.appBare = bare
+		}
+	}
+	t.Setenv("GIT_CONFIG_COUNT", "3")
+	srv := httptest.NewServer(http.HandlerFunc(f.serve))
+	t.Cleanup(srv.Close)
+	f.feed = srv.URL
+	f.report = filepath.Join(root, "released.json")
+	t.Setenv("GITHUB_API_URL", srv.URL)
+	t.Setenv("GITHUB_TOKEN", "test")
+	t.Setenv("GITHUB_STEP_SUMMARY", "")
+	return f
+}
+func (f *releasedPublishFixture) serve(w http.ResponseWriter, q *http.Request) {
+	p := q.URL.Path
+	if q.Method != "GET" {
+		f.writes++
+	}
+	switch {
+	case strings.HasSuffix(p, "/index.json"):
+		fmt.Fprint(w, `{"versions":["2.0.0"]}`)
+	case strings.HasSuffix(p, ".nuspec"):
+		if strings.Contains(p, "/acme.core/") {
+			fmt.Fprintf(w, `<package><metadata><repository url="https://github.com/acme/core" commit="%s" /></metadata></package>`, strings.Repeat("b", 40))
+			return
+		}
+		if f.via != "" {
+			fmt.Fprintf(w, `<package><metadata><dependencies><dependency id="Acme.Core" version="%s" /></dependencies></metadata></package>`, f.deliveryMinimum)
+			return
+		}
+		fmt.Fprintf(w, `<package><metadata><repository url="https://github.com/acme/lib" commit="%s" /></metadata></package>`, strings.Repeat("b", 40))
+	case strings.Contains(p, "/compare/"):
+		f.comparisons++
+		fmt.Fprintf(w, `{"status":%q}`, f.status)
+	case p == "/repos/acme/lib/pulls/1" || p == "/repos/acme/core/pulls/1":
+		fmt.Fprintf(w, `{"merged_at":"today","merge_commit_sha":%q}`, strings.Repeat("a", 40))
+	case p == "/repos/acme/lib/pulls" || p == "/repos/acme/core/pulls":
+		fmt.Fprint(w, fmt.Sprintf(`[{"number":1,"head":{"ref":"stack/topic","repo":{"full_name":"you/%s"}}}]`, f.sibling))
+	case p == "/repos/acme/app" || p == "/repos/acme/lib" || p == "/repos/acme/core":
+		fmt.Fprint(w, `{"default_branch":"main"}`)
+	case p == "/repos/acme/app/pulls" && q.Method == "GET":
+		if q.URL.Query().Get("head") != "acme:rig-released/"+f.sibling {
+			f.t.Errorf("unexpected head: %s", q.URL.RawQuery)
+		}
+		if f.pr {
+			fmt.Fprint(w, `[{"number":7}]`)
+		} else {
+			fmt.Fprint(w, `[]`)
+		}
+	case strings.Contains(p, "/git/commits/"):
+		fmt.Fprint(w, `{"tree":{"sha":"base-tree"}}`)
+	case strings.HasSuffix(p, "/git/trees"):
+		var payload struct {
+			BaseTree string `json:"base_tree"`
+			Tree     []struct{ Path, Content, Mode, Type string }
+		}
+		if err := json.NewDecoder(q.Body).Decode(&payload); err != nil {
+			f.t.Error(err)
+		}
+		if payload.BaseTree != "base-tree" {
+			f.t.Error("not based on default tree")
+		}
+		f.tree = map[string]string{}
+		for _, e := range payload.Tree {
+			f.tree[e.Path] = e.Content
+			if e.Mode != "100644" || e.Type != "blob" {
+				f.t.Errorf("invalid entry %+v", e)
+			}
+		}
+		fmt.Fprint(w, `{"sha":"new-tree"}`)
+	case strings.HasSuffix(p, "/git/commits"):
+		fmt.Fprint(w, `{"sha":"new-commit"}`)
+	case strings.Contains(p, "/git/matching-refs/"):
+		if f.ref {
+			fmt.Fprint(w, fmt.Sprintf(`[{"ref":"refs/heads/rig-released/%s"}]`, f.sibling))
+		} else {
+			fmt.Fprint(w, `[]`)
+		}
+	case strings.HasSuffix(p, "/git/refs"):
+		f.ref = true
+		f.refCreates++
+		fmt.Fprint(w, `{}`)
+	case strings.Contains(p, "/git/refs/heads/"):
+		f.refUpdates++
+		fmt.Fprint(w, `{}`)
+	case p == "/repos/acme/app/pulls" && q.Method == "POST":
+		f.opens++
+		if f.denied {
+			w.WriteHeader(403)
+			return
+		}
+		f.pr = true
+		f.readBody(q)
+		fmt.Fprint(w, `{"number":7}`)
+	case p == "/repos/acme/app/pulls/7" && q.Method == "PATCH":
+		f.updates++
+		f.readBody(q)
+		fmt.Fprint(w, `{}`)
+	default:
+		f.t.Errorf("unexpected API %s %s", q.Method, p)
+		w.WriteHeader(404)
+	}
+}
+func (f *releasedPublishFixture) readBody(q *http.Request) {
+	var p struct{ Title, Body string }
+	if err := json.NewDecoder(q.Body).Decode(&p); err != nil {
+		f.t.Error(err)
+	}
+	f.body = p.Body
+	f.title = p.Title
+}
+func (f *releasedPublishFixture) run(publish bool) (string, error) {
+	f.t.Helper()
+	c := newStackReleasedCmd()
+	var out bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&out)
+	args := []string{"app", f.sibling, "--seed", "acme/home@main", "--package", f.pkg, "--via-package", f.via, "--feed", f.feed, "--warning", "ACME0001"}
+	if publish && f.omitPair {
+		args = args[2:]
+	}
+	if publish {
+		args = append(args, "--publish", f.report)
+	} else {
+		args = append(args, "--report", f.report)
+	}
+	c.SetArgs(args)
+	err := c.Execute()
+	return out.String(), err
+}
+func (f *releasedPublishFixture) build() {
+	f.t.Helper()
+	if _, err := f.run(false); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func TestStackReleasedPublishExactAndRerun(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	if f.writes != 0 {
+		t.Fatal("report wrote upstream")
+	}
+	before, err := os.ReadFile(filepath.Join(f.app, "Code.cs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(before), "#if STACK_ACME_LIB") {
+		t.Fatal("report modified tree")
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := f.run(true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.opens != 1 || f.updates != 1 || f.refCreates != 1 || f.refUpdates != 1 {
+		t.Fatalf("not idempotent: %+v", f)
+	}
+	if len(f.tree) != 2 || f.tree["Code.cs"] != "Api.New();\n" {
+		t.Fatalf("unexpected exact edits: %v", f.tree)
+	}
+	want := `<Project><PropertyGroup><PackageId>Acme.App</PackageId><Version>1.0.0</Version></PropertyGroup><ItemGroup><PackageReference Include="Acme.Lib" Version="2.0.0" /></ItemGroup></Project>`
+	if f.tree["App.csproj"] != want {
+		t.Fatalf("project edit %q", f.tree["App.csproj"])
+	}
+	for _, text := range []string{"compound condition", "Code.cs:1: removed #if STACK_ACME_LIB", "StackOnlyWarning ACME0001", "Complex.cs", "direct reference"} {
+		if !strings.Contains(f.body, stackCanaryText(text)) {
+			t.Fatalf("missing %s in %s", text, f.body)
+		}
+	}
+	if !strings.Contains(f.title, "Acme.Lib 2.0.0") || !strings.HasSuffix(f.body, "A human must review this PR and run package-mode checks before merging.\n") {
+		t.Fatal(f.title, f.body)
+	}
+}
+func TestStackReleasedPublishNotYet(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.status = "behind"
+	f.build()
+	data, err := os.ReadFile(f.report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var r stackReleasedReport
+	if err = json.Unmarshal(data, &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "not yet" || len(r.Edits) != 0 {
+		t.Fatalf("report: %+v", r)
+	}
+	if _, err = f.run(true); err != nil {
+		t.Fatal(err)
+	}
+	if f.writes != 0 {
+		t.Fatal("not-yet published")
+	}
+}
+func TestStackReleasedPublishReverifies(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	f.status = "behind"
+	f.comparisons = 0
+	if _, err := f.run(true); err == nil {
+		t.Fatal("publisher accepted release that no longer proves ancestry")
+	}
+	if f.comparisons == 0 || f.writes != 0 {
+		t.Fatalf("re-verification missing: compares %d writes %d", f.comparisons, f.writes)
+	}
+}
+func TestStackReleasedPublishTampered(t *testing.T) {
+	for _, field := range []string{"edit", "version", "warning", "member", "path"} {
+		t.Run(field, func(t *testing.T) {
+			f := newReleasedPublishFixture(t)
+			f.build()
+			data, err := os.ReadFile(f.report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var r stackReleasedReport
+			if err = json.Unmarshal(data, &r); err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "edit":
+				r.Edits[0].Content = "tampered"
+			case "path":
+				r.Edits[0].Path = "../outside"
+			case "version":
+				r.Version = "9.0.0"
+			case "warning":
+				r.Options.Warnings = []string{"OTHER"}
+			case "member":
+				r.Member = "lib"
+			}
+			data, err = json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(f.report, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = f.run(true); err == nil || f.writes != 0 {
+				t.Fatalf("tamper accepted: %v, writes %d", err, f.writes)
+			}
+		})
+	}
+}
+func TestStackReleasedPublishAlreadyMigrated(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	path := filepath.Join(f.app, "App.csproj")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, bytes.Replace(data, []byte(`Version="1.0.0" />`), []byte(`Version="2.0.0" />`), 1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, f.app, "add", ".")
+	mustGitStack(t, f.app, "commit", "-qm", "hand migration")
+	mustGitStack(t, f.app, "push", f.appBare, "main")
+	out, err := f.run(true)
+	if err != nil || !strings.Contains(out, "already has") || f.writes != 0 {
+		t.Fatalf("%s %v writes %d", out, err, f.writes)
+	}
+}
+func TestStackReleasedPublishPermissionDenied(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	f.denied = true
+	out, err := f.run(true)
+	if err != nil || !strings.Contains(out, "Allow GitHub Actions to create and approve pull requests") || !f.ref || f.pr {
+		t.Fatalf("%s %v", out, err)
+	}
+	f.denied = false
+	if _, err = f.run(true); err != nil {
+		t.Fatal(err)
+	}
+	if !f.pr || f.refCreates != 1 || f.refUpdates != 1 {
+		t.Fatalf("branch not recovered: %+v", f)
+	}
+}
+
+func TestStackReleasedPublishWithoutPositionals(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	f.omitPair = true
+	if _, err := f.run(true); err != nil {
+		t.Fatal(err)
+	}
+	if f.opens != 1 {
+		t.Fatal("missing PR")
+	}
+}
+
+func TestStackReleasedPublishStaleDefault(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.build()
+	if err := os.WriteFile(filepath.Join(f.app, "Unrelated.cs"), []byte("class New {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, f.app, "add", ".")
+	mustGitStack(t, f.app, "commit", "-qm", "default moved")
+	mustGitStack(t, f.app, "push", f.appBare, "main")
+	if _, err := f.run(true); err == nil || f.writes != 0 {
+		t.Fatalf("stale default accepted: %v", err)
+	}
+}
+
+func TestStackReleasedPublishTransitive(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	f.sibling = "core"
+	f.pkg = "Acme.Core"
+	f.via = "Acme.Lib"
+	root := filepath.Dir(f.app)
+	home := filepath.Join(root, "home")
+	lib := filepath.Join(root, "lib")
+	core := filepath.Join(root, "core")
+	if err := os.MkdirAll(core, 0700); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, core, "init", "-q", "-b", "main")
+	mustGitStack(t, core, "config", "user.name", "test")
+	mustGitStack(t, core, "config", "user.email", "test@localhost")
+	files := map[string]string{
+		filepath.Join(core, "Core.csproj"): `<Project><PropertyGroup><PackageId>Acme.Core</PackageId><Version>1.0.0</Version></PropertyGroup></Project>`,
+		filepath.Join(lib, "Lib.csproj"):   `<Project><PropertyGroup><PackageId>Acme.Lib</PackageId><Version>1.0.0</Version></PropertyGroup><ItemGroup><PackageReference Include="Acme.Core" Version="1.0.0" /></ItemGroup></Project>`,
+		filepath.Join(f.app, "Code.cs"):    "#if STACK_ACME_CORE\nApi.New();\n#else\nApi.Old();\n#endif\n",
+	}
+	for path, content := range files {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := filepath.Join(home, "rig.stack.jsonc")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest stackManifest
+	if err = json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Repos["core"] = &stackRepo{Upstream: "github.com/acme/core", Fork: "github.com/you/core"}
+	manifest.LastSync["core"] = strings.Repeat("a", 40)
+	manifest.Proposals["core"] = manifest.Proposals["lib"]
+	delete(manifest.Proposals, "lib")
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{home, lib, f.app, core} {
+		mustGitStack(t, dir, "add", ".")
+		mustGitStack(t, dir, "commit", "-qm", "core dependency")
+		bare := filepath.Join(root, filepath.Base(dir)+".git")
+		if dir == core {
+			mustGitStack(t, dir, "clone", "--bare", dir, bare)
+		} else {
+			mustGitStack(t, dir, "push", bare, "main")
+		}
+	}
+	t.Setenv("GIT_CONFIG_COUNT", "4")
+	t.Setenv("GIT_CONFIG_KEY_3", "url."+filepath.ToSlash(filepath.Join(root, "core.git"))+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_3", "https://github.com/acme/core.git")
+	f.build()
+	if _, err = f.run(true); err != nil {
+		t.Fatal(err)
+	}
+	if f.opens != 1 || f.tree["Code.cs"] != "Api.New();\n" || !strings.Contains(f.body, stackCanaryText("Acme.Lib 2.0.0 requires Acme.Core >= 2.0.0")) {
+		t.Fatalf("transitive PR: %+v", f)
+	}
+	// An altered delivery nuspec must be independently rechecked too.
+	f.deliveryMinimum = "1.0.0"
+	f.writes = 0
+	if _, err = f.run(true); err == nil || f.writes != 0 {
+		t.Fatalf("unverified delivery accepted: %v", err)
+	}
+}

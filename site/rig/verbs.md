@@ -293,7 +293,7 @@ you contribute to, and `push` fast-forwards a repo you own with its history.
 | `stack home [pointer-file]` | Read a member’s single-reference .rig-stack pointer (default .rig-stack) |
 | `stack canary` | Test upstream tips; required `--seed`, `--allowed-hosts`, `--members`, `--mode batch` or `--mode separate`, `--isolate`, `--build`, `--test`, `--report`; `--publish` validates tracked upstream ancestry and reconciles reported build outcomes into cursor PRs or failure issues on a fresh trusted runner; `-n` previews |
 | `stack deps` | Read `--manifest <path>` or `--seed <ref>` (exclusive); `--allowed-hosts <hosts>` restricts seed hosts; check topic PR dependencies against upstream merge states and manifest cursors; `--publish` posts statuses only in `GITHUB_REPOSITORY` |
-| `stack released <member> <sibling> --package <id>` | Verify NuGet release ancestry and package delivery; preview pin and guard edits, or use `--apply` on a clean tree with interactive confirmation. `-n` previews only |
+| `stack released <member> <sibling> --package <id>` | Verify NuGet release ancestry and package delivery; preview pin and guard edits, or use `--apply` on a clean tree with interactive confirmation; `--report` writes read-only JSON, `--seed` reads a trusted manifest home and default branches, and `--publish` independently verifies and proposes a member PR. `-n` previews only |
 | `stack status` | Each repo's cursor against its upstream, whether it holds work that has not left — all of which `propose` would send — and, listed under it, each `stack-pr-*` topic in flight with the fork branch its pull request is on, `not proposed yet`, whether the branch has moved since, and whether a pull left it behind; `--releases` opts into NuGet release annotations under the shared short deadline |
 | `stack pull [repo]` | Merge new upstream commits into a repo's directory (all repos by default); private upstreams through your `gh` login, as with `init` |
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch — **all** of them, the prefix's whole divergence from upstream; `--from <branch>` sends only what a topic branch of the stackspace adds (a bare name resolves to the conventional `stack-pr-<name>`), so a second fix can be its own pull request (needs `trackBranch`, which it then keeps current); `--dry-run` shows the commit and branch that would go and touches no remote; both report any package the branch references that this stackspace provides from source rather than a feed, since a plain checkout of the branch cannot restore those |
@@ -312,6 +312,19 @@ For transitive siblings, `stack released --via-package Acme.Control
 --via-version 4.0.0` selects a direct package whose nuspec must deliver the
 verified sibling minimum in every target-framework group. `rig stack status
 --releases` opts into bounded release annotations; default status skips discovery.
+
+`stack released --report <file>` writes read-only JSON; `not yet` exits 0.
+Use `--seed acme/rigstack-app@main` for a trusted manifest home and member default
+branches. In a fresh job, `stack released [<member> <sibling>] --publish <file>`
+requires `--seed` and the same trusted `--package`, `--feed`, `--version`,
+`--via-package`, `--via-version` and `--warning` selections. It re-verifies all
+release/delivery evidence and edits, then opens or updates a stable member PR.
+`--report`, `--publish` and `--apply` are mutually exclusive. Neither report nor
+publish edits the local tree; `--apply` still requires clean-tree interactive
+confirmation. See [scheduled return to packages](stack.md#scheduled-return-to-packages)
+and `examples/github-workflows/stack-released.yml`. NuGet only; npm and deeper
+transitive chains remain undone.
+
 
 On .NET, `wire` source constants and target-time properties include the static
 PackageReference closure of each swapped sibling, propagated through evaluated

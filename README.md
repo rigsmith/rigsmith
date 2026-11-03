@@ -122,6 +122,14 @@ Transitive package migrations verify a published delivery dependency with
 `--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
 release discovery; ordinary status performs no additional registry checks.
 
+Scheduled NuGet release migration uses `rig stack released --report` and a
+separate `--publish` job to open or update a reviewed back-to-packages PR on the
+member. The publisher reloads a trusted `--seed`, re-verifies ancestry/delivery
+and derives edits from current default-branch blobs without running repo code.
+Copy `examples/github-workflows/stack-released.yml`; repeat trusted package,
+feed, version and warning selections in both jobs. npm and deeper transitive
+chains remain unsupported. See [the stack guide](site/rig/stack.md#scheduled-return-to-packages) for permissions and review limits.
+
 The release engine — changeset parsing, the dependency **cascade** (a dependent
 is patch-bumped when its dependency releases), **linked/fixed/lockstep**
 grouping, version bumping, and changelog rendering — is a faithful port of
