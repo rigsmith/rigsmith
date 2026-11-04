@@ -1718,7 +1718,10 @@ created while planning, as they were before.
 
 `stack released --report <file>` serializes the release/delivery proof and exact
 migration contents without editing the source tree. Report summaries go to
-stderr so stdout stays clean. `not yet` is successful for
+stderr so stdout stays clean. A temporary file in the destination directory is
+written, synced and closed before rename, so existing Unix descriptors cannot read the
+replacement contents. Unix mode is 0600; on Windows, callers need a private
+directory ACL because mode bits only control the read-only attribute. `not yet` is successful for
 scheduled runs; missing evidence and feed failures remain errors. `--seed`
 reloads an unfused manifest home and reads shallow default branches, independently
 of any build checkout. NuGet-only discovery is built in and static.

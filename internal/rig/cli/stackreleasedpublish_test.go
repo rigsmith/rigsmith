@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -636,23 +637,72 @@ func TestStackReleasedReportOverwriteMode(t *testing.T) {
 	}
 }
 
-func TestStackReleasedReportChmodFailurePreservesContents(t *testing.T) {
+func TestStackReleasedReportRenameFailurePreservesContents(t *testing.T) {
 	f := newReleasedPublishFixture(t)
 	before := []byte(`{"Schema":1,"Status":"released"}`)
 	if err := os.WriteFile(f.report, before, 0644); err != nil {
 		t.Fatal(err)
 	}
-	old := stackReleasedReportChmod
-	stackReleasedReportChmod = func(*os.File, os.FileMode) error { return os.ErrPermission }
-	t.Cleanup(func() { stackReleasedReportChmod = old })
+	old := stackReleasedReportRename
+	called := false
+	stackReleasedReportRename = func(from, to string) error {
+		called = true
+		if filepath.Dir(from) != filepath.Dir(f.report) || to != f.report {
+			t.Errorf("unexpected report replacement: %q -> %q", from, to)
+		}
+		data, err := os.ReadFile(from)
+		if err != nil || !json.Valid(data) {
+			t.Errorf("report not prepared before rename: %q %v", data, err)
+		}
+		return os.ErrPermission
+	}
+	t.Cleanup(func() { stackReleasedReportRename = old })
 	if _, err := f.run(false); !errors.Is(err, os.ErrPermission) {
-		t.Fatalf("permission failure not returned: %v", err)
+		t.Fatalf("rename failure not returned: %v", err)
+	}
+	if !called {
+		t.Fatal("replacement was not attempted")
 	}
 	after, err := os.ReadFile(f.report)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(after, before) {
-		t.Fatalf("permission failure changed existing report: %q", after)
+		t.Fatalf("rename failure changed existing report: %q", after)
+	}
+	if paths, err := filepath.Glob(filepath.Join(filepath.Dir(f.report), ".rig-released-report-*")); err != nil || len(paths) != 0 {
+		t.Fatalf("failed report left temporary files: %v %v", paths, err)
+	}
+}
+
+func TestStackReleasedReportReplacementIsolatesExistingReaders(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix rename descriptor isolation; Windows replacement can be denied while the file is open")
+	}
+	f := newReleasedPublishFixture(t)
+	before := []byte(`{"Schema":1,"Status":"old report"}`)
+	if err := os.WriteFile(f.report, before, 0644); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := os.Open(f.report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	f.build()
+	oldContents, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(oldContents, before) {
+		t.Fatalf("existing reader observed replacement contents: %q", oldContents)
+	}
+	newContents, err := os.ReadFile(f.report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report stackReleasedReport
+	if err = json.Unmarshal(newContents, &report); err != nil || report.Status != "released" || len(report.Edits) == 0 {
+		t.Fatalf("replacement report missing: %s %v", newContents, err)
 	}
 }

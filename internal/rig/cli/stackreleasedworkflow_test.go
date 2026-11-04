@@ -116,18 +116,21 @@ func TestStackReleasedWorkflow(t *testing.T) {
 				if !ok || len(call.Assigns) != 0 {
 					t.Fatal("expected a plain release command:", name)
 				}
-				args, err := expand.Fields(&expand.Config{Env: expand.ListEnviron("MEMBER=app", "SIBLING=lib", "PACKAGE=Acme.Lib", "VIA=Acme.Control", "WARNING=ACME0001")}, call.Args...)
-				if err != nil {
-					t.Fatal(err)
-				}
-				want := []string{"rig", "stack", "released", "app", "lib", "--seed", "acme/rigstack-app@main", "--package", "Acme.Lib", "--via-package", "Acme.Control", "--warning", "ACME0001"}
-				if name == "publish" {
-					want = append(want, "--publish", "report/released.json")
-				} else {
-					want = append(want, "--report", "released.json")
-				}
-				if !reflect.DeepEqual(args, want) {
-					t.Fatalf("unexpected %s release arguments: got %q, want %q", name, args, want)
+				for _, row := range job.Strategy.Matrix.Include {
+					env := expand.ListEnviron("MEMBER="+row["member"], "SIBLING="+row["sibling"], "PACKAGE="+row["package"], "VIA="+row["via"], "WARNING="+row["warning"])
+					args, err := expand.Fields(&expand.Config{Env: env}, call.Args...)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := []string{"rig", "stack", "released", row["member"], row["sibling"], "--seed", "acme/rigstack-app@main", "--package", row["package"], "--via-package", row["via"], "--warning", row["warning"]}
+					if name == "publish" {
+						want = append(want, "--publish", "report/released.json")
+					} else {
+						want = append(want, "--report", "released.json")
+					}
+					if !reflect.DeepEqual(args, want) {
+						t.Fatalf("unexpected %s release arguments for %s/%s: got %q, want %q", name, row["member"], row["sibling"], args, want)
+					}
 				}
 			}
 			if strings.HasPrefix(step.Uses, "actions/upload-artifact@") {

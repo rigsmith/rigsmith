@@ -35,7 +35,7 @@ type stackReleasedReport struct {
 	Notes, Removed                                            []string
 }
 
-var stackReleasedReportChmod = (*os.File).Chmod
+var stackReleasedReportRename = os.Rename
 
 // Report and publisher share only data-reading code: no adapter registry,
 // checkout filters, MSBuild, hooks, or commands from the manifest are executed.
@@ -248,21 +248,22 @@ func stackReleasedReportCommand(cmd *cobra.Command, args []string, o stackReleas
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(report, os.O_WRONLY|os.O_CREATE, 0600)
+	f, err := os.CreateTemp(filepath.Dir(report), ".rig-released-report-*")
 	if err != nil {
 		return err
 	}
+	defer os.Remove(f.Name())
 	defer f.Close()
-	if err = stackReleasedReportChmod(f, 0600); err != nil {
-		return err
-	}
-	if err = f.Truncate(0); err != nil {
-		return err
-	}
 	if _, err = f.Write(data); err != nil {
 		return err
 	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
 	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = stackReleasedReportRename(f.Name(), report); err != nil {
 		return err
 	}
 	return stackCanarySummary(cmd.ErrOrStderr(), "Release report: "+fresh.Status+"; no tree edits.")

@@ -1701,9 +1701,16 @@ or executes member code. Do not share a self-hosted workspace across the jobs.
 member bases, checked release commit/version, direct or verified immediate
 transitive delivery, exact relative file paths and replacement contents, removed
 guards/warnings, and every manual-review note. It never changes source files.
-Human report summaries go to stderr, leaving stdout clean. Report files use
-owner-only permissions (0600), including when an existing file is overwritten.
-If setting those permissions fails, the existing report contents are preserved.
+Human report summaries go to stderr, leaving stdout clean. Reports are written
+to a temporary file in the destination directory and renamed into place only
+after the write, sync and close succeed. On Unix, the new file uses owner-only
+permissions (0600), and replacement is atomic; processes holding an old report
+descriptor continue to see the old contents. Preparation or replacement failures
+leave the old report unchanged and remove the temporary file. On Windows, mode
+bits control the read-only attribute rather than enforcing a private ACL; use a
+report directory whose ACL limits access to the intended user. Replacement
+semantics differ by platform. See [Go file permissions](https://pkg.go.dev/os#Chmod)
+and [rename behavior](https://pkg.go.dev/os#Rename).
 Without `--seed`, report mode reads the local stackspace; publication requires a
 seed-backed report. A release not yet containing all recorded work, or a delivery
 package not yet requiring it, reports `not yet` and exits successfully. Missing
