@@ -11,7 +11,7 @@ description: >
   setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home,
-  setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies,
+  setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
@@ -693,3 +693,19 @@ are reported with their command and left untouched. Project/local install, unins
 and doctor fixes refuse settings symlinks escaping the resolved repository or targeting
 global settings; symlinked checkout paths remain supported. Malformed hook structures
 are refused, JSON numbers retain their precision, and diagnostic controls are escaped.
+
+For scheduled NuGet return-to-packages PRs, use
+`examples/github-workflows/stack-released.yml`, matching the canary's direct rig
+invocation and fresh report/publish runners. `stack released --report <file>` is
+read-only and exits 0 for `not yet`. Add a trusted `--seed` for publishable reports.
+`stack released --publish <file> --seed acme/rigstack-app@main --package Acme.Lib`
+reloads member default branches and independently proves ancestry, delivery and
+exact edits before proposing a PR. Repeat all trusted feed/version/via/warning
+flags and preferably member/sibling positionals in both jobs; never derive them
+from artifact data. Do not execute checkout code or reuse build credentials or
+caches in the privileged job. Contents/PR write applies to the member repository;
+cross-repository workflows need a publish-only token. Re-runs reuse the same PR;
+a member already migrated is a no-op. Local `--apply` remains interactive and
+confirm-first. Human review and package-mode checks are required. Evidence is
+currently fake services and bare repos; hosted real-release validation, npm and
+deeper transitive delivery remain undone.

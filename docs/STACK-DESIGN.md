@@ -1607,9 +1607,8 @@ manual-review notes, refuses tracked or untracked dirt, and asks for interactive
 confirmation. It fails off a terminal; no `--yes` bypass is provided for this
 first destructive source rewrite. This follows the destructive replacement rule
 even though the working tree is clean and Git can recover it. `-n` always stays
-in preview mode, including with `--apply`. Nothing commits, pushes or opens a PR.
-A later opt-in PR layer would need contents/pull-requests write permissions;
-no action permissions or workflow inputs change here.
+in preview mode, including with `--apply`. The local path never commits, pushes or opens a PR. Scheduled publication uses
+the separate verified report/PR path described below.
 
 Only exact `#if STACK_ID`, optional `#else`, and balanced nested directives are
 rewritten, keeping the selected branch's bytes. Compound expressions, `#elif`
@@ -1714,3 +1713,58 @@ still refuse an ambiguous history that propose can present as a reviewable diff.
 Dry run restores the temporary filtered ref even on planning errors; it does
 not move HEAD, manifest, cursor or remote. Git objects and filter caches may be
 created while planning, as they were before.
+
+## Scheduled release migration trust boundary
+
+`stack released --report <file>` serializes the release/delivery proof and exact
+migration contents without editing the source tree. Report summaries go to
+stderr so stdout stays clean. A temporary file in the destination directory is
+written, synced and closed before rename, so existing Unix descriptors cannot read the
+replacement contents. Unix mode is 0600; on Windows, callers need a private
+directory ACL because mode bits only control the read-only attribute. `not yet` is successful for
+scheduled runs; missing evidence and feed failures remain errors. `--seed`
+reloads an unfused manifest home and reads shallow default branches, independently
+of any build checkout. NuGet-only discovery is built in and static.
+
+`--publish <report>` requires a trusted `--seed` and matching command selections
+(package, feed, explicit versions, delivery selection and attributed warnings).
+The example repeats trusted member/sibling arguments too. With no positionals,
+publish reads the pair from the report and validates manifest membership. It
+reloads upstream state, repeats proposal/cursor ancestry and immediate delivery
+checks, proves pins, and recomputes exact edits before any write. All report
+fields must match; bases that moved require a new report. A member already pinned
+to the delivery version or newer is a no-op even when the report is stale, since
+that path uses no artifact contents and performs no write.
+
+The reader clones bare and materializes raw blobs, bypassing checkout filters
+and archive attributes. No repo commands, hooks, custom adapters, or MSBuild are
+run. Member symlinks, submodules and LFS are refused. The fresh publisher uses
+the Git data API to replace only independently derived files on the default
+branch tree. `rig-released/<sibling>` and a body marker identify one proposal
+per member/sibling. Branch lookup precedes PR creation, and re-runs update its
+title/body. A PR targeting a different base is refused before writes. An existing
+head with the intended tree and sole parent/base is retained; only a changed
+tree or base creates a new commit and moves the ref. Ref paths and head queries
+escape branch names, including allowed `#` characters. Workflows serialize this namespace.
+PR creation denied by repository policy may leave that deterministic branch;
+the summary names the Actions PR setting and retry reuses it, matching canary
+recovery. Only write HTTP 403/404 responses use that successful summary path;
+read errors, transport failures, 5xx and other API failures return errors with
+diagnostics. HTTP status is retained without printing upstream response bodies.
+No destructive local rewrite is added. `--apply` remains clean-tree,
+interactive and confirm-first.
+
+The example calls rig directly, following the canary rather than adding a
+composite action mode. Both jobs install reviewed version-pinned module source
+verified by Go's checksum database on fresh hosted runners without caches or
+member checkout. The build job has contents read; publication needs member
+contents/PR write and upstream read. A manifest-home workflow targeting another
+repository needs a publish-only token with those cross-repository permissions;
+Git read credentials are independently configured on both runners.
+
+Fake services and local bare histories establish artifact refusal, exact edits,
+idempotence, hand-migration no-op, permission recovery, and unchanged complex
+guards. A hosted scheduled run with a real release remains integration work.
+The existing gated local package-mode build fixture still applies to the shared
+rewriter. npm/other registries and delivery deeper than one verified transitive
+hop are not implemented.

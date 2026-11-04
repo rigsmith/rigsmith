@@ -1662,7 +1662,8 @@ guards, files containing strings/comments, source/availability conditions and
 unattributed StackOnlyWarning declarations are listed for manual review.
 Use `--warning ACME0001` only after identifying that declaration as belonging to
 this package. Floating versions and conditional pins require manual work.
-Review and build with stack sources off before committing. No PR is opened.
+Review and build with stack sources off before committing. The local preview and
+`--apply` do not open a PR; scheduled publication is separate below.
 
 For `App -> Acme.Control -> Acme.Core`, the Core release alone is insufficient.
 `rig stack released app core --package Acme.Core --via-package Acme.Control`
@@ -1680,3 +1681,79 @@ references or overrides introduced by build props/targets refuse the whole
 migration. Ancestor build files are checked too. Simple enabled central pins
 and local project-reference propagation are supported; explicit imports and
 complex MSBuild rules need manual review. Refusals leave pins and guards intact.
+
+### Scheduled return to packages
+
+Copy `examples/github-workflows/stack-released.yml`, set your trusted manifest
+`--seed acme/rigstack-app@main`, and edit both jobs' member/sibling/package
+matrices. Use a reviewed rig release in both pinned installs. Like the canary,
+the example calls rig directly; the composite action has no new mode. The Go
+checksum database authenticates the pinned module sources, with caches disabled.
+Schedule and `workflow_dispatch` run the same read-only report job, followed by
+a fresh hosted publish runner with contents/PR write access to the **member**.
+For cross-repository members, `github.token` usually cannot write there; use a
+publish-only token with member write and upstream read permissions. Configure
+private Git read credentials independently in both jobs. Neither job checks out
+or executes member code. Do not share a self-hosted workspace across the jobs.
+
+`rig stack released app lib --package Acme.Lib --seed acme/rigstack-app@main
+--report released.json` writes a JSON report with member/sibling, seed and
+member bases, checked release commit/version, direct or verified immediate
+transitive delivery, exact relative file paths and replacement contents, removed
+guards/warnings, and every manual-review note. It never changes source files.
+Human report summaries go to stderr, leaving stdout clean. Reports are written
+to a temporary file in the destination directory and renamed into place only
+after the write, sync and close succeed. On Unix, the new file uses owner-only
+permissions (0600), and replacement is atomic; processes holding an old report
+descriptor continue to see the old contents. Preparation or replacement failures
+leave the old report unchanged and remove the temporary file. On Windows, mode
+bits control the read-only attribute rather than enforcing a private ACL; use a
+report directory whose ACL limits access to the intended user. Replacement
+semantics differ by platform. See [Go file permissions](https://pkg.go.dev/os#Chmod)
+and [rename behavior](https://pkg.go.dev/os#Rename).
+Without `--seed`, report mode reads the local stackspace; publication requires a
+seed-backed report. A release not yet containing all recorded work, or a delivery
+package not yet requiring it, reports `not yet` and exits successfully. Missing
+metadata, inaccessible feeds and other inconclusive checks still fail.
+
+`rig stack released app lib --package Acme.Lib --seed acme/rigstack-app@main
+--publish released.json` independently reloads the manifest home and shallow
+member default branches. It reads raw Git blobs (no checkout filters), uses only
+built-in .NET discovery, and runs no MSBuild, plugins, hooks or repo commands.
+Symlinks, LFS and submodules are refused. The publisher rechecks every recorded
+proposal, cursor ancestry, NuGet repository metadata, delivery minimum, and pin
+safety, then re-derives edits. Report selections must match trusted workflow
+`--package`, `--feed`, `--version`, `--via-package`, `--via-version` and `--warning`
+flags. Pass the same member/sibling arguments to constrain the pair too; when
+omitted in publish mode, the pair is read from the report and checked against
+the trusted manifest. Edited versions, contents or notes are rejected. Changed
+upstream bases require a fresh report. If the member already has the delivery
+version or newer, publication does nothing, including after a hand migration
+between jobs; no report content is used on that no-write path.
+
+One stable `rig-released/<sibling>` branch per member repository is rebuilt on
+its current default branch using the Git data API. The open PR is updated by
+head branch, never duplicated on a re-run. An existing PR targeting another base
+branch is refused before any write. Identical tree/base pairs keep their existing
+head commit, preserving approvals and avoiding repeated CI; changed PR text is
+still updated. Its title names the direct package
+and version; the body records ancestry, delivery, every removed guard, remaining
+guards with reasons, and attributed warning removals. A human must review it
+and run package-mode checks. Serialize workflows, reserve this branch namespace,
+and use one matrix row per member/sibling pair. The publisher never edits the
+local tree, merges the PR, or weakens `--apply`'s interactive confirmation.
+
+Enable Settings → Actions → General → **Allow GitHub Actions to create and
+approve pull requests**, or use a token with member PR write access. Denial is
+summarized with that setting; a branch may remain and the next run reuses it.
+Without `GITHUB_TOKEN`, publication is skipped with a summary. Read failures,
+network failures, timeouts, 5xx responses and other API errors fail the check with
+a diagnostic. Only write denials (HTTP 403 or 404 on tree, commit, ref or PR
+creation/update) use the permission summary and exit successfully; its diagnostic
+includes the HTTP status. GitHub may conceal inaccessible write destinations
+with 404.
+
+Coverage uses fake NuGet/GitHub services and local bare repos, including exact
+edits, re-runs, stale ancestry, tampered artifacts, hand migration, permission
+recovery and complex guards. Hosted Actions and a real release are not verified.
+NuGet only: npm, other feeds, and deeper transitive delivery chains remain undone.

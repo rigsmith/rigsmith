@@ -1,0 +1,118 @@
+name: Return to packages
+on:
+  schedule:
+    - cron: '37 4 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: stack-released
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - member: app
+            sibling: lib
+            package: Acme.Lib
+            via: ''
+            warning: ACME0001
+          - member: app
+            sibling: core
+            package: Acme.Core
+            via: Acme.Control
+            warning: ACME0002
+    steps:
+      # No member checkout is needed: rig reads committed default-branch blobs.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Install pinned rig
+        # Replace vX.Y.Z with a reviewed release containing stack released CI.
+        # As in stack-canary.yml, Go verifies pinned public module source
+        # against the checksum database; no build-job executable is reused.
+        env:
+          GOSUMDB: sum.golang.org
+          GONOSUMDB: ''
+          GOPRIVATE: ''
+        run: go install github.com/rigsmith/rigsmith/cmd/rig@vX.Y.Z
+      # Private seed/members: configure READ-ONLY Git credentials independently
+      # in each job. GITHUB_TOKEN alone does not authenticate Git clones.
+      - name: Check release and compute report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          MEMBER: ${{ matrix.member }}
+          SIBLING: ${{ matrix.sibling }}
+          PACKAGE: ${{ matrix.package }}
+          VIA: ${{ matrix.via }}
+          WARNING: ${{ matrix.warning }}
+        run: >-
+          rig stack released "$MEMBER" "$SIBLING"
+          --seed acme/rigstack-app@main --package "$PACKAGE"
+          --via-package "$VIA" --warning "$WARNING" --report released.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: released-${{ matrix.member }}-${{ matrix.sibling }}
+          path: released.json
+          if-no-files-found: error
+  publish:
+    needs: build
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Settings > Actions > General: enable "Allow GitHub Actions to create
+      # and approve pull requests", or use a publish-only token with PR write.
+      # Denial may leave rig-released/<sibling>; the next run reuses it.
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - member: app
+            sibling: lib
+            package: Acme.Lib
+            via: ''
+            warning: ACME0001
+          - member: app
+            sibling: core
+            package: Acme.Core
+            via: Acme.Control
+            warning: ACME0002
+    steps:
+      # Fresh hosted runner: no checkout, build caches or repo code execution.
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Install pinned rig
+        env:
+          GOSUMDB: sum.golang.org
+          GONOSUMDB: ''
+          GOPRIVATE: ''
+        run: go install github.com/rigsmith/rigsmith/cmd/rig@vX.Y.Z
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: released-${{ matrix.member }}-${{ matrix.sibling }}
+          path: report
+      # Configure independent Git read credentials here for private seed/members.
+      - name: Verify and propose package migration
+        env:
+          # Must read seed/upstream metadata and write the MEMBER repository.
+          # Cross-repository writes need a suitable publish-only token.
+          GITHUB_TOKEN: ${{ github.token }}
+          MEMBER: ${{ matrix.member }}
+          SIBLING: ${{ matrix.sibling }}
+          PACKAGE: ${{ matrix.package }}
+          VIA: ${{ matrix.via }}
+          WARNING: ${{ matrix.warning }}
+        run: >-
+          rig stack released "$MEMBER" "$SIBLING"
+          --seed acme/rigstack-app@main --package "$PACKAGE"
+          --via-package "$VIA" --warning "$WARNING" --publish report/released.json
