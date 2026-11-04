@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -609,7 +610,7 @@ func TestStackReleasedReportStreams(t *testing.T) {
 
 func TestStackReleasedReportOverwriteMode(t *testing.T) {
 	f := newReleasedPublishFixture(t)
-	if err := os.WriteFile(f.report, []byte("old report"), 0644); err != nil {
+	if err := os.WriteFile(f.report, bytes.Repeat([]byte("old report"), 1024), 0644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(f.report, 0644); err != nil {
@@ -632,5 +633,26 @@ func TestStackReleasedReportOverwriteMode(t *testing.T) {
 		if got := info.Mode().Perm(); got != 0600 {
 			t.Fatalf("overwritten report permissions = %04o, want 0600", got)
 		}
+	}
+}
+
+func TestStackReleasedReportChmodFailurePreservesContents(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	before := []byte(`{"Schema":1,"Status":"released"}`)
+	if err := os.WriteFile(f.report, before, 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := stackReleasedReportChmod
+	stackReleasedReportChmod = func(*os.File, os.FileMode) error { return os.ErrPermission }
+	t.Cleanup(func() { stackReleasedReportChmod = old })
+	if _, err := f.run(false); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("permission failure not returned: %v", err)
+	}
+	after, err := os.ReadFile(f.report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatalf("permission failure changed existing report: %q", after)
 	}
 }

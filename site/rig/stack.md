@@ -1703,6 +1703,7 @@ transitive delivery, exact relative file paths and replacement contents, removed
 guards/warnings, and every manual-review note. It never changes source files.
 Human report summaries go to stderr, leaving stdout clean. Report files use
 owner-only permissions (0600), including when an existing file is overwritten.
+If setting those permissions fails, the existing report contents are preserved.
 Without `--seed`, report mode reads the local stackspace; publication requires a
 seed-backed report. A release not yet containing all recorded work, or a delivery
 package not yet requiring it, reports `not yet` and exits successfully. Missing
