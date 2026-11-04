@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"go.yaml.in/yaml/v3"
+	"mvdan.cc/sh/v3/expand"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 func TestStackReleasedWorkflow(t *testing.T) {
@@ -103,17 +105,29 @@ func TestStackReleasedWorkflow(t *testing.T) {
 				if !reflect.DeepEqual(step.Env, expected) {
 					t.Fatal("matrix/token environment not propagated:", name)
 				}
-				for _, arg := range []string{`"$MEMBER" "$SIBLING"`, `--seed acme/rigstack-app@main`, `--package "$PACKAGE"`, `--via-package "$VIA"`, `--warning "$WARNING"`} {
-					if !strings.Contains(step.Run, arg) {
-						t.Fatalf("missing trusted %s argument in %s", arg, name)
-					}
+				script, err := syntax.NewParser().Parse(strings.NewReader(step.Run), "")
+				if err != nil {
+					t.Fatal(err)
 				}
-				flag := "--report released.json"
+				if len(script.Stmts) != 1 || script.Stmts[0].Background || script.Stmts[0].Negated || len(script.Stmts[0].Redirs) != 0 {
+					t.Fatal("expected one unredirected release command:", name)
+				}
+				call, ok := script.Stmts[0].Cmd.(*syntax.CallExpr)
+				if !ok || len(call.Assigns) != 0 {
+					t.Fatal("expected a plain release command:", name)
+				}
+				args, err := expand.Fields(&expand.Config{Env: expand.ListEnviron("MEMBER=app", "SIBLING=lib", "PACKAGE=Acme.Lib", "VIA=Acme.Control", "WARNING=ACME0001")}, call.Args...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := []string{"rig", "stack", "released", "app", "lib", "--seed", "acme/rigstack-app@main", "--package", "Acme.Lib", "--via-package", "Acme.Control", "--warning", "ACME0001"}
 				if name == "publish" {
-					flag = "--publish report/released.json"
+					want = append(want, "--publish", "report/released.json")
+				} else {
+					want = append(want, "--report", "released.json")
 				}
-				if !strings.Contains(step.Run, flag) {
-					t.Fatalf("wrong report handoff command in %s: %s", name, step.Run)
+				if !reflect.DeepEqual(args, want) {
+					t.Fatalf("unexpected %s release arguments: got %q, want %q", name, args, want)
 				}
 			}
 			if strings.HasPrefix(step.Uses, "actions/upload-artifact@") {

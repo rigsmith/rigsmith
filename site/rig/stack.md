@@ -1701,7 +1701,8 @@ or executes member code. Do not share a self-hosted workspace across the jobs.
 member bases, checked release commit/version, direct or verified immediate
 transitive delivery, exact relative file paths and replacement contents, removed
 guards/warnings, and every manual-review note. It never changes source files.
-Human report summaries go to stderr, leaving stdout clean.
+Human report summaries go to stderr, leaving stdout clean. Report files use
+owner-only permissions (0600), including when an existing file is overwritten.
 Without `--seed`, report mode reads the local stackspace; publication requires a
 seed-backed report. A release not yet containing all recorded work, or a delivery
 package not yet requiring it, reports `not yet` and exits successfully. Missing

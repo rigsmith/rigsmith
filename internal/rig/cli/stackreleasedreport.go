@@ -246,7 +246,18 @@ func stackReleasedReportCommand(cmd *cobra.Command, args []string, o stackReleas
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(report, data, 0600); err != nil {
+	f, err := os.OpenFile(report, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err = f.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
 		return err
 	}
 	return stackCanarySummary(cmd.ErrOrStderr(), "Release report: "+fresh.Status+"; no tree edits.")

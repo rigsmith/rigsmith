@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -603,5 +604,33 @@ func TestStackReleasedReportStreams(t *testing.T) {
 				t.Fatalf("preview=%v report stat: %v", preview, err)
 			}
 		})
+	}
+}
+
+func TestStackReleasedReportOverwriteMode(t *testing.T) {
+	f := newReleasedPublishFixture(t)
+	if err := os.WriteFile(f.report, []byte("old report"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(f.report, 0644); err != nil {
+		t.Fatal(err)
+	}
+	f.build()
+	data, err := os.ReadFile(f.report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report stackReleasedReport
+	if err = json.Unmarshal(data, &report); err != nil || report.Schema != 1 {
+		t.Fatalf("report was not replaced: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(f.report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("overwritten report permissions = %04o, want 0600", got)
+		}
 	}
 }
