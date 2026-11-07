@@ -349,6 +349,68 @@ the history-filtering engine [`init` and `pull`](./stack) run — for this
 stackspace, overriding the one rig ships with. Changing it against existing
 stackspace history is at your own risk.
 
+### Edge publishing configuration
+
+The top-level `edge` map sits beside `repos`, keyed by member. It is parsed and
+validated now; edge commands will be added separately. rig treats this block as
+hand-authored input and never rewrites it.
+
+```jsonc
+{
+  "repos": {
+    "lib": {
+      "upstream": "github.com/acme/Lib",
+      "fork": "github.com/you/Lib",             // proposals still come from here
+      "trackBranch": "stack/integration",
+      "publishPrefix": "You."
+    }
+  },
+  "edge": {
+    "lib": {
+      "feed": "https://nuget.pkg.github.com/acme/index.json",
+      "label": "edge",                         // default
+      "exclude": ["Lib.Samples"],              // original ids
+      "maxSize": "50MB",                       // default 100 MB; override up or down
+      "publishFrom": "github.com/acme/lib-edge", // optional; default: manifest home
+      "pushKeySecret": "EDGE_FEED_KEY",         // secret NAME, never its value
+      "adopted": [
+        {
+          "pr": "https://github.com/acme/Lib/pull/412",
+          "commit": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+        }
+      ]
+    }
+  }
+}
+```
+
+Every edge entry must name a configured member with `trackBranch` and either
+`publishPrefix` or a non-empty `publishesAs`. Those existing member keys remain
+the source of republished ids: explicit `publishesAs` entries take precedence
+over `publishPrefix`. Full package coverage is checked at pack time.
+
+| Key | Meaning |
+|---|---|
+| `feed` | Required destination package feed URL. |
+| `label` | Prerelease label; defaults to `edge`. It must contain valid NuGet prerelease identifiers. |
+| `exclude` | Original ids to omit, before republishing. Unmatched entries can be reported once all produced ids are discovered. |
+| `maxSize` | Maximum size of each package. Unset means **100 MB (100,000,000 bytes)**. An explicit positive value overrides it in either direction; zero is rejected. Sizes such as `50MB`, `1.5MB` and `100MiB` are accepted; MB means 10^6 bytes and MiB means 2^20 bytes. |
+| `publishFrom` | Optional publishing repository, in the same forms as repo specs above. Defaults to the manifest home. `fork` keeps its role as the PR fork. |
+| `pushKeySecret` | Name of a secret in the publishing repository. Use letters, digits and underscores, beginning with a letter or underscore. Reserved `GITHUB_` names and recognizable GitHub token prefixes are refused. Never put the credential value in the manifest. |
+| `adopted` | Foreign PRs already carried in the member's tree, for eventual status and retirement reporting. Each entry needs a PR URL on the member's upstream and a full 40-character hex commit SHA. This list does not merge anything into a build. |
+
+The version rule uses the newest stable public version of the original id (`R`)
+and the in-tree version (`T`). If `T > R`, the base is `T`; otherwise it is `R`
+with its patch incremented. With no public version, use `T`; with an empty
+MinVer-style `T`, increment `R`. Both missing is an error. A winning prerelease
+`T` retains its suffix: `2.0.0-rc.1` becomes `2.0.0-rc.1.edge.<number>`, above
+`rc.1` and below `rc.2`.
+A stable base produces `<base>-<label>.<number>`; a prerelease base produces
+`<base>.<label>.<number>`. Numbers must fit a signed 32-bit NuGet
+numeric identifier. Number `0` is allowed for a local pack and is unpublishable;
+publication must also increase the number beyond the feed's newest version
+for that base and label.
+
 ## Declaring artifacts {#artifacts}
 
 [`rig verify`](./verbs#verify) infers the common case with no configuration at

@@ -140,6 +140,8 @@ type stackManifest struct {
 	Schema string                `json:"$schema,omitempty"`
 	Josh   string                `json:"josh,omitempty"` // engine version override; empty = rig's pinned default
 	Repos  map[string]*stackRepo `json:"repos"`
+	// Edge is hand-authored publishing configuration, outside every member.
+	Edge map[string]*stackEdge `json:"edge,omitempty"`
 	// BranchPrefix is prepended to the name `send` is given, so a short name per
 	// change ("read-timeout") becomes the branch your forks actually carry
 	// ("stack/read-timeout"). Unset means stackDefaultBranchPrefix; set it to ""
@@ -541,6 +543,9 @@ func (m *stackManifest) validate() error {
 			}
 		}
 	}
+	if err := m.validateEdge(); err != nil {
+		return err
+	}
 	return m.validateProposalCycles()
 }
 
@@ -849,7 +854,23 @@ const stackManifestTemplate = `{
     // },
 
     // "another-lib": { "upstream": "...", "fork": "..." }
-  }
+  },
+
+  // Hand-authored edge configuration; rig reads it and never rewrites it.
+  // The member needs trackBranch and publishPrefix or publishesAs above.
+  // "edge": {
+  //   "some-lib": {
+  //     "feed": "https://nuget.pkg.github.com/acme/index.json",
+  //     "label": "edge",                  // default
+  //     "exclude": ["Some.Lib.Samples"],   // original package ids
+  //     "maxSize": "50MB",                // default 100 MB; positive override up or down
+  //     "publishFrom": "github.com/acme/lib-edge", // optional; default: manifest home
+  //     "pushKeySecret": "EDGE_FEED_KEY",  // secret NAME, never the value
+  //     "adopted": [
+  //       { "pr": "github.com/acme/Some.Lib/pull/412", "commit": "<full 40-character sha>" }
+  //     ]
+  //   }
+  // },
 
   // A "lastSync" block appears here after the first import, recording the
   // upstream commit each directory was taken from. Written by rig, not by hand.
@@ -947,5 +968,14 @@ func (m *stackManifest) normalize() {
 		}
 		r.Upstream = stackNormalizeSpec(r.Upstream)
 		r.Fork = stackNormalizeSpec(r.Fork)
+	}
+	for _, edge := range m.Edge {
+		if edge == nil {
+			continue
+		}
+		if edge.Label == "" {
+			edge.Label = "edge"
+		}
+		edge.PublishFrom = stackNormalizeSpec(edge.PublishFrom)
 	}
 }

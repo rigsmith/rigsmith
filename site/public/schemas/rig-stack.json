@@ -177,6 +177,37 @@
         }
       }
     },
+    "edge": {
+      "type": "object",
+      "description": "Hand-authored edge publishing configuration keyed by member, beside repos. Each member must have trackBranch and publishPrefix or a non-empty publishesAs. Parsed and validated now; edge verbs are not available yet. rig never rewrites this block.",
+      "propertyNames": { "minLength": 1, "pattern": "\\S" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["feed"],
+        "properties": {
+          "feed": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Destination package feed URL." },
+          "label": { "type": "string", "default": "edge", "description": "NuGet prerelease label. Appended as -<label>.<number> to a stable base, or .<label>.<number> to a prerelease base. Defaults to edge.", "pattern": "^[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*$" },
+          "exclude": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" }, "uniqueItems": true, "description": "Original package ids to omit. Entries that name nothing the member produces can be reported after discovery." },
+          "maxSize": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Maximum size per package, for example 50MB or 100MiB. Defaults to 100 MB (100000000 bytes) when unset. An explicit positive size overrides the default either upward or downward; zero is rejected. MB means 10^6 bytes; MiB means 2^20 bytes." },
+          "publishFrom": { "type": "string", "minLength": 1, "description": "Optional publishing repository as host/owner/name (pasted repository URLs are normalized). Defaults to the manifest home; the member's fork remains its PR fork." },
+          "pushKeySecret": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "Name of the publishing repository's push secret, never its value. GitHub-reserved names and recognizable GitHub token prefixes are refused." },
+          "adopted": {
+            "type": "array",
+            "description": "Foreign PRs already carried in trackBranch, recorded for status and retirement. This is not a build-time merge list.",
+            "items": {
+              "type": "object",
+              "required": ["pr", "commit"],
+              "properties": {
+                "pr": { "type": "string", "minLength": 1, "description": "PR URL on this member's upstream: https://host/owner/repo/pull/number, or host/owner/repo/pull/number." },
+                "commit": { "type": "string", "pattern": "^[0-9A-Fa-f]{40}$", "description": "Full 40-character hex commit SHA of the adopted PR." }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "proposals": {
       "type": "object",
       "description": "Written by `propose --from`, not by hand: for each repo, which branch of your fork carries each topic branch's pull request, and the commit that was sent to it. `lastPropose` holds one branch per repo and cannot answer this once two fixes are in flight for one member. Only what git cannot be asked to derive is recorded — which topics exist, what they touch and whether they are stale all come from the repository every time. The commit lets `status` say when a branch has moved past its pull request, and keeps a topic recreated under an old name from inheriting the old destination.",
