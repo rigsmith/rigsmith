@@ -5,7 +5,6 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -199,17 +198,7 @@ func stackReleaseCheckPins(root, pkg string, requireDelivery bool) error {
 		files[path] = f
 		return nil
 	}
-	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if e.IsDir() {
-			switch strings.ToLower(e.Name()) {
-			case ".git", "bin", "obj", "vendor", "node_modules", "packages", "generated", ".vs":
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	err := stackReleaseWalkFiles(root, func(path string) error {
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".csproj" && ext != ".props" && ext != ".targets" {
 			return nil

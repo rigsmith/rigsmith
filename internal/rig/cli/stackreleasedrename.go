@@ -27,23 +27,10 @@ func (s stackReleaseSelection) symbol() string {
 // generated files. Such an id must not silently survive a member migration.
 func stackReleaseReferenceIDs(root string, edits []stackReleaseEdit) ([]string, error) {
 	ids := map[string]bool{}
-	err := filepath.WalkDir(root, func(path string, e os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if e.IsDir() {
-			switch strings.ToLower(e.Name()) {
-			case ".git", "bin", "obj", "vendor", "node_modules", "packages", "generated", ".vs":
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	err := stackReleaseWalkFiles(root, func(path string) error {
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".csproj" && ext != ".props" && ext != ".targets" {
 			return nil
-		}
-		if e.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("cannot check package identities in symlink %s", path)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

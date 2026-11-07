@@ -1678,6 +1678,11 @@ leave another republished id from that sibling in the consumer, it refuses and
 names the ids left behind. Migrate those ids together manually before rerunning;
 do not mix edge and public ids for the same sibling's assemblies. A skipped or
 unsupported reference that would retain the selected republished id also refuses.
+Release editing and safety checks share one file scope: tracked and non-ignored
+files in Git worktrees, or a filesystem walk for snapshots without Git. Projects
+under `packages/`, `generated/` and `vendor/` count; use `.gitignore` for restored
+package caches. `bin/`, `obj/`, `.vs`, `.git` and `node_modules/` are always
+excluded, and candidate symlinks refuse the migration.
 The same rename and refusal rules apply to scheduled reports and their independent
 publication checks. The token editor supports `Include` and `Update`; the pin
 preflight still refuses `Update` because its effective MSBuild pin is unproven.

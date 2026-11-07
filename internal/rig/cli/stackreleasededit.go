@@ -268,20 +268,7 @@ func stackReleaseRenameEdits(root, pkg, original, version, symbol string, warnin
 	var edits []stackReleaseEdit
 	var notes []string
 	pinChanged := false
-	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if e.IsDir() {
-			switch strings.ToLower(e.Name()) {
-			case ".git", "bin", "obj", "vendor", "node_modules", "packages", "generated", ".vs":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if e.Type()&os.ModeSymlink != 0 {
-			return nil
-		}
+	err := stackReleaseWalkFiles(root, func(path string) error {
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".cs" && ext != ".csproj" && ext != ".props" && ext != ".targets" {
 			return nil
@@ -316,7 +303,7 @@ func stackReleaseRenameEdits(root, pkg, original, version, symbol string, warnin
 			}
 		}
 		if !bytes.Equal(data, after) {
-			info, err := e.Info()
+			info, err := os.Stat(path)
 			if err != nil {
 				return err
 			}

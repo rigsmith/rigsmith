@@ -26,17 +26,7 @@ func stackReleasedAlready(root, pkg, version string) (bool, error) {
 		return false, fmt.Errorf("invalid delivery version")
 	}
 	found, older := false, false
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch strings.ToLower(d.Name()) {
-			case ".git", "bin", "obj", "vendor", "node_modules", "packages", "generated", ".vs":
-				return filepath.SkipDir
-			}
-			return nil
-		}
+	err := stackReleaseWalkFiles(root, func(path string) error {
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext != ".csproj" && ext != ".props" && ext != ".targets" {
 			return nil
