@@ -1693,6 +1693,28 @@ this package. Floating versions and conditional pins require manual work.
 Review and build with stack sources off before committing. The local preview and
 `--apply` do not open a PR; scheduled publication is separate below.
 
+When the sibling declares `publishPrefix` or `publishesAs`, select the **original**
+public id with `--package`. A consumer's `Include="You.Acme.Lib"` is renamed to
+`Include="Acme.Lib"` alongside the version bump. Explicit `publishesAs` mappings
+win over the prefix, as they do for `wire`. Central `PackageVersion` pins and
+their versionless `PackageReference` identities move together; XML comments and
+other packages stay intact. Guard removal uses the referenced id
+(`STACK_YOU_ACME_LIB`), and pin safety is proved for that republished id.
+
+Migration is all-or-nothing per sibling: if this single-package plan would
+leave another republished id from that sibling in the consumer, it refuses and
+names the ids left behind. Migrate those ids together manually before rerunning;
+do not mix edge and public ids for the same sibling's assemblies. A skipped or
+unsupported reference that would retain the selected republished id also refuses.
+Release editing and safety checks share one file scope: tracked and non-ignored
+files in Git worktrees, or a filesystem walk for snapshots without Git. Projects
+under `packages/`, `generated/` and `vendor/` count; use `.gitignore` for restored
+package caches. `bin/`, `obj/`, `.vs`, `.git` and `node_modules/` are always
+excluded, and candidate symlinks refuse the migration.
+The same rename and refusal rules apply to scheduled reports and their independent
+publication checks. The token editor supports `Include` and `Update`; the pin
+preflight still refuses `Update` because its effective MSBuild pin is unproven.
+
 For `App -> Acme.Control -> Acme.Core`, the Core release alone is insufficient.
 `rig stack released app core --package Acme.Core --via-package Acme.Control`
 checks published Control nuspecs for a Core minimum at least as new as the proven

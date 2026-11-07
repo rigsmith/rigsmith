@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/huh"
-	"github.com/rigsmith/rigsmith/core/ecosystem/dotnet"
 	"github.com/spf13/cobra"
 )
 
@@ -49,28 +48,36 @@ func stackReleaseVersionProof(ctx context.Context, a stackDepsAPI, m *stackManif
 	if r == nil {
 		return "", fmt.Errorf("unknown sibling %s", sibling)
 	}
-	var commits []string
+	var proposals []stackDepsPR
 	for _, p := range m.Proposals[sibling] {
 		pr, err := a.proposal(ctx, r, p)
 		if err != nil {
 			return "", fmt.Errorf("can't check proposal: %w", err)
 		}
+		proof, err := stackReleaseItemProof(ctx, a, r, pr, "", "", "")
+		if err != nil {
+			return "", err
+		}
 		// Open proposals also block: guards carry no topic identity.
-		if pr.MergedAt == nil {
+		if proof.Status == "open" {
 			return "", fmt.Errorf("not yet released: recorded proposal is unmerged")
 		}
-		if !stackIsSHA(pr.MergeSHA) {
-			return "", fmt.Errorf("can't tell: missing upstream merge commit")
-		}
-		commits = append(commits, pr.MergeSHA)
+		proposals = append(proposals, pr)
 	}
-	if len(commits) == 0 {
+	if len(proposals) == 0 {
 		return "", fmt.Errorf("can't tell: no recorded proposals")
 	}
 	if !stackIsSHA(m.cursor(sibling)) {
 		return "", fmt.Errorf("can't tell: missing upstream cursor")
 	}
-	commits = append(commits, m.cursor(sibling))
+	v, sha, err := stackReleaseFindVersion(ctx, a, r, proposals, m.cursor(sibling), pkg, version, feed)
+	if err == nil && commit != nil {
+		*commit = sha
+	}
+	return v, err
+}
+
+func stackReleaseFindVersion(ctx context.Context, a stackDepsAPI, r *stackRepo, proposals []stackDepsPR, cursor, pkg, version, feed string) (string, string, error) {
 	base := strings.TrimRight(feed, "/") + "/" + url.PathEscape(strings.ToLower(pkg))
 	versions := []string{version}
 	if version == "" {
@@ -78,19 +85,19 @@ func stackReleaseVersionProof(ctx context.Context, a stackDepsAPI, m *stackManif
 			Versions []string `json:"versions"`
 		}
 		if err := stackReleaseGet(ctx, a.client, base+"/index.json", &index, false); err != nil {
-			return "", err
+			return "", "", err
 		}
 		var err error
 		versions, err = stackReleaseCandidates(index.Versions)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	unknown := false
 	for _, v := range versions {
 		parsed, ok := stackParseNugetVersion(v)
 		if !ok {
-			return "", fmt.Errorf("invalid version")
+			return "", "", fmt.Errorf("invalid version")
 		}
 		v = parsed.normalized()
 		var spec struct {
@@ -102,7 +109,7 @@ func stackReleaseVersionProof(ctx context.Context, a stackDepsAPI, m *stackManif
 			} `xml:"metadata"`
 		}
 		if err := stackReleaseGet(ctx, a.client, base+"/"+url.PathEscape(strings.ToLower(v))+"/"+url.PathEscape(strings.ToLower(pkg))+".nuspec", &spec, true); err != nil {
-			return "", err
+			return "", "", err
 		}
 		repo := spec.Metadata.Repository
 		normalized := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(repo.URL, "https://"), "/"), ".git")
@@ -110,31 +117,32 @@ func stackReleaseVersionProof(ctx context.Context, a stackDepsAPI, m *stackManif
 			unknown = true
 			continue
 		}
-		_, slug, _ := strings.Cut(r.Upstream, "/")
 		included := true
-		for _, sha := range commits {
-			var comparison struct {
-				Status string `json:"status"`
+		for _, pr := range proposals {
+			proof, err := stackReleaseItemProof(ctx, a, r, pr, "", v, repo.Commit)
+			if err != nil {
+				return "", "", err
 			}
-			if err := a.request(ctx, "GET", "/repos/"+slug+"/compare/"+sha+"..."+repo.Commit, nil, &comparison); err != nil {
-				return "", fmt.Errorf("can't check release ancestry: %w", err)
-			}
-			if comparison.Status != "ahead" && comparison.Status != "identical" {
+			if proof.Status != "released in V" {
 				included = false
 				break
 			}
 		}
-		if included {
-			if commit != nil {
-				*commit = repo.Commit
+		if included && cursor != "" {
+			var err error
+			included, err = stackReleaseContains(ctx, a, r, cursor, repo.Commit)
+			if err != nil {
+				return "", "", fmt.Errorf("can't check release ancestry: %w", err)
 			}
-			return v, nil
+		}
+		if included {
+			return v, repo.Commit, nil
 		}
 	}
 	if unknown {
-		return "", fmt.Errorf("can't tell: missing repository commit or matching repository URL")
+		return "", "", fmt.Errorf("can't tell: missing repository commit or matching repository URL")
 	}
-	return "", fmt.Errorf("not yet released in the checked versions (at most 20 stable versions)")
+	return "", "", fmt.Errorf("not yet released in the checked versions (at most 20 stable versions)")
 }
 
 func newStackReleasedCmd() *cobra.Command {
@@ -144,7 +152,7 @@ func newStackReleasedCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "released <member> <sibling>",
 		Short: "Check NuGet release ancestry and prepare a return to packages",
-		Long:  "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\n--apply requires a clean tree and interactive confirmation. Transitive siblings require a published direct package dependency minimum in every framework group.\n--via-package/--via-version select that delivery release. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only.\n--report writes read-only JSON (not yet released exits successfully). --seed reloads a trusted manifest home\nand member default branches. --publish verifies that report independently and proposes a PR, running no repository code.\nPublish requires --seed and trusted --package, --feed, --version, --via-* and --warning selections matching the report.",
+		Long:  "Checks all recorded sibling proposals and its upstream cursor against NuGet repository commit metadata.\nMissing metadata reports can't tell. --package selects the original sibling package; --version selects a release\n(otherwise checks up to 20 newest stable versions). --feed is a NuGet flat-container base URL.\nRepublished ids are renamed back; plans leaving sibling republished ids behind refuse.\n--apply requires a clean tree and interactive confirmation. Transitive siblings require a published direct package dependency minimum in every framework group.\n--via-package/--via-version select that delivery release. Complex guards and project conditions\nare listed for manual review. --warning names declarations explicitly attributed to this package. -n previews only.\n--report writes read-only JSON (not yet released exits successfully). --seed reloads a trusted manifest home\nand member default branches. --publish verifies that report independently and proposes a PR, running no repository code.\nPublish requires --seed and trusted --package, --feed, --version, --via-* and --warning selections matching the report.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if publish != "" && len(args) == 0 {
 				return nil
@@ -210,6 +218,10 @@ func newStackReleasedCmd() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		selection, links, err := stackReleaseSelect(cmd.Context(), root, m, links, args[0], args[1], pkg)
+		if err != nil {
+			return err
+		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), 20*time.Second)
 		defer cancel()
 		v, err := stackReleaseVersion(ctx, stackDepsClient(), m, args[1], pkg, version, feed)
@@ -217,13 +229,12 @@ func newStackReleasedCmd() *cobra.Command {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: released in %s (all recorded proposals and upstream cursor checked)\n", pkg, v)
-		symbol := "STACK_" + strings.ToUpper(dotnet.StackSourceName(pkg))
 		pin, pinVersion, delivery, err := stackReleaseDelivery(ctx, stackDepsClient(), links, args[0], args[1], pkg, v, via, viaVersion, feed)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintln(cmd.OutOrStdout(), delivery)
-		edits, notes, err := stackReleaseMigrationEdits(filepath.Join(root, args[0]), pkg, pin, pinVersion, symbol, warnings...)
+		edits, notes, err := stackReleaseSelectedEdits(filepath.Join(root, args[0]), selection, pin, pinVersion, warnings...)
 		if err != nil {
 			return err
 		}
