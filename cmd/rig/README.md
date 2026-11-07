@@ -71,7 +71,7 @@ copy. Packed ids must be a non-empty subset of the publisher’s text-only allow
 ids; its own NuGet sibling ids enforce cross-member refusals. Third-party dependency and assembly-name checks
 use the build report’s evaluation claims. `--upstream-tip` conflicts exit 0 with
 an inconclusive report; publishing a tip requires `--allow-tip-publish`.
-See `examples/github-workflows/stack-edge.yml`; `edge init` is not built yet.
+See `examples/github-workflows/stack-edge.yml`.
 See [Edge builds](../../site/rig/stack.md#edge-builds).
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
@@ -136,6 +136,20 @@ or failure issues through separate build and publish jobs. See the
 [stack guide](https://rigsmith.dev/rig/stack).
 
 `rig stack ci --topic <name>` tests all recorded topic PR heads together; see [stack CI](https://rigsmith.dev/rig/stack#testing-a-complete-topic).
+
+### Adopting an upstream PR
+
+`rig stack edge adopt lib https://github.com/acme/Lib/pull/412` creates
+`stack-pr-adopt-lib-412` on the member's import commit, merging the PR's change onto
+the cursor. It requires the member's tracked upstream branch as the PR base before
+fetching, then fetches only the PR head from its head repository.
+Conflicts and different existing topic content refuse; identical content is a
+no-op. `--dry-run` writes no branch; member names complete. Merge the topic into
+the integration line, add the exact printed entry to `edge.lib.adopted`, then run
+`rig stack propose lib --track-only`. Adopt never writes the manifest or pushes.
+Status warns on moved PR heads in text and JSON while retaining pinned content
+and release/retirement verdicts. See
+[adopting a PR](../../site/rig/stack.md#adopt-someone-elses-pr).
 
 ## Verbs
 

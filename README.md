@@ -42,7 +42,7 @@ packages and pushes with the key named by `edge.pushKeySecret`. Both jobs requir
 the same trusted `--number`. Put the key in the `edge-publish` environment’s
 secrets, with deployment limited to the default branch. Tip
 publishing requires `--allow-tip-publish`. Third-party dependencies and assembly
-names use the build report’s evaluation claims. `edge init` is not built yet.
+names use the build report’s evaluation claims.
 See [Edge builds](site/rig/stack.md#edge-builds).
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
@@ -61,6 +61,20 @@ which is macOS and Linux only because Homebrew does not run on Windows.
 Scheduled upstream checks: `rig stack canary` tests tips and reports cursor PRs
 or failure issues through separate build and publish jobs. See the
 [stack guide](https://rigsmith.dev/rig/stack).
+
+### Adopting an upstream PR
+
+`rig stack edge adopt lib https://github.com/acme/Lib/pull/412` brings someone
+else's PR into `stack-pr-adopt-lib-412`, rooted on the member's import commit, with
+its change merged onto the cursor. The PR must target the member's tracked upstream
+branch; another base is refused before fetching. Conflicts and different existing topic
+content refuse; identical content is a no-op. `--dry-run` creates no branch,
+and member names complete. Merge the topic into the integration line, add the
+exact `adopted` entry printed by the command, then run
+`rig stack propose lib --track-only`. Adopt never writes the manifest or pushes.
+`edge status` warns in text and JSON when the PR head moves; builds retain pinned
+content and release/retirement verdicts are unchanged. See
+[adopting a PR](site/rig/stack.md#adopt-someone-elses-pr).
 
 ## Status
 
