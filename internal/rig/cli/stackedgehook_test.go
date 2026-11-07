@@ -16,7 +16,8 @@ func TestStackEdgeHookGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != string(want) {
+	// Git may check out this text fixture with CRLF on Windows.
+	if string(got) != strings.ReplaceAll(string(want), "\r\n", "\n") {
 		t.Fatalf("hook:\n%s\nwant:\n%s", got, want)
 	}
 	if strings.Contains(string(got), "GlobalPropertiesToRemove") {
