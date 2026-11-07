@@ -64,26 +64,7 @@ func newStackEdgeStatusCmd() *cobra.Command {
 	c.Flags().StringVar(&pkg, "package", "", "Original NuGet package for public release evidence (one member only)")
 	c.Flags().StringVar(&version, "version", "", "Public release to check (otherwise checks 20 newest stable versions)")
 	c.Flags().StringVar(&feed, "feed", stackNugetFeed, "Public NuGet flat-container base URL")
-	c.ValidArgsFunction = func(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
-		if len(args) != 0 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		root, err := stackRoot(cmd.Context())
-		if err != nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		m, _, err := loadStackManifest(root)
-		if err != nil || m == nil {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		var names []string
-		for _, name := range m.names() {
-			if m.Edge[name] != nil {
-				names = append(names, name)
-			}
-		}
-		return names, cobra.ShellCompDirectiveNoFileComp
-	}
+	c.ValidArgsFunction = stackEdgeMemberCompletion
 	for _, flag := range []string{"package", "version", "feed"} {
 		_ = c.RegisterFlagCompletionFunc(flag, func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 			return nil, cobra.ShellCompDirectiveNoFileComp

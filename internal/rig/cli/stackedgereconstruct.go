@@ -15,7 +15,8 @@ import (
 
 type stackEdgeReconstructOptions struct {
 	// Checkout is the stackspace root (or a git directory from which to load a
-	// seed). Exactly one of Manifest and Seed is required, as for stack ci.
+	// seed). Manifest and Seed are exclusive; neither selects the checkout's
+	// own committed manifest.
 	Checkout     string
 	Manifest     string
 	Seed         string
@@ -39,12 +40,17 @@ type stackEdgeReconstruction struct {
 // stackEdgeInconclusiveError distinguishes an untested conflicting combination
 // from a build failure. A caller must never publish it as a successful rebuild.
 type stackEdgeInconclusiveError struct {
-	Member string
-	err    error
+	Member     string
+	Provenance stackEdgeProvenance
+	err        error
 }
 
 func (e *stackEdgeInconclusiveError) Error() string {
-	return fmt.Sprintf("%s: upstream-tip reconstruction is inconclusive: pull, resolve on the integration line, `rig stack propose %s --track-only`", e.Member, e.Member)
+	return fmt.Sprintf("%s: upstream-tip reconstruction is inconclusive: %s", e.Member, e.Remedy())
+}
+
+func (e *stackEdgeInconclusiveError) Remedy() string {
+	return fmt.Sprintf("pull, resolve on the integration line, `rig stack propose %s --track-only`", e.Member)
 }
 
 func (e *stackEdgeInconclusiveError) Unwrap() error { return e.err }
@@ -71,6 +77,13 @@ func stackEdgeReconstruct(ctx context.Context, opts stackEdgeReconstructOptions)
 	if err = os.Mkdir(root, 0700); err != nil {
 		return nil, cleanup, err
 	}
+	// NuGet matches project references by absolute path. A symlinked temp
+	// root (notably /var on macOS) can make restore and pack disagree and
+	// silently omit project dependencies from the nuspec.
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, cleanup, err
+	}
 	m, err := stackReconstructRepository(ctx, root, data, opts.AllowedHosts)
 	if err != nil {
 		return nil, cleanup, err
@@ -83,6 +96,9 @@ func stackEdgeReconstruct(ctx context.Context, opts stackEdgeReconstructOptions)
 		r := m.Repos[name]
 		if r == nil {
 			return nil, cleanup, fmt.Errorf("unknown edge member %s", name)
+		}
+		if m.Edge[name] == nil {
+			return nil, cleanup, fmt.Errorf("%s needs a configured member and edge block", name)
 		}
 		if r.TrackBranch == "" {
 			return nil, cleanup, fmt.Errorf("edge member %s needs a trackBranch", name)
@@ -159,7 +175,7 @@ func stackEdgeReconstruct(ctx context.Context, opts stackEdgeReconstructOptions)
 				if e != nil {
 					var exit *exec.ExitError
 					if errors.As(e, &exit) && exit.ExitCode() == 1 {
-						return nil, cleanup, &stackEdgeInconclusiveError{Member: name, err: e}
+						return nil, cleanup, &stackEdgeInconclusiveError{Member: name, Provenance: p, err: e}
 					}
 					return nil, cleanup, e
 				}

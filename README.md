@@ -30,6 +30,14 @@ still warn and offer installation.
 
 `rig stack ci --topic <name>` tests all recorded topic PR heads together; see [stack CI](https://rigsmith.dev/rig/stack#testing-a-complete-topic).
 
+`rig stack edge pack lib --number 42` reconstructs a committed stack manifest
+and fork trackBranch, then renames, versions, packs and verifies carried .NET fixes
+under your publishing ids. `--seed` selects a manifest home; `--here` always
+marks output unpublishable. `rig stack edge status [member]` reports carried fixes,
+freshness and retirement evidence; `rig stack released` previews switching back
+to public ids. Packing writes artifacts and provenance, never pushes a feed.
+`edge ci` and `edge init` are not built yet. See [Edge builds](site/rig/stack.md#edge-builds).
+
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,
 keeping unreachable siblings absent.

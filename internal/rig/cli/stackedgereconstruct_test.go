@@ -41,9 +41,10 @@ func newStackEdgeFixture(t *testing.T) stackEdgeFixture {
 	}
 	writeStackManifest(t, f.checkout, fmt.Sprintf(`{
 		"repos": {
-			"lib": {"upstream": %q, "fork": %q, "trackBranch": "stack/integration"},
+			"lib": {"upstream": %q, "fork": %q, "trackBranch": "stack/integration", "publishPrefix": "You."},
 			"app": {"upstream": %q, "fork": %q, "trackBranch": "stack/integration"}
 		},
+		"edge": {"lib": {"feed": "https://feed.invalid/index.json"}},
 		"lastSync": {"lib": %q, "app": %q},
 		"lastPropose": {"lib": "old-proposal", "app": "stack/integration"}
 	}`, f.server.spec("acme/lib"), f.server.spec("you/lib"), f.server.spec("acme/app"), f.server.spec("you/app"), f.base["lib"], f.base["app"]))
@@ -79,7 +80,7 @@ func (f stackEdgeFixture) options(seed bool) stackEdgeReconstructOptions {
 func assertStackEdgeFile(t *testing.T, root, path, want string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
-	if err != nil || string(data) != want {
+	if err != nil || strings.ReplaceAll(string(data), "\r\n", "\n") != strings.ReplaceAll(want, "\r\n", "\n") {
 		t.Fatalf("%s = %q, want %q: %v", path, data, want, err)
 	}
 }
@@ -119,6 +120,10 @@ func TestStackEdgeReconstructTrackAndCursor(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(cleanup)
+			canonical, err := filepath.EvalSymlinks(result.Root)
+			if err != nil || result.Root != canonical {
+				t.Fatalf("reconstruction root must be canonical for NuGet: %s, %v", result.Root, err)
+			}
 			assertStackEdgeFile(t, result.Root, "lib/src/lib.txt", "carried fix\n")
 			assertStackEdgeFile(t, result.Root, "app/src/app.txt", "app v1\n")
 			for _, name := range []string{"app", "lib"} {
@@ -214,6 +219,18 @@ func TestStackEdgeReconstructRefusals(t *testing.T) {
 func TestStackEdgeReconstructMultipleMembers(t *testing.T) {
 	requireStackEdgeEngine(t)
 	f := newStackEdgeFixture(t)
+	m, _, err := loadStackManifest(f.checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Repos["app"].PublishPrefix = "App."
+	m.Edge["app"] = &stackEdge{Feed: "https://feed.invalid/index.json"}
+	if err := stackReconstructWrite(f.checkout, m); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, f.checkout, "add", ".")
+	mustGitStack(t, f.checkout, "commit", "-qm", "configure second edge member")
+	mustGitStack(t, f.checkout, "push", "-q", f.seed, "HEAD")
 	opts := f.options(true)
 	opts.Members = []string{"lib", "app"}
 	result, cleanup, err := stackEdgeReconstruct(t.Context(), opts)

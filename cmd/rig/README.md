@@ -33,6 +33,8 @@ rig stack propose some-lib read-timeout -m "Fix the read timeout"   # ALL of som
 rig stack propose some-lib read-timeout --from read-timeout         # ...or one topic's tree (stack-pr-read-timeout); root it on the import, or it carries its parent's fixes too
 rig stack propose some-lib --track-only        # refresh trackBranch after pull; no proposal or PR
 rig stack push my-app                # a repo you own: its own branch, history intact
+rig stack edge pack lib --number 42   # reconstruct trackBranch; rename, version, pack and verify
+rig stack edge status lib            # carried fixes, freshness and retirement evidence
 rig stack pack some-lib              # its packages, built here — a bare checkout of a proposed branch cannot
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
 rig stack push my-app --dry-run      # the target, branch and commits that would go; touches no remote
@@ -45,6 +47,19 @@ upstream base; ambiguous history is refused. Push verifies fast-forward ancestry
 and never forces an update. `--dry-run` uses the same delivery plan.
 
 `rig stack pull -n` previews cursor and upstream movement without changing the stackspace. Setup operations (`init`, `add`, `rm`, `setup`) and offline seed directory exports refuse dry-run; seed publication previews without cloning or pushing; `wire` and `doctor --fix` report without writing. `ci`, `ci-guard`, and `deps` (including `--publish`) refuse dry-run; `home` is read-only.
+
+`rig stack edge pack <member>` reads the committed stack manifest by default,
+or `--manifest` / `--seed`, and packs a temporary reconstruction of the fork
+trackBranch. `--upstream-tip` merges onto current upstream; conflicts report
+inconclusive with a remedy and skip packing, clearing stale top-level package files and writing `edge-pack.json`
+with `status: "inconclusive"`. Cleanup preserves other files and all directories. With `-n`, it prints the outcome without changing output. `-o` chooses the output directory
+(default `dist/`); `edge-pack.json` records verification expectations and provenance.
+`--number` defaults to unpublishable 0; `--here` always marks output unpublishable.
+`rig stack edge status [member]` reports carried fixes, freshness, newest edge
+version and retirement evidence; `--json` emits its report. `rig stack released`
+previews migration to public ids, refusing plans that leave another republished id
+from the same member behind. Pack does not push a feed; `edge ci` and `edge init`
+are not built yet. See [Edge builds](../../site/rig/stack.md#edge-builds).
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,

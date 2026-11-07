@@ -236,7 +236,7 @@ func stackEdgeCheckDependencies(id string, packed, discovered []stackEdgeDepende
 	}
 	for i, dep := range discovered {
 		if matched[i] == -1 {
-			return fmt.Errorf("%s: dependency %s@%s from discovery is missing", id, dep.ID, dep.Version)
+			return fmt.Errorf("%s: dependency %s@%s from discovery is missing (observed dependencies: %+v)", id, dep.ID, dep.Version, packed)
 		}
 	}
 	return nil
