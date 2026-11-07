@@ -153,6 +153,9 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 // arbitrary files and is distributed by git tag, so there are no distributable
 // files to produce. (Not advertised in Capabilities.)
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if err := req.CheckProperties(a.Info()); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
 	return plugin.ArtifactsResponse{Skipped: true, Message: "no build artifacts (versioned in place; released via git tag)"}, nil
 }
 

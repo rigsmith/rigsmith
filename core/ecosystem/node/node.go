@@ -404,6 +404,9 @@ func npmrcAuthKey(packageSource string) string {
 // .tgz is a registry artifact, so it is not attached to the GitHub release by
 // default (Attach: false) — it ships to npm via Publish.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if err := req.CheckProperties(a.Info()); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
 	if req.Package.Private {
 		return plugin.ArtifactsResponse{Skipped: true, Message: "private"}, nil
 	}

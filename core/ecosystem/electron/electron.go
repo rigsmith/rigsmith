@@ -141,6 +141,9 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 // present, else electron-builder) and collects the produced installers so the
 // forge-release step can attach them.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if err := req.CheckProperties(a.Info()); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
 	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	forge := usesForge(dir, readPkg(filepath.Join(dir, "package.json")))
 	builder := "electron-builder"

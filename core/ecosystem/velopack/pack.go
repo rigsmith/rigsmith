@@ -43,6 +43,9 @@ const (
 // any host. Channels, when set, narrows the run to those configured channels —
 // one installer instead of the whole matrix.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if err := req.CheckProperties(a.Info()); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
 	pkgDir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	cfg, err := loadConfig(pkgDir)
 	if err != nil {

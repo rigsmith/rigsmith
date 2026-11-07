@@ -765,7 +765,7 @@ func TestPackPassesTheResolvedVersion(t *testing.T) {
 	if want := filepath.Join(out, "Mermaider.0.12.3.nupkg"); len(resp.Artifacts) != 1 || resp.Artifacts[0].Path != want {
 		t.Fatalf("artifacts = %+v, want the nupkg the version names", resp.Artifacts)
 	}
-	if args := packArgs("A.csproj", "dist", ""); slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-p:Version=") }) {
+	if args := packArgs("A.csproj", "dist", "", nil); slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, "-p:Version=") }) {
 		t.Errorf("no version, yet -p:Version passed: %v", args)
 	}
 }

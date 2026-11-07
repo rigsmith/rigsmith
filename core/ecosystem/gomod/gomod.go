@@ -221,6 +221,9 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 // the build independent of tag ordering. A rehearse build (--snapshot) derives
 // its own pseudo-version and needs neither.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if err := req.CheckProperties(a.Info()); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
 	if goreleaserConfig(req.RepoRoot) == "" {
 		return plugin.ArtifactsResponse{Skipped: true, Message: "no .goreleaser.yaml; Go modules ship via git tag"}, nil
 	}

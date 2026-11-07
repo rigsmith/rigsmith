@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cmderr"
@@ -100,7 +101,7 @@ func (a *Adapter) Info() plugin.EcosystemInfo {
 		APIVersion:       plugin.APIVersion,
 		ID:               "dotnet",
 		DisplayName:      ".NET",
-		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.MethodReleaseInit, plugin.MethodLocalOverlay},
+		Capabilities:     []string{plugin.MethodDiscover, plugin.MethodSetVersion, plugin.MethodPublish, plugin.MethodArtifacts, plugin.CapabilityArtifactsProperties, plugin.MethodReleaseInit, plugin.MethodLocalOverlay},
 		ManifestPatterns: []string{"*.csproj"},
 		DevCommands: map[string][]string{
 			plugin.VerbBuild:  {"dotnet", "build"},
@@ -322,7 +323,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		defer os.RemoveAll(tmpDir)
 
 		manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
-		if _, _, err := packRunner(ctx, "", "dotnet", packArgs(manifest, tmpDir, req.Package.Version)...); err != nil {
+		if _, _, err := packRunner(ctx, "", "dotnet", packArgs(manifest, tmpDir, req.Package.Version, nil)...); err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("dotnet pack: %w", err)
 		}
 
@@ -406,6 +407,17 @@ func redact(text, secret string) string {
 // .nupkg is a registry artifact, so it is not attached to the GitHub release by
 // default (Attach: false) — it ships to NuGet via Publish.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if err := req.CheckProperties(a.Info()); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
+	for name := range req.Properties {
+		if !propertyNameRe.MatchString(name) {
+			return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: invalid property name %q", name)
+		}
+		if strings.EqualFold(name, "Version") && req.Package.Version != "" {
+			return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: Properties must not override Package.Version")
+		}
+	}
 	if req.Package.Private {
 		return plugin.ArtifactsResponse{Skipped: true, Message: "private"}, nil
 	}
@@ -417,11 +429,12 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: mkdir %s: %w", req.OutputDir, err)
 	}
 	manifest := filepath.Join(req.RepoRoot, req.Package.ManifestPath)
-	if _, _, err := packRunner(ctx, req.RepoRoot, "dotnet", packArgs(manifest, req.OutputDir, req.Package.Version)...); err != nil {
+	if _, _, err := packRunner(ctx, req.RepoRoot, "dotnet", packArgs(manifest, req.OutputDir, req.Package.Version, req.Properties)...); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: %w", err)
 	}
 	// dotnet pack names the package <PackageId>.<version>.nupkg; PackageId is the
-	// adapter's Name and the version is Version, so the path is deterministic.
+	// adapter's Name unless Properties supplied an id override. This is a
+	// prediction; callers using overrides must observe the output directory.
 	nupkg := filepath.Join(req.OutputDir, req.Package.Name+"."+req.Package.Version+".nupkg")
 	return plugin.ArtifactsResponse{
 		Built:     true,
@@ -491,12 +504,32 @@ var pushRunner = runCmd
 // it computed — a file that is not there. A global property on the command
 // line is one no target can override, so the release's number wins even
 // there; for a project stamped in its manifest it merely repeats the file.
-func packArgs(manifest, outDir, version string) []string {
+func packArgs(manifest, outDir, version string, properties map[string]string) []string {
 	args := []string{"pack", manifest, "-c", "Release", "-o", outDir}
 	if version != "" {
 		args = append(args, "-p:Version="+version)
 	}
+	keys := make([]string, 0, len(properties))
+	for name := range properties {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		args = append(args, "-p:"+name+"="+escapePropertyValue(properties[name]))
+	}
 	return args
+}
+
+var propertyNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*$`)
+
+// exec.Command passes each property as one argv entry on every OS; shell
+// quoting would become part of the value. MSBuild still parses separators and
+// expressions inside that entry, so escape its metacharacters as literal data.
+func escapePropertyValue(value string) string {
+	return strings.NewReplacer(
+		"%", "%25", ";", "%3B", ",", "%2C", "\"", "%22", "'", "%27",
+		"$", "%24", "@", "%40", "(", "%28", ")", "%29", "*", "%2A", "?", "%3F",
+	).Replace(value)
 }
 
 // resolvedVersion is where a project's version lives and its current value.
