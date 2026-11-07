@@ -103,6 +103,11 @@ func (m *stackManifest) validateEdge() error {
 		if strings.TrimSpace(e.Feed) == "" {
 			return fmt.Errorf("stack edge %q needs a feed", name)
 		}
+		if e.PublishFrom != "" {
+			if err := stackValidRepoSpec(e.PublishFrom); err != nil {
+				return fmt.Errorf("stack edge %q: publishFrom: %w", name, err)
+			}
+		}
 		if err := stackEdgeValidateLabel(e.Label); err != nil {
 			return fmt.Errorf("stack edge %q: %w", name, err)
 		}

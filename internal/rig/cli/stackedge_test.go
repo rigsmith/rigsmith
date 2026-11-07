@@ -107,6 +107,46 @@ func TestStackEdgeValidation(t *testing.T) {
 	}
 }
 
+func TestStackEdgePublishFrom(t *testing.T) {
+	for _, tc := range []struct {
+		spec, want string
+		invalid    bool
+	}{
+		{"", "", false},
+		{"github.com/acme/lib-edge", "github.com/acme/lib-edge", false},
+		{"https://github.com/acme/lib-edge.git", "github.com/acme/lib-edge", false},
+		{"git@github.com:acme/lib-edge.git", "github.com/acme/lib-edge", false},
+		{"ssh://git@github.com/acme/lib-edge.git", "github.com/acme/lib-edge", false},
+		{"github.com/acme", "", true},
+		{"github.com//lib-edge", "", true},
+		{"/acme/lib-edge", "", true},
+		{"github.com/acme/", "", true},
+		{"github.com/acme/lib-edge/extra", "", true},
+		{"https://https://github.com/acme/lib-edge", "", true},
+		{"https://", "", true},
+		{"/", "", true},
+		{" ", "", true},
+	} {
+		t.Run(tc.spec, func(t *testing.T) {
+			root := t.TempDir()
+			writeStackManifest(t, root, fmt.Sprintf(`{"repos":{"lib":%s},"edge":{"lib":{"feed":"f","publishFrom":%q}}}`, stackEdgeTestRepo, tc.spec))
+			m, _, err := loadStackManifest(root)
+			if tc.invalid {
+				if err == nil || !strings.Contains(err.Error(), "publishFrom") {
+					t.Fatalf("error = %v, want publishFrom validation error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := m.Edge["lib"].PublishFrom; got != tc.want {
+				t.Fatalf("publishFrom = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStackEdgePRUpstream(t *testing.T) {
 	for _, tc := range []struct {
 		url  string

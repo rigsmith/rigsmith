@@ -494,15 +494,8 @@ func (m *stackManifest) validate() error {
 				name, c)
 		}
 		for _, spec := range []string{r.Upstream, r.Fork} {
-			// A paste is normalised into host/owner/name before this runs, so
-			// anything still carrying a scheme was not a shape we recognise.
-			if strings.Contains(spec, "://") {
-				return fmt.Errorf("stack repo %q: %q is not a repository URL this understands — host/owner/name, or the https or ssh URL of one", name, spec)
-			}
-			// Counting separators would accept "github.com//repo": require three
-			// non-empty components, or the URL fails later as an opaque git error.
-			if parts := strings.Split(spec, "/"); len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-				return fmt.Errorf("stack repo %q: %q must be host/owner/name", name, spec)
+			if err := stackValidRepoSpec(spec); err != nil {
+				return fmt.Errorf("stack repo %q: %w", name, err)
 			}
 		}
 	}
@@ -908,6 +901,20 @@ func stackIsSHA(s string) bool {
 	return true
 }
 
+func stackValidRepoSpec(spec string) error {
+	// A paste is normalised into host/owner/name before this runs, so
+	// anything still carrying a scheme was not a shape we recognise.
+	if strings.Contains(spec, "://") {
+		return fmt.Errorf("%q is not a repository URL this understands — host/owner/name, or the https or ssh URL of one", spec)
+	}
+	// Counting separators would accept "github.com//repo": require three
+	// non-empty components, or the URL fails later as an opaque git error.
+	if parts := strings.Split(spec, "/"); len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return fmt.Errorf("%q must be host/owner/name", spec)
+	}
+	return nil
+}
+
 // stackNormalizeSpec reduces what people actually paste — the URL in the browser
 // bar, the one the clone button hands out, an ssh remote — to the canonical
 // host/owner/name. Rejecting those was pure friction: the information is all
@@ -976,6 +983,10 @@ func (m *stackManifest) normalize() {
 		if edge.Label == "" {
 			edge.Label = "edge"
 		}
-		edge.PublishFrom = stackNormalizeSpec(edge.PublishFrom)
+		// A malformed value such as "https://" must not normalize to an
+		// absent optional value and silently select the manifest home.
+		if spec := stackNormalizeSpec(edge.PublishFrom); spec != "" {
+			edge.PublishFrom = spec
+		}
 	}
 }
