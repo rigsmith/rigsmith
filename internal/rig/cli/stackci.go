@@ -493,7 +493,7 @@ func stackCIReplaceRef(ctx context.Context, checkout, root, member, ref string) 
 	if e = os.MkdirAll(dest, 0755); e != nil {
 		return "", e
 	}
-	if e = stackCIMaterializeRef(ctx, checkout, dest, ref); e != nil {
+	if e = stackCIMaterializeRef(ctx, checkout, dest, strings.TrimSpace(string(sha))); e != nil {
 		return "", e
 	}
 	if _, e = stackCIGit(ctx, root, "add", "-A", "--", member); e != nil {

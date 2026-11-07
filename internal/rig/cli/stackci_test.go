@@ -82,6 +82,60 @@ func TestStackCIValidation(t *testing.T) {
 	}
 }
 
+func TestStackCIReplacePinsResolvedCommit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Git wrapper uses a POSIX shell")
+	}
+	checkout, fused := t.TempDir(), t.TempDir()
+	for _, dir := range []string{checkout, fused} {
+		mustGitStack(t, dir, "init", "-q")
+		mustGitStack(t, dir, "config", "user.name", "test")
+		mustGitStack(t, dir, "config", "user.email", "t@t")
+	}
+	for _, content := range []string{"resolved tree", "moved tree"} {
+		if err := os.WriteFile(filepath.Join(checkout, "content.txt"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		mustGitStack(t, checkout, "add", ".")
+		mustGitStack(t, checkout, "commit", "-qm", content)
+	}
+	resolved := strings.TrimSpace(mustGitStack(t, checkout, "rev-parse", "HEAD^"))
+	moved := strings.TrimSpace(mustGitStack(t, checkout, "rev-parse", "HEAD"))
+	mustGitStack(t, checkout, "reset", "--hard", resolved)
+	mustGitStack(t, fused, "commit", "--allow-empty", "-qm", "fused root")
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := t.TempDir()
+	// Move HEAD after returning rev-parse's answer, before the next Git call.
+	script := `#!/bin/sh
+"$RIG_TEST_REAL_GIT" "$@"
+git_status=$?
+if [ "$git_status" -eq 0 ] && [ "$*" = "--no-replace-objects rev-parse HEAD" ]; then
+  "$RIG_TEST_REAL_GIT" --no-replace-objects update-ref HEAD "$RIG_TEST_NEXT_HEAD" || exit $?
+fi
+exit "$git_status"
+`
+	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIG_TEST_REAL_GIT", realGit)
+	t.Setenv("RIG_TEST_NEXT_HEAD", moved)
+	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := stackCIReplace(t.Context(), checkout, fused, "app")
+	if err != nil || got != resolved {
+		t.Fatalf("resolved commit = %q, want %q: %v", got, resolved, err)
+	}
+	if head := strings.TrimSpace(mustGitStack(t, checkout, "rev-parse", "HEAD")); head != moved {
+		t.Fatalf("fixture did not move HEAD: %s", head)
+	}
+	content, err := os.ReadFile(filepath.Join(fused, "app", "content.txt"))
+	if err != nil || string(content) != "resolved tree" {
+		t.Fatalf("materialized tree differs from resolved commit: %q, %v", content, err)
+	}
+}
+
 func TestStackCIFlow(t *testing.T) { stackCIFlow(t, false) }
 
 func TestStackCIFlowFailures(t *testing.T) { stackCIFlow(t, true) }
