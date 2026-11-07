@@ -50,7 +50,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack push [repo]                   fast-forward a repo you own, history intact\n" +
 			"  rig stack wire                          write the build overlay for the members\n" +
 			"  rig stack pack [repo]                   build a member's packages here, where the overlay applies\n" +
-			"  rig stack edge                          pack carried fixes; check edge retirement\n" +
+			"  rig stack edge                          build and publish carried fixes; check retirement\n" +
 			"  rig stack doctor                        engine + manifest checks (--fix installs josh)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
@@ -2346,7 +2346,7 @@ func stackMenuItems() []menuItem {
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "pack", desc: "build a member's packages here, where the overlay makes siblings resolve", cmd: newStackPackCmd()},
-		{label: "edge", desc: "pack carried fixes under your ids; check freshness and retirement", cmd: newStackEdgeCmd()},
+		{label: "edge", desc: "pack carried fixes, adopt upstream PRs and check retirement", cmd: newStackEdgeCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 		{label: "seed", desc: "export just the root files as a small repo, to rebuild this stackspace elsewhere (asks where)", cmd: newStackSeedMenuCmd()},
 	}

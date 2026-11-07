@@ -1106,6 +1106,7 @@ the step-by-step.
 | `stack edge pack <member>` | Reconstruct, rename, version, pack and verify carried .NET fixes under your ids; `--here` is always unpublishable |
 | `stack edge status [member]` | Read carried-item release evidence, integration freshness, newest edge version and retirement verdict |
 | `stack edge adopt <member> <pr-url>` | Bring an upstream PR into an import-rooted topic and print its manifest pin; `-n` creates no branch |
+| `stack edge ci` | Build credential-free reports or independently verify and publish edge packages from a trusted seed |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 `propose` and `push` answer different questions. `propose` proposes one squashed
@@ -1281,9 +1282,90 @@ built. `-n`/`--dry-run` reconstructs and reports ids/versions without building o
 writing or deleting output; packability and dependency verification require a
 real pack.
 
-There is no publish command in this group yet, and its `Publishable` report field
-is only an eligibility marker, not evidence of publication or a separate test run.
-**`edge ci` is not built yet.**
+`edge pack`'s `Publishable` field is an eligibility marker; publication requires
+an `edge ci` report and a separate trusted publish job.
+
+Run CI from the command line or a workflow. The interactive edge menu offers
+pack, status and adopt, prompting for the member and PR URL where needed.
+
+For CI, copy `examples/github-workflows/stack-edge.yml` and select a reviewed rig
+release for both independent installs. Use two fresh hosted runners:
+
+```sh
+# Build job: contents: read, persist-credentials: false, no secrets.
+rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --report edge.json -o edge-out
+# Publish job: downloaded report/packages; only this command receives EDGE_FEED_KEY.
+rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --publish report/edge.json -o report/edge-out
+```
+
+The workflow passes <code v-pre>${{ github.run_number }}</code> explicitly as the required
+`--number` in **both** jobs. The publisher refuses a report with a different
+number, so a compromised builder cannot reserve an inflated number. Report
+reconstructs the pinned seed and trackBranch, wires, runs `--build` and `--test`
+(default `rig build` and `rig test`, interpreted by bash), then calls the shared
+pack path. It writes commits, ids, version, package sizes, verification expectations
+and SHA-256 digests, never subprocess output. Build and test stdout/stderr stream
+to the command's stderr for the job log; failures preserve the subprocess error
+and leave any existing report file untouched. Upload `edge.json` and the `.nupkg`
+files together. No feed key belongs in this job; a configured push credential in
+the environment is refused before project execution.
+
+Publish runs no project code, MSBuild, restore, adapter plugins or cache restore.
+It reloads the seed independently and refuses a changed seed, member, feed, label,
+version or packed id outside its allowed set. It fetches the fork read-only and
+requires the reported track commit to be on the current trackBranch (equal or an ancestor), proves its parent,
+and checks sibling cursors. It derives the republished ids and exclusions from the
+seed and committed source. The packed ids must be a non-empty, duplicate-free
+subset of the publisher’s text-only allowed set: produced, non-excluded ids
+under the publishing rule, minus projects with literal `IsPackable=false` or
+`IsTestProject=true`. Projects allowed by discovery but omitted by the builder,
+such as SDK-implied test projects, are fine. The version is recomputed for the
+selected packages with the trusted run number. The publisher uses its own NuGet
+id list for every other member, ignoring the report’s ownership lists; a non-.NET
+sibling contributes no NuGet ids. It enforces member dependencies under
+republished ids at the edge version, no dependencies on other members’ NuGet
+ids, and the effective size limit. It re-runs package verification and
+checks SHA-256 digests against the report before any push.
+
+**Trust boundary:** third-party dependency versions and assembly-name before/after
+values come from the build job's MSBuild evaluation. The publisher checks packages
+against those claims, as pack does; it does not independently prove those two
+expectations or that the reported build/tests actually ran. Ids, edge version,
+feed, member dependency rules and fork ancestry are independently checked.
+The text-only allowed set can overestimate SDK packability, so it need not equal
+the builder’s evaluated package set. Dynamic package identities outside that
+allowed set are refused. Publisher snapshots refuse symlinks.
+
+Before enabling the workflow, create a GitHub Actions environment named
+`edge-publish` with a deployment-branch rule limited to the repository’s default
+branch. Store the key there as an **environment secret**, not a repository
+secret, and remove any repository-secret copy. The publish job names that
+environment, so `workflow_dispatch` of a modified workflow on another branch
+cannot reach the key. Keep the same protected environment and secret placement
+when adapting the template.
+
+The key is read from the environment variable named by `edge.pushKeySecret`.
+NuGet v3 service-index discovery finds the flat container and
+`PackagePublish/2.0.0`; the same key authenticates monotonicity reads and the
+multipart HTTP PUT with `X-NuGet-ApiKey`. It never enters argv or diagnostics.
+HTTPS is required (loopback HTTP is allowed for local testing); redirects are
+refused. Every id's newest matching `<base>-<label>.*` is checked before the first
+push, refusing non-increasing run numbers after workflow resets. A 409 names the
+already-existing version and fails; network errors and 5xx also fail without a
+retry loop. Pushes are sequential; a later failure can leave earlier packages on
+the feed, so use a new increasing number for a complete rerun.
+Feed index and version-list reads retain a short timeout. Pushes have a separate
+15-minute context deadline and a two-minute response-header timeout, allowing
+large uploads without the read client's 30-second total limit. A push timeout
+warns that the package may already have been stored: check its version list on
+the configured feed before rerunning, and use a new increasing number if present.
+
+`--upstream-tip` conflicts write an inconclusive report and exit 0; the template
+skips its publish job. A clean tip report carries `tip: true`. Tip publishing is
+opt-in: add `--allow-tip-publish` only to the trusted publish command after review.
+The template ships with it off. Reports with any status other than `packed`,
+number 0, or `--here` provenance are refused. `-n` previews report creation without
+building, or verifies a publication without pushing.
 
 `edge status [member]` is read-only. It reports recorded proposals and adopted
 PRs, unproposed content, local integration receipt and upstream-base freshness,
