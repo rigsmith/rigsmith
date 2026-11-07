@@ -140,6 +140,8 @@ type stackManifest struct {
 	Schema string                `json:"$schema,omitempty"`
 	Josh   string                `json:"josh,omitempty"` // engine version override; empty = rig's pinned default
 	Repos  map[string]*stackRepo `json:"repos"`
+	// Edge is hand-authored publishing configuration, outside every member.
+	Edge map[string]*stackEdge `json:"edge,omitempty"`
 	// BranchPrefix is prepended to the name `send` is given, so a short name per
 	// change ("read-timeout") becomes the branch your forks actually carry
 	// ("stack/read-timeout"). Unset means stackDefaultBranchPrefix; set it to ""
@@ -492,15 +494,8 @@ func (m *stackManifest) validate() error {
 				name, c)
 		}
 		for _, spec := range []string{r.Upstream, r.Fork} {
-			// A paste is normalised into host/owner/name before this runs, so
-			// anything still carrying a scheme was not a shape we recognise.
-			if strings.Contains(spec, "://") {
-				return fmt.Errorf("stack repo %q: %q is not a repository URL this understands — host/owner/name, or the https or ssh URL of one", name, spec)
-			}
-			// Counting separators would accept "github.com//repo": require three
-			// non-empty components, or the URL fails later as an opaque git error.
-			if parts := strings.Split(spec, "/"); len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-				return fmt.Errorf("stack repo %q: %q must be host/owner/name", name, spec)
+			if err := stackValidRepoSpec(spec); err != nil {
+				return fmt.Errorf("stack repo %q: %w", name, err)
 			}
 		}
 	}
@@ -540,6 +535,9 @@ func (m *stackManifest) validate() error {
 				return fmt.Errorf("the proposals map for %q records commit %q for topic %q — that must be a full 40-character commit SHA, or be left out", prefix, p.Commit, topic)
 			}
 		}
+	}
+	if err := m.validateEdge(); err != nil {
+		return err
 	}
 	return m.validateProposalCycles()
 }
@@ -849,7 +847,23 @@ const stackManifestTemplate = `{
     // },
 
     // "another-lib": { "upstream": "...", "fork": "..." }
-  }
+  },
+
+  // Hand-authored edge configuration; rig reads it and never rewrites it.
+  // The member needs trackBranch and publishPrefix or publishesAs above.
+  // "edge": {
+  //   "some-lib": {
+  //     "feed": "https://nuget.pkg.github.com/acme/index.json",
+  //     "label": "edge",                  // default
+  //     "exclude": ["Some.Lib.Samples"],   // original package ids
+  //     "maxSize": "50MB",                // default 100 MB; positive override up or down
+  //     "publishFrom": "github.com/acme/lib-edge", // optional; default: manifest home
+  //     "pushKeySecret": "EDGE_FEED_KEY",  // secret NAME, never the value
+  //     "adopted": [
+  //       { "pr": "github.com/acme/Some.Lib/pull/412", "commit": "<full 40-character sha>" }
+  //     ]
+  //   }
+  // },
 
   // A "lastSync" block appears here after the first import, recording the
   // upstream commit each directory was taken from. Written by rig, not by hand.
@@ -885,6 +899,20 @@ func stackIsSHA(s string) bool {
 		}
 	}
 	return true
+}
+
+func stackValidRepoSpec(spec string) error {
+	// A paste is normalised into host/owner/name before this runs, so
+	// anything still carrying a scheme was not a shape we recognise.
+	if strings.Contains(spec, "://") {
+		return fmt.Errorf("%q is not a repository URL this understands — host/owner/name, or the https or ssh URL of one", spec)
+	}
+	// Counting separators would accept "github.com//repo": require three
+	// non-empty components, or the URL fails later as an opaque git error.
+	if parts := strings.Split(spec, "/"); len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return fmt.Errorf("%q must be host/owner/name", spec)
+	}
+	return nil
 }
 
 // stackNormalizeSpec reduces what people actually paste — the URL in the browser
@@ -947,5 +975,18 @@ func (m *stackManifest) normalize() {
 		}
 		r.Upstream = stackNormalizeSpec(r.Upstream)
 		r.Fork = stackNormalizeSpec(r.Fork)
+	}
+	for _, edge := range m.Edge {
+		if edge == nil {
+			continue
+		}
+		if edge.Label == "" {
+			edge.Label = "edge"
+		}
+		// A malformed value such as "https://" must not normalize to an
+		// absent optional value and silently select the manifest home.
+		if spec := stackNormalizeSpec(edge.PublishFrom); spec != "" {
+			edge.PublishFrom = spec
+		}
 	}
 }
