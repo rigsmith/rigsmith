@@ -73,6 +73,10 @@ func stackReleasedCompute(ctx context.Context, api stackDepsAPI, root string, m 
 	if err != nil {
 		return r, err
 	}
+	selection, links, err := stackReleaseSelect(ctx, root, m, links, r.Member, r.Sibling, o.Package)
+	if err != nil {
+		return r, err
+	}
 	r.Pin, r.PinVersion, r.Delivery, err = stackReleaseDelivery(ctx, api, links, r.Member, r.Sibling, o.Package, v, o.Via, o.ViaVersion, o.Feed)
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "guards unchanged: no checked") {
@@ -83,7 +87,10 @@ func stackReleasedCompute(ctx context.Context, api stackDepsAPI, root string, m 
 		return r, err
 	}
 	dir := filepath.Join(root, r.Member)
-	already, err := stackReleasedAlready(dir, r.Pin, r.PinVersion)
+	already := false
+	if strings.EqualFold(selection.Reference, selection.Original) {
+		already, err = stackReleasedAlready(dir, r.Pin, r.PinVersion)
+	}
 	if err != nil {
 		return r, err
 	}
@@ -91,8 +98,8 @@ func stackReleasedCompute(ctx context.Context, api stackDepsAPI, root string, m 
 		r.Status = "already migrated"
 		return r, nil
 	}
-	symbol := "STACK_" + strings.ToUpper(dotnet.StackSourceName(o.Package))
-	edits, notes, err := stackReleaseMigrationEdits(dir, o.Package, r.Pin, r.PinVersion, symbol, o.Warnings...)
+	symbol := selection.symbol()
+	edits, notes, err := stackReleaseSelectedEdits(dir, selection, r.Pin, r.PinVersion, o.Warnings...)
 	if err != nil {
 		return r, err
 	}

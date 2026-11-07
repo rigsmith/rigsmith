@@ -308,6 +308,11 @@ commit ancestry. `--version` selects a release, `--feed` selects a flat-containe
 feed, `--warning` explicitly attributes warning IDs, and `--apply` edits a clean
 working tree after interactive confirmation. `-n` previews only. See [stackspaces](./stack).
 
+With `publishPrefix` or `publishesAs`, select the original public `--package` id.
+Released renames the consumer's republished reference and bumps its version,
+using that referenced id for guard and pin checks. It refuses plans that would
+leave other republished ids of the sibling behind.
+
 For transitive siblings, `stack released --via-package Acme.Control
 --via-version 4.0.0` selects a direct package whose nuspec must deliver the
 verified sibling minimum in every target-framework group. `rig stack status

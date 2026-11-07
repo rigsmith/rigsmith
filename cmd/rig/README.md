@@ -75,6 +75,11 @@ recording edges, publishing statuses, and enabling scheduled refresh.
 and previews package pin and simple stack guard edits. `--apply` requires a clean
 tree and interactive confirmation; `-n` previews. See [stackspaces](../../site/rig/stack.md).
 
+With `publishPrefix` or `publishesAs`, select the original public `--package` id.
+Released renames the consumer's republished reference and bumps its version,
+using that referenced id for guard and pin checks. It refuses plans that would
+leave other republished ids of the sibling behind.
+
 Scheduled NuGet release migration uses `rig stack released --report` and a
 separate `--publish` job to open or update a reviewed back-to-packages PR on the
 member. The publisher reloads a trusted `--seed`, re-verifies ancestry/delivery

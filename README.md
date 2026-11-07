@@ -118,6 +118,11 @@ For .NET stackspaces, `rig stack released app lib --package Acme.Lib` checks
 published NuGet commit ancestry and previews a return to packages. `--apply`
 edits a clean tree after confirmation. See [the stack guide](site/rig/stack.md).
 
+With `publishPrefix` or `publishesAs`, select the original public `--package` id.
+Released renames the consumer's republished reference and bumps its version,
+using that referenced id for guard and pin checks. It refuses plans that would
+leave other republished ids of the sibling behind.
+
 Transitive package migrations verify a published delivery dependency with
 `--via-package`/`--via-version`. Use `rig stack status --releases` to opt into
 release discovery; ordinary status performs no additional registry checks.

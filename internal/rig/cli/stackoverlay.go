@@ -40,6 +40,17 @@ func stackRedirects(ctx context.Context, root string, members []string, publishi
 	return stackRedirectsFromScan(stackScan(ctx, root, stackScanOptions{Registry: true}), members, publishing)
 }
 
+// Explicit package mappings override the prefix, including when both are set.
+func stackRepublishedID(pub stackPublishing, original string) (string, bool) {
+	if as, ok := pub.As[original]; ok {
+		return as, true
+	}
+	if pub.Prefix != "" {
+		return pub.Prefix + original, true
+	}
+	return "", false
+}
+
 func stackRedirectsFromScan(scans []stackScanResult, members []string, publishing map[string]stackPublishing) (map[string][]stackLink, []stackOrphan, []string, map[string]error) {
 	member := func(rel string) string {
 		rel = filepath.ToSlash(rel)
@@ -127,13 +138,11 @@ func stackRedirectsFromScan(scans []stackScanResult, members []string, publishin
 		for _, m := range members {
 			pub := publishing[m]
 			for _, orig := range produces[m] {
-				as, ok := pub.As[orig]
+				as, ok := stackRepublishedID(pub, orig)
 				if !ok {
-					if pub.Prefix == "" {
-						continue
-					}
-					as = pub.Prefix + orig
-				} else {
+					continue
+				}
+				if _, explicit := pub.As[orig]; explicit {
 					if aliasUsed[m] == nil {
 						aliasUsed[m] = map[string]bool{}
 					}

@@ -112,6 +112,11 @@ func stackReleaseRewrite(data []byte, symbol string) ([]byte, string) {
 var stackReleaseVersionAttr = regexp.MustCompile(`([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*("[^"]*"|'[^']*')`)
 
 func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]byte, bool, []string) {
+	return stackReleaseXMLRename(data, pkg, pkg, version, warnings...)
+}
+
+func stackReleaseXMLRename(data []byte, pkg, original, version string, warnings ...string) ([]byte, bool, []string) {
+	rename := !strings.EqualFold(pkg, original)
 	d := xml.NewDecoder(bytes.NewReader(data))
 	var out bytes.Buffer
 	last := 0
@@ -197,7 +202,7 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 		if !match {
 			continue
 		}
-		if override || update {
+		if override || update && !rename {
 			notes = append(notes, "unsafe package version: VersionOverride or Update")
 			continue
 		}
@@ -218,24 +223,33 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 			}
 		}
 		raw := data[start:end]
-		var loc []int
-		for _, attr := range stackReleaseVersionAttr.FindAllSubmatchIndex(raw, -1) {
-			if strings.EqualFold(string(raw[attr[2]:attr[3]]), "Version") {
-				loc = []int{attr[0], attr[1], attr[4], attr[5]}
-				break
-			}
-		}
-		_, literal := stackParseNugetVersion(current)
-		if conditional || !literal || loc == nil {
+		// A versionless Include is renamed alongside its proven central pin.
+		if current == "" && !rename {
 			notes = append(notes, "nonliteral, conditional or centrally managed reference; review manually")
 			continue
 		}
+		var rewritten bytes.Buffer
+		offset := 0
+		for _, attr := range stackReleaseVersionAttr.FindAllSubmatchIndex(raw, -1) {
+			name := string(raw[attr[2]:attr[3]])
+			value := ""
+			switch {
+			case strings.EqualFold(name, "Version"):
+				value = version
+			case rename && (strings.EqualFold(name, "Include") || strings.EqualFold(name, "Update")):
+				value = original
+			default:
+				continue
+			}
+			rewritten.Write(raw[offset:attr[4]])
+			rewritten.WriteByte('"')
+			_ = xml.EscapeText(&rewritten, []byte(value))
+			rewritten.WriteByte('"')
+			offset = attr[5]
+		}
+		rewritten.Write(raw[offset:])
 		out.Write(data[last:start])
-		out.Write(raw[:loc[2]])
-		out.WriteByte('"')
-		out.WriteString(version)
-		out.WriteByte('"')
-		out.Write(raw[loc[3]:])
+		out.Write(rewritten.Bytes())
 		last = end
 		changed = true
 	}
@@ -244,6 +258,10 @@ func stackReleaseXML(data []byte, pkg, version string, warnings ...string) ([]by
 }
 
 func stackReleaseEdits(root, pkg, version, symbol string, warnings ...string) ([]stackReleaseEdit, []string, error) {
+	return stackReleaseRenameEdits(root, pkg, pkg, version, symbol, warnings...)
+}
+
+func stackReleaseRenameEdits(root, pkg, original, version, symbol string, warnings ...string) ([]stackReleaseEdit, []string, error) {
 	if err := stackReleaseProvePins(root, pkg); err != nil {
 		return nil, nil, err
 	}
@@ -288,7 +306,7 @@ func stackReleaseEdits(root, pkg, version, symbol string, warnings ...string) ([
 		} else {
 			var changed bool
 			var ns []string
-			after, changed, ns = stackReleaseXML(data, pkg, version, warnings...)
+			after, changed, ns = stackReleaseXMLRename(data, pkg, original, version, warnings...)
 			pinChanged = pinChanged || changed
 			for _, n := range ns {
 				if strings.HasPrefix(n, "unsafe package version") {
