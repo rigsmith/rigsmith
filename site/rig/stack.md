@@ -1264,8 +1264,8 @@ stale top-level `.nupkg`, `.snupkg` and `edge-pack.json` output files, then writ
 `edge-pack.json` with stable `status: "inconclusive"`, the member, track commit, upstream tip and remedy. This
 prevents stale packages from an earlier run being treated as new output. Successful
 packs use the same cleanup before building. Other files and all subdirectories
-are preserved; cleanup never recurses. Output paths containing this stackspace root, tracked source files or Git metadata are
-refused rather than cleared. `-n` prints the status, both commits and remedy
+are preserved; cleanup never recurses. Output paths containing the caller’s stackspace root, tracked source files or
+its Git metadata are refused in both reconstructed and `--here` modes. `-n` prints the status, both commits and remedy
 while leaving existing output untouched.
 
 The shared pack path applies a temporary rename hook, packs, and verifies the

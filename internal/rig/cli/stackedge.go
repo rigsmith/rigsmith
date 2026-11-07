@@ -95,7 +95,7 @@ func (m *stackManifest) validateEdge() error {
 			return fmt.Errorf("stack edge %q must be an object", name)
 		}
 		if strings.TrimSpace(r.TrackBranch) == "" {
-			return fmt.Errorf("stack edge %q needs trackBranch on its member", name)
+			return fmt.Errorf("stack edge %q needs a trackBranch on its member", name)
 		}
 		if r.PublishPrefix == "" && len(r.PublishesAs) == 0 {
 			return fmt.Errorf("stack edge %q needs publishPrefix or publishesAs on its member", name)

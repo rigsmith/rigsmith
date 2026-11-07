@@ -257,10 +257,32 @@ func TestStackEdgePackReconstructedDotnetE2E(t *testing.T) {
 		return transport.RoundTrip(req)
 	})
 	t.Cleanup(func() { http.DefaultTransport = transport })
+	guarded := filepath.Join(checkout, "tracked-output")
+	if err := os.Mkdir(guarded, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(guarded, "x.nupkg"), []byte("tracked package input\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, checkout, "add", "tracked-output/x.nupkg")
+	mustGitStack(t, checkout, "-c", "user.name=test", "-c", "user.email=t@t", "commit", "-qm", "tracked package input")
+	blocked := newStackEdgePackCmd()
+	blocked.SetContext(ctx)
+	blocked.SetArgs([]string{"lib", "--number", "7", "--allowed-hosts", server.addr, "--out", guarded})
+	var output bytes.Buffer
+	blocked.SetOut(&output)
+	blocked.SetErr(&output)
+	if err := blocked.Execute(); err == nil || !strings.Contains(err.Error(), "tracked source") {
+		t.Fatalf("reconstructed pack did not protect the real checkout: %v\n%s", err, output.String())
+	}
+	assertStackEdgeFile(t, guarded, "x.nupkg", "tracked package input\n")
+	if entries, err := os.ReadDir(guarded); err != nil || len(entries) != 1 || entries[0].Name() != "x.nupkg" {
+		t.Fatalf("refused output changed: %v, %v", entries, err)
+	}
+	output.Reset()
 	cmd := newStackEdgePackCmd()
 	cmd.SetContext(ctx)
 	cmd.SetArgs([]string{"lib", "--number", "7", "--allowed-hosts", server.addr})
-	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
 	if err := cmd.Execute(); err != nil {

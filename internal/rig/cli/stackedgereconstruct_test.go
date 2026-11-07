@@ -177,7 +177,7 @@ func TestStackEdgeReconstructRefusals(t *testing.T) {
 				}
 				if failure == "no-track" {
 					m.Repos["lib"].TrackBranch = ""
-					want = "needs trackBranch"
+					want = "needs a trackBranch"
 				} else {
 					delete(m.LastSync, "app")
 					want = "no full manifest cursor"

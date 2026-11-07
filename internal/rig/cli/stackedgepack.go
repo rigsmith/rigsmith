@@ -58,7 +58,7 @@ func newStackEdgePackCmd() *cobra.Command {
 				return err
 			}
 			root := checkout
-			opts := stackEdgePackOptions{OutputDir: dir, Number: number, DryRun: dryRun, Here: here}
+			opts := stackEdgePackOptions{Checkout: checkout, OutputDir: dir, Number: number, DryRun: dryRun, Here: here}
 			if here {
 				_, _, repo, err := stackspace(ctx)
 				if err != nil {
@@ -130,6 +130,7 @@ func newStackEdgePackCmd() *cobra.Command {
 // it with their temporary root and the actual fork commit, without involving
 // the working checkout or changing the packaging and verification rules.
 type stackEdgePackOptions struct {
+	Checkout   string // user's checkout for output protection; defaults to the supplied tree
 	OutputDir  string
 	Number     uint64
 	Commit     string
@@ -327,7 +328,10 @@ func stackEdgePackTree(ctx context.Context, out io.Writer, m *stackManifest, roo
 		}
 		return result, nil
 	}
-	if err := stackEdgeClearOutput(ctx, root, opts.OutputDir); err != nil {
+	if opts.Checkout == "" {
+		opts.Checkout = root
+	}
+	if err := stackEdgeClearOutput(ctx, opts.Checkout, opts.OutputDir); err != nil {
 		return result, err
 	}
 	properties := map[string]string{"RepositoryUrl": result.RepositoryURL, "RepositoryCommit": opts.Commit, "Version": result.Version}
