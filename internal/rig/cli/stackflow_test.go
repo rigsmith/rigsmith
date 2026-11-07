@@ -1095,6 +1095,7 @@ func TestStackProposeFromTopicOnUnmergedWork(t *testing.T) {
 	mustGitStack(t, ws, "add", "-A")
 	mustGitStack(t, ws, "commit", "-qm", "lib: c.txt")
 	mustGitStack(t, ws, "switch", "-q", "main")
+	mustGitStack(t, ws, "merge", "-q", "--no-edit", "stack-pr-fix-c")
 
 	chdir(t, ws)
 	out, err := propose(t, "lib", "fix-c", "fix-c")

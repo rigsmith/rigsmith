@@ -677,6 +677,18 @@ The rest is unchanged from the first attempt:
   `seed` would refuse a stackspace whose unproposed commits are safely on the fork,
   and `status` would call them unsent.
 
+**Integration-line safety and refresh (2026-11-06).** `propose --from` requires
+the topic to be an ancestor of HEAD, including in a dry run, before any remote
+write. A checkout missing that topic is not the integration line. After a pull,
+`propose <member> --track-only` runs the shared integration push without a proposal
+or PR: `HEAD:<prefix>` as a single commit parented on upstream tip, force-pushed
+under a lease and recorded as `refs/rigsmith/integration/<member>`. It requires
+trackBranch, a clean prefix, cursor = upstream tip, and every recorded topic for
+that member still present locally to be an ancestor of HEAD. Deleted topics are
+ignored. It is mutually exclusive with `--from`, honours dry-run, and pushes
+nothing when the remote already holds that exact tree and single parent. Pull,
+whole-prefix propose, and topic-proposal no-op exits keep their existing behavior.
+
 `status` now says that `propose` sends the prefix's whole divergence, because that
 behaviour is otherwise discovered by a maintainer asking why a diff touches something
 unrelated. Said rather than counted: a count needs a range, and every range against the

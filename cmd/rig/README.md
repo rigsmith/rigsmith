@@ -31,6 +31,7 @@ rig stack status                     # who has moved upstream, what has not left
 rig stack pull some-lib              # take that movement
 rig stack propose some-lib read-timeout -m "Fix the read timeout"   # ALL of some-lib's changes → stack/read-timeout
 rig stack propose some-lib read-timeout --from read-timeout         # ...or one topic's tree (stack-pr-read-timeout); root it on the import, or it carries its parent's fixes too
+rig stack propose some-lib --track-only        # refresh trackBranch after pull; no proposal or PR
 rig stack push my-app                # a repo you own: its own branch, history intact
 rig stack pack some-lib              # its packages, built here — a bare checkout of a proposed branch cannot
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
@@ -61,6 +62,11 @@ stackspace. Its action verifies release downloads and reports trusted history
 cache reuse and commit/filter provenance; `cache-history: 'false'` disables
 bundle reuse. See [stack CI](../../site/rig/stack.md#testing-a-member-pr-in-its-stackspace) for the read-only,
 no-secret fork PR setup and cache trust limits.
+
+`propose --from` requires its topic to be an ancestor of HEAD; check out the
+integration line containing it first. `propose --track-only` requires trackBranch,
+a current cursor, a clean prefix and every recorded local topic in HEAD. It
+refreshes only the integration snapshot and supports `--dry-run`.
 
 `propose` proposes one squashed commit to a fork you contribute to; `push`
 fast-forwards a project you own with every commit that touched it. Mark a

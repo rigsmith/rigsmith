@@ -46,6 +46,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack status                       cursor vs upstream, per repo; --releases checks NuGet\n" +
 			"  rig stack pull [repo]                  merge new upstream commits (all by default)\n" +
 			"  rig stack propose [repo] [branch]      a branch on your fork, prefixed stack/ (asks)\n" +
+			"  rig stack propose <repo> --track-only  refresh trackBranch without a proposal\n" +
 			"  rig stack push [repo]                  fast-forward a repo you own, history intact\n" +
 			"  rig stack wire                         write the build overlay for the members\n" +
 			"  rig stack pack [repo]                  build a member's packages here, where the overlay applies\n" +
@@ -1299,10 +1300,11 @@ func stackResolveTopic(ctx context.Context, repo *gitrepo.Repo, given string) (s
 func newStackSendCmd() *cobra.Command {
 	var message string
 	var fromBranch string
+	var trackOnly bool
 	cmd := &cobra.Command{
 		Use:     "propose [repo] [new-branch]",
 		Aliases: []string{"send"},
-		Short:   "Propose stackspace changes via your fork and record topic dependencies",
+		Short:   "Propose stackspace changes via your fork, or refresh trackBranch",
 		Long: "Takes this stackspace's version of <repo> and commits it on top of that\n" +
 			"project's upstream tip, as <new-branch> on your fork. The branch holds\n" +
 			"one commit whose diff is exactly what the stackspace changed, with none of\n" +
@@ -1340,11 +1342,22 @@ func newStackSendCmd() *cobra.Command {
 			"A topic is deliberately not the whole divergence, so it cannot also be\n" +
 			"what a rebuild elsewhere reconstitutes from. That is trackBranch, which\n" +
 			"--from requires and keeps current with everything the prefix carries.\n\n" +
+			"The topic must be an ancestor of HEAD: check out the integration line\n" +
+			"that contains it before proposing. --track-only refreshes trackBranch\n" +
+			"alone, including after a pull, without opening a PR or recording a\n" +
+			"proposal. It requires trackBranch and every recorded topic still here\n" +
+			"to be an ancestor of HEAD. It cannot be combined with --from.\n\n" +
 			"With --dry-run, says what it would push and where, and stops there:\n" +
 			"nothing reaches the fork, and nothing local records a proposal.",
 		Args:              cobra.MaximumNArgs(2),
 		ValidArgsFunction: stackRepoCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if trackOnly && fromBranch != "" {
+				return fmt.Errorf("--track-only and --from are mutually exclusive")
+			}
+			if trackOnly && len(args) != 1 {
+				return fmt.Errorf("--track-only needs exactly one member: `rig stack propose <member> --track-only`")
+			}
 			ctx := cmd.Context()
 			m, src, repo, err := stackspace(ctx)
 			if err != nil {
@@ -1373,7 +1386,7 @@ func newStackSendCmd() *cobra.Command {
 			// missing argument should be told so, not left waiting on a form
 			// nobody is there to answer.
 			reused := false
-			if name == "" || typed == "" {
+			if !trackOnly && (name == "" || typed == "") {
 				if !stdinStdoutTTY() {
 					// The branch this repo was last proposed on is the one an open
 					// pull request is already watching, so without a terminal to
@@ -1405,11 +1418,14 @@ func newStackSendCmd() *cobra.Command {
 				}
 				return fmt.Errorf("no stack repo %q (have: %s)", name, strings.Join(m.names(), ", "))
 			}
+			if trackOnly && r.TrackBranch == "" {
+				return fmt.Errorf("--track-only needs a trackBranch for %s — set \"trackBranch\" on %s in the manifest to name the integration branch on %s", name, name, r.Fork)
+			}
 			// The prefix keeps these branches recognisable on a fork that also
 			// carries your own work, and is applied here rather than at the call
 			// sites so the menu and the CLI cannot disagree about it.
 			branch, other := m.proposeBranch(name, typed)
-			if other != "" {
+			if !trackOnly && other != "" {
 				// The remembered branch reads two ways (a prefix changed since
 				// it was recorded); the fork knows which one exists, and that
 				// is the one an open pull request is watching.
@@ -1471,6 +1487,17 @@ func newStackSendCmd() *cobra.Command {
 			// what is proposed: it is what trackBranch is updated with below, so
 			// a rebuild still gets the fixes this pull request leaves out.
 			fullTree := tree
+			if trackOnly {
+				for topic := range m.Proposals[name] {
+					if !repo.BranchExists(ctx, topic) {
+						continue
+					}
+					if err := stackRequireIntegrationTopic(ctx, repo, topic); err != nil {
+						return err
+					}
+				}
+				return stackPushIntegration(ctx, repo, name, r, fullTree, tip, dryRun, cmd.OutOrStdout())
+			}
 			// Declared out here because it is written under --from and read at the
 			// recording step further down, after the push.
 			topicCommit := ""
@@ -1502,6 +1529,9 @@ func newStackSendCmd() *cobra.Command {
 					return terr
 				}
 				fromBranch = topic
+				if err := stackRequireIntegrationTopic(ctx, repo, fromBranch); err != nil {
+					return err
+				}
 				topicTree, terr := repo.RevParse(ctx, fromBranch+":"+name)
 				if terr != nil {
 					return fmt.Errorf("%s has no %s/ in it, so there is nothing of that project to propose: %w", fromBranch, name, terr)
@@ -1641,20 +1671,9 @@ func newStackSendCmd() *cobra.Command {
 			// as "upstream, plus everything we carry" — which is what it is, and
 			// what makes it a sane thing to open by hand.
 			if fromBranch != "" {
-				intCommit, ierr := repo.CommitTree(ctx, fullTree, tip,
-					fmt.Sprintf("Everything the stackspace carries for %s, including what is not yet proposed", name))
-				if ierr != nil {
-					return ierr
-				}
-				if ierr := repo.PushRefForce(ctx, stackRemoteURL(r.Fork), intCommit, "refs/heads/"+r.TrackBranch, stackAuthFor(ctx, r.Fork)); ierr != nil {
+				if ierr := stackPushIntegration(ctx, repo, name, r, fullTree, tip, false, cmd.OutOrStdout()); ierr != nil {
 					return fmt.Errorf("the proposal reached %s:%s, but %s could not be updated: %w\na rebuild would be missing what this pull request left out — push it before seeding", r.Fork, branch, r.TrackBranch, ierr)
 				}
-				// Recorded like the proposal ref, so status and seed can tell
-				// that the unproposed commits have left too.
-				if ierr := repo.SetRef(ctx, "refs/rigsmith/integration/"+name, intCommit); ierr != nil {
-					return ierr
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: %s now carries everything, for rebuilds\n", name, r.TrackBranch)
 			}
 			// Whether the manifest was already the user's business before this
 			// command touched it. Asked BEFORE the write below, because
@@ -1720,7 +1739,66 @@ func newStackSendCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&message, "message", "m", "", "commit message for the branch")
 	cmd.Flags().StringVar(&fromBranch, "from", "", "propose only what this stackspace branch adds (a topic branch); requires trackBranch")
+	cmd.Flags().BoolVar(&trackOnly, "track-only", false, "refresh only trackBranch from the integration line; requires trackBranch")
+	cmd.MarkFlagsMutuallyExclusive("track-only", "from")
 	return cmd
+}
+
+func stackRequireIntegrationTopic(ctx context.Context, repo *gitrepo.Repo, topic string) error {
+	contained, err := repo.IsAncestor(ctx, "refs/heads/"+topic, "HEAD")
+	if err != nil {
+		return fmt.Errorf("cannot tell whether HEAD contains topic %s: %w", topic, err)
+	}
+	if !contained {
+		return fmt.Errorf("topic %s is not an ancestor of HEAD — check out the integration line that contains %s before updating trackBranch", topic, topic)
+	}
+	return nil
+}
+
+// Both topic proposals and integration-only refreshes publish the same snapshot.
+func stackPushIntegration(ctx context.Context, repo *gitrepo.Repo, name string, r *stackRepo, tree, tip string, preview bool, out io.Writer) error {
+	remote := stackRemoteURL(r.Fork)
+	ref := "refs/heads/" + r.TrackBranch
+	auth := stackAuthFor(ctx, r.Fork)
+	found, err := repo.LsRemoteRefs(ctx, remote, auth, ref)
+	if err != nil {
+		return err
+	}
+	if current := found[ref]; current != "" {
+		if err := repo.FetchObjects(ctx, remote, current, auth); err != nil {
+			return err
+		}
+		parents, err := repo.RevParse(ctx, current+"^@")
+		if err != nil {
+			return err
+		}
+		if stackTreeOf(ctx, repo, current) == tree && parents == tip {
+			if !preview {
+				if err := repo.SetRef(ctx, "refs/rigsmith/integration/"+name, current); err != nil {
+					return err
+				}
+			}
+			fmt.Fprintf(out, "%s: %s is up to date\n", name, r.TrackBranch)
+			return nil
+		}
+	}
+	commit, err := repo.CommitTree(ctx, tree, tip,
+		fmt.Sprintf("Everything the stackspace carries for %s, including what is not yet proposed", name))
+	if err != nil {
+		return err
+	}
+	if preview {
+		fmt.Fprintf(out, "would push %s to %s:%s (integration only)\n", short(commit), r.Fork, r.TrackBranch)
+		return nil
+	}
+	if err := repo.PushRefForce(ctx, remote, commit, ref, auth); err != nil {
+		return err
+	}
+	if err := repo.SetRef(ctx, "refs/rigsmith/integration/"+name, commit); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "%s: %s now carries everything, for rebuilds\n", name, r.TrackBranch)
+	return nil
 }
 
 // newStackPushCmd exports a member you own back to its own repository, keeping
@@ -2246,7 +2324,7 @@ func stackMenuItems() []menuItem {
 		{label: "rm", desc: "remove a repo from this stackspace — manifest, tree and overlay (pick one)", cmd: newStackRemoveMenuCmd()},
 		{label: "status", desc: "each repo's cursor against its upstream, and how much it diverges by", cmd: newStackStatusCmd()},
 		{label: "pull", desc: "merge new upstream commits into every repo", cmd: newStackPullCmd()},
-		{label: "propose", desc: "ALL of a repo's changes to its upstream, via a branch on your fork (asks; --from proposes one topic)", cmd: newStackSendCmd()},
+		{label: "propose", desc: "ALL of a repo's changes via your fork (asks; --from for one topic; --track-only refreshes trackBranch)", cmd: newStackSendCmd()},
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "pack", desc: "build a member's packages here, where the overlay makes siblings resolve", cmd: newStackPackCmd()},
