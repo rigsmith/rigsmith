@@ -130,7 +130,7 @@ func newStackCICmd() *cobra.Command {
 				return step("setup", 10, func() error { return e })
 			}
 		}
-		var temp, root, exe, reportPath, seedCommit string
+		var temp, root, exe, reportPath string
 		defer func() {
 			if temp != "" {
 				_ = os.RemoveAll(temp)
@@ -176,42 +176,16 @@ func newStackCICmd() *cobra.Command {
 			if e := os.Mkdir(root, 0700); e != nil {
 				return e
 			}
-			var data []byte
-			if seed != "" {
-				data, seedCommit, e = stackCISeed(cmd.Context(), checkout, filepath.Join(temp, "seed"), seed, allowedHosts)
-				if e != nil {
-					return e
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Seed %s %s\n", ghrepo.SafeRemote(seed), seedCommit)
-				fmt.Fprintf(&summary, "\nSeed: %s (commit %s)\n", ghrepo.SafeRemote(seed), seedCommit)
-			} else {
-				p := manifest
-				if !filepath.IsAbs(p) {
-					p = filepath.Join(checkout, p)
-				}
-				rel, err := filepath.Rel(checkout, p)
-				if err != nil {
-					return err
-				}
-				data, e = stackCIGit(cmd.Context(), checkout, "show", "HEAD:"+filepath.ToSlash(rel))
-				if e != nil {
-					return fmt.Errorf("manifest must be committed: %w", e)
-				}
-			}
-			if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
-				return e
-			}
-			if _, e = stackCIGit(cmd.Context(), root, "init", "-q"); e != nil {
-				return e
-			}
-			m, _, e := loadStackManifest(root)
+			data, seedCommit, e := stackReconstructManifest(cmd.Context(), checkout, temp, manifest, seed, allowedHosts)
 			if e != nil {
 				return e
 			}
-			if m == nil {
-				return fmt.Errorf("no stack manifest")
+			if seed != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "Seed %s %s\n", ghrepo.SafeRemote(seed), seedCommit)
+				fmt.Fprintf(&summary, "\nSeed: %s (commit %s)\n", ghrepo.SafeRemote(seed), seedCommit)
 			}
-			if e := stackCIValidate(m, allowedHosts); e != nil {
+			m, e := stackReconstructRepository(cmd.Context(), root, data, allowedHosts)
+			if e != nil {
 				return e
 			}
 			if member == "" {
@@ -249,29 +223,10 @@ func newStackCICmd() *cobra.Command {
 				summary.WriteString("\nStack topic: all recorded PR heads applied together.\n")
 			}
 			// CI cursor mode must not silently select a proposed fork branch.
-			for _, n := range m.names() {
-				r := m.Repos[n]
-				r.TrackBranch = ""
-				if tip {
-					r.UpstreamCommit = ""
-					r.UpstreamTag = ""
-					delete(m.LastSync, n)
-				} else if n != member {
-					if !stackIsSHA(m.cursor(n)) {
-						return fmt.Errorf("member %s has no full manifest cursor", n)
-					}
-					r.UpstreamBranch = ""
-					r.Branch = ""
-					r.UpstreamTag = ""
-					r.UpstreamCommit = m.cursor(n)
-				}
-			}
-			m.LastPropose = nil
-			data, e = json.MarshalIndent(m, "", "  ")
-			if e != nil {
+			if e = stackReconstructCursors(m, member, tip, nil); e != nil {
 				return e
 			}
-			if e = os.WriteFile(filepath.Join(root, "rig.stack.jsonc"), data, 0600); e != nil {
+			if e = stackReconstructWrite(root, m); e != nil {
 				return e
 			}
 			if e = run(root, "stack", "init", "--ci-checkout-member", member); e != nil {
@@ -428,7 +383,11 @@ func stackCIGit(ctx context.Context, dir string, args ...string) ([]byte, error)
 // Read raw tree blobs: archive export attributes and checkout filters must not
 // remove or rewrite the committed source. No index or worktree config is used.
 func stackCIMaterialize(ctx context.Context, checkout, dest string) error {
-	entries, err := stackCIGit(ctx, checkout, "ls-tree", "-rz", "--full-tree", "HEAD")
+	return stackCIMaterializeRef(ctx, checkout, dest, "HEAD")
+}
+
+func stackCIMaterializeRef(ctx context.Context, checkout, dest, ref string) error {
+	entries, err := stackCIGit(ctx, checkout, "ls-tree", "-rz", "--full-tree", ref)
 	if err != nil {
 		return err
 	}
@@ -516,10 +475,14 @@ func stackCIMaterialize(ctx context.Context, checkout, dest string) error {
 }
 
 func stackCIReplace(ctx context.Context, checkout, root, member string) (string, error) {
+	return stackCIReplaceRef(ctx, checkout, root, member, "HEAD")
+}
+
+func stackCIReplaceRef(ctx context.Context, checkout, root, member, ref string) (string, error) {
 	if e := stackValidPrefix(member); e != nil {
 		return "", e
 	}
-	sha, e := stackCIGit(ctx, checkout, "rev-parse", "HEAD")
+	sha, e := stackCIGit(ctx, checkout, "rev-parse", ref)
 	if e != nil {
 		return "", e
 	}
@@ -530,7 +493,7 @@ func stackCIReplace(ctx context.Context, checkout, root, member string) (string,
 	if e = os.MkdirAll(dest, 0755); e != nil {
 		return "", e
 	}
-	if e = stackCIMaterialize(ctx, checkout, dest); e != nil {
+	if e = stackCIMaterializeRef(ctx, checkout, dest, strings.TrimSpace(string(sha))); e != nil {
 		return "", e
 	}
 	if _, e = stackCIGit(ctx, root, "add", "-A", "--", member); e != nil {
