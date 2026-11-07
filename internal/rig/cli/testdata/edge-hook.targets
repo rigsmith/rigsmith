@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup Condition="&#39;$(PackageId)&#39; == &#39;Lib&#39; or (&#39;$(PackageId)&#39; == &#39;&#39; and &#39;$(AssemblyName)&#39; == &#39;Lib&#39;)">
+    <PackageId>You.Lib</PackageId>
+  </PropertyGroup>
+  <PropertyGroup Condition="&#39;$(PackageId)&#39; == &#39;Lib.Controls&#39; or (&#39;$(PackageId)&#39; == &#39;&#39; and &#39;$(AssemblyName)&#39; == &#39;Lib.Controls&#39;)">
+    <PackageId>You.Lib.Controls</PackageId>
+  </PropertyGroup>
+</Project>

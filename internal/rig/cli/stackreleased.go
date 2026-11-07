@@ -18,6 +18,14 @@ import (
 
 const stackNugetFeed = "https://api.nuget.org/v3-flatcontainer"
 
+type stackReleaseHTTPError struct {
+	StatusCode int
+}
+
+func (e *stackReleaseHTTPError) Error() string {
+	return fmt.Sprintf("can't check feed: HTTP %d", e.StatusCode)
+}
+
 // A flat-container feed is explicit: failed private feeds never mean unpublished.
 func stackReleaseGet(ctx context.Context, client *http.Client, path string, result any, isXML bool) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", path, nil)
@@ -30,7 +38,7 @@ func stackReleaseGet(ctx context.Context, client *http.Client, path string, resu
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("can't check feed: HTTP %d", resp.StatusCode)
+		return &stackReleaseHTTPError{StatusCode: resp.StatusCode}
 	}
 	r := io.LimitReader(resp.Body, 2<<20)
 	if isXML {

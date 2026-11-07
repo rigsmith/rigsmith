@@ -58,7 +58,7 @@ func newStackCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackCanaryCmd(), newStackReleasedCmd(), newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
+	cmd.AddCommand(newStackEdgeCmd(), newStackCanaryCmd(), newStackReleasedCmd(), newStackCIGuardCmd(), newStackDepsCmd(), newStackCICmd(), newStackHomeCmd(), newStackSetupCmd(), newStackInitCmd(), newStackAddCmd(), newStackRemoveCmd(), newStackSeedCmd(), newStackStatusCmd(), newStackPullCmd(), newStackSendCmd(), newStackPushCmd(), newStackWireCmd(), newStackPackCmd(), newStackDoctorCmd())
 	return refuseUnknownVerb(cmd)
 }
 
