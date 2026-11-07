@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
@@ -217,7 +218,7 @@ func duplicateNames(found []discovered) error {
 // returning the packages and a name→ecosystem-id map. Discovery is narrowed to
 // the top-level config.Paths roots; a per-ecosystem `sourcePath` block overrides
 // those for that ecosystem only. With neither, the whole repo is scanned (minus
-// the usual ignores and .gitignored files).
+// the usual ignores, .gitignored files, and packages under a testdata directory).
 //
 // Overlay ecosystems (EcosystemInfo.Overlays — e.g. Tauri over cargo, Electron
 // over node) reuse a base ecosystem's manifest but own the release. After every
@@ -254,6 +255,9 @@ func (w *Workspace) Discover(ctx context.Context) ([]plugin.Package, map[string]
 				return nil, nil, fmt.Errorf("discover %s: %w", eco.Info().ID, err)
 			}
 			for _, p := range resp.Packages {
+				if slices.Contains(strings.Split(filepath.ToSlash(p.Dir), "/"), "testdata") {
+					continue
+				}
 				where := p.ManifestPath
 				if where == "" {
 					where = p.Dir

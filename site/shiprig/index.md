@@ -4,6 +4,12 @@ RigSmith's release tool — the Go successor to net-changesets. One uniform
 `add changeset → version → publish` workflow across .NET, Node, Go, and Rust,
 plus Tauri, Electron, and Velopack desktop apps.
 
+Shared discovery with changerig excludes packages under any `testdata` path
+segment relative to the repository root, including from `packages list --json`.
+Directories such as `mytestdata` remain eligible. `paths` and per-ecosystem
+`sourcePath` still narrow discovery; `ignore` marks packages as ignored while
+keeping them listed.
+
 ```sh
 shiprig init               # release-init wizard: pipeline, forge, publish auth
 shiprig add -p my/pkg --bump minor -m "Add a feature"   # interactive without flags

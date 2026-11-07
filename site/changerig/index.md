@@ -32,6 +32,10 @@ same shared report/fix model the other rigs use. With a
 against it.
 
 It works across **.NET, Node, Go, and Rust** in the same polyglot monorepo.
+Discovery excludes packages whose repository-relative directory contains a
+`testdata` path segment, even when selected by `paths` or an ecosystem's
+`sourcePath`. Directories such as `mytestdata` remain eligible.
+
 Changesets name packages by name, so every discovered package needs a name of
 its own, across ecosystems too: two packages under one name (an npm package and
 a Go module both called `shared`, say) stop every command with an error naming

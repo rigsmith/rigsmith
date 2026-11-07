@@ -113,6 +113,7 @@ changerig version --ignore pkg              # leave a package out of this run (a
 changerig version --only pkg                # version only this release group; the rest wait for a later run
 changerig version --yes --release-as pkg=2.0.0   # release a package at an exact version (CI)
 changerig ui                                # interactive bubbletea menu
+shiprig packages list --json                # read-only release package inventory
 shiprig publish                             # registries + tags (idempotent, confirm-gated on a TTY)
 shiprig release                             # the configurable step pipeline (.changeset/release.jsonc)
 
@@ -135,6 +136,11 @@ rig stack pack some-lib                     # its packages, built here where sib
 rig stack propose some-lib read-timeout --dry-run   # what would go to your fork, touching nothing
 rig stack push my-app --dry-run             # what would go — target, branch, commits — touching no remote
 ```
+
+Changerig and shiprig discovery exclude packages under any repository-relative
+`testdata` path segment; names such as `mytestdata` remain eligible. `paths` and
+per-ecosystem `sourcePath` still narrow discovery, and ignored packages remain
+visible in `shiprig packages list --json`.
 
 Owned-member push compares content with upstream, so squash/rebase merges already
 containing the work leave nothing to push. New commits remain separate on a safe
