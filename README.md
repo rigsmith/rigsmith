@@ -36,7 +36,7 @@ under your publishing ids. `--seed` selects a manifest home; `--here` always
 marks output unpublishable. `rig stack edge status [member]` reports carried fixes,
 freshness and retirement evidence; `rig stack released` previews switching back
 to public ids. Packing writes artifacts and provenance, never pushes a feed.
-`edge ci` and `edge init` are not built yet. See [Edge builds](site/rig/stack.md#edge-builds).
+`edge ci` is not built yet. See [Edge builds](site/rig/stack.md#edge-builds).
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,

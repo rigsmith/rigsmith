@@ -1283,7 +1283,7 @@ real pack.
 
 There is no publish command in this group yet, and its `Publishable` report field
 is only an eligibility marker, not evidence of publication or a separate test run.
-**`edge ci` and `edge init` are not built yet.**
+**`edge ci` is not built yet.**
 
 `edge status [member]` is read-only. It reports recorded proposals and adopted
 PRs, unproposed content, local integration receipt and upstream-base freshness,

@@ -58,8 +58,8 @@ with `status: "inconclusive"`. Cleanup preserves other files and all directories
 `rig stack edge status [member]` reports carried fixes, freshness, newest edge
 version and retirement evidence; `--json` emits its report. `rig stack released`
 previews migration to public ids, refusing plans that leave another republished id
-from the same member behind. Pack does not push a feed; `edge ci` and `edge init`
-are not built yet. See [Edge builds](../../site/rig/stack.md#edge-builds).
+from the same member behind. Pack does not push a feed; `edge ci`
+is not built yet. See [Edge builds](../../site/rig/stack.md#edge-builds).
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,

@@ -651,6 +651,12 @@ func stackSpec(root string) cfgfind.Spec {
 // loadStackManifest resolves and parses the manifest at root. A nil manifest with
 // nil error means "not a stackspace" — callers say so themselves.
 func loadStackManifest(root string) (*stackManifest, *cfgfind.Source, error) {
+	return loadStackManifestForEdgeSetup(root, false)
+}
+
+// Setup reports missing publishing rules as facts, while retaining all other
+// manifest validation. Ordinary commands still require the complete edge config.
+func loadStackManifestForEdgeSetup(root string, setup bool) (*stackManifest, *cfgfind.Source, error) {
 	src, err := cfgfind.Find(stackSpec(root))
 	if err != nil || src == nil {
 		return nil, nil, err
@@ -660,7 +666,18 @@ func loadStackManifest(root string) (*stackManifest, *cfgfind.Source, error) {
 		return nil, nil, fmt.Errorf("parsing %s: %w", src.Origin, err)
 	}
 	m.normalize()
-	if err := m.validate(); err != nil {
+	validate := m.validate
+	if setup {
+		validate = func() error {
+			base := m
+			base.Edge = nil
+			if err := base.validate(); err != nil {
+				return err
+			}
+			return m.validateEdgeConfig(false)
+		}
+	}
+	if err := validate(); err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", src.Origin, err)
 	}
 	return &m, src, nil

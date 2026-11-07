@@ -85,6 +85,10 @@ func stackEdgePRUpstream(raw, upstream string) bool {
 }
 
 func (m *stackManifest) validateEdge() error {
+	return m.validateEdgeConfig(true)
+}
+
+func (m *stackManifest) validateEdgeConfig(requirePublishing bool) error {
 	for _, name := range slices.Sorted(maps.Keys(m.Edge)) {
 		e := m.Edge[name]
 		r := m.Repos[name]
@@ -94,10 +98,10 @@ func (m *stackManifest) validateEdge() error {
 		if e == nil {
 			return fmt.Errorf("stack edge %q must be an object", name)
 		}
-		if strings.TrimSpace(r.TrackBranch) == "" {
+		if requirePublishing && strings.TrimSpace(r.TrackBranch) == "" {
 			return fmt.Errorf("stack edge %q needs a trackBranch on its member", name)
 		}
-		if r.PublishPrefix == "" && len(r.PublishesAs) == 0 {
+		if requirePublishing && r.PublishPrefix == "" && len(r.PublishesAs) == 0 {
 			return fmt.Errorf("stack edge %q needs publishPrefix or publishesAs on its member", name)
 		}
 		if strings.TrimSpace(e.Feed) == "" {

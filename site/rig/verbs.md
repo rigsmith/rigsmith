@@ -388,7 +388,7 @@ returns non-zero while retaining the successful local pull and cursor.
 See [topic dependencies](./stack#stack-topic-dependencies) for recording edges,
 publication permissions, and the opt-in scheduled refresh workflow.
 
-**[Edge builds](./stack#edge-builds)** prepare carried fixes under your own ids; `--here` output and number 0 are unpublishable. `edge ci` and `edge init` are not built yet.
+**[Edge builds](./stack#edge-builds)** prepare carried fixes under your own ids; `--here` output and number 0 are unpublishable. `edge ci` is not built yet.
 
 **[Stackspaces](./stack)** is the full guide: setting one up, wiring the
 build so the consumer compiles against source, sending and updating pull

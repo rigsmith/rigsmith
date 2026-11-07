@@ -155,8 +155,8 @@ unproposed content, freshness, newest edge version and retirement. Private feeds
 needing credentials report can't check. Use `rig stack released` to preview
 returning consumers to public ids; it refuses a single-package plan that leaves
 another republished id of that member, so migrate those together manually.
-`edge ci` and `edge init` are not built yet; do not invent a workflow invoking
-them. See `site/rig/stack.md#edge-builds` for the manifest block and limits.
+`edge ci` is not built yet; do not invent a workflow invoking
+it. See `site/rig/stack.md#edge-builds` for the manifest block and limits.
 
 A **stack workspace** fuses upstream repos you maintain forks of into one git
 history, each under its own directory (`pty-core/`, `term-core/`, …). A change
