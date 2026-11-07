@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,11 +129,18 @@ func stackEdgePublicVersion(ctx context.Context, client *http.Client, feed, id s
 	}
 	path := strings.TrimRight(feed, "/") + "/" + url.PathEscape(strings.ToLower(id)) + "/index.json"
 	if err := stackReleaseGet(ctx, client, path, &index, false); err != nil {
+		var status *stackReleaseHTTPError
+		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+			return "", nil // the public flat-container index has no such package
+		}
 		return "", fmt.Errorf("public version of %s: %w", id, err)
 	}
 	versions, err := stackReleaseCandidates(index.Versions)
-	if err != nil || len(versions) == 0 {
-		return "", fmt.Errorf("public version of %s: no supported stable public version (%v)", id, err)
+	if err != nil {
+		return "", fmt.Errorf("public version of %s: %w", id, err)
+	}
+	if len(versions) == 0 {
+		return "", nil
 	}
 	return versions[0], nil
 }

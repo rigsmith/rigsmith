@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -116,10 +118,117 @@ func TestStackEdgePackRefusesCrossMemberSwap(t *testing.T) {
 	}
 }
 
-func TestStackEdgePublicVersionRefusesFailedFeed(t *testing.T) {
+func TestStackEdgePublicVersionMissingPackage(t *testing.T) {
 	feed := httptest.NewServer(http.NotFoundHandler())
 	defer feed.Close()
-	if _, err := stackEdgePublicVersion(context.Background(), feed.Client(), feed.URL, "Lib"); err == nil || !strings.Contains(err.Error(), "HTTP 404") {
-		t.Fatalf("feed: %v", err)
+	if version, err := stackEdgePublicVersion(context.Background(), feed.Client(), feed.URL, "Lib"); err != nil || version != "" {
+		t.Fatalf("unpublished package: version=%q, err=%v", version, err)
+	}
+}
+
+func TestStackEdgePublicVersionCandidates(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want, wantError string
+	}{
+		{name: "empty", body: `{"versions":[]}`},
+		{name: "only-prereleases", body: `{"versions":["1.0.0-beta.1","2.0.0-rc.2"]}`},
+		{name: "stable", body: `{"versions":["1.0.0","2.0.0-rc.2","1.2.3"]}`, want: "1.2.3"},
+		{name: "unsupported", body: `{"versions":["1.2.3","2.0.0.999999999999999999999"]}`, wantError: "unsupported feed version"},
+		{name: "bad-json", body: `{`, wantError: "unexpected EOF"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { fmt.Fprint(w, tc.body) }))
+			defer feed.Close()
+			version, err := stackEdgePublicVersion(context.Background(), feed.Client(), feed.URL, "Lib")
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) || errors.Unwrap(err) == nil {
+					t.Fatalf("expected wrapped %q, got %v", tc.wantError, err)
+				}
+				return
+			}
+			if err != nil || version != tc.want {
+				t.Fatalf("version=%q, err=%v; want %q", version, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestStackEdgePublicVersionRefusesFailedFeed(t *testing.T) {
+	for _, status := range []int{http.StatusInternalServerError, http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+			defer feed.Close()
+			_, err := stackEdgePublicVersion(context.Background(), feed.Client(), feed.URL, "Lib")
+			var responseError *stackReleaseHTTPError
+			if !errors.As(err, &responseError) || responseError.StatusCode != status {
+				t.Fatalf("expected wrapped HTTP %d, got %v", status, err)
+			}
+		})
+	}
+	t.Run("network", func(t *testing.T) {
+		client := &http.Client{Transport: stackDepsRoundTrip(func(*http.Request) (*http.Response, error) { return nil, errors.New("network unavailable") })}
+		if _, err := stackEdgePublicVersion(context.Background(), client, "https://feed.invalid", "Lib"); err == nil {
+			t.Fatal("network failure was treated as unpublished")
+		}
+	})
+}
+
+func TestStackEdgePackUsesTreeWithoutPublicStable(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+	}{
+		{name: "unpublished", status: http.StatusNotFound},
+		{name: "empty", status: http.StatusOK, body: `{"versions":[]}`},
+		{name: "only-prereleases", status: http.StatusOK, body: `{"versions":["1.0.0-beta.1"]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			csproj(t, root, "lib/Lib", "Lib")
+			feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tc.status); fmt.Fprint(w, tc.body) }))
+			defer feed.Close()
+			opts := stackEdgePackOptions{OutputDir: filepath.Join(root, "out"), Commit: strings.Repeat("a", 40), Here: true, DryRun: true, PublicFeed: feed.URL, Client: feed.Client()}
+			result, err := stackEdgePackTree(context.Background(), io.Discard, edgeTestManifest(), root, "lib", opts)
+			if err != nil || result.Version != "1.0.0-edge.0" {
+				t.Fatalf("tree fallback: version=%q, err=%v", result.Version, err)
+			}
+			// Discovery must still reject a missing R and T together.
+			path := filepath.Join(root, "lib", "Lib", "Lib.csproj")
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = []byte(strings.Replace(string(data), "<Version>1.0.0</Version>", "", 1))
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err = stackEdgePackTree(context.Background(), io.Discard, edgeTestManifest(), root, "lib", opts)
+			if err == nil || !strings.Contains(err.Error(), "needs a public version R or an in-tree version T") {
+				t.Fatalf("missing R and T: %v", err)
+			}
+		})
+	}
+}
+
+func TestStackReleaseGetPreservesHTTPStatus(t *testing.T) {
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/json" {
+			fmt.Fprint(w, `not json`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer feed.Close()
+	var result any
+	err := stackReleaseGet(context.Background(), feed.Client(), feed.URL, &result, false)
+	var status *stackReleaseHTTPError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusNotFound {
+		t.Fatalf("HTTP status: %v", err)
+	}
+	// A successful response with invalid JSON is not an HTTP-status error.
+	err = stackReleaseGet(context.Background(), feed.Client(), feed.URL+"/json", &result, false)
+	var syntax *json.SyntaxError
+	if !errors.As(err, &syntax) || errors.As(err, &status) {
+		t.Fatalf("JSON error: %v", err)
 	}
 }

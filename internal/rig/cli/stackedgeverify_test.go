@@ -148,6 +148,38 @@ func TestStackEdgeVerifyRejectsExtraOriginal(t *testing.T) {
 	}
 }
 
+func TestStackEdgeVerifyPlatformFrameworks(t *testing.T) {
+	for _, tc := range []struct {
+		name, expected, packed string
+		matches                bool
+	}{
+		{name: "SDK-fills-platform-version", expected: "net10.0-windows", packed: "net10.0-windows7.0", matches: true},
+		{name: "nuspec-omits-platform-version", expected: "net10.0-windows7.0", packed: "net10.0-windows", matches: true},
+		{name: "same-explicit-version", expected: "net10.0-windows7.0", packed: "net10.0-windows7.0", matches: true},
+		{name: "different-explicit-versions", expected: "net10.0-windows7.0", packed: "net10.0-windows10.0.19041.0"},
+		{name: "different-platform", expected: "net10.0-windows", packed: "net10.0-android34.0"},
+		{name: "different-base", expected: "net9.0-windows", packed: "net10.0-windows7.0"},
+		{name: "platform-absent", expected: "net10.0", packed: "net10.0-windows7.0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := edgeTestExpectations()
+			want.Packages[1].Dependencies[1].Framework = tc.expected
+			dir := t.TempDir()
+			edgeTestNupkg(t, dir, "lib.nupkg", "You.Lib", want.Version, "", "Lib")
+			deps := fmt.Sprintf(`<group targetFramework="%s"><dependency id="You.Lib" version="1.2.4-edge.7"/><dependency id="ThirdParty" version="[3.2.1]"/></group>`, tc.packed)
+			edgeTestNupkg(t, dir, "controls.nupkg", "You.Lib.Controls", want.Version, deps, "Lib.Controls")
+			_, err := stackEdgeVerify(dir, want)
+			if tc.matches {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "differs from discovery") {
+				t.Fatalf("framework %s vs %s: %v", tc.expected, tc.packed, err)
+			}
+		})
+	}
+}
+
 func TestStackEdgeRange(t *testing.T) {
 	for a, b := range map[string]string{"1.2": "1.2.0", "[1.2, )": "1.2.0", "[1.2]": "[1.2.0]", "(1.0, 2.0]": "(1.0.0,2.0.0]"} {
 		if got := stackEdgeRange(a); got != b {

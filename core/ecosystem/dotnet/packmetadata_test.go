@@ -50,3 +50,46 @@ func TestEvaluatePackMetadata(t *testing.T) {
 		t.Fatalf("unescaped property: %v", calls[0])
 	}
 }
+
+func TestEvaluatePackMetadataSkipsEmptyFrameworks(t *testing.T) {
+	original := metadataRunner
+	t.Cleanup(func() { metadataRunner = original })
+	for _, frameworks := range []string{";net8.0", " ; net8.0 ; ; net10.0; "} {
+		t.Run(frameworks, func(t *testing.T) {
+			var calls []string
+			metadataRunner = func(_ context.Context, _, _ string, args ...string) (string, string, error) {
+				framework := ""
+				for _, arg := range args {
+					if strings.HasPrefix(arg, "-p:TargetFramework=") {
+						framework = strings.TrimPrefix(arg, "-p:TargetFramework=")
+					}
+				}
+				calls = append(calls, framework)
+				data, err := json.Marshal(map[string]any{
+					"Properties": map[string]string{"AssemblyName": "Lib", "TargetFrameworks": frameworks, "IsPackable": "true"},
+					"Items":      map[string]any{"PackageReference": []map[string]string{{"Identity": "ThirdParty", "Version": "1.0.0"}}},
+				})
+				return string(data), "", err
+			}
+			meta, err := EvaluatePackMetadata(context.Background(), "root", "Lib.csproj", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"net8.0"}
+			if strings.Contains(frameworks, "net10.0") {
+				want = append(want, "net10.0")
+			}
+			if strings.Join(calls, ",") != ","+strings.Join(want, ",") {
+				t.Fatalf("queries = %q, want outer build then %q", calls, want)
+			}
+			if len(meta.Dependencies) != len(want) {
+				t.Fatalf("dependencies = %+v", meta.Dependencies)
+			}
+			for i, dep := range meta.Dependencies {
+				if dep.Framework != want[i] {
+					t.Errorf("dependency framework = %q, want %q", dep.Framework, want[i])
+				}
+			}
+		})
+	}
+}

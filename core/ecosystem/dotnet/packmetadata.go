@@ -102,6 +102,10 @@ func EvaluatePackMetadata(ctx context.Context, root, manifest string, properties
 	}
 	if frameworks := props["TargetFrameworks"]; frameworks != "" {
 		for _, framework := range strings.Split(frameworks, ";") {
+			framework = strings.TrimSpace(framework)
+			if framework == "" {
+				continue
+			}
 			inner, innerItems, err := query(framework)
 			if err != nil {
 				return result, err

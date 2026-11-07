@@ -131,7 +131,7 @@ func stackEdgeVerify(dir string, want stackEdgeVerifyRequest) ([]stackEdgeVerifi
 			}
 			match := false
 			for _, original := range pkg.Dependencies {
-				if strings.EqualFold(original.ID, dep.ID) && stackEdgeRange(original.Version) == stackEdgeRange(dep.Version) && (original.Framework == "" || stackEdgeFramework(original.Framework) == stackEdgeFramework(dep.Framework)) {
+				if strings.EqualFold(original.ID, dep.ID) && stackEdgeRange(original.Version) == stackEdgeRange(dep.Version) && (original.Framework == "" || stackEdgeSameFramework(original.Framework, dep.Framework)) {
 					match = true
 					observed[stackEdgeDependencyKey(original)] = true
 					break
@@ -216,6 +216,31 @@ func stackEdgeDependencyVersion(got, version string) bool {
 
 func stackEdgeDependencyKey(dep stackEdgeDependency) string {
 	return strings.ToLower(dep.ID) + "@" + stackEdgeRange(dep.Version) + "/" + stackEdgeFramework(dep.Framework)
+}
+
+// The SDK can fill an omitted platform version when writing the nuspec. Treat
+// that as the same framework, but never erase a difference between two explicit
+// platform versions or between different platforms or target frameworks.
+func stackEdgeSameFramework(a, b string) bool {
+	a, b = stackEdgeFramework(a), stackEdgeFramework(b)
+	if a == b {
+		return true
+	}
+	baseA, platformA, hasPlatformA := strings.Cut(a, "-")
+	baseB, platformB, hasPlatformB := strings.Cut(b, "-")
+	if !hasPlatformA || !hasPlatformB || baseA != baseB {
+		return false
+	}
+	split := func(platform string) (string, string) {
+		i := strings.IndexFunc(platform, func(r rune) bool { return r >= '0' && r <= '9' })
+		if i < 0 {
+			return platform, ""
+		}
+		return platform[:i], platform[i:]
+	}
+	nameA, versionA := split(platformA)
+	nameB, versionB := split(platformB)
+	return nameA != "" && nameA == nameB && (versionA == "" || versionB == "" || versionA == versionB)
 }
 
 // NuGet accepts both the long framework name and SDK short forms in nuspecs.
