@@ -31,11 +31,6 @@ go.work.sum
 [Bb]in/
 [Oo]bj/
 
-# shiprig v1.22.0, pinned in release.yml, discovers this packable fixture as a
-# release package with no version. Remove once the pin includes the testdata
-# skip from #566; the fixture files stay tracked for tests.
-/core/ecosystem/dotnet/testdata/edge-rename/
-
 # Generated Windows resource files (icon + version info); emitted by
 # scripts/winres.sh into each cmd/<tool>/ during the goreleaser before hook.
 cmd/*/*.syso
