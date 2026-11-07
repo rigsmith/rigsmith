@@ -207,7 +207,7 @@ func (s *stackEdgeSetup) checkWiring(_ string) error {
 	for _, scan := range scans {
 		for _, p := range scan.Packages {
 			for name, pub := range s.m.publishing() {
-				if p.Dir == name || strings.HasPrefix(p.Dir, name+"/") {
+				if stackPackUnder(name, p.Dir) {
 					if as, ok := stackRepublishedID(pub, p.Name); ok {
 						aliases[as] = true
 					}
@@ -219,7 +219,7 @@ func (s *stackEdgeSetup) checkWiring(_ string) error {
 		for _, p := range scan.Packages {
 			from := ""
 			for _, member := range s.m.names() {
-				if p.Dir == member || strings.HasPrefix(p.Dir, member+"/") {
+				if stackPackUnder(member, p.Dir) {
 					from = member
 					break
 				}
