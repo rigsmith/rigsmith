@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -115,7 +116,12 @@ func TestStackReleasedCandidateFiles(t *testing.T) {
 		t.Run(map[bool]string{false: "snapshot", true: "git"}[git], func(t *testing.T) {
 			root := stackReleaseFileFixture(t, git)
 			member := filepath.Join(root, "member [one]")
-			for _, path := range []string{"packages/App/App.csproj", "generated/Defs.props", "vendor/Build.targets", "packages/App/Code.cs", "new\nline.props"} {
+			unusualName := "new line.props"
+			// Windows forbids control characters in filenames.
+			if runtime.GOOS != "windows" {
+				unusualName = "new\nline.props"
+			}
+			for _, path := range []string{"packages/App/App.csproj", "generated/Defs.props", "vendor/Build.targets", "packages/App/Code.cs", unusualName} {
 				stackReleaseFileWrite(t, member, path, "<Project />")
 			}
 			for _, dir := range []string{"bin", "obj", ".git", ".vs", "node_modules"} {
@@ -134,7 +140,7 @@ func TestStackReleasedCandidateFiles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"generated/Defs.props", "new\nline.props", "packages/App/App.csproj", "packages/App/Code.cs", "vendor/Build.targets"}
+			want := []string{"generated/Defs.props", unusualName, "packages/App/App.csproj", "packages/App/Code.cs", "vendor/Build.targets"}
 			if !slices.Equal(files, want) {
 				t.Fatalf("files=%q want=%q", files, want)
 			}
