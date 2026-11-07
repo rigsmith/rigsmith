@@ -14,7 +14,23 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func edgeWorkflowFixture(t *testing.T) *stackEdgeSetup {
+func edgeWorkflowHome(t *testing.T, s *stackEdgeSetup) string {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, s.root, "init", "--bare", "-b", "main", home)
+	const remote = "https://github.com/acme/app-stack.git"
+	// Publication pushes from a temporary clone, so the rewrite must reach
+	// child Git processes as well as commands in the fixture repository.
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url."+stackTopicFileURL(home)+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", remote)
+	if err := stackConfigureHome(s.ctx, s.root, remote, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+func edgeWorkflowFixture(t *testing.T) (*stackEdgeSetup, string) {
 	t.Helper()
 	s, _, _ := edgeSetupFixture(t)
 	mustGitStack(t, s.root, "init", "-b", "main")
@@ -24,13 +40,9 @@ func edgeWorkflowFixture(t *testing.T) *stackEdgeSetup {
 	writeStackManifest(t, s.root, string(data))
 	mustGitStack(t, s.root, "add", "rig.stack.jsonc")
 	mustGitStack(t, s.root, "commit", "-qm", "manifest")
-	home := filepath.Join(t.TempDir(), "home.git")
-	mustGitStack(t, s.root, "init", "--bare", "-b", "main", home)
-	if err := stackConfigureHome(s.ctx, s.root, home, "main", ""); err != nil {
-		t.Fatal(err)
-	}
+	home := edgeWorkflowHome(t, s)
 	t.Chdir(s.root)
-	return s
+	return s, home
 }
 
 func TestStackEdgeWorkflowTemplateCopy(t *testing.T) {
@@ -44,7 +56,7 @@ func TestStackEdgeWorkflowTemplateCopy(t *testing.T) {
 }
 
 func TestStackEdgeWorkflowMembersAndSecretNames(t *testing.T) {
-	s := edgeWorkflowFixture(t)
+	s, _ := edgeWorkflowFixture(t)
 	s.m.Edge["lib"].PushKeySecret = "LIB_PUSH_KEY"
 	s.m.Repos["other"] = s.m.Repos["lib"]
 	s.m.Edge["other"] = &stackEdge{Feed: "https://example.invalid/index.json", PushKeySecret: "OTHER_PUSH_KEY"}
@@ -88,7 +100,7 @@ func TestStackEdgeWorkflowMembersAndSecretNames(t *testing.T) {
 }
 
 func TestStackEdgeWorkflowPublication(t *testing.T) {
-	s := edgeWorkflowFixture(t)
+	s, home := edgeWorkflowFixture(t)
 	if err := s.checkWorkflowPublication("lib"); err == nil {
 		t.Fatal("missing workflow passed")
 	}
@@ -118,7 +130,6 @@ func TestStackEdgeWorkflowPublication(t *testing.T) {
 		t.Fatal("wrote inside member")
 	}
 	// Published content is checked independently of the local file and receipt.
-	home := stackHomeConfig(s.ctx, s.root, "URL")
 	mustGitStack(t, home, "update-ref", "-d", "refs/heads/main")
 	if err := s.checkWorkflowPublication("lib"); err == nil {
 		t.Fatal("absent published workflow passed")
@@ -128,7 +139,7 @@ func TestStackEdgeWorkflowPublication(t *testing.T) {
 func TestStackEdgeWorkflowNonTTY(t *testing.T) {
 	for _, stage := range []string{"write", "commit", "publish"} {
 		t.Run(stage, func(t *testing.T) {
-			s := edgeWorkflowFixture(t)
+			s, home := edgeWorkflowFixture(t)
 			want, err := s.workflow("lib")
 			if err != nil {
 				t.Fatal(err)
@@ -157,7 +168,7 @@ func TestStackEdgeWorkflowNonTTY(t *testing.T) {
 			if before != mustGitStack(t, s.root, "status", "--porcelain") || head != mustGitStack(t, s.root, "rev-parse", "HEAD") {
 				t.Fatal("non-TTY changed checkout")
 			}
-			if refs := mustGitStack(t, stackHomeConfig(s.ctx, s.root, "URL"), "for-each-ref"); refs != "" {
+			if refs := mustGitStack(t, home, "for-each-ref"); refs != "" {
 				t.Fatal("non-TTY published")
 			}
 		})
@@ -165,7 +176,7 @@ func TestStackEdgeWorkflowNonTTY(t *testing.T) {
 }
 
 func TestStackEdgeWorkflowCommitOnlyPath(t *testing.T) {
-	s := edgeWorkflowFixture(t)
+	s, _ := edgeWorkflowFixture(t)
 	if err := os.WriteFile(filepath.Join(s.root, "unrelated.txt"), []byte("unfinished"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +193,7 @@ func TestStackEdgeWorkflowCommitOnlyPath(t *testing.T) {
 }
 
 func TestStackEdgeWorkflowNeverInsideMember(t *testing.T) {
-	s := edgeWorkflowFixture(t)
+	s, _ := edgeWorkflowFixture(t)
 	member := filepath.Join(s.root, "lib")
 	if err := os.MkdirAll(member, 0o755); err != nil {
 		t.Fatal(err)
@@ -213,5 +224,15 @@ func TestStackEdgeMemberPromptAbort(t *testing.T) {
 				t.Fatalf("cancel result: %v", err)
 			}
 		}
+	}
+}
+
+func TestStackEdgeWorkflowRefusesBackslashHome(t *testing.T) {
+	s, _ := edgeWorkflowFixture(t)
+	if err := stackConfigureHome(s.ctx, s.root, `C:\Users\test\home.git`, "main", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.memberWorkflow("lib"); err == nil || err.Error() != "home or member cannot be represented safely in the workflow" {
+		t.Fatalf("backslash home: %v", err)
 	}
 }
