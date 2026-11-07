@@ -1103,6 +1103,8 @@ the step-by-step.
 | `stack propose [repo] [new-branch]` | Put that repo's changes on your fork as a PR-ready branch; `--dry-run` says what would go and touches no remote |
 | `stack push [repo]` | Fast-forward a repo you own with this stackspace's commits, history intact; inferred when only one is yours; `--dry-run` lists the commits that would go and touches no remote |
 | `stack wire` | Write the build overlay so members resolve each other from source, and refresh the generated `README.md`. Defers while any member the manifest names is not imported: nothing crosses between directories that are not there, which reads exactly like an overlay left over |
+| `stack edge pack <member>` | Reconstruct, rename, version, pack and verify carried .NET fixes under your ids; `--here` is always unpublishable |
+| `stack edge status [member]` | Read carried-item release evidence, integration freshness, newest edge version and retirement verdict |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 `propose` and `push` answer different questions. `propose` proposes one squashed
@@ -1190,6 +1192,115 @@ What it lists is what appeared in the output directory, not what the build
 predicted: a project that computes its version at build time (MinVer and
 friends) is discovered with no version at all, so a predicted file name would
 have an empty version in it and match nothing on disk.
+
+## Edge builds
+
+Edge builds are a stop-gap for carried .NET fixes that have not shipped upstream.
+They use your own NuGet ids (`Lib` → `You.Lib`, `Lib.Controls` →
+`You.Lib.Controls`) while preserving assembly names. They do not publish to a feed.
+
+Configure the member's PR fork, integration branch, publishing ids, and an `edge`
+block beside `repos` in the stack manifest:
+
+```jsonc
+{
+  "repos": {
+    "lib": {
+      "upstream": "github.com/acme/Lib",
+      "fork": "github.com/you/Lib",
+      "trackBranch": "stack/integration",
+      "publishPrefix": "You."
+    }
+  },
+  "edge": {
+    "lib": {
+      "feed": "https://nuget.pkg.github.com/you/index.json",
+      "label": "edge",              // optional; default edge
+      "exclude": ["Lib.Samples"],    // optional; original package ids
+      "maxSize": "50MB"              // optional; checked per package
+    }
+  }
+}
+```
+
+An explicit `publishesAs` mapping overrides `publishPrefix`. Every non-excluded
+package needs a distinct republished id; edge refuses original ids. Commit the
+manifest before packing. After a pull, refresh the integration snapshot with
+`rig stack propose lib --track-only` from the integration line.
+
+```sh
+rig stack edge pack lib --number 42
+rig stack edge pack lib --manifest rig.stack.jsonc --number 42 -o ./edge-out
+rig stack edge pack lib --seed you/stackspace@main --number 42
+rig stack edge pack lib --upstream-tip --number 43
+rig stack edge pack lib --here -n
+rig stack edge status lib
+rig stack edge status --json
+```
+
+`edge pack <member>` reconstructs the committed manifest and the fork's
+`trackBranch` in a temporary repository; other members stay at recorded cursors.
+Without `--manifest` or `--seed`, it discovers the stackspace's own committed
+`rig.stack.jsonc`, `rig.stack.json`, or inline `.rig.json` stack block. Dirty
+manifest and member files are ignored. `--allowed-hosts` is a comma-separated
+allowlist for seed and member hosts (default `github.com`). A seed may also be a
+local path. Temporary reconstruction files are removed when the command ends.
+
+The version is `<base>-<label>.<number>`. For each included original id, rig reads
+the newest stable public NuGet version R and the reconstructed in-tree version T.
+If T is newer (or there is no R), it uses T; otherwise it increments R's patch.
+A member shares the highest resulting version. An existing prerelease T keeps its
+suffix, followed by `.<label>.<number>`. `--number` defaults to 0, marked
+unpublishable; pass the CI run number explicitly when preparing artifacts.
+`--here` packs the working tree and always marks output unpublishable, even with
+a nonzero number. It cannot be combined with `--seed`, `--manifest`, or
+`--upstream-tip`.
+
+`--upstream-tip` three-way merges the integration snapshot onto the current
+upstream tip. A conflict prints **inconclusive**, with the remedy: pull, resolve
+on the integration line, then `rig stack propose lib --track-only`. It skips
+packing and exits successfully instead of reporting a build failure. It clears
+the selected output directory and leaves only `edge-pack.json`, with stable
+`status: "inconclusive"`, the member, track commit, upstream tip and remedy. This
+prevents stale packages from an earlier run being treated as new output. Output
+paths containing this stackspace root, tracked source files or Git metadata are
+refused rather than cleared. `-n` prints the status, both commits and remedy
+while leaving existing output untouched.
+
+The shared pack path applies a temporary rename hook, packs, and verifies the
+observed nuspec ids, intra-member dependencies, third-party dependency versions,
+assembly names, and package sizes. Dependencies on another member's packages
+are refused. The default output is `dist/` at the caller's stackspace root;
+`-o`/`--out` selects another directory. `edge-pack.json` records ids, version,
+verification expectations, sizes, `status: "packed"` after verification, and
+provenance per member: `TrackCommit`, `TrackParent`, and `UpstreamCommit`, plus `UpstreamTip` in tip mode. NuGet
+`RepositoryUrl` names the PR fork and `RepositoryCommit` is the track commit
+built. `-n`/`--dry-run` reconstructs and reports ids/versions without building or
+writing or deleting output; packability and dependency verification require a
+real pack.
+
+There is no publish command in this group yet, and its `Publishable` report field
+is only an eligibility marker, not evidence of publication or a separate test run.
+**`edge ci` and `edge init` are not built yet.**
+
+`edge status [member]` is read-only. It reports recorded proposals and adopted
+PRs, unproposed content, local integration receipt and upstream-base freshness,
+the newest edge version, and retirement evidence. Without a member it checks all
+configured edge members. `--package Lib` selects the original evidence package;
+otherwise it uses the first sorted non-excluded NuGet id discovered locally.
+`--version` selects one public release and `--feed` overrides the public
+flat-container base; it does not select the private edge feed. Authenticated
+edge feeds report “can't check”; status uses no feed credentials.
+
+Retirement requires all carried PRs to be proven in one public release and a
+content merge that leaves that release unchanged. Use
+`rig stack released app lib --package Lib` to preview switching a consumer from
+`You.Lib` back to `Lib`; `--apply` requires a clean tree and interactive
+confirmation. The existing all-or-nothing check refuses a single-package plan
+that would leave another republished id from the same member behind; migrate
+those ids together manually. See [return to packages](#return-to-packages-after-a-release).
+Remove the edge block and publishing rules by hand after consumers migrate.
+Packages already on the edge feed remain for consumers still pinned to them.
 
 ## Things worth knowing before they bite
 

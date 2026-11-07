@@ -79,7 +79,7 @@ func (f stackEdgeFixture) options(seed bool) stackEdgeReconstructOptions {
 func assertStackEdgeFile(t *testing.T, root, path, want string) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
-	if err != nil || string(data) != want {
+	if err != nil || strings.ReplaceAll(string(data), "\r\n", "\n") != strings.ReplaceAll(want, "\r\n", "\n") {
 		t.Fatalf("%s = %q, want %q: %v", path, data, want, err)
 	}
 }
@@ -119,6 +119,10 @@ func TestStackEdgeReconstructTrackAndCursor(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(cleanup)
+			canonical, err := filepath.EvalSymlinks(result.Root)
+			if err != nil || result.Root != canonical {
+				t.Fatalf("reconstruction root must be canonical for NuGet: %s, %v", result.Root, err)
+			}
 			assertStackEdgeFile(t, result.Root, "lib/src/lib.txt", "carried fix\n")
 			assertStackEdgeFile(t, result.Root, "app/src/app.txt", "app v1\n")
 			for _, name := range []string{"app", "lib"} {

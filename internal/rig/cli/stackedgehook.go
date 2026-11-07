@@ -61,13 +61,24 @@ func stackEdgeMSBuildLiteral(value string) string {
 }
 
 func stackEdgeWriteHook(renames map[string]string, originals map[string]dotnet.PackMetadata) (string, func(), error) {
+	canonical := map[string]dotnet.PackMetadata{}
+	for path, metadata := range originals {
+		if metadata.OriginalHook == "" {
+			continue
+		}
+		project, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", nil, fmt.Errorf("resolving original hook project %s: %w", path, err)
+		}
+		canonical[project] = metadata
+	}
 	dir, err := os.MkdirTemp("", "rig-stack-edge-hook-")
 	if err != nil {
 		return "", nil, err
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	path := filepath.Join(dir, "Edge.targets")
-	if err := os.WriteFile(path, stackEdgeHookXML(renames, originals), 0o600); err != nil {
+	if err := os.WriteFile(path, stackEdgeHookXML(renames, canonical), 0o600); err != nil {
 		cleanup()
 		return "", nil, err
 	}

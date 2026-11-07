@@ -21,50 +21,104 @@ import (
 )
 
 func newStackEdgePackCmd() *cobra.Command {
-	var out string
-	var here, dryRun bool
+	var out, manifest, seed, allowedHosts string
+	var here, dryRun, upstreamTip bool
 	var number uint64
 	cmd := &cobra.Command{
 		Use: "pack <member>", Short: "Rename, version, pack and verify a member's edge packages",
-		Long: "Packs the working tree with --here under the member's publishing ids.\n" +
+		Long: "Reconstructs the committed stackspace manifest (or --manifest / --seed),\n" +
+			"then packs the member's fork trackBranch under its publishing ids.\n" +
 			"Checks the observed NuGet packages and preserves assembly names.\n" +
-			"--here output can never be published, even with a nonzero --number.\n" +
-			"Reconstruction mode comes later; --here is required for now.",
-		Args: cobra.ExactArgs(1), ValidArgsFunction: stackRepoCompletion,
+			"--upstream-tip merges onto current upstream; conflicts report inconclusive\n" +
+			"with commits and a remedy, replace --out with only edge-pack.json, and skip packing.\n" +
+			"--here uses the working tree instead;\n" +
+			"its output can never be published, even with a nonzero --number.\n" +
+			"Writes verified packages and edge-pack.json to --out; never pushes a feed.\n" +
+			"--dry-run discovers ids and versions without building, writing or deleting output.",
+		Args: cobra.ExactArgs(1), ValidArgsFunction: stackEdgeMemberCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !here {
-				return fmt.Errorf("edge pack requires --here for now; reconstruction mode comes later")
+			if here && (seed != "" || manifest != "" || upstreamTip) {
+				return fmt.Errorf("--here cannot be combined with --manifest, --seed or --upstream-tip")
+			}
+			if manifest != "" && seed != "" {
+				return fmt.Errorf("--manifest and --seed are mutually exclusive")
 			}
 			ctx := cmd.Context()
-			m, _, repo, err := stackspace(ctx)
+			checkout, err := stackRoot(ctx)
+			if err != nil {
+				return err
+			}
+			dir := out
+			if dir == "" {
+				dir = filepath.Join(checkout, stackPackDefaultOut)
+			}
+			dir, err = filepath.Abs(dir)
+			if err != nil {
+				return err
+			}
+			root := checkout
+			opts := stackEdgePackOptions{OutputDir: dir, Number: number, DryRun: dryRun, Here: here}
+			if here {
+				_, _, repo, err := stackspace(ctx)
+				if err != nil {
+					return err
+				}
+				opts.Commit, err = repo.Head(ctx)
+				if err != nil {
+					return err
+				}
+			} else {
+				rebuilt, cleanup, err := stackEdgeReconstruct(ctx, stackEdgeReconstructOptions{
+					Checkout: checkout, Manifest: manifest, Seed: seed, Members: args,
+					AllowedHosts: allowedHosts, UpstreamTip: upstreamTip,
+				})
+				if err != nil {
+					var inconclusive *stackEdgeInconclusiveError
+					if errors.As(err, &inconclusive) {
+						result := stackEdgePackResult{
+							Status: "inconclusive", Member: inconclusive.Member, Remedy: inconclusive.Remedy(),
+							Commit:     inconclusive.Provenance.TrackCommit,
+							Provenance: map[string]stackEdgeProvenance{inconclusive.Member: inconclusive.Provenance},
+						}
+						fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (track: %s; upstream tip: %s): %s\n", result.Member, result.Status, result.Commit, inconclusive.Provenance.UpstreamTip, result.Remedy)
+						if dryRun {
+							return nil
+						}
+						if err := stackEdgeClearOutput(ctx, checkout, dir); err != nil {
+							return err
+						}
+						return stackEdgeWritePackReport(dir, result)
+					}
+					return err
+				}
+				defer cleanup()
+				root, opts.Provenance = rebuilt.Root, rebuilt.Provenance
+				opts.Commit = rebuilt.Provenance[args[0]].TrackCommit
+			}
+			m, _, err := loadStackManifest(root)
 			if err != nil {
 				return err
 			}
 			if m.Repos[args[0]] == nil {
 				return fmt.Errorf("unknown stack member %q", args[0])
 			}
-			commit, err := repo.Head(ctx)
-			if err != nil {
-				return err
-			}
-			dir := out
-			if dir == "" {
-				dir = filepath.Join(repo.Dir, stackPackDefaultOut)
-			}
-			dir, err = filepath.Abs(dir)
-			if err != nil {
-				return err
-			}
-			_, err = stackEdgePackTree(ctx, cmd.OutOrStdout(), m, repo.Dir, args[0], stackEdgePackOptions{
-				OutputDir: dir, Number: number, DryRun: dryRun, Here: true, Commit: commit,
-			})
+			_, err = stackEdgePackTree(ctx, cmd.OutOrStdout(), m, root, args[0], opts)
 			return err
 		},
 	}
 	cmd.Flags().StringVarP(&out, "out", "o", "", "output directory (default dist/ at the stackspace root)")
 	cmd.Flags().Uint64Var(&number, "number", 0, "edge run number (0 is unpublishable)")
 	cmd.Flags().BoolVar(&here, "here", false, "pack the working tree; output is never publishable")
+	cmd.Flags().StringVar(&manifest, "manifest", "", "committed manifest path (default: the stackspace's own manifest)")
+	cmd.Flags().StringVar(&seed, "seed", "", "manifest seed (owner/repo@ref, URL or local path); exclusive with --manifest")
+	cmd.Flags().StringVar(&allowedHosts, "allowed-hosts", "github.com", "comma-separated allowed fork/upstream and seed hosts")
+	cmd.Flags().BoolVar(&upstreamTip, "upstream-tip", false, "merge trackBranch onto upstream tip; conflicts are inconclusive")
 	cmd.Flags().BoolVarP(&dryRun, "dry-run", "n", false, "show ids and versions without building")
+	for _, flag := range []string{"seed", "allowed-hosts", "number"} {
+		_ = cmd.RegisterFlagCompletionFunc(flag, func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		})
+	}
 	return cmd
 }
 
@@ -72,23 +126,27 @@ func newStackEdgePackCmd() *cobra.Command {
 // it with their temporary root and the actual fork commit, without involving
 // the working checkout or changing the packaging and verification rules.
 type stackEdgePackOptions struct {
-	OutputDir string
-	Number    uint64
-	Commit    string
-	Here      bool
-	DryRun    bool
+	OutputDir  string
+	Number     uint64
+	Commit     string
+	Here       bool
+	DryRun     bool
+	Provenance map[string]stackEdgeProvenance
 	// PublicFeed and Client allow hermetic feed fixtures. CLI uses nuget.org.
 	PublicFeed string
 	Client     *http.Client
 }
 
 type stackEdgePackResult struct {
+	Status        string `json:"status"` // planned, packed, or inconclusive
+	Remedy        string `json:"remedy,omitempty"`
 	Member        string
 	Version       string
 	RepositoryURL string
 	Commit        string
 	Here          bool
 	Publishable   bool
+	Provenance    map[string]stackEdgeProvenance `json:",omitempty"`
 	Expected      stackEdgeVerifyRequest
 	Artifacts     []stackEdgeVerifiedPackage
 }
@@ -146,7 +204,13 @@ func stackEdgePublicVersion(ctx context.Context, client *http.Client, feed, id s
 }
 
 func stackEdgePackTree(ctx context.Context, out io.Writer, m *stackManifest, root, member string, opts stackEdgePackOptions) (stackEdgePackResult, error) {
-	result := stackEdgePackResult{Member: member, Commit: opts.Commit, Here: opts.Here}
+	result := stackEdgePackResult{Member: member, Commit: opts.Commit, Here: opts.Here, Provenance: opts.Provenance}
+	// The working checkout can be symlinked too. Keep discovery, evaluated
+	// project paths and NuGet's restore/pack inputs on the same absolute root.
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return result, err
+	}
 	e, r := m.Edge[member], m.Repos[member]
 	if e == nil || r == nil {
 		return result, fmt.Errorf("%s needs a configured member and edge block", member)
@@ -251,6 +315,7 @@ func stackEdgePackTree(ctx context.Context, out io.Writer, m *stackManifest, roo
 	result.Publishable = opts.Number != 0 && !opts.Here
 	fmt.Fprintf(out, "%s: edge %s (publishable: %t; here: %t)\n", member, result.Version, result.Publishable, opts.Here)
 	if opts.DryRun {
+		result.Status = "planned"
 		for _, p := range pkgs {
 			if as := ids[p.pkg.Name]; as != "" {
 				fmt.Fprintf(out, "would pack %s as %s@%s\n", p.pkg.Name, as, result.Version)
@@ -367,12 +432,60 @@ func stackEdgePackTree(ctx context.Context, out io.Writer, m *stackManifest, roo
 			return result, err
 		}
 	}
+	result.Status = "packed"
+	return result, stackEdgeWritePackReport(opts.OutputDir, result)
+}
+
+func stackEdgeWritePackReport(dir string, result stackEdgePackResult) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
-		return result, err
+		return err
 	}
-	if err := os.WriteFile(filepath.Join(opts.OutputDir, "edge-pack.json"), append(data, '\n'), 0o644); err != nil {
-		return result, err
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
 	}
-	return result, nil
+	return os.WriteFile(filepath.Join(dir, "edge-pack.json"), append(data, '\n'), 0o644)
+}
+
+// An inconclusive run must not leave earlier artifacts beside its report.
+// Refuse source directories before clearing a user-selected output path.
+func stackEdgeClearOutput(ctx context.Context, checkout, dir string) error {
+	resolved, err := filepath.EvalSymlinks(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, part := range strings.Split(filepath.ToSlash(resolved), "/") {
+		if strings.EqualFold(part, ".git") {
+			return fmt.Errorf("refusing to clear --out inside git metadata")
+		}
+	}
+	root, err := filepath.EvalSymlinks(checkout)
+	if err != nil {
+		return err
+	}
+	if rel, err := filepath.Rel(resolved, root); err != nil || rel == "." || filepath.IsLocal(rel) {
+		return fmt.Errorf("refusing to clear --out containing the stackspace root")
+	}
+	if rel, err := filepath.Rel(root, resolved); err == nil && filepath.IsLocal(rel) {
+		files, err := stackCIGit(ctx, root, "ls-files", "-z", "--", filepath.ToSlash(rel))
+		if err != nil {
+			return err
+		}
+		if len(files) != 0 {
+			return fmt.Errorf("refusing to clear --out containing tracked source files")
+		}
+	}
+	entries, err := os.ReadDir(resolved)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(resolved, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }

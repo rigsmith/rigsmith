@@ -10,7 +10,7 @@ description: >
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code or Codex CLI
   setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
-  forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull,
+  forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing edge builds under republished NuGet ids and checking edge retirement,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
@@ -130,6 +130,31 @@ belong to the calling workflow. See `examples/github-workflows/stack-canary.yml`
 and the scheduled canary section of `docs/STACK-DESIGN.md` for batch, member,
 attribution and preview policies.
 
+For carried .NET fixes needed before upstream releases, use `rig stack edge
+pack <member>` with a committed manifest containing `edge.<member>`, the member's
+PR `fork`, `trackBranch`, and `publishPrefix` / `publishesAs`. It reconstructs the
+committed manifest (or explicit `--manifest` / `--seed`) and fork trackBranch in a
+temporary tree, then renames, versions, packs and verifies. Other members stay at
+recorded cursors. Refresh trackBranch after pull with `propose --track-only` from
+the integration line. `--upstream-tip` merges onto current upstream; a conflict
+prints inconclusive and the pull/resolve/track-only remedy, then skips packing
+and clears output, leaving only `edge-pack.json` with `status: "inconclusive"`,
+both commits and remedy. With `-n`, it only prints the outcome and leaves existing
+output untouched. Successful pack reports have `status: "packed"`.
+`--number` defaults to unpublishable 0; pass a run number explicitly.
+`--here` always marks output unpublishable and refuses reconstruction flags.
+`-n` reports the static id/version plan without building or changing output;
+`-o` selects output (default `dist/`). `edge-pack.json` includes per-member provenance and pack
+verification expectations; RepositoryCommit is the track commit built.
+Cross-member package dependencies are refused. Pack never pushes a feed.
+Use `edge status [member]` (`--json` available) for carried PR release evidence,
+unproposed content, freshness, newest edge version and retirement. Private feeds
+needing credentials report can't check. Use `rig stack released` to preview
+returning consumers to public ids; it refuses a single-package plan that leaves
+another republished id of that member, so migrate those together manually.
+`edge ci` and `edge init` are not built yet; do not invent a workflow invoking
+them. See `site/rig/stack.md#edge-builds` for the manifest block and limits.
+
 A **stack workspace** fuses upstream repos you maintain forks of into one git
 history, each under its own directory (`pty-core/`, `term-core/`, …). A change
 spans them in one commit and the build compiles against source; each project
@@ -152,6 +177,8 @@ rig stack pull [repo]                  # take upstream's new commits (all repos 
 rig stack send <repo> <new-branch>     # ALL that repo's changes → a branch on the fork
 rig stack propose <repo> <b> --from <topic>  # ...or one topic branch (needs trackBranch)
 rig stack init                         # scaffold the manifest; run again to import
+rig stack edge pack <member> --number 42 # reconstruct trackBranch; rename, version, pack, verify
+rig stack edge status [member]        # read carried fixes, freshness and retirement evidence
 rig stack pack <repo>                  # build that member's packages HERE (overlay in effect)
 rig stack doctor --fix                 # install the josh engine if missing
 ```

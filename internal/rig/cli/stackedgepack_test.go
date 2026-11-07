@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/spf13/cobra"
 )
 
 func TestStackEdgeResolveIDs(t *testing.T) {
@@ -41,10 +42,10 @@ func TestStackEdgeResolveIDs(t *testing.T) {
 	}
 }
 
-func TestStackEdgeCommandHiddenAndHereRequired(t *testing.T) {
+func TestStackEdgeCommandDiscovery(t *testing.T) {
 	stack := newStackCmd()
 	edge, _, err := stack.Find([]string{"edge"})
-	if err != nil || !edge.Hidden || edge.RunE == nil {
+	if err != nil || edge.Hidden || edge.RunE == nil || edge.Long == "" {
 		t.Fatalf("edge group: %+v, %v", edge, err)
 	}
 	var output bytes.Buffer
@@ -52,15 +53,73 @@ func TestStackEdgeCommandHiddenAndHereRequired(t *testing.T) {
 	if err := stack.Help(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output.String(), "edge") {
-		t.Fatalf("edge leaked into help: %s", output.String())
+	if !strings.Contains(output.String(), "rig stack edge") {
+		t.Fatalf("edge missing from help: %s", output.String())
+	}
+	for _, verb := range []string{"pack", "status"} {
+		cmd, _, err := edge.Find([]string{verb})
+		if err != nil || cmd == edge || cmd.Short == "" || cmd.Long == "" || cmd.ValidArgsFunction == nil {
+			t.Fatalf("%s missing help/completion: %v", verb, err)
+		}
 	}
 	cmd := newStackEdgePackCmd()
-	if err := cmd.RunE(cmd, []string{"lib"}); err == nil || !strings.Contains(err.Error(), "reconstruction mode comes later") {
-		t.Fatalf("without --here: %v", err)
-	}
 	if cmd.ValidArgsFunction == nil || cmd.Flags().ShorthandLookup("o") == nil || cmd.Flags().Lookup("number").DefValue != "0" {
 		t.Fatal("missing flag/completion contract")
+	}
+}
+
+func TestStackEdgePackFlags(t *testing.T) {
+	data, err := json.Marshal(edgeTestManifest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := inTempStackspace(t, string(data))
+	mustGitStack(t, root, "add", ".")
+	mustGitStack(t, root, "-c", "user.name=test", "-c", "user.email=t@t", "commit", "-qm", "manifest")
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"here-seed", []string{"lib", "--here", "--seed", "acme/stack@main"}, "--here cannot be combined"},
+		{"here-manifest", []string{"lib", "--here", "--manifest", "rig.stack.jsonc"}, "--here cannot be combined"},
+		{"here-tip", []string{"lib", "--here", "--upstream-tip"}, "--here cannot be combined"},
+		{"seed-manifest", []string{"lib", "--seed", "acme/stack@main", "--manifest", "rig.stack.jsonc"}, "mutually exclusive"},
+		{"missing-member", nil, "accepts 1 arg(s), received 0"},
+		{"unknown-member", []string{"unknown"}, "unknown edge member"},
+		{"unknown-here", []string{"unknown", "--here"}, "unknown stack member"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newStackEdgePackCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs(tc.args)
+			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestStackEdgeMemberCompletion(t *testing.T) {
+	m := edgeTestManifest()
+	m.Repos["app"] = &stackRepo{Upstream: "github.com/you/App", Fork: "github.com/you/App", Owned: true}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := inTempStackspace(t, string(data))
+	if _, _, err := loadStackManifest(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range []*cobra.Command{newStackEdgePackCmd(), newStackEdgeStatusCmd()} {
+		names, directive := cmd.ValidArgsFunction(cmd, nil, "")
+		if strings.Join(names, ",") != "lib" || directive != cobra.ShellCompDirectiveNoFileComp {
+			t.Fatalf("%s completion: %v, %v", cmd.Name(), names, directive)
+		}
+		if names, _ := cmd.ValidArgsFunction(cmd, []string{"lib"}, ""); len(names) != 0 {
+			t.Fatalf("%s offered second member: %v", cmd.Name(), names)
+		}
 	}
 }
 
