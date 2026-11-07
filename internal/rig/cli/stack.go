@@ -2346,7 +2346,7 @@ func stackMenuItems() []menuItem {
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "pack", desc: "build a member's packages here, where the overlay makes siblings resolve", cmd: newStackPackCmd()},
-		{label: "edge", desc: "build and publish carried fixes under your ids; check retirement", cmd: newStackEdgeCmd()},
+		{label: "edge", desc: "pack carried fixes, adopt upstream PRs and check retirement", cmd: newStackEdgeCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 		{label: "seed", desc: "export just the root files as a small repo, to rebuild this stackspace elsewhere (asks where)", cmd: newStackSeedMenuCmd()},
 	}

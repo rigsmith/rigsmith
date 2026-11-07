@@ -1285,6 +1285,9 @@ real pack.
 `edge pack`'s `Publishable` field is an eligibility marker; publication requires
 an `edge ci` report and a separate trusted publish job.
 
+Run CI from the command line or a workflow. The interactive edge menu offers
+pack, status and adopt, prompting for the member and PR URL where needed.
+
 For CI, copy `examples/github-workflows/stack-edge.yml` and select a reviewed rig
 release for both independent installs. Use two fresh hosted runners:
 

@@ -363,3 +363,21 @@ func TestStackEdgeCIFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestStackEdgeCIMenu(t *testing.T) {
+	var labels []string
+	for _, entry := range stackEdgeMenuEntries() {
+		labels = append(labels, entry.Label)
+		if entry.Cmd == nil || entry.Cmd.RunE == nil || entry.Cmd.Args != nil && entry.Cmd.Args(entry.Cmd, nil) != nil {
+			t.Fatalf("menu entry %q must run without positional arguments", entry.Label)
+		}
+	}
+	if !reflect.DeepEqual(labels, []string{"pack", "status", "adopt"}) {
+		t.Fatalf("interactive edge actions = %q; CI and hidden init must be absent", labels)
+	}
+	edge := newStackEdgeCmd()
+	ci, _, err := edge.Find([]string{"ci"})
+	if err != nil || ci == edge || ci.Hidden {
+		t.Fatal("CI must remain discoverable from the command line")
+	}
+}

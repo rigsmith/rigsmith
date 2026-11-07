@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/charmbracelet/huh"
 	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/spf13/cobra"
 )
@@ -17,13 +19,70 @@ func newStackEdgeCmd() *cobra.Command {
 			"  rig stack edge ci                       build reports or verify and publish packages",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
-				return climenu.Run(cmd)
+				return climenu.RunMenu(cmd, cmd.CommandPath(), cmd.Short, stackEdgeMenuEntries())
 			}
 			return cmd.Help()
 		},
 	}
 	cmd.AddCommand(newStackEdgePackCmd(), newStackEdgeStatusCmd(), newStackEdgeAdoptCmd(), newStackEdgeCICmd(), newStackEdgeInitCmd())
 	return refuseUnknownVerb(cmd)
+}
+
+// stackEdgeMenuEntries keeps CI-only flag selections out of the interactive
+// menu and offers argument-taking actions through the usual prompting wrappers.
+func stackEdgeMenuEntries() []climenu.Entry {
+	return []climenu.Entry{
+		{Label: "pack", Desc: "pack a member's carried fixes under your ids", Cmd: newStackEdgeMemberMenuCmd(newStackEdgePackCmd())},
+		{Label: "status", Desc: "check carried fixes, freshness and retirement", Cmd: newStackEdgeStatusCmd()},
+		{Label: "adopt", Desc: "bring an upstream PR into an import-rooted topic", Cmd: newStackEdgeMemberMenuCmd(newStackEdgeAdoptCmd())},
+	}
+}
+
+// newStackEdgeMemberMenuCmd prompts for the positional inputs that climenu's
+// no-argument actions cannot supply, then delegates to the real command.
+func newStackEdgeMemberMenuCmd(sub *cobra.Command) *cobra.Command {
+	return &cobra.Command{
+		Use: sub.Name(), Hidden: true, Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			root, err := stackRoot(cmd.Context())
+			if err != nil {
+				return err
+			}
+			m, _, err := loadStackManifest(root)
+			if err != nil {
+				return err
+			}
+			if m == nil {
+				return fmt.Errorf("no stack manifest")
+			}
+			var options []huh.Option[string]
+			for _, name := range m.names() {
+				if sub.Name() == "pack" && m.Edge[name] == nil {
+					continue
+				}
+				options = append(options, huh.NewOption(name, name))
+			}
+			if len(options) == 0 {
+				return fmt.Errorf("no configured members for edge %s", sub.Name())
+			}
+			var member, pr string
+			fields := []huh.Field{huh.NewSelect[string]().Title("Which member?").Options(options...).Filtering(true).Value(&member)}
+			if sub.Name() == "adopt" {
+				fields = append(fields, huh.NewInput().Title("Upstream PR URL").Value(&pr))
+			}
+			if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
+				return err
+			}
+			args := []string{member}
+			if sub.Name() == "adopt" {
+				args = append(args, pr)
+			}
+			sub.SetContext(cmd.Context())
+			sub.SetOut(cmd.OutOrStdout())
+			sub.SetErr(cmd.ErrOrStderr())
+			return sub.RunE(sub, args)
+		},
+	}
 }
 
 func stackEdgeMemberCompletion(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {

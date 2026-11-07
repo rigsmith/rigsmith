@@ -13,3 +13,5 @@ Stream report-job build and test diagnostics to stderr and preserve subprocess f
 Keep short feed-read timeouts separate from package uploads. Bound pushes with a 15-minute context deadline and two-minute response-header timeout, and explain how to check for a package that may have been stored after a timeout.
 
 Render the GitHub run-number expression literally in the stack documentation so Vue does not evaluate it during the documentation build.
+
+Keep CI-only commands out of the interactive edge menu; prompt for member and PR inputs when choosing pack or adopt.
