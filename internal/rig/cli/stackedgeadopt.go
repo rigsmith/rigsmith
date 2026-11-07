@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -20,7 +21,8 @@ func newStackEdgeAdoptCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use: "adopt <member> <pr-url>", Short: "Bring an upstream PR into an import-rooted stackspace topic",
 		Long: "Read a PR on the member's upstream and fetch only its head commit from its head repository.\n" +
-			"Merge its change onto the member's cursor tree and create stack-pr-adopt-<number>, rooted\n" +
+			"The PR must target the member's tracked upstream branch.\n" +
+			"Merge its change onto the cursor tree and create stack-pr-adopt-<member>-<number>, rooted\n" +
 			"on the member's import commit. Conflicts and existing topics with different content refuse.\n" +
 			"Print the adopted entry to add by hand, then merge the topic and refresh trackBranch.\n" +
 			"Never edits the manifest or checkout, merges, proposes or pushes. --dry-run writes no branch.",
@@ -77,6 +79,9 @@ func stackEdgeAdopt(ctx context.Context, api stackDepsAPI, root string, m *stack
 	if err != nil {
 		return fmt.Errorf("PR %s: %w", raw, err)
 	}
+	if pr.Base.Ref != m.branch(name) {
+		return fmt.Errorf("PR %s targets branch %q, but member %s tracks %q; the PR must target branch %q", raw, pr.Base.Ref, name, m.branch(name), m.branch(name))
+	}
 	if !stackIsSHA(pr.Head.SHA) {
 		return fmt.Errorf("PR %s has no valid head commit", raw)
 	}
@@ -110,7 +115,7 @@ func stackEdgeAdopt(ctx context.Context, api stackDepsAPI, root string, m *stack
 	if err != nil {
 		return err
 	}
-	branch := stackTopicPrefix + "adopt-" + strconv.Itoa(n)
+	branch := stackEdgeAdoptBranch(name, n)
 	ref := "refs/heads/" + branch
 	old, err := stackCIGit(ctx, root, "rev-parse", "--verify", "--quiet", ref)
 	if err != nil {
@@ -143,6 +148,13 @@ func stackEdgeAdopt(ctx context.Context, api stackDepsAPI, root string, m *stack
 	}
 	fmt.Fprintf(out, "Next: merge %s into the integration line, add this entry to edge.%s.adopted:\n{ \"pr\": %q, \"commit\": %q }\nThen run `rig stack propose %s --track-only`.\n", branch, name, raw, pr.Head.SHA, name)
 	return nil
+}
+
+func stackEdgeAdoptBranch(member string, number int) string {
+	// Prefixes are directory names, so they can contain characters Git refs
+	// forbid. Escape those without making distinct member names collide.
+	member = strings.NewReplacer(".", "%2E", "~", "%7E", ":", "%3A").Replace(url.PathEscape(member))
+	return stackTopicPrefix + "adopt-" + member + "-" + strconv.Itoa(number)
 }
 
 // Replace just the member entry in the import tree. mktree avoids both the

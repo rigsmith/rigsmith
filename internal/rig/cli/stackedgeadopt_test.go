@@ -79,6 +79,7 @@ func newEdgeAdoptFixture(t *testing.T, conflict bool) *edgeAdoptFixture {
 	f.write(t, f.ws, "README.md", "root on integration line\n")
 	f.commit(t, f.ws, "other integration content")
 	f.pr.Number, f.pr.State, f.pr.Head.SHA, f.pr.Head.Repo.FullName = 7, "open", f.head, "contributor/Lib"
+	f.pr.Base.Ref = "main"
 	f.api = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requests++
 		if r.Method != "GET" || r.URL.Path != "/repos/acme/Lib/pulls/7" {
@@ -153,7 +154,7 @@ func TestStackEdgeAdoptTopic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("adopt: %v\n%s", err, out)
 	}
-	topic := "refs/heads/stack-pr-adopt-7"
+	topic := "refs/heads/stack-pr-adopt-lib-7"
 	if got := strings.TrimSpace(mustGitStack(t, f.ws, "rev-parse", topic+"^@")); got != f.imported {
 		t.Fatalf("topic parents %q, want only import %s", got, f.imported)
 	}
@@ -169,7 +170,7 @@ func TestStackEdgeAdoptTopic(t *testing.T) {
 	if got := f.snapshot(t); !reflect.DeepEqual(got, before) {
 		t.Fatalf("adoption changed checkout, index, manifest or remotes: before=%v after=%v", before, got)
 	}
-	for _, want := range []string{`{ "pr": "` + f.url() + `", "commit": "` + f.head + `" }`, "merge stack-pr-adopt-7 into the integration line", "edge.lib.adopted", "rig stack propose lib --track-only"} {
+	for _, want := range []string{`{ "pr": "` + f.url() + `", "commit": "` + f.head + `" }`, "merge stack-pr-adopt-lib-7 into the integration line", "edge.lib.adopted", "rig stack propose lib --track-only"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing next step %q: %s", want, out)
 		}
@@ -206,7 +207,7 @@ func TestStackEdgeAdoptExisting(t *testing.T) {
 					t.Fatalf("first adopt: %v\n%s", err, out)
 				}
 			} else {
-				mustGitStack(t, f.ws, "branch", "stack-pr-adopt-7", f.imported)
+				mustGitStack(t, f.ws, "branch", "stack-pr-adopt-lib-7", f.imported)
 			}
 			before, refs := f.snapshot(t), mustGitStack(t, f.ws, "for-each-ref")
 			out, err := f.command(t, "lib", f.url())
@@ -227,7 +228,7 @@ func TestStackEdgeAdoptDryRun(t *testing.T) {
 	f := newEdgeAdoptFixture(t, false)
 	before, refs := f.snapshot(t), mustGitStack(t, f.ws, "for-each-ref")
 	out, err := f.command(t, "lib", f.url(), "--dry-run")
-	if err != nil || !strings.Contains(out, "Would create stack-pr-adopt-7") || !strings.Contains(out, f.head) {
+	if err != nil || !strings.Contains(out, "Would create stack-pr-adopt-lib-7") || !strings.Contains(out, f.head) {
 		t.Fatalf("dry-run: %v\n%s", err, out)
 	}
 	if !reflect.DeepEqual(f.snapshot(t), before) || mustGitStack(t, f.ws, "for-each-ref") != refs {
@@ -244,6 +245,119 @@ func TestStackEdgeAdoptWrongRepo(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.snapshot(t), before) || mustGitStack(t, f.ws, "for-each-ref") != refs {
 		t.Fatal("wrong-repo adoption wrote state")
+	}
+}
+
+func TestStackEdgeAdoptWrongBase(t *testing.T) {
+	for _, tracked := range []string{"main", "release"} {
+		t.Run(tracked, func(t *testing.T) {
+			f := newEdgeAdoptFixture(t, false)
+			m, _, err := loadStackManifest(f.ws)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m.Repos["lib"].UpstreamBranch = tracked
+			b, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeStackManifest(t, f.ws, string(b))
+			f.pr.Base.Ref = "other-branch"
+			before, refs := f.snapshot(t), mustGitStack(t, f.ws, "for-each-ref")
+			if _, err := stackCIGit(t.Context(), f.ws, "cat-file", "-e", f.head); err == nil {
+				t.Fatal("PR head was already local before adoption")
+			}
+			out, err := f.command(t, "lib", f.url())
+			if err == nil || !strings.Contains(err.Error(), `targets branch "other-branch"`) || !strings.Contains(err.Error(), `tracks "`+tracked+`"`) || !strings.Contains(err.Error(), `PR must target branch "`+tracked+`"`) {
+				t.Fatalf("wrong base should name both branches and remedy: %v\n%s", err, out)
+			}
+			if _, err := stackCIGit(t.Context(), f.ws, "cat-file", "-e", f.head); err == nil {
+				t.Fatal("wrong-base adoption fetched the PR head")
+			}
+			if !reflect.DeepEqual(f.snapshot(t), before) || mustGitStack(t, f.ws, "for-each-ref") != refs {
+				t.Fatal("wrong-base adoption wrote state")
+			}
+			f.pr.Base.Ref = tracked
+			if out, err := f.command(t, "lib", f.url()); err != nil {
+				t.Fatalf("matching tracked branch should adopt: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+func TestStackEdgeAdoptSameNumberDifferentMembers(t *testing.T) {
+	f := newEdgeAdoptFixture(t, false)
+	appUpstream, appFork, appHeadRepo := f.git.bare(t, "acme/App"), f.git.bare(t, "you/App"), f.git.bare(t, "contributor/App")
+	mustGitStack(t, f.source, "push", "-q", appUpstream, f.cursor+":refs/heads/main")
+	mustGitStack(t, f.source, "push", "-q", appFork, f.cursor+":refs/heads/stack/integration")
+	mustGitStack(t, f.source, "checkout", "-q", "-b", "app-fix", f.base)
+	f.write(t, f.source, "fix.txt", "foreign app fix\n")
+	f.commit(t, f.source, "app PR")
+	appHead := strings.TrimSpace(mustGitStack(t, f.source, "rev-parse", "HEAD"))
+	mustGitStack(t, f.source, "push", "-q", appHeadRepo, "HEAD:refs/heads/app-fix")
+	f.write(t, f.ws, "app/fix.txt", "original\n")
+	f.write(t, f.ws, "app/cursor.txt", "cursor addition\n")
+	if err := os.Remove(filepath.Join(f.ws, "app", "keep.txt")); err != nil {
+		t.Fatal(err)
+	}
+	m, _, err := loadStackManifest(f.ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.LastSync["app"] = f.cursor
+	b, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeStackManifest(t, f.ws, string(b))
+	f.commit(t, f.ws, "stack: import app @ "+short(f.cursor))
+	appImport := strings.TrimSpace(mustGitStack(t, f.ws, "rev-parse", "HEAD"))
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("adoption attempted API write: %s", r.Method)
+		}
+		pr := f.pr
+		switch r.URL.Path {
+		case "/repos/acme/Lib/pulls/7":
+		case "/repos/acme/App/pulls/7":
+			pr.Head.SHA, pr.Head.Repo.FullName = appHead, "contributor/App"
+		default:
+			t.Errorf("unexpected request: %s", r.URL)
+		}
+		_ = json.NewEncoder(w).Encode(pr)
+	}))
+	defer api.Close()
+	t.Setenv("GITHUB_API_URL", api.URL)
+	for _, tc := range []struct{ member, repo, imported, content string }{
+		{"lib", "acme/Lib", f.imported, "foreign fix\n"},
+		{"app", "acme/App", appImport, "foreign app fix\n"},
+	} {
+		out, err := f.command(t, tc.member, "https://"+f.git.spec(tc.repo)+"/pull/7")
+		if err != nil {
+			t.Fatalf("adopting %s PR 7: %v\n%s", tc.member, err, out)
+		}
+		topic := "stack-pr-adopt-" + tc.member + "-7"
+		if got := strings.TrimSpace(mustGitStack(t, f.ws, "rev-parse", topic+"^@")); got != tc.imported {
+			t.Fatalf("%s parent = %s; want %s", topic, got, tc.imported)
+		}
+		if got := mustGitStack(t, f.ws, "show", topic+":"+tc.member+"/fix.txt"); got != tc.content {
+			t.Fatalf("%s content = %q; want %q", topic, got, tc.content)
+		}
+	}
+}
+
+func TestStackEdgeAdoptBranchValidRefs(t *testing.T) {
+	seen := map[string]bool{}
+	for _, member := range []string{"lib", "lib..core", "lib.lock", "lib[core]", "lib~core", "lib%2Ecore", "lib.core", "lib@{core}"} {
+		if err := stackValidPrefix(member); err != nil {
+			t.Fatal(err)
+		}
+		branch := stackEdgeAdoptBranch(member, 7)
+		if seen[branch] {
+			t.Fatalf("members collided at %s", branch)
+		}
+		seen[branch] = true
+		mustGitStack(t, t.TempDir(), "check-ref-format", "refs/heads/"+branch)
 	}
 }
 

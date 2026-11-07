@@ -314,10 +314,13 @@ without cloning/pushing, retaining local safety checks. See the
 ### Adopting someone else's upstream PR
 
 Use `rig stack edge adopt lib https://github.com/acme/Lib/pull/412` for a foreign
-PR. It validates the upstream, reads GitHub, fetches only the PR head from its
+PR. It validates the upstream and requires the member's tracked upstream branch
+as the PR base before fetching. It reads GitHub, fetches only the PR head from its
 head repository, and merges its change onto the member's cursor tree. The topic
-`stack-pr-adopt-412` has the member's import commit as its only parent, preserving
-the import's root and sibling trees. Keep cursor history available locally.
+`stack-pr-adopt-lib-412` has the member's import commit as its only parent, preserving
+the import's root and sibling trees. The member name prevents collisions across
+upstreams with equal PR numbers; characters Git refs forbid are escaped.
+Keep cursor history available locally.
 Conflicts refuse: the PR needs rebasing onto the cursor or importing by hand as
 a topic. An existing identical topic is a no-op; different content refuses
 overwrite. Preserve or rename the old topic before adopting an updated PR.

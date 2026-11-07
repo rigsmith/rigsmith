@@ -36,7 +36,10 @@ type stackDepsPR struct {
 	State     string  `json:"state"`
 	MergedAt  *string `json:"merged_at"`
 	MergeSHA  string  `json:"merge_commit_sha"`
-	Head      struct {
+	Base      struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+	Head struct {
 		SHA  string `json:"sha"`
 		Ref  string `json:"ref"`
 		Repo struct {

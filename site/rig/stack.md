@@ -1308,11 +1308,15 @@ Packages already on the edge feed remain for consumers still pinned to them.
 
 Use `rig stack edge adopt lib https://github.com/acme/Lib/pull/412` to carry a
 foreign PR without creating your own proposal. Rig validates the PR against the
-member's upstream, reads its head through GitHub, and fetches only that commit's
-history from the PR's head repository. It merges the PR change onto the cursor
-tree, then creates `stack-pr-adopt-412` with the member's import commit as its
-only parent. Root files and sibling prefixes come from that import, so the topic
-contains no other integration-line fixes. Cursor history must be available
+member's upstream and tracked upstream branch, reads its head through GitHub,
+and fetches only that commit's history from the PR's head repository. It merges
+the PR change onto the cursor
+tree, then creates `stack-pr-adopt-lib-412` with the member's import commit as its
+only parent. The member in the topic name keeps equal PR numbers from different
+upstreams separate; characters Git refs forbid are escaped. A PR targeting a
+different branch refuses before any fetch and must target the member's tracked
+upstream branch. Root files and sibling prefixes come from that import, so the
+topic contains no other integration-line fixes. Cursor history must be available
 locally; rig never fetches another upstream ref to fill it in.
 
 Conflicts refuse without creating a topic: rebase the PR onto the cursor or bring
@@ -1324,7 +1328,7 @@ plan without writing a branch. Member names have tab completion.
 Adopt never edits the hand-authored manifest, merges, proposes or pushes. After
 it succeeds:
 
-1. Merge `stack-pr-adopt-412` into your integration line.
+1. Merge `stack-pr-adopt-lib-412` into your integration line.
 2. Add the exact entry printed by adopt to `edge.lib.adopted`:
    `{ "pr": "https://github.com/acme/Lib/pull/412", "commit": "<full head SHA printed by adopt>" }`.
 3. Run `rig stack propose lib --track-only` to refresh the integration snapshot.

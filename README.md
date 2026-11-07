@@ -58,8 +58,9 @@ or failure issues through separate build and publish jobs. See the
 ### Adopting an upstream PR
 
 `rig stack edge adopt lib https://github.com/acme/Lib/pull/412` brings someone
-else's PR into `stack-pr-adopt-412`, rooted on the member's import commit, with
-its change merged onto the cursor. Conflicts and different existing topic
+else's PR into `stack-pr-adopt-lib-412`, rooted on the member's import commit, with
+its change merged onto the cursor. The PR must target the member's tracked upstream
+branch; another base is refused before fetching. Conflicts and different existing topic
 content refuse; identical content is a no-op. `--dry-run` creates no branch,
 and member names complete. Merge the topic into the integration line, add the
 exact `adopted` entry printed by the command, then run
