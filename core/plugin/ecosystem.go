@@ -44,6 +44,9 @@ type Ecosystem interface {
 	// returns them. Separate from Publish: it produces, it does not ship. An
 	// adapter with nothing to build (e.g. a Go module published by tag, with no
 	// goreleaser config) returns Skipped.
+	// A non-empty Properties map requires CapabilityArtifactsProperties; adapters
+	// without it must refuse before building or skipping. Hosts can preflight
+	// the same contract with req.CheckProperties(adapter.Info()).
 	Artifacts(ctx context.Context, req ArtifactsRequest) (ArtifactsResponse, error)
 	// ReleaseInit declares the ecosystem's release prerequisites — env tokens to
 	// preflight and any build-config file to scaffold — so a release `init`
@@ -201,6 +204,9 @@ func (s *SubprocessEcosystem) Published(ctx context.Context, req PublishedReques
 }
 
 func (s *SubprocessEcosystem) Artifacts(ctx context.Context, req ArtifactsRequest) (ArtifactsResponse, error) {
+	if err := req.CheckProperties(s.info); err != nil {
+		return ArtifactsResponse{}, err
+	}
 	req.APIVersion = APIVersion
 	var resp ArtifactsResponse
 	err := s.host.Call(ctx, MethodArtifacts, req, &resp)

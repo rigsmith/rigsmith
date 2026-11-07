@@ -209,6 +209,9 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 // (shared at the workspace root in a workspace), so we locate the bundle dir
 // rather than build into req.OutputDir.
 func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (plugin.ArtifactsResponse, error) {
+	if err := req.CheckProperties(a.Info()); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
 	crateDir := filepath.Join(req.RepoRoot, req.Package.Dir)
 	signed := req.Signing != nil && len(req.Signing.Env) > 0
 	if req.DryRun {

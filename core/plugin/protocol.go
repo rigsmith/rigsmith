@@ -17,7 +17,9 @@ package plugin
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"slices"
 )
 
 // APIVersion is the highest protocol version this build speaks. The engine
@@ -99,7 +101,7 @@ type EcosystemInfo struct {
 	APIVersion       int      `json:"apiVersion"`
 	ID               string   `json:"id"`               // "dotnet", "node", "go"
 	DisplayName      string   `json:"displayName"`      // ".NET", "Node", "Go"
-	Capabilities     []string `json:"capabilities"`     // subset of MethodDiscover, MethodSetVersion, MethodPublish, ...
+	Capabilities     []string `json:"capabilities"`     // method names and optional Capability* contracts
 	ManifestPatterns []string `json:"manifestPatterns"` // globs that signal this ecosystem (*.csproj, package.json, go.mod)
 
 	// DevCommands maps a dev-loop verb (build/test/run/format/lint/typecheck) to
@@ -153,6 +155,13 @@ const (
 	MethodReleaseInit  = "release-init"
 	MethodLocalOverlay = "local-overlay"
 )
+
+// CapabilityArtifactsProperties declares that Artifacts honours Properties,
+// including a package-id override and its propagation to package dependencies.
+// It is a contract on artifacts, not a separately callable method. Hosts must
+// require it before requesting republished ids, including from older plugins
+// that would silently ignore the additive Properties field.
+const CapabilityArtifactsProperties = "artifacts-properties"
 
 // DiscoverRequest asks an adapter to enumerate the packages it owns.
 type DiscoverRequest struct {
@@ -310,6 +319,13 @@ type ArtifactsRequest struct {
 	// channel concept ignores it; one that does must reject a channel it is not
 	// configured for rather than silently building nothing.
 	Channels []string `json:"channels,omitempty"`
+	// Properties supplies extra MSBuild-style build properties (literal values,
+	// not shell-quoted arguments). Empty preserves the adapter's normal build.
+	// An adapter must advertise CapabilityArtifactsProperties to honour these,
+	// including republishing under another id without changing assembly identity.
+	// Otherwise it must refuse a non-empty map, even on a DryRun or skipped build:
+	// ignoring a rename could publish original ids to a private feed.
+	Properties map[string]string `json:"properties,omitempty"`
 	// Env is the release's resolved environment (the layered .env / .env.local
 	// under the ambient shell, the same the shell/sign/forge steps run with) as
 	// KEY=VALUE entries. An adapter that shells out to a build tool should use it
@@ -323,6 +339,15 @@ type ArtifactsRequest struct {
 	// default when no signing config is set); the engine never sets it unless
 	// signing is explicitly enabled. Values are masked in any surfaced output.
 	Signing *SigningCreds `json:"signing,omitempty"`
+}
+
+// CheckProperties checks the capability before a host dispatches Artifacts or
+// an adapter starts work. Unsupported properties are never silently ignored.
+func (r ArtifactsRequest) CheckProperties(info EcosystemInfo) error {
+	if len(r.Properties) != 0 && !slices.Contains(info.Capabilities, CapabilityArtifactsProperties) {
+		return fmt.Errorf("adapter %s doesn't support %q (not in its capabilities): refusing artifact properties", info.ID, CapabilityArtifactsProperties)
+	}
+	return nil
 }
 
 // BaseEnv returns the environment a build subprocess should run with: the

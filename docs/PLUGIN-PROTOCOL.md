@@ -64,6 +64,40 @@ what drives lockstep grouping. `dependencies[]` carry `{name, kind, range}`; an
 empty `range` (e.g. .NET ProjectReference, a Go `require`) is treated as
 always-out-of-range, hence the dependent is always patch-bumped.
 
+### Artifact properties and republished ids
+
+`artifacts` accepts `{apiVersion, repoRoot, package, outputDir, snapshot?,
+dryRun?, channels?, properties?, env?, signing?}` and returns
+`{built, skipped, artifacts[], channels?, message}`. `channels` narrows configured
+build targets; an adapter with channels must reject unknown ones rather than
+silently building nothing. An adapter without a channel concept ignores it.
+
+`properties` is an optional map of extra MSBuild-style properties with literal
+string values. Nil or empty maps are omitted, so requests from older hosts keep
+their behaviour and older plugins can decode the additive field without an API
+version change. Capability negotiation is required before sending a non-empty
+map: an old plugin could ignore an unknown rename and produce original ids.
+
+An adapter advertises `artifacts-properties` in `info.capabilities` to promise
+that `artifacts` honours those properties, including republishing a package under
+a different id, propagating that id into package dependencies, and preserving
+assembly identity. This capability is a contract on `artifacts`, not a method.
+Hosts can preflight it with `request.CheckProperties(adapter.Info())`; the
+subprocess host performs that check before dispatch. Every adapter without the
+capability must refuse a non-empty map before building, skipping, or reporting a
+dry run. It must never silently ignore properties.
+
+The .NET adapter advertises this capability and passes properties as individual
+`-p:Name=Value` arguments to `dotnet pack`, escaping MSBuild metacharacters rather
+than shell-quoting values. Names must match `[A-Za-z_][A-Za-z0-9_.-]*`.
+`package.version`, when set, supplies the global `Version` property; extra
+properties named `Version` or `PackageVersion` are then refused
+(case-insensitively), because either can change the produced package version.
+A generated `CustomAfterMicrosoftCommonTargets` file can rename package ids throughout
+project references. The artifact path in the response remains a prediction
+using the discovered package name; callers overriding ids must inspect files
+actually produced in `outputDir`. Other built-in adapters refuse properties.
+
 ### Discovery resolution (for the host)
 
 A plugin command is resolved like git subcommands:
