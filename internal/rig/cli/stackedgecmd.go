@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/charmbracelet/huh"
@@ -14,6 +15,7 @@ func newStackEdgeCmd() *cobra.Command {
 		Use: "edge", Short: "Build, publish and check retirement of carried fixes",
 		Long: "Build carried fixes under your publishing ids, and check when they can retire.\n\n" +
 			"  rig stack edge adopt <member> <pr-url>  bring an upstream PR into a topic\n" +
+			"  rig stack edge init [member]            set up publishing; confirm each outward action\n" +
 			"  rig stack edge pack <member>            reconstruct, rename, version, pack and verify\n" +
 			"  rig stack edge status [member]          carried fixes, freshness and release evidence\n" +
 			"  rig stack edge ci                       build reports or verify and publish packages",
@@ -32,6 +34,7 @@ func newStackEdgeCmd() *cobra.Command {
 // menu and offers argument-taking actions through the usual prompting wrappers.
 func stackEdgeMenuEntries() []climenu.Entry {
 	return []climenu.Entry{
+		{Label: "init", Desc: "check and set up edge publishing from the manifest", Cmd: newStackEdgeInitCmd()},
 		{Label: "pack", Desc: "pack a member's carried fixes under your ids", Cmd: newStackEdgeMemberMenuCmd(newStackEdgePackCmd())},
 		{Label: "status", Desc: "check carried fixes, freshness and retirement", Cmd: newStackEdgeStatusCmd()},
 		{Label: "adopt", Desc: "bring an upstream PR into an import-rooted topic", Cmd: newStackEdgeMemberMenuCmd(newStackEdgeAdoptCmd())},
@@ -70,7 +73,10 @@ func newStackEdgeMemberMenuCmd(sub *cobra.Command) *cobra.Command {
 			if sub.Name() == "adopt" {
 				fields = append(fields, huh.NewInput().Title("Upstream PR URL").Value(&pr))
 			}
-			if err := huh.NewForm(huh.NewGroup(fields...)).Run(); err != nil {
+			if err := stackEdgeMemberPrompt(huh.NewForm(huh.NewGroup(fields...))); err != nil {
+				if errors.Is(err, huh.ErrUserAborted) {
+					return nil
+				}
 				return err
 			}
 			args := []string{member}
@@ -84,6 +90,8 @@ func newStackEdgeMemberMenuCmd(sub *cobra.Command) *cobra.Command {
 		},
 	}
 }
+
+var stackEdgeMemberPrompt = func(form *huh.Form) error { return form.Run() }
 
 func stackEdgeMemberCompletion(cmd *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 	if len(args) != 0 {

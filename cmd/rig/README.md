@@ -35,6 +35,8 @@ rig stack propose some-lib --track-only        # refresh trackBranch after pull;
 rig stack push my-app                # a repo you own: its own branch, history intact
 rig stack edge pack lib --number 42   # reconstruct trackBranch; rename, version, pack and verify
 rig stack edge status lib            # carried fixes, freshness and retirement evidence
+rig stack edge init lib              # check/repair setup; each outward action confirms
+rig stack doctor --edge              # same edge setup facts, read-only
 rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --report edge.json
 rig stack pack some-lib              # its packages, built here — a bare checkout of a proposed branch cannot
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
@@ -73,6 +75,21 @@ use the build report’s evaluation claims. `--upstream-tip` conflicts exit 0 wi
 an inconclusive report; publishing a tip requires `--allow-tip-publish`.
 See `examples/github-workflows/stack-edge.yml`.
 See [Edge builds](../../site/rig/stack.md#edge-builds).
+
+`rig stack edge init [member]` reads the hand-authored manifest, checks publishing
+coverage, trackBranch and wiring, and runs a real temporary pack with number 0.
+It writes the root `.github/workflows/stack-edge.yml`, commits only that path,
+and runs `rig stack seed --publish` to the configured home, with separate
+terminal confirmations. It never creates the home or writes inside members;
+commit other root edits before publication. It can create an explicit missing
+`publishFrom` repo and disable each non-edge workflow in a publishing fork.
+It creates or updates `edge-publish` to allow only the default branch, reads the
+rule back, then sets the missing environment secret via stdin or `--push-auth`.
+It never overwrites existing secrets; repository copies are reported for manual
+deletion. Secret setting retries only 5xx, up to three attempts, with metadata
+read-back and subprocess output withheld. Select a reviewed rig release in the
+generated template. `rig stack doctor --edge` checks the same facts without
+repair; `-n` skips the real pack and prints plans. Neither offers `--yes`.
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,
@@ -147,7 +164,7 @@ Conflicts and different existing topic content refuse; identical content is a
 no-op. `--dry-run` writes no branch; member names complete. Merge the topic into
 the integration line, add the exact printed entry to `edge.lib.adopted`, then run
 `rig stack propose lib --track-only`. Adopt never writes the manifest or pushes.
-Status warns on moved PR heads in text and JSON while retaining pinned content
+Status and CI reports warn on moved PR heads in text and JSON while retaining pinned content
 and release/retirement verdicts. See
 [adopting a PR](../../site/rig/stack.md#adopt-someone-elses-pr).
 

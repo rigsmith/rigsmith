@@ -1219,7 +1219,8 @@ block beside `repos` in the stack manifest:
       "feed": "https://nuget.pkg.github.com/you/index.json",
       "label": "edge",              // optional; default edge
       "exclude": ["Lib.Samples"],    // optional; original package ids
-      "maxSize": "50MB"              // optional; checked per package
+      "maxSize": "50MB",             // optional; default 100 MB; checked per package
+      "pushKeySecret": "EDGE_FEED_KEY" // environment secret NAME, never its value
     }
   }
 }
@@ -1286,7 +1287,60 @@ real pack.
 an `edge ci` report and a separate trusted publish job.
 
 Run CI from the command line or a workflow. The interactive edge menu offers
-pack, status and adopt, prompting for the member and PR URL where needed.
+init, pack, status and adopt, prompting for the member and PR URL where needed. CI stays on the command line.
+
+### Set up publishing
+
+Run `rig stack edge init lib` after committing the manifest and configuring a
+branch-based manifest home with `rig stack seed --publish acme/rigstack-app@main`.
+Without a member, init checks all configured edge members. `rig stack doctor
+--edge` checks the same facts without repairing them. Init's `-n` prints checks
+and plans without repairs or building; `rig stack doctor --edge -n` also skips
+the temporary pack. Missing facts return an error in both read-only modes.
+
+The shared setup checks cover publishing-id coverage, the fork's integration
+snapshot and recorded topics, redirected references and current root overlays,
+a real temporary unpublishable pack, root workflow publication, the publishing
+repo, its protected environment and push secret, and external consumer mapping.
+The real pack runs project code and may take a while; a static `edge pack -n`
+cannot verify nuspecs. It uses number 0 and leaves no packages in your checkout.
+
+Init writes `.github/workflows/stack-edge.yml` **at the stackspace root**, using
+the embedded example template with the home, member and `pushKeySecret` variable
+filled in. Writing, committing only that file by path, and running
+`rig stack seed --publish` each require separate interactive confirmations.
+Init reads the home back to verify publication. It refuses a pinned home and
+never creates the home. Other dirty root files, including newly wired overlays,
+must be committed or stashed before seed publication; init never commits them.
+Select a reviewed rig release in both `vX.Y.Z` template installs and publish that
+root edit before enabling the workflow. The supplied build/test commands are
+`rig build` and `rig test`; adapt them to your stackspace.
+
+Publishing settings default to the GitHub manifest home. An explicit
+`edge.<member>.publishFrom` can name a different GitHub repo. Init creates it if
+missing after confirmation, and if it is a fork disables every workflow except
+`.github/workflows/stack-edge.yml`, confirming and reading each change back.
+The root workflow is published to the home; if `publishFrom` differs, arrange
+for the reviewed workflow to run there too.
+
+Init creates or updates a GitHub Actions environment named `edge-publish` in
+the publishing repo. Its deployment policy must allow **only the default
+branch**, with no tag rules or extra branch patterns; init confirms every
+change and reads the rule back. Set the push key there as an **environment
+secret**. Init uses `gh secret set --env edge-publish` with the value from stdin
+or `--push-auth` (`op://…`, `env:NAME`, or `cmd:…`), never argv. It re-checks
+before setting, leaves existing environment secrets unchanged, retries only
+5xx up to three attempts, withholds subprocess output and confirms the secret's
+`updated_at` metadata at whole-second precision. Any repository secret with the
+same name is reported because it bypasses the environment's branch protection:
+delete that repository copy yourself. Init never deletes it.
+
+All destructive or outward setup actions require stdin and stdout on a
+terminal, with no `--yes` flag. A satisfied fact asks nothing on a second run.
+Manifest edits and an external consumer `nuget.config` source-mapping snippet
+are printed only; no member prefix is written, including owned members.
+
+### Build and publish in CI
 
 For CI, copy `examples/github-workflows/stack-edge.yml` and select a reviewed rig
 release for both independent installs. Use two fresh hosted runners:
@@ -1419,6 +1473,10 @@ If that PR's head later moves, `edge status` warns with the old pin and current
 head, including in each item's JSON `warning`. Re-run adopt to update the topic,
 merge it and update the pin. Builds keep using the pinned content; the warning
 does not change the item's release state or the retirement verdict.
+`edge ci --report` prints each warning and records
+`adoptedMoved: [{pr, pinned, head, warning}]`. Movement or an unavailable head
+check never blocks building or publishing; deciding whether to proceed belongs
+to the user.
 
 ## Things worth knowing before they bite
 

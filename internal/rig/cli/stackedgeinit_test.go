@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -20,15 +21,17 @@ import (
 )
 
 type edgeSetupAPI struct {
-	server                                    *httptest.Server
-	exists, fork, secret, stale, disableStuck bool
-	workflows                                 []stackEdgeWorkflow
-	failures, sets, writes, reads             int
-	updated                                   time.Time
-	requests                                  []string
-	commands                                  [][]string
-	inputs                                    []string
-	value                                     string
+	server                                                    *httptest.Server
+	exists, fork, secret, stale, disableStuck                 bool
+	environment, customBranches, environmentStuck, repoSecret bool
+	policies                                                  []stackEdgeBranchPolicy
+	workflows                                                 []stackEdgeWorkflow
+	failures, sets, writes, reads                             int
+	updated                                                   time.Time
+	requests                                                  []string
+	commands                                                  [][]string
+	inputs                                                    []string
+	value                                                     string
 }
 
 func edgeSetupFixture(t *testing.T) (*stackEdgeSetup, *edgeSetupAPI, *bytes.Buffer) {
@@ -38,6 +41,8 @@ func edgeSetupFixture(t *testing.T) (*stackEdgeSetup, *edgeSetupAPI, *bytes.Buff
 		{ID: 2, Path: ".github/workflows/stack-edge.yml", State: "active"},
 		{ID: 3, Path: ".github/workflows/old.yml", State: "disabled_manually"},
 	}}
+	f.environment, f.customBranches = true, true
+	f.policies = []stackEdgeBranchPolicy{{ID: 10, Name: "main", Type: "branch"}}
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requests = append(f.requests, r.Method+" "+r.URL.RequestURI())
 		if r.Method == "GET" {
@@ -56,7 +61,7 @@ func edgeSetupFixture(t *testing.T) (*stackEdgeSetup, *edgeSetupAPI, *bytes.Buff
 				http.NotFound(w, r)
 				return
 			}
-			write(map[string]any{"fork": f.fork})
+			write(map[string]any{"fork": f.fork, "default_branch": "main"})
 		case r.Method == "GET" && r.URL.Path == "/user":
 			write(map[string]string{"login": "publisher"})
 		case r.Method == "POST" && r.URL.Path == "/user/repos":
@@ -79,7 +84,64 @@ func edgeSetupFixture(t *testing.T) (*stackEdgeSetup, *edgeSetupAPI, *bytes.Buff
 			w.WriteHeader(204)
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/actions/workflows/1"):
 			write(f.workflows[0])
-		case strings.HasSuffix(r.URL.Path, "/actions/secrets/EDGE_FEED_KEY"):
+		case r.URL.Path == "/repos/publisher/edge/environments/edge-publish":
+			if r.Method == "PUT" {
+				var body struct {
+					Policy struct {
+						Custom    bool `json:"custom_branch_policies"`
+						Protected bool `json:"protected_branches"`
+					} `json:"deployment_branch_policy"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if !body.Policy.Custom || body.Policy.Protected {
+					t.Error("environment not restricted to custom branches")
+				}
+				if !f.environmentStuck {
+					f.environment, f.customBranches = true, true
+				}
+			}
+			if !f.environment {
+				http.NotFound(w, r)
+				return
+			}
+			write(map[string]any{"name": "edge-publish", "deployment_branch_policy": map[string]bool{"protected_branches": false, "custom_branch_policies": f.customBranches}})
+		case strings.Contains(r.URL.Path, "/environments/edge-publish/deployment-branch-policies"):
+			switch r.Method {
+			case "GET":
+				write(map[string]any{"branch_policies": f.policies})
+			case "POST":
+				var policy stackEdgeBranchPolicy
+				if err := json.NewDecoder(r.Body).Decode(&policy); err != nil {
+					t.Error(err)
+				}
+				policy.ID = 10
+				if !f.environmentStuck {
+					f.policies = append(f.policies, policy)
+				}
+				write(policy)
+			case "DELETE":
+				for i, p := range f.policies {
+					if strings.HasSuffix(r.URL.Path, fmt.Sprintf("/%d", p.ID)) {
+						f.policies = append(f.policies[:i], f.policies[i+1:]...)
+						break
+					}
+				}
+				w.WriteHeader(204)
+			default:
+				t.Errorf("unexpected policy method %s", r.Method)
+			}
+		case r.URL.Path == "/repos/publisher/edge/actions/secrets/EDGE_FEED_KEY":
+			if r.Method != "GET" {
+				t.Errorf("repository secret mutated: %s", r.Method)
+			}
+			if !f.repoSecret {
+				http.NotFound(w, r)
+				return
+			}
+			write(map[string]any{"name": "EDGE_FEED_KEY", "updated_at": f.updated})
+		case strings.HasSuffix(r.URL.Path, "/environments/edge-publish/secrets/EDGE_FEED_KEY"):
 			if r.Method == "GET" {
 				if !f.secret {
 					http.NotFound(w, r)
@@ -130,11 +192,11 @@ func edgeSetupFixture(t *testing.T) (*stackEdgeSetup, *edgeSetupAPI, *bytes.Buff
 			t.Fatal(err)
 		}
 		f.inputs = append(f.inputs, string(input))
-		want := []string{"gh", "secret", "set", "EDGE_FEED_KEY", "--repo", "github.com/publisher/edge"}
+		want := []string{"gh", "secret", "set", "EDGE_FEED_KEY", "--repo", "github.com/publisher/edge", "--env", "edge-publish"}
 		if !reflect.DeepEqual(command, want) {
 			t.Errorf("command=%v want %v", command, want)
 		}
-		req, err := http.NewRequestWithContext(ctx, "PUT", f.server.URL+"/repos/publisher/edge/actions/secrets/EDGE_FEED_KEY", bytes.NewReader(input))
+		req, err := http.NewRequestWithContext(ctx, "PUT", f.server.URL+"/repos/publisher/edge/environments/edge-publish/secrets/EDGE_FEED_KEY", bytes.NewReader(input))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -399,26 +461,55 @@ func TestStackEdgeInitSecretTimestampResolution(t *testing.T) {
 	}
 }
 
-func TestStackEdgeInitHidden(t *testing.T) {
+func TestStackEdgeInitPublicHelp(t *testing.T) {
 	edge := newStackEdgeCmd()
 	init, _, err := edge.Find([]string{"init"})
-	if err != nil || init == edge || !init.Hidden || init.ValidArgsFunction == nil {
-		t.Fatal("init must be hidden with member completion")
+	if err != nil || init == edge || init.Hidden || init.ValidArgsFunction == nil {
+		t.Fatal("init must be public with member completion")
 	}
 	if init.Flags().Lookup("yes") != nil {
 		t.Fatal("confirmation bypass flag")
 	}
 	doctor := newStackDoctorCmd()
-	if !doctor.Flags().Lookup("edge").Hidden {
-		t.Fatal("doctor edge flag visible")
+	if doctor.Flags().Lookup("edge").Hidden {
+		t.Fatal("doctor edge flag hidden")
 	}
 	var out bytes.Buffer
 	edge.SetOut(&out)
 	if err := edge.Help(); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out.String(), "rig stack edge init") {
-		t.Fatal("hidden init advertised")
+	if !strings.Contains(out.String(), "rig stack edge init") {
+		t.Fatal("init not advertised")
+	}
+	columns := regexp.MustCompile(`^  rig stack edge .*? {2,}`)
+	column := -1
+	for _, line := range strings.Split(edge.Long, "\n") {
+		if !strings.HasPrefix(line, "  rig stack edge ") {
+			continue
+		}
+		prefix := columns.FindString(line)
+		if prefix == "" || column >= 0 && len(prefix) != column {
+			t.Fatalf("misaligned edge help: %s", line)
+		}
+		column = len(prefix)
+	}
+	out.Reset()
+	doctor.SetOut(&out)
+	if err := doctor.Help(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "--edge") {
+		t.Fatal("doctor flag not advertised")
+	}
+	root := inTempStackspace(t, `{"repos":{"lib":{"upstream":"github.com/acme/Lib","fork":"github.com/you/Lib"},"app":{"upstream":"github.com/acme/App","fork":"github.com/you/App"}}}`)
+	if _, _, err := loadStackManifest(root); err != nil {
+		t.Fatal(err)
+	}
+	init.SetContext(t.Context())
+	names, _ := init.ValidArgsFunction(init, nil, "")
+	if !reflect.DeepEqual(names, []string{"app", "lib"}) {
+		t.Fatalf("member completion: %v", names)
 	}
 }
 

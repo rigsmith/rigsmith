@@ -179,7 +179,7 @@
     },
     "edge": {
       "type": "object",
-      "description": "Hand-authored edge publishing configuration keyed by member, beside repos. Each member must have trackBranch and publishPrefix or a non-empty publishesAs. Used by rig stack edge pack to reconstruct and verify packages, and rig stack edge status to report carried fixes and retirement evidence. edge ci and edge init are not built yet. rig never rewrites this block.",
+      "description": "Hand-authored edge publishing configuration keyed by member, beside repos. Each member must have trackBranch and publishPrefix or a non-empty publishesAs. Used by rig stack edge pack to reconstruct and verify packages, status to report carried fixes and retirement evidence, adopt to import upstream PR topics, ci to build reports and independently verify publication, and init / rig stack doctor --edge to repair or check publishing setup. rig never rewrites this block.",
       "propertyNames": { "minLength": 1, "pattern": "\\S" },
       "additionalProperties": {
         "type": "object",
@@ -190,7 +190,7 @@
           "exclude": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" }, "uniqueItems": true, "description": "Original package ids to omit. Entries that name nothing the member produces can be reported after discovery." },
           "maxSize": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Maximum size per package, for example 50MB or 100MiB. Defaults to 100 MB (100000000 bytes) when unset. An explicit positive size overrides the default either upward or downward; zero is rejected. MB means 10^6 bytes; MiB means 2^20 bytes." },
           "publishFrom": { "type": "string", "minLength": 1, "pattern": "^(?:(?:(?:https?|ssh|git)://)?(?:[^/@]+@)?(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+)(?::[0-9]+)?/[^/]+/[^/?#]+|[^/@]+@(?:\\[[0-9A-Fa-f:]+\\]|[^/:@]+):[^/]+/[^/?#]+)/?(?:[?#].*)?$", "description": "Optional publishing repository as host/owner/name (pasted repository URLs are normalized). Defaults to the manifest home; the member's fork remains its PR fork." },
-          "pushKeySecret": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "Name of the publishing repository's push secret, never its value. GitHub-reserved names and recognizable GitHub token prefixes are refused." },
+          "pushKeySecret": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "Name of the push secret in the publishing repository's default-branch-only edge-publish environment, never its value. GitHub-reserved names and recognizable GitHub token prefixes are refused." },
           "adopted": {
             "type": "array",
             "description": "Foreign PRs already carried in trackBranch, recorded for status and retirement. This is not a build-time merge list.",

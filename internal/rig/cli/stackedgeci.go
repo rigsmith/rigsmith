@@ -26,6 +26,7 @@ type stackEdgeCIReport struct {
 	Status                        string `json:"status"`
 	Pack                          stackEdgePackResult
 	SHA256                        map[string]string
+	AdoptedMoved                  []stackEdgeAdoptedMove `json:"adoptedMoved"`
 }
 
 type stackEdgeCIOptions struct {
@@ -154,6 +155,13 @@ func stackEdgeCI(ctx context.Context, out io.Writer, o stackEdgeCIOptions) (err 
 	r := stackEdgeCIReport{Schema: 1, SeedBase: base, Member: o.Member, Feed: e.Feed, Label: e.Label, Number: o.Number, Tip: o.Tip}
 	if r.Label == "" {
 		r.Label = "edge"
+	}
+	r.AdoptedMoved, err = stackEdgeAdoptedMoved(ctx, stackDepsClient(), m.Repos[o.Member], e.Adopted)
+	for _, moved := range r.AdoptedMoved {
+		fmt.Fprintln(out, "Warning:", moved.Warning)
+	}
+	if err != nil {
+		fmt.Fprintf(out, "Warning: could not check every adopted PR for movement: %v\n", err)
 	}
 	// Reuse the private seed clone: its HEAD is the independently loaded base,
 	// so a moving remote ref cannot change inputs before reconstruction.

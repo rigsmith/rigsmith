@@ -33,6 +33,11 @@ func edgeSetupStackspace(t *testing.T) (*stackEdgeSetup, *edgeSetupAPI, *bytes.B
 	mustGitStack(t, ws, "commit", "-qm", "edge setup input")
 	s.root = ws
 	s.m = m
+	home := filepath.Join(t.TempDir(), "home.git")
+	mustGitStack(t, ws, "init", "--bare", "-b", "main", home)
+	if err := stackConfigureHome(s.ctx, ws, home, "main", ""); err != nil {
+		t.Fatal(err)
+	}
 	return s, f, out, fork
 }
 
@@ -81,13 +86,21 @@ func TestStackEdgeFactsTrackBareRepos(t *testing.T) {
 
 func TestStackEdgeFactsRepairRecheckAndSecondRun(t *testing.T) {
 	s, f, out, _ := edgeSetupStackspace(t)
+	f.environment, f.customBranches, f.policies = false, false, nil
+	// Wiring is root work for the user to commit; edge commits only its workflow.
+	if err := s.repairWiring("lib"); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, s.root, "add", ".")
+	mustGitStack(t, s.root, "commit", "-qm", "root wiring")
+	mustGitStack(t, s.root, "commit", "--allow-empty", "-qm", "stack: import app @ fixture")
 	packs, prompts := 0, 0
 	s.pack = func(context.Context, io.Writer, string, string) error { packs++; return nil }
 	s.prompt = func(c *huh.Confirm) error { prompts++; return c.RunAccessible(out, strings.NewReader("y\n")) }
 	if err := s.checkFacts([]string{"lib"}, true, false); err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
-	if packs != 1 || prompts != 4 || f.sets != 1 || f.writes != 2 {
+	if packs != 1 || prompts != 8 || f.sets != 1 || f.writes != 4 {
 		t.Fatalf("packs=%d prompts=%d sets=%d writes=%d\n%s", packs, prompts, f.sets, f.writes, out)
 	}
 	before := mustGitStack(t, s.root, "status", "--porcelain")
@@ -96,7 +109,7 @@ func TestStackEdgeFactsRepairRecheckAndSecondRun(t *testing.T) {
 	if err := s.checkFacts([]string{"lib"}, true, false); err != nil {
 		t.Fatal(err)
 	}
-	if packs != 2 || f.writes != 2 || f.sets != 1 {
+	if packs != 2 || f.writes != 4 || f.sets != 1 {
 		t.Fatal("second init performed a repair")
 	}
 	if after := mustGitStack(t, s.root, "status", "--porcelain"); before != after {
@@ -152,8 +165,8 @@ func TestStackEdgeFactsDryRunNoRepairsOrPack(t *testing.T) {
 			t.Errorf("missing %s", want)
 		}
 	}
-	if strings.Contains(out.String(), "(e)") {
-		t.Fatal("workflow fact stub present")
+	if !strings.Contains(out.String(), "(e)") || !strings.Contains(out.String(), "(g-environment)") {
+		t.Fatal("workflow or environment fact absent")
 	}
 }
 
@@ -201,6 +214,7 @@ func TestStackEdgeFactsCoverageAndWiring(t *testing.T) {
 func TestStackEdgeFactsPublishingDefaultsToHome(t *testing.T) {
 	s, _, _, _ := edgeSetupStackspace(t)
 	s.m.Edge["lib"].PublishFrom = ""
+	mustGitStack(t, s.root, "config", "--unset", "rig.stackHomeURL")
 	if _, err := s.publishingRepo("lib"); err == nil {
 		t.Fatal("fell back to PR fork")
 	}
