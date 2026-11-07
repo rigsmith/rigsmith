@@ -1105,6 +1105,7 @@ the step-by-step.
 | `stack wire` | Write the build overlay so members resolve each other from source, and refresh the generated `README.md`. Defers while any member the manifest names is not imported: nothing crosses between directories that are not there, which reads exactly like an overlay left over |
 | `stack edge pack <member>` | Reconstruct, rename, version, pack and verify carried .NET fixes under your ids; `--here` is always unpublishable |
 | `stack edge status [member]` | Read carried-item release evidence, integration freshness, newest edge version and retirement verdict |
+| `stack edge adopt <member> <pr-url>` | Bring an upstream PR into an import-rooted topic and print its manifest pin; `-n` creates no branch |
 | `stack doctor` | Check the engine and manifest; `--fix` installs what is missing |
 
 `propose` and `push` answer different questions. `propose` proposes one squashed
@@ -1282,7 +1283,7 @@ real pack.
 
 There is no publish command in this group yet, and its `Publishable` report field
 is only an eligibility marker, not evidence of publication or a separate test run.
-**`edge ci` and `edge init` are not built yet.**
+**`edge ci` is not built yet.**
 
 `edge status [member]` is read-only. It reports recorded proposals and adopted
 PRs, unproposed content, local integration receipt and upstream-base freshness,
@@ -1302,6 +1303,40 @@ that would leave another republished id from the same member behind; migrate
 those ids together manually. See [return to packages](#return-to-packages-after-a-release).
 Remove the edge block and publishing rules by hand after consumers migrate.
 Packages already on the edge feed remain for consumers still pinned to them.
+
+### Adopt someone else's PR
+
+Use `rig stack edge adopt lib https://github.com/acme/Lib/pull/412` to carry a
+foreign PR without creating your own proposal. Rig validates the PR against the
+member's upstream and tracked upstream branch, reads its head through GitHub,
+and fetches only that commit's history from the PR's head repository. It merges
+the PR change onto the cursor
+tree, then creates `stack-pr-adopt-lib-412` with the member's import commit as its
+only parent. The member in the topic name keeps equal PR numbers from different
+upstreams separate; characters Git refs forbid are escaped. A PR targeting a
+different branch refuses before any fetch and must target the member's tracked
+upstream branch. Root files and sibling prefixes come from that import, so the
+topic contains no other integration-line fixes. Cursor history must be available
+locally; rig never fetches another upstream ref to fill it in.
+
+Conflicts refuse without creating a topic: rebase the PR onto the cursor or bring
+it in by hand as a topic. An existing topic with the same tree is a no-op;
+different content is refused. Preserve or rename the old topic before adopting
+an updated PR. `--dry-run` performs the read and merge checks and prints the
+plan without writing a branch. Member names have tab completion.
+
+Adopt never edits the hand-authored manifest, merges, proposes or pushes. After
+it succeeds:
+
+1. Merge `stack-pr-adopt-lib-412` into your integration line.
+2. Add the exact entry printed by adopt to `edge.lib.adopted`:
+   `{ "pr": "https://github.com/acme/Lib/pull/412", "commit": "<full head SHA printed by adopt>" }`.
+3. Run `rig stack propose lib --track-only` to refresh the integration snapshot.
+
+If that PR's head later moves, `edge status` warns with the old pin and current
+head, including in each item's JSON `warning`. Re-run adopt to update the topic,
+merge it and update the pin. Builds keep using the pinned content; the warning
+does not change the item's release state or the retirement verdict.
 
 ## Things worth knowing before they bite
 
