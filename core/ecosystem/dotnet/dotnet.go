@@ -414,7 +414,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		if !propertyNameRe.MatchString(name) {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: invalid property name %q", name)
 		}
-		if strings.EqualFold(name, "Version") && req.Package.Version != "" {
+		if (strings.EqualFold(name, "Version") || strings.EqualFold(name, "PackageVersion")) && req.Package.Version != "" {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("dotnet pack: Properties must not override Package.Version")
 		}
 	}

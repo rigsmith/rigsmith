@@ -51,13 +51,33 @@ func TestArtifactsPropertiesArguments(t *testing.T) {
 }
 
 func TestArtifactsPropertiesRejectsInvalidNames(t *testing.T) {
-	for _, name := range []string{"", "Bad=Name", "Bad;Injected", "Bad,Injected", "Bad Name", "-Bad", "Version", "vErSiOn"} {
+	for _, name := range []string{"", "Bad=Name", "Bad;Injected", "Bad,Injected", "Bad Name", "-Bad"} {
 		t.Run(name, func(t *testing.T) {
 			_, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
 				DryRun: true, Package: plugin.Package{Version: "1.2.3"}, Properties: map[string]string{name: "value"},
 			})
-			if err == nil || (!strings.Contains(err.Error(), "invalid property name") && !strings.Contains(err.Error(), "must not override")) {
+			if err == nil || !strings.Contains(err.Error(), "invalid property name") {
 				t.Fatalf("invalid property accepted: %q, %v", name, err)
+			}
+		})
+	}
+}
+
+func TestArtifactsPropertiesVersionOverrides(t *testing.T) {
+	for _, name := range []string{"Version", "vErSiOn", "PackageVersion", "pAcKaGeVeRsIoN"} {
+		t.Run(name, func(t *testing.T) {
+			for _, version := range []string{"1.2.3", ""} {
+				_, err := New().Artifacts(context.Background(), plugin.ArtifactsRequest{
+					DryRun: true, Package: plugin.Package{Version: version},
+					Properties: map[string]string{name: "2.0.0"},
+				})
+				if version != "" {
+					if err == nil || !strings.Contains(err.Error(), "must not override Package.Version") {
+						t.Fatalf("%s overrides Package.Version: %v", name, err)
+					}
+				} else if err != nil {
+					t.Fatalf("%s without Package.Version should be allowed: %v", name, err)
+				}
 			}
 		})
 	}

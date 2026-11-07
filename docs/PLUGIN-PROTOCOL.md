@@ -91,8 +91,9 @@ The .NET adapter advertises this capability and passes properties as individual
 `-p:Name=Value` arguments to `dotnet pack`, escaping MSBuild metacharacters rather
 than shell-quoting values. Names must match `[A-Za-z_][A-Za-z0-9_.-]*`.
 `package.version`, when set, supplies the global `Version` property; extra
-properties cannot override it (case-insensitively). A generated
-`CustomAfterMicrosoftCommonTargets` file can rename package ids throughout
+properties named `Version` or `PackageVersion` are then refused
+(case-insensitively), because either can change the produced package version.
+A generated `CustomAfterMicrosoftCommonTargets` file can rename package ids throughout
 project references. The artifact path in the response remains a prediction
 using the discovered package name; callers overriding ids must inspect files
 actually produced in `outputDir`. Other built-in adapters refuse properties.
