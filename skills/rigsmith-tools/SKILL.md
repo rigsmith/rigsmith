@@ -10,7 +10,7 @@ description: >
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code or Codex CLI
   setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
-  forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing edge builds under republished NuGet ids and checking edge retirement,
+  forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing edge builds under republished NuGet ids and checking edge retirement, switching consumers from republished/edge package ids back to the original public ids,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
@@ -170,7 +170,7 @@ rig stack seed --publish acme/rigstack-app@main   # opt in and publish root-only
 rig stack ci --seed acme/rigstack-app@main --member app # isolated committed-checkout CI
 rig stack ci --manifest rig.stack.jsonc --member app # alternative committed manifest
 rig stack ci-guard app/App.csproj       # observed .NET build warning policy
-rig stack released <member> <sibling> --package <id>  # verify release and preview migration
+rig stack released <member> <sibling> --package <id>  # verify release; preview switching republished ids back to public ids
 rig stack deps [--publish]              # check topic dependencies; optionally post statuses
 rig stack deps --seed acme/rigstack-app@main [--publish] # read proposals from seed
 rig stack home [pointer-file]           # read a member's .rig-stack reference
@@ -396,11 +396,29 @@ Full guide: <https://rigsmith.dev/rig/stack>.
 ### Return to packages
 
 For returning .NET stack members to packages, preview with
-`rig stack released <member> <sibling> --package Acme.Lib [--version 2.0.0]`.
+`rig stack released <member> <sibling> --package Lib [--version 2.0.0]`.
 Require repository commit ancestry proof; missing evidence is not a release.
-`--apply` is interactive and clean-tree only; `-n` previews. Explicitly attribute
+`--apply` requires a clean tree and interactive confirmation; `-n` previews.
+Local preview and apply create no commit, push or PR. Explicitly attribute
 StackOnlyWarning IDs with `--warning`; review all refused rewrites and build
-with UseStackSources=false. The command creates no PR.
+with UseStackSources=false.
+
+When a consumer references a sibling's republished id, `publishPrefix` or
+`publishesAs` selects its original public id; explicit `publishesAs` wins. The
+plan renames `Include`/`Update` back from `You.Lib` to `Lib` alongside the version
+bump, removes the guard named from the republished id (`STACK_YOU_LIB`), and runs
+pin proof on that republished id. The XML editor supports `Update`, but pin
+preflight still refuses `Update` pins. Migration is all-or-nothing per sibling:
+if another republished id from that sibling would remain, it refuses and names
+what would be left behind; migrate those ids together manually.
+
+Release reads and edits share one file scope: `.csproj`, `.props`, `.targets`
+and `.cs`. In Git worktrees, only tracked or non-ignored untracked files count
+(`git ls-files --cached --others --exclude-standard`). Projects under `packages/`
+are included; gitignored caches are not. `bin`, `obj`, `.git`, `.vs` and
+`node_modules` are always skipped. Candidate file and directory symlinks are
+refused. Snapshots without Git use a filesystem walk with the same file types
+and directory exclusions.
 
 For a transitive stack sibling, use --via-package/--via-version to verify a
 published direct package delivers the verified sibling minimum in all nuspec
