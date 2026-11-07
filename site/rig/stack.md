@@ -1259,11 +1259,12 @@ a nonzero number. It cannot be combined with `--seed`, `--manifest`, or
 `--upstream-tip` three-way merges the integration snapshot onto the current
 upstream tip. A conflict prints **inconclusive**, with the remedy: pull, resolve
 on the integration line, then `rig stack propose lib --track-only`. It skips
-packing and exits successfully instead of reporting a build failure. It clears
-the selected output directory and leaves only `edge-pack.json`, with stable
-`status: "inconclusive"`, the member, track commit, upstream tip and remedy. This
-prevents stale packages from an earlier run being treated as new output. Output
-paths containing this stackspace root, tracked source files or Git metadata are
+packing and exits successfully instead of reporting a build failure. It removes
+stale top-level `.nupkg`, `.snupkg` and `edge-pack.json` output files, then writes
+`edge-pack.json` with stable `status: "inconclusive"`, the member, track commit, upstream tip and remedy. This
+prevents stale packages from an earlier run being treated as new output. Successful
+packs use the same cleanup before building. Other files and all subdirectories
+are preserved; cleanup never recurses. Output paths containing this stackspace root, tracked source files or Git metadata are
 refused rather than cleared. `-n` prints the status, both commits and remedy
 while leaving existing output untouched.
 

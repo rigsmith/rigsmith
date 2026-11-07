@@ -95,31 +95,41 @@ func TestStackEdgeHookCanonicalProjectConditions(t *testing.T) {
 		}
 		t.Fatal(err)
 	}
-	canonical, err := filepath.EvalSymlinks(project)
+	if err := os.Symlink(project, filepath.Join(root, "Linked.csproj")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skipf("file symlinks unavailable: %v", err)
+		}
+		t.Fatal(err)
+	}
+	canonicalRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	path, cleanup, err := stackEdgeWriteHook(map[string]string{"Lib": "You.Lib"}, map[string]dotnet.PackMetadata{
-		filepath.Join(link, "Lib.csproj"): {OriginalHook: filepath.Join(root, "original.targets")},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var document struct {
-		Groups []struct {
-			Condition string `xml:"Condition,attr"`
-		} `xml:"PropertyGroup"`
-	}
-	if err := xml.Unmarshal(data, &document); err != nil {
-		t.Fatal(err)
-	}
-	want := "'$(MSBuildProjectFullPath)' == '" + stackEdgeMSBuildLiteral(canonical) + "'"
-	if len(document.Groups) != 2 || document.Groups[0].Condition != want || strings.Contains(document.Groups[0].Condition, link) {
-		t.Fatalf("noncanonical hook condition: %s", data)
+	for _, name := range []string{"Lib.csproj", "Linked.csproj"} {
+		t.Run(name, func(t *testing.T) {
+			path, cleanup, err := stackEdgeWriteHook(map[string]string{"Lib": "You.Lib"}, map[string]dotnet.PackMetadata{
+				filepath.Join(link, name): {OriginalHook: filepath.Join(root, "original.targets")},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer cleanup()
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document struct {
+				Groups []struct {
+					Condition string `xml:"Condition,attr"`
+				} `xml:"PropertyGroup"`
+			}
+			if err := xml.Unmarshal(data, &document); err != nil {
+				t.Fatal(err)
+			}
+			want := "'$(MSBuildProjectFullPath)' == '" + stackEdgeMSBuildLiteral(filepath.Join(canonicalRoot, name)) + "'"
+			if len(document.Groups) != 2 || document.Groups[0].Condition != want || strings.Contains(document.Groups[0].Condition, link) {
+				t.Fatalf("wrong hook condition for loaded project: %s", data)
+			}
+		})
 	}
 }

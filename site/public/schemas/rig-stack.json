@@ -179,13 +179,13 @@
     },
     "edge": {
       "type": "object",
-      "description": "Hand-authored edge publishing configuration keyed by member, beside repos. Each member must have trackBranch and publishPrefix or a non-empty publishesAs. Parsed and validated now; edge verbs are not available yet. rig never rewrites this block.",
+      "description": "Hand-authored edge publishing configuration keyed by member, beside repos. Each member must have trackBranch and publishPrefix or a non-empty publishesAs. Used by rig stack edge pack to reconstruct and verify packages, and rig stack edge status to report carried fixes and retirement evidence. edge ci and edge init are not built yet. rig never rewrites this block.",
       "propertyNames": { "minLength": 1, "pattern": "\\S" },
       "additionalProperties": {
         "type": "object",
         "required": ["feed"],
         "properties": {
-          "feed": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Destination package feed URL." },
+          "feed": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Edge package feed URL, read by rig stack edge status for the newest edge version. rig stack edge pack does not publish." },
           "label": { "type": "string", "default": "edge", "description": "NuGet prerelease label. Appended as -<label>.<number> to a stable base, or .<label>.<number> to a prerelease base. Defaults to edge.", "pattern": "^[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*$" },
           "exclude": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" }, "uniqueItems": true, "description": "Original package ids to omit. Entries that name nothing the member produces can be reported after discovery." },
           "maxSize": { "type": "string", "minLength": 1, "pattern": "\\S", "description": "Maximum size per package, for example 50MB or 100MiB. Defaults to 100 MB (100000000 bytes) when unset. An explicit positive size overrides the default either upward or downward; zero is rejected. MB means 10^6 bytes; MiB means 2^20 bytes." },

@@ -41,9 +41,10 @@ func newStackEdgeFixture(t *testing.T) stackEdgeFixture {
 	}
 	writeStackManifest(t, f.checkout, fmt.Sprintf(`{
 		"repos": {
-			"lib": {"upstream": %q, "fork": %q, "trackBranch": "stack/integration"},
+			"lib": {"upstream": %q, "fork": %q, "trackBranch": "stack/integration", "publishPrefix": "You."},
 			"app": {"upstream": %q, "fork": %q, "trackBranch": "stack/integration"}
 		},
+		"edge": {"lib": {"feed": "https://feed.invalid/index.json"}},
 		"lastSync": {"lib": %q, "app": %q},
 		"lastPropose": {"lib": "old-proposal", "app": "stack/integration"}
 	}`, f.server.spec("acme/lib"), f.server.spec("you/lib"), f.server.spec("acme/app"), f.server.spec("you/app"), f.base["lib"], f.base["app"]))
@@ -176,7 +177,7 @@ func TestStackEdgeReconstructRefusals(t *testing.T) {
 				}
 				if failure == "no-track" {
 					m.Repos["lib"].TrackBranch = ""
-					want = "needs a trackBranch"
+					want = "needs trackBranch"
 				} else {
 					delete(m.LastSync, "app")
 					want = "no full manifest cursor"
@@ -218,6 +219,18 @@ func TestStackEdgeReconstructRefusals(t *testing.T) {
 func TestStackEdgeReconstructMultipleMembers(t *testing.T) {
 	requireStackEdgeEngine(t)
 	f := newStackEdgeFixture(t)
+	m, _, err := loadStackManifest(f.checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Repos["app"].PublishPrefix = "App."
+	m.Edge["app"] = &stackEdge{Feed: "https://feed.invalid/index.json"}
+	if err := stackReconstructWrite(f.checkout, m); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, f.checkout, "add", ".")
+	mustGitStack(t, f.checkout, "commit", "-qm", "configure second edge member")
+	mustGitStack(t, f.checkout, "push", "-q", f.seed, "HEAD")
 	opts := f.options(true)
 	opts.Members = []string{"lib", "app"}
 	result, cleanup, err := stackEdgeReconstruct(t.Context(), opts)

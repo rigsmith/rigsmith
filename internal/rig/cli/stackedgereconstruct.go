@@ -97,6 +97,9 @@ func stackEdgeReconstruct(ctx context.Context, opts stackEdgeReconstructOptions)
 		if r == nil {
 			return nil, cleanup, fmt.Errorf("unknown edge member %s", name)
 		}
+		if m.Edge[name] == nil {
+			return nil, cleanup, fmt.Errorf("%s needs a configured member and edge block", name)
+		}
 		if r.TrackBranch == "" {
 			return nil, cleanup, fmt.Errorf("edge member %s needs a trackBranch", name)
 		}

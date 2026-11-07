@@ -66,11 +66,11 @@ func stackEdgeWriteHook(renames map[string]string, originals map[string]dotnet.P
 		if metadata.OriginalHook == "" {
 			continue
 		}
-		project, err := filepath.EvalSymlinks(path)
+		dir, err := filepath.EvalSymlinks(filepath.Dir(path))
 		if err != nil {
-			return "", nil, fmt.Errorf("resolving original hook project %s: %w", path, err)
+			return "", nil, fmt.Errorf("resolving original hook project directory %s: %w", path, err)
 		}
-		canonical[project] = metadata
+		canonical[filepath.Join(dir, filepath.Base(path))] = metadata
 	}
 	dir, err := os.MkdirTemp("", "rig-stack-edge-hook-")
 	if err != nil {

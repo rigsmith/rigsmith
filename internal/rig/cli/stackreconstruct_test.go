@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -80,7 +81,7 @@ func TestStackEdgePackTipConflict(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "old"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"stale.nupkg", "old/stale.snupkg", "edge-pack.json", "old/checksums.txt"} {
+	for _, path := range []string{"stale.nupkg", "stale.snupkg", "keep.txt", "old/stale.snupkg", "edge-pack.json", "old/checksums.txt"} {
 		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(path)), []byte("stale output"), 0600); err != nil {
 			t.Fatal(err)
 		}
@@ -94,10 +95,10 @@ func TestStackEdgePackTipConflict(t *testing.T) {
 	if err := dry.Execute(); err != nil || !strings.Contains(out.String(), "inconclusive") || !strings.Contains(out.String(), f.track["lib"]) || !strings.Contains(out.String(), tip) || !strings.Contains(out.String(), "rig stack propose lib --track-only") {
 		t.Fatalf("dry-run conflict outcome: %v\n%s", err, out.String())
 	}
-	for _, path := range []string{"stale.nupkg", "old/stale.snupkg", "edge-pack.json", "old/checksums.txt"} {
+	for _, path := range []string{"stale.nupkg", "stale.snupkg", "keep.txt", "old/stale.snupkg", "edge-pack.json", "old/checksums.txt"} {
 		assertStackEdgeFile(t, dir, path, "stale output")
 	}
-	if files := stackPackWalk(dir); len(files) != 4 {
+	if files := stackPackWalk(dir); len(files) != 6 {
 		t.Fatalf("dry-run changed existing output: %v", files)
 	}
 	out.Reset()
@@ -112,8 +113,11 @@ func TestStackEdgePackTipConflict(t *testing.T) {
 		t.Fatalf("missing inconclusive remedy: %s", out.String())
 	}
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "edge-pack.json" {
-		t.Fatalf("inconclusive output must contain only edge-pack.json: %v, %v", entries, err)
+	if err != nil || len(entries) != 3 || entries[0].Name() != "edge-pack.json" || entries[1].Name() != "keep.txt" || entries[2].Name() != "old" {
+		t.Fatalf("inconclusive output must retain unrelated files and directories: %v, %v", entries, err)
+	}
+	for _, path := range []string{"keep.txt", "old/stale.snupkg", "old/checksums.txt"} {
+		assertStackEdgeFile(t, dir, path, "stale output")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "edge-pack.json"))
 	if err != nil {
@@ -147,7 +151,7 @@ func TestStackEdgePackTipConflict(t *testing.T) {
 func TestStackEdgeClearOutputRefusesSources(t *testing.T) {
 	root := inTempStackspace(t, `{"repos":{}}`)
 	mustGitStack(t, root, "add", ".")
-	for _, path := range []string{root, filepath.Dir(root), filepath.Join(root, ".git")} {
+	for _, path := range []string{root, filepath.Dir(root), filepath.Join(root, ".git"), filepath.Join(root, ".git", "missing", "edge")} {
 		if err := stackEdgeClearOutput(t.Context(), root, path); err == nil {
 			t.Fatalf("cleared source path %s", path)
 		}
@@ -163,4 +167,73 @@ func TestStackEdgeClearOutputRefusesSources(t *testing.T) {
 		t.Fatalf("cleared tracked source: %v", err)
 	}
 	assertStackEdgeFile(t, root, "source/keep.txt", "source")
+}
+
+func TestStackEdgeClearOutputPreservesUnrelated(t *testing.T) {
+	root := inTempStackspace(t, `{"repos":{}}`)
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "nested.nupkg"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"old.nupkg", "old.SNUPKG", "edge-pack.json", "keep.txt", "checksums.txt", "nested.nupkg/old.nupkg"} {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(path)), []byte("existing output"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stackEdgeClearOutput(t.Context(), root, dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"keep.txt", "checksums.txt", "nested.nupkg/old.nupkg"} {
+		assertStackEdgeFile(t, dir, path, "existing output")
+	}
+	for _, name := range []string{"old.nupkg", "old.SNUPKG", "edge-pack.json"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("stale pack output %s remains: %v", name, err)
+		}
+	}
+	missing := filepath.Join(dir, "missing", "nested")
+	if err := stackEdgeClearOutput(t.Context(), root, missing); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatalf("cleanup created missing output directory: %v", err)
+	}
+}
+
+func TestStackEdgeClearOutputRefusesSeparateGitDirectories(t *testing.T) {
+	root := t.TempDir()
+	metadata := filepath.Join(t.TempDir(), "repository-metadata")
+	mustGitStack(t, root, "init", "-q", "--separate-git-dir", metadata)
+	if err := os.WriteFile(filepath.Join(root, "keep.txt"), []byte("source"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mustGitStack(t, root, "add", ".")
+	mustGitStack(t, root, "-c", "user.name=test", "-c", "user.email=t@t", "commit", "-qm", "source")
+	worktree := filepath.Join(t.TempDir(), "linked")
+	mustGitStack(t, root, "worktree", "add", "-q", "-b", "linked", worktree)
+	for _, checkout := range []string{root, worktree} {
+		ownMetadata := strings.TrimSpace(mustGitStack(t, checkout, "rev-parse", "--absolute-git-dir"))
+		for _, path := range []string{ownMetadata, filepath.Join(ownMetadata, "missing", "edge"), metadata, filepath.Join(metadata, "objects"), filepath.Dir(metadata)} {
+			if err := stackEdgeClearOutput(t.Context(), checkout, path); err == nil || !strings.Contains(err.Error(), "git metadata") {
+				t.Fatalf("accepted git metadata output %s: %v", path, err)
+			}
+		}
+		mustGitStack(t, checkout, "rev-parse", "HEAD")
+	}
+	t.Run("symlinked-missing-output", func(t *testing.T) {
+		alias := filepath.Join(t.TempDir(), "metadata-alias")
+		if err := os.Symlink(metadata, alias); err != nil {
+			if runtime.GOOS == "windows" {
+				t.Skipf("directory symlinks unavailable: %v", err)
+			}
+			t.Fatal(err)
+		}
+		path := filepath.Join(alias, "missing", "edge")
+		if err := stackEdgeClearOutput(t.Context(), root, path); err == nil || !strings.Contains(err.Error(), "git metadata") {
+			t.Fatalf("accepted symlinked metadata output: %v", err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("metadata output was created: %v", err)
+		}
+	})
 }

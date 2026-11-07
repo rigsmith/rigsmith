@@ -30,10 +30,11 @@ func newStackEdgePackCmd() *cobra.Command {
 			"then packs the member's fork trackBranch under its publishing ids.\n" +
 			"Checks the observed NuGet packages and preserves assembly names.\n" +
 			"--upstream-tip merges onto current upstream; conflicts report inconclusive\n" +
-			"with commits and a remedy, replace --out with only edge-pack.json, and skip packing.\n" +
+			"with commits and a remedy, clear stale package files, and write edge-pack.json.\n" +
 			"--here uses the working tree instead;\n" +
 			"its output can never be published, even with a nonzero --number.\n" +
 			"Writes verified packages and edge-pack.json to --out; never pushes a feed.\n" +
+			"Clears only top-level .nupkg, .snupkg and edge-pack.json output files.\n" +
 			"--dry-run discovers ids and versions without building, writing or deleting output.",
 		Args: cobra.ExactArgs(1), ValidArgsFunction: stackEdgeMemberCompletion,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -101,6 +102,9 @@ func newStackEdgePackCmd() *cobra.Command {
 			}
 			if m.Repos[args[0]] == nil {
 				return fmt.Errorf("unknown stack member %q", args[0])
+			}
+			if m.Edge[args[0]] == nil {
+				return fmt.Errorf("%s needs a configured member and edge block", args[0])
 			}
 			_, err = stackEdgePackTree(ctx, cmd.OutOrStdout(), m, root, args[0], opts)
 			return err
@@ -323,6 +327,9 @@ func stackEdgePackTree(ctx context.Context, out io.Writer, m *stackManifest, roo
 		}
 		return result, nil
 	}
+	if err := stackEdgeClearOutput(ctx, root, opts.OutputDir); err != nil {
+		return result, err
+	}
 	properties := map[string]string{"RepositoryUrl": result.RepositoryURL, "RepositoryCommit": opts.Commit, "Version": result.Version}
 	paths := map[string]string{}
 	for _, p := range all {
@@ -447,14 +454,21 @@ func stackEdgeWritePackReport(dir string, result stackEdgePackResult) error {
 	return os.WriteFile(filepath.Join(dir, "edge-pack.json"), append(data, '\n'), 0o644)
 }
 
-// An inconclusive run must not leave earlier artifacts beside its report.
-// Refuse source directories before clearing a user-selected output path.
+// Clear only the top-level files edge pack owns, on both success and conflict.
 func stackEdgeClearOutput(ctx context.Context, checkout, dir string) error {
+	for _, part := range strings.Split(filepath.ToSlash(dir), "/") {
+		if strings.EqualFold(part, ".git") {
+			return fmt.Errorf("refusing to clear --out inside git metadata")
+		}
+	}
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
 	resolved, err := filepath.EvalSymlinks(dir)
 	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
+		resolved = dir // The ancestor identity walk below still checks metadata.
+	} else if err != nil {
 		return err
 	}
 	for _, part := range strings.Split(filepath.ToSlash(resolved), "/") {
@@ -465,6 +479,54 @@ func stackEdgeClearOutput(ctx context.Context, checkout, dir string) error {
 	root, err := filepath.EvalSymlinks(checkout)
 	if err != nil {
 		return err
+	}
+	outputInfo, err := os.Stat(resolved)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, flag := range []string{"--absolute-git-dir", "--git-common-dir"} {
+		data, err := stackCIGit(ctx, root, "rev-parse", flag)
+		if err != nil {
+			return err
+		}
+		metadata := strings.TrimSpace(string(data))
+		if !filepath.IsAbs(metadata) {
+			metadata = filepath.Join(root, metadata)
+		}
+		metadata, err = filepath.EvalSymlinks(metadata)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(metadata)
+		if err != nil {
+			return err
+		}
+		for ancestor := resolved; ; ancestor = filepath.Dir(ancestor) {
+			ancestorInfo, err := os.Stat(ancestor)
+			if err == nil && os.SameFile(ancestorInfo, info) {
+				return fmt.Errorf("refusing to clear --out inside git metadata")
+			}
+			if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			if filepath.Dir(ancestor) == ancestor {
+				break
+			}
+		}
+		if outputInfo != nil {
+			for ancestor := metadata; ; ancestor = filepath.Dir(ancestor) {
+				ancestorInfo, err := os.Stat(ancestor)
+				if err != nil {
+					return err
+				}
+				if os.SameFile(ancestorInfo, outputInfo) {
+					return fmt.Errorf("refusing to clear --out containing git metadata")
+				}
+				if filepath.Dir(ancestor) == ancestor {
+					break
+				}
+			}
+		}
 	}
 	if rel, err := filepath.Rel(resolved, root); err != nil || rel == "." || filepath.IsLocal(rel) {
 		return fmt.Errorf("refusing to clear --out containing the stackspace root")
@@ -479,11 +541,18 @@ func stackEdgeClearOutput(ctx context.Context, checkout, dir string) error {
 		}
 	}
 	entries, err := os.ReadDir(resolved)
+	if os.IsNotExist(err) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if err := os.RemoveAll(filepath.Join(resolved, entry.Name())); err != nil {
+		name := entry.Name()
+		if entry.IsDir() || !(strings.HasSuffix(strings.ToLower(name), ".nupkg") || strings.HasSuffix(strings.ToLower(name), ".snupkg") || name == "edge-pack.json") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(resolved, name)); err != nil {
 			return err
 		}
 	}

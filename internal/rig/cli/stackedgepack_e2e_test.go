@@ -30,6 +30,7 @@ func TestStackEdgePackDotnetE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	mustGitStack(t, root, "init", "-q")
 	fixture := filepath.Join("..", "..", "..", "core", "ecosystem", "dotnet", "testdata", "edge-rename")
 	if err := os.CopyFS(filepath.Join(root, "lib"), os.DirFS(fixture)); err != nil {
 		t.Fatal(err)
@@ -52,10 +53,18 @@ func TestStackEdgePackDotnetE2E(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// This package did not appear during the build and must never be verified
-	// or copied into the report, regardless of the adapter's predicted path.
+	// Earlier package outputs must be cleared, without touching unrelated files
+	// or recursing into directories, before the new packages are written.
 	if err := os.WriteFile(filepath.Join(dir, "stale.nupkg"), []byte("not a zip"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "keep.nupkg"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"keep.txt", "keep.nupkg/nested.nupkg", "stale.snupkg", "edge-pack.json"} {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(path)), []byte("existing output"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	result, err := stackEdgePackTree(ctx, &out, edgeTestManifest(), root, "lib", stackEdgePackOptions{
 		OutputDir: dir, Number: 7, Commit: strings.Repeat("a", 40), Here: true, PublicFeed: feed.URL, Client: feed.Client(),
@@ -65,6 +74,14 @@ func TestStackEdgePackDotnetE2E(t *testing.T) {
 	}
 	if result.Publishable || !result.Here || result.Version != "1.2.4-edge.7" || len(result.Artifacts) != 2 {
 		t.Fatalf("result=%+v", result)
+	}
+	for _, path := range []string{"keep.txt", "keep.nupkg/nested.nupkg"} {
+		assertStackEdgeFile(t, dir, path, "existing output")
+	}
+	for _, name := range []string{"stale.nupkg", "stale.snupkg"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("success retained stale package %s: %v", name, err)
+		}
 	}
 	for _, artifact := range result.Artifacts {
 		path := filepath.Join(dir, artifact.File)

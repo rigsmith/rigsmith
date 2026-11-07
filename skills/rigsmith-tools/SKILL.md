@@ -138,9 +138,11 @@ temporary tree, then renames, versions, packs and verifies. Other members stay a
 recorded cursors. Refresh trackBranch after pull with `propose --track-only` from
 the integration line. `--upstream-tip` merges onto current upstream; a conflict
 prints inconclusive and the pull/resolve/track-only remedy, then skips packing
-and clears output, leaving only `edge-pack.json` with `status: "inconclusive"`,
+and clears stale top-level package files, writing `edge-pack.json` with
+`status: "inconclusive"`,
 both commits and remedy. With `-n`, it only prints the outcome and leaves existing
-output untouched. Successful pack reports have `status: "packed"`.
+output untouched. Both success and conflict cleanup preserve unrelated files and
+all subdirectories. Successful pack reports have `status: "packed"`.
 `--number` defaults to unpublishable 0; pass a run number explicitly.
 `--here` always marks output unpublishable and refuses reconstruction flags.
 `-n` reports the static id/version plan without building or changing output;

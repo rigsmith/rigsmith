@@ -123,6 +123,44 @@ func TestStackEdgeMemberCompletion(t *testing.T) {
 	}
 }
 
+func TestStackEdgePackRequiresEdgeBeforeFetch(t *testing.T) {
+	requests := make(chan struct{}, 16)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	host := strings.TrimPrefix(server.URL, "http://")
+	m := edgeTestManifest()
+	m.Edge = nil
+	m.Repos["lib"].Upstream, m.Repos["lib"].Fork = host+"/acme/Lib", host+"/you/Lib"
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := inTempStackspace(t, string(data))
+	mustGitStack(t, root, "add", ".")
+	mustGitStack(t, root, "-c", "user.name=test", "-c", "user.email=t@t", "commit", "-qm", "non-edge member")
+	for _, member := range []string{"lib", "unknown"} {
+		t.Run(member, func(t *testing.T) {
+			cmd := newStackEdgePackCmd()
+			cmd.SetOut(io.Discard)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs([]string{member, "--allowed-hosts", host})
+			want := "needs a configured member and edge block"
+			if member == "unknown" {
+				want = "unknown edge member"
+			}
+			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected preflight refusal %q, got %v", want, err)
+			}
+			if len(requests) != 0 {
+				t.Fatal("invalid member caused a fetch")
+			}
+		})
+	}
+}
+
 func edgeTestManifest() *stackManifest {
 	return &stackManifest{
 		Repos: map[string]*stackRepo{"lib": {Upstream: "github.com/acme/Lib", Fork: "github.com/you/Lib", TrackBranch: "stack/integration", PublishPrefix: "You."}},

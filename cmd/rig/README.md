@@ -51,8 +51,8 @@ and never forces an update. `--dry-run` uses the same delivery plan.
 `rig stack edge pack <member>` reads the committed stack manifest by default,
 or `--manifest` / `--seed`, and packs a temporary reconstruction of the fork
 trackBranch. `--upstream-tip` merges onto current upstream; conflicts report
-inconclusive with a remedy and skip packing, leaving only `edge-pack.json`
-with `status: "inconclusive"` in the cleared output directory. With `-n`, it prints the outcome without changing output. `-o` chooses the output directory
+inconclusive with a remedy and skip packing, clearing stale top-level package files and writing `edge-pack.json`
+with `status: "inconclusive"`. Cleanup preserves other files and all directories. With `-n`, it prints the outcome without changing output. `-o` chooses the output directory
 (default `dist/`); `edge-pack.json` records verification expectations and provenance.
 `--number` defaults to unpublishable 0; `--here` always marks output unpublishable.
 `rig stack edge status [member]` reports carried fixes, freshness, newest edge
