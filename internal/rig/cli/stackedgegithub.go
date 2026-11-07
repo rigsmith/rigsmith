@@ -68,18 +68,22 @@ func stackEdgeWorkflowDisabled(w stackEdgeWorkflow) bool {
 }
 
 func (s *stackEdgeSetup) checkPublishingRepo(name string) error {
-	if s.m.Edge[name].PublishFrom == "" {
-		return nil
-	} // Default home needs no upstream-workflow cleanup.
+	defaultHome := s.m.Edge[name].PublishFrom == ""
 	slug, err := s.publishingRepo(name)
 	if err != nil {
+		if defaultHome {
+			return fmt.Errorf("publishing home is not ready; configure the manifest home: `rig stack seed --publish`: %w", err)
+		}
 		return err
 	}
 	fork, err := s.publishingRepoInfo(slug)
 	if err != nil {
+		if defaultHome {
+			return fmt.Errorf("publishing home is not ready; configure the manifest home: `rig stack seed --publish`: %w", err)
+		}
 		return err
 	}
-	if !fork {
+	if defaultHome || !fork {
 		return nil
 	}
 	workflows, err := s.workflows(slug)
@@ -95,6 +99,11 @@ func (s *stackEdgeSetup) checkPublishingRepo(name string) error {
 }
 
 func (s *stackEdgeSetup) repairPublishingRepo(name string) error {
+	// The existing seed flow owns the default home. Edge may create only an
+	// explicitly configured publishing repository.
+	if s.m.Edge[name].PublishFrom == "" {
+		return s.checkPublishingRepo(name)
+	}
 	slug, err := s.publishingRepo(name)
 	if err != nil {
 		return err
@@ -253,11 +262,25 @@ func (s *stackEdgeSetup) repairSecret(name string) error {
 	if err := s.confirm("set push secret " + secret + " in " + slug + " from stdin or the publish-auth reference"); err != nil {
 		return err
 	}
+	if _, err := s.secretMetadata(slug, secret); err == nil {
+		fmt.Fprintf(s.out, "Another process created push secret %s in %s; leaving it unchanged.\n", secret, slug)
+		return nil
+	} else if !stackEdgeMissing(err) {
+		return err
+	}
 	value, err := s.pushCredential()
 	if err != nil {
 		return err
 	}
 	for attempt := 0; attempt < 3; attempt++ {
+		// Credential input and retry delays can outlive the absence check.
+		// GitHub's create-or-update API cannot make this check/write atomic.
+		if _, err := s.secretMetadata(slug, secret); err == nil {
+			fmt.Fprintf(s.out, "Another process created push secret %s in %s; leaving it unchanged.\n", secret, slug)
+			return nil
+		} else if !stackEdgeMissing(err) {
+			return err
+		}
 		started := s.now().UTC()
 		output, setErr := s.run(s.ctx, "gh", []string{"secret", "set", secret, "--repo", "github.com/" + slug}, strings.NewReader(value))
 		if setErr == nil {

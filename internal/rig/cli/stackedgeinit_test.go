@@ -473,3 +473,75 @@ func TestStackEdgeInitSetupLoaderKeepsValidation(t *testing.T) {
 		t.Fatal("setup ignored unrelated invalid edge config")
 	}
 }
+
+func TestStackEdgeInitDefaultHomeChecksWithoutCreating(t *testing.T) {
+	s, f, out := edgeSetupFixture(t)
+	s.m.Edge["lib"].PublishFrom = ""
+	mustGitStack(t, s.root, "init", "-q")
+	mustGitStack(t, s.root, "config", "rig.stackHomeURL", "https://github.com/publisher/edge.git")
+	s.prompt = func(*huh.Confirm) error { t.Fatal("default-home setup must use the seed flow"); return nil }
+	// Even a forked default home is checked only for existence, without disabling
+	// its workflows; workflow cleanup belongs to an explicit publishFrom role.
+	if err := s.checkPublishingRepo("lib"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.repairPublishingRepo("lib"); err != nil {
+		t.Fatal(err)
+	}
+	if f.reads != 2 {
+		t.Fatalf("default home existence reads = %d, want 2", f.reads)
+	}
+	for _, request := range f.requests {
+		if strings.Contains(request, "/actions/workflows") {
+			t.Fatalf("default home workflow cleanup: %s", request)
+		}
+	}
+	f.exists = false
+	if err := s.checkPublishingRepo("lib"); err == nil || !strings.Contains(err.Error(), "configure the manifest home: `rig stack seed --publish`") {
+		t.Fatalf("missing home accepted without remedy: %v", err)
+	}
+	if err := s.repairPublishingRepo("lib"); err == nil || !strings.Contains(err.Error(), "rig stack seed --publish") {
+		t.Fatalf("default-home repair missing seed remedy: %v", err)
+	}
+	if f.writes != 0 || f.exists {
+		t.Fatal("edge created the missing default home")
+	}
+	assertEdgeSetupNoSecret(t, s, f, out, nil)
+}
+
+type edgeSetupReaderFunc func([]byte) (int, error)
+
+func (read edgeSetupReaderFunc) Read(p []byte) (int, error) { return read(p) }
+
+func TestStackEdgeInitSecretAppearsBeforeSet(t *testing.T) {
+	for _, phase := range []string{"confirmation", "credential-input", "retry-delay"} {
+		t.Run(phase, func(t *testing.T) {
+			s, f, out := edgeSetupFixture(t)
+			wantSets := 0
+			switch phase {
+			case "confirmation":
+				prompt := s.prompt
+				s.prompt = func(c *huh.Confirm) error { err := prompt(c); f.secret = true; return err }
+				s.in = failEdgeSetupReader{t}
+			case "credential-input":
+				input := strings.NewReader(f.value)
+				s.in = edgeSetupReaderFunc(func(p []byte) (int, error) { f.secret = true; return input.Read(p) })
+			case "retry-delay":
+				f.failures = 1
+				s.sleep = func(context.Context, time.Duration) error { f.secret = true; return nil }
+				wantSets = 1
+			}
+			err := s.repairSecret("lib")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if f.sets != wantSets || f.writes != wantSets || len(f.commands) != wantSets {
+				t.Fatalf("overwrote concurrent secret: sets=%d writes=%d commands=%d; want %d", f.sets, f.writes, len(f.commands), wantSets)
+			}
+			if !strings.Contains(out.String(), "Another process created push secret") || !strings.Contains(out.String(), "leaving it unchanged") {
+				t.Fatalf("missing concurrent-creation report: %s", out)
+			}
+			assertEdgeSetupNoSecret(t, s, f, out, err)
+		})
+	}
+}

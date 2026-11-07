@@ -49,7 +49,7 @@ func (s *stackEdgeSetup) facts() []stackEdgeSetupFact {
 	// FactEWorkflowPublicationInsertionPoint: add the workflow/home publication
 	// fact here once its template lands. There is deliberately no passing stub.
 	facts = append(facts,
-		stackEdgeSetupFact{"f", "publishing repo exists; upstream fork workflows are disabled", "create an empty publishing repo if missing; disable each non-edge fork workflow (each confirmed and read back)", s.checkPublishingRepo, s.repairPublishingRepo},
+		stackEdgeSetupFact{"f", "publishing repo exists; upstream fork workflows are disabled", "configure the default manifest home with rig stack seed --publish; create an explicit publishFrom repo if missing; disable each non-edge fork workflow (each confirmed and read back)", s.checkPublishingRepo, s.repairPublishingRepo},
 		stackEdgeSetupFact{"g", "publishing repo has the push secret", "set the missing push secret from stdin or --push-auth (confirmed), retry 5xx up to 3 tries, read back fresh metadata", s.checkSecret, s.repairSecret},
 		stackEdgeSetupFact{"h", "external consumer package source mapping", "print a nuget.config snippet; never write inside a member", s.printConsumerConfig, nil},
 	)
