@@ -1,14 +1,17 @@
 package cli
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStackEdgeCIFeedFailures(t *testing.T) {
@@ -60,6 +63,117 @@ func TestStackEdgeCIFeedNetworkAndRedirect(t *testing.T) {
 	}
 	if contacts != 0 {
 		t.Fatal("redirect sink received a request")
+	}
+	f = &stackEdgeCIFeed{client: source.Client(), publish: source.URL, key: edgeCIKey}
+	if err := f.push(t.Context(), file, "1.2.4-edge.7"); err == nil || !strings.Contains(err.Error(), "302") {
+		t.Fatal(err)
+	}
+	if contacts != 0 {
+		t.Fatal("push redirect sink received a request")
+	}
+}
+
+func TestStackEdgeCIFeedSlowUpload(t *testing.T) {
+	// Scale the 30-second read window to 50ms. Draining the upload takes
+	// several such windows, without making this regression wait 30 seconds.
+	const readTimeout = 50 * time.Millisecond
+	const version = "1.2.4-edge.7"
+	payload := bytes.Repeat([]byte("package data\n"), 4096)
+	file := filepath.Join(t.TempDir(), "package.nupkg")
+	if err := os.WriteFile(file, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			time.Sleep(4 * readTimeout)
+			fmt.Fprint(w, `{"versions":["1.2.4-edge.6"]}`)
+			return
+		}
+		if r.Header.Get("X-NuGet-ApiKey") != edgeCIKey {
+			t.Error("push credential missing")
+		}
+		parts, err := r.MultipartReader()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		part, err := parts.NextPart()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		var received bytes.Buffer
+		buf := make([]byte, 4096)
+		for {
+			n, err := part.Read(buf)
+			if n > 0 {
+				received.Write(buf[:n])
+				time.Sleep(readTimeout / 2)
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Error(err)
+				return
+			}
+		}
+		if !bytes.Equal(received.Bytes(), payload) {
+			t.Error("upload bytes changed")
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer s.Close()
+	client := s.Client()
+	client.Timeout = readTimeout
+	base := client.Transport.(*http.Transport)
+	originalHeaders := base.ResponseHeaderTimeout
+	f := &stackEdgeCIFeed{client: client, key: edgeCIKey, flat: s.URL, publish: s.URL, pushTimeout: 5 * time.Second}
+	if err := f.push(t.Context(), file, version); err != nil {
+		t.Fatal(err)
+	}
+	if client.Timeout != readTimeout || base.ResponseHeaderTimeout != originalHeaders {
+		t.Fatal("push changed the read client or its transport")
+	}
+	if err := f.monotonic(t.Context(), "You.Lib", version); err == nil || !strings.Contains(err.Error(), "read failed (network)") {
+		t.Fatalf("read lost its short timeout: %v", err)
+	}
+}
+
+func TestStackEdgeCIFeedPushTimeout(t *testing.T) {
+	for _, phase := range []string{"upload-context", "response-headers"} {
+		t.Run(phase, func(t *testing.T) {
+			release := make(chan struct{})
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				<-release // Feed may have stored it while the response is lost.
+				w.WriteHeader(http.StatusCreated)
+			}))
+			defer s.Close()
+			defer close(release)
+			file := filepath.Join(t.TempDir(), "package.nupkg")
+			if err := os.WriteFile(file, []byte("payload"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			f := &stackEdgeCIFeed{client: s.Client(), publish: s.URL, key: edgeCIKey, pushTimeout: 5 * time.Second}
+			if phase == "upload-context" {
+				f.pushTimeout = 100 * time.Millisecond
+			} else {
+				f.pushHeaderTimeout = 100 * time.Millisecond
+			}
+			err := f.push(t.Context(), file, "1.2.4-edge.7")
+			if err == nil {
+				t.Fatal("stalled push succeeded")
+			}
+			for _, text := range []string{"timed out", "1.2.4-edge.7", "may have been stored", "version list", "new increasing --number"} {
+				if !strings.Contains(err.Error(), text) {
+					t.Fatalf("timeout lacks %q: %v", text, err)
+				}
+			}
+			if strings.Contains(err.Error(), edgeCIKey) {
+				t.Fatal("timeout leaked credential")
+			}
+		})
 	}
 }
 

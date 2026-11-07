@@ -4,19 +4,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type stackEdgeCIFeed struct {
 	client             *http.Client
 	key, flat, publish string
+	pushTimeout        time.Duration
+	pushHeaderTimeout  time.Duration
 }
 
 func stackEdgeCIEndpoint(raw string) bool {
@@ -141,6 +146,30 @@ func (f *stackEdgeCIFeed) monotonic(ctx context.Context, id, version string) err
 }
 
 func (f *stackEdgeCIFeed) push(ctx context.Context, path, version string) error {
+	timeout := f.pushTimeout
+	if timeout <= 0 {
+		timeout = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	// Reads keep their short total timeout. Uploads use a separate client so
+	// a large body is bounded by the push context instead of the read timer.
+	client := *f.client
+	client.Timeout = 0
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	if base, ok := transport.(*http.Transport); ok {
+		copy := base.Clone()
+		copy.ResponseHeaderTimeout = f.pushHeaderTimeout
+		if copy.ResponseHeaderTimeout <= 0 {
+			copy.ResponseHeaderTimeout = 2 * time.Minute
+		}
+		client.Transport = copy
+		defer copy.CloseIdleConnections()
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("cannot read package for push")
@@ -168,8 +197,12 @@ func (f *stackEdgeCIFeed) push(ctx context.Context, path, version string) error 
 	}
 	req.ContentLength = int64(len(prefix)+len(suffix)) + stat.Size()
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	response, err := f.client.Do(req)
+	response, err := client.Do(req)
 	if err != nil {
+		var networkError net.Error
+		if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &networkError) && networkError.Timeout() {
+			return fmt.Errorf("NuGet push timed out for version %s; the package may have been stored. Check the package's version list on the configured feed before rerunning; if present, use a new increasing --number", version)
+		}
 		return fmt.Errorf("NuGet push failed (network)")
 	}
 	defer response.Body.Close()

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ type stackEdgeCIOptions struct {
 	Tip, AllowTip, DryRun                                    bool
 	Client                                                   *http.Client
 	PublicFeed                                               string
+	Stderr                                                   io.Writer
 }
 
 func newStackEdgeCICmd() *cobra.Command {
@@ -42,6 +44,7 @@ func newStackEdgeCICmd() *cobra.Command {
 		Long: "Use --seed owner/repo@ref --member name with exactly one of --report or --publish.\n" +
 			"Both jobs require --number from the trusted CI run; publish must match the report.\n" +
 			"Report reconstructs trackBranch, wires, builds, tests and packs.\n" +
+			"Build/test diagnostics stream to stderr, never into the report file.\n" +
 			"Use no credentials in the build job. Tip conflicts write an inconclusive report and exit 0.\n" +
 			"Publish runs no project code: reloads the seed, proves ancestry, ids and version,\n" +
 			"verifies downloaded packages and sha256s, checks feed monotonicity and pushes over HTTP.\n" +
@@ -59,6 +62,7 @@ func newStackEdgeCICmd() *cobra.Command {
 			if o.Publish != "" && (o.Tip || cmd.Flags().Changed("build") || cmd.Flags().Changed("test")) {
 				return fmt.Errorf("--upstream-tip, --build and --test belong to the report job")
 			}
+			o.Stderr = cmd.ErrOrStderr()
 			return stackEdgeCI(cmd.Context(), cmd.OutOrStdout(), o)
 		},
 	}
@@ -84,6 +88,9 @@ func newStackEdgeCICmd() *cobra.Command {
 }
 
 func stackEdgeCI(ctx context.Context, out io.Writer, o stackEdgeCIOptions) (err error) {
+	if o.Stderr == nil {
+		o.Stderr = io.Discard
+	}
 	if o.Client == nil {
 		o.Client = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -170,12 +177,12 @@ func stackEdgeCI(ctx context.Context, out io.Writer, o stackEdgeCIOptions) (err 
 		if err != nil {
 			return err
 		}
-		if err = stackCanaryRun(ctx, rebuilt.Root, exe, "stack", "wire"); err != nil {
-			return fmt.Errorf("edge wire failed")
+		if err = stackEdgeCIRun(ctx, rebuilt.Root, o.Stderr, exe, "stack", "wire"); err != nil {
+			return fmt.Errorf("edge wire failed: %w", err)
 		}
 		for i, command := range []string{o.Build, o.Test} {
-			if err = stackCanaryRun(ctx, rebuilt.Root, "bash", "-eo", "pipefail", "-c", command); err != nil {
-				return fmt.Errorf("edge %s failed", []string{"build", "test"}[i])
+			if err = stackEdgeCIRun(ctx, rebuilt.Root, o.Stderr, "bash", "-eo", "pipefail", "-c", command); err != nil {
+				return fmt.Errorf("edge %s failed: %w", []string{"build", "test"}[i], err)
 			}
 		}
 		builtManifest, _, err := loadStackManifest(rebuilt.Root)
@@ -197,6 +204,14 @@ func stackEdgeCI(ctx context.Context, out io.Writer, o stackEdgeCIOptions) (err 
 	}
 	_, err = fmt.Fprintf(out, "Edge report: %s\n", r.Status)
 	return err
+}
+
+func stackEdgeCIRun(ctx context.Context, root string, stderr io.Writer, program string, args ...string) error {
+	p := exec.CommandContext(ctx, program, args...)
+	p.Dir = root
+	p.Env = append(stackCanaryEnv(), "RIG_STACK_CI_VERIFIED=1", "GIT_AUTHOR_NAME=rig", "GIT_AUTHOR_EMAIL=rig@localhost", "GIT_COMMITTER_NAME=rig", "GIT_COMMITTER_EMAIL=rig@localhost")
+	p.Stdout, p.Stderr = stderr, stderr
+	return p.Run()
 }
 
 func stackEdgeCIReadReport(path string) (stackEdgeCIReport, error) {

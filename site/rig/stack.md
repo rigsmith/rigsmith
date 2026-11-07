@@ -1295,13 +1295,15 @@ rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --report 
 rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --publish report/edge.json -o report/edge-out
 ```
 
-The workflow passes `${{ github.run_number }}` explicitly as the required
+The workflow passes <code v-pre>${{ github.run_number }}</code> explicitly as the required
 `--number` in **both** jobs. The publisher refuses a report with a different
 number, so a compromised builder cannot reserve an inflated number. Report
 reconstructs the pinned seed and trackBranch, wires, runs `--build` and `--test`
 (default `rig build` and `rig test`, interpreted by bash), then calls the shared
 pack path. It writes commits, ids, version, package sizes, verification expectations
-and SHA-256 digests, never subprocess output. Upload `edge.json` and the `.nupkg`
+and SHA-256 digests, never subprocess output. Build and test stdout/stderr stream
+to the command's stderr for the job log; failures preserve the subprocess error
+and leave any existing report file untouched. Upload `edge.json` and the `.nupkg`
 files together. No feed key belongs in this job; a configured push credential in
 the environment is refused before project execution.
 
@@ -1349,6 +1351,11 @@ push, refusing non-increasing run numbers after workflow resets. A 409 names the
 already-existing version and fails; network errors and 5xx also fail without a
 retry loop. Pushes are sequential; a later failure can leave earlier packages on
 the feed, so use a new increasing number for a complete rerun.
+Feed index and version-list reads retain a short timeout. Pushes have a separate
+15-minute context deadline and a two-minute response-header timeout, allowing
+large uploads without the read client's 30-second total limit. A push timeout
+warns that the package may already have been stored: check its version list on
+the configured feed before rerunning, and use a new increasing number if present.
 
 `--upstream-tip` conflicts write an inconclusive report and exit 0; the template
 skips its publish job. A clean tip report carries `tip: true`. Tip publishing is
