@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 )
 
@@ -79,12 +78,7 @@ func stackReleaseProposalProof(ctx context.Context, a stackDepsAPI, m *stackMani
 	if item.PR == 0 {
 		pr, err = a.proposal(ctx, r, item.Proposal)
 	} else {
-		host, slug, ok := strings.Cut(r.Upstream, "/")
-		u, parseErr := url.Parse(a.base)
-		if !ok || parseErr != nil || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != host && !(host == "github.com" && u.Hostname() == "api.github.com")) {
-			return proof, fmt.Errorf("API host does not match upstream")
-		}
-		err = a.request(ctx, "GET", fmt.Sprintf("/repos/%s/pulls/%d", slug, item.PR), nil, &pr)
+		pr, err = a.pullRequest(ctx, r, item.PR)
 	}
 	if err != nil {
 		return proof, fmt.Errorf("can't check proposal: %w", err)

@@ -27,6 +27,7 @@ type stackEdgeStatusItem struct {
 	MergeCommit   string `json:"mergeCommit,omitempty"`
 	ReleaseCommit string `json:"releaseCommit,omitempty"`
 	Note          string `json:"note,omitempty"`
+	Warning       string `json:"warning,omitempty"`
 }
 
 type stackEdgeStatusReport struct {
@@ -51,6 +52,7 @@ func newStackEdgeStatusCmd() *cobra.Command {
 		Use:   "status [member]",
 		Short: "Show carried fixes, integration freshness and edge retirement evidence",
 		Long: "Reads each recorded proposal and adopted PR using public NuGet repository commit evidence.\n" +
+			"Warns when an adopted PR head moves beyond its pin; pinned content and release verdicts stay unchanged.\n" +
 			"Shows unproposed content, local integration receipt freshness, upstream base freshness,\n" +
 			"and the newest edge version (authenticated feeds report can't check; no feed credentials are used).\n" +
 			"Retirement requires every item released in one public version and a three-way content merge\n" +
@@ -118,6 +120,9 @@ func newStackEdgeStatusCmd() *cobra.Command {
 				}
 				if item.Note != "" {
 					state += " — " + item.Note
+				}
+				if item.Warning != "" {
+					state += " — warning: " + item.Warning
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "  %-30s %s\n", strings.TrimSpace(item.Kind+" "+item.Name), state)
 			}
@@ -224,7 +229,14 @@ func stackEdgeMemberStatus(ctx context.Context, api stackDepsAPI, root string, m
 			n = -1 // the manifest accepts uint64; the API helper requires an int
 		}
 		inputs = append(inputs, stackReleaseItem{PR: n})
-		labels = append(labels, stackEdgeStatusItem{Kind: "adopted", Name: adopted.PR})
+		item := stackEdgeStatusItem{Kind: "adopted", Name: adopted.PR}
+		moved, err := stackEdgeAdoptedMoved(ctx, api, member, []stackEdgeAdopted{adopted})
+		if err != nil {
+			item.Note = "can't check adopted PR head: " + err.Error()
+		} else if len(moved) != 0 {
+			item.Warning = moved[0].Warning
+		}
+		labels = append(labels, item)
 	}
 	accounted := r.TrackBase
 	accountErr := historyErr
@@ -241,7 +253,7 @@ func stackEdgeMemberStatus(ctx context.Context, api stackDepsAPI, root string, m
 		}
 		item.Status, item.Version, item.MergeCommit, item.ReleaseCommit = proof.Status, proof.Version, proof.MergeCommit, proof.ReleaseCommit
 		if proofErr != nil {
-			item.Note = proofErr.Error()
+			item.Note = strings.TrimSpace(strings.Join([]string{item.Note, proofErr.Error()}, " "))
 		}
 		if item.Status == "" {
 			item.Status = "can't check"

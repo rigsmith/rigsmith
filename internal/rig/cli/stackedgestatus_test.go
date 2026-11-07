@@ -23,6 +23,7 @@ type edgeStatusFixture struct {
 	api                                                   *httptest.Server
 	merged, inCursor, published, private                  bool
 	adopted, missingMetadata, compareError, extraPR       bool
+	adoptedHead                                           string
 }
 
 func newEdgeStatusFixture(t *testing.T) *edgeStatusFixture {
@@ -84,7 +85,11 @@ func newEdgeStatusFixture(t *testing.T) *edgeStatusFixture {
 			if f.merged {
 				merged = `"today"`
 			}
-			fmt.Fprintf(w, `{"number":7,"merged_at":%s,"merge_commit_sha":%q,"head":{"sha":%q}}`, merged, f.fix, f.fix)
+			head := f.fix
+			if f.adoptedHead != "" {
+				head = f.adoptedHead
+			}
+			fmt.Fprintf(w, `{"number":7,"merged_at":%s,"merge_commit_sha":%q,"head":{"sha":%q}}`, merged, f.fix, head)
 		case r.URL.Path == "/repos/acme/lib/pulls/8":
 			fmt.Fprintf(w, `{"number":8,"merged_at":null,"head":{"sha":%q}}`, f.fix)
 		case strings.Contains(r.URL.Path, "/compare/"):
@@ -259,6 +264,36 @@ func TestStackEdgeStatusAdopted(t *testing.T) {
 	r := f.report(t)
 	if len(r.Items) != 1 || r.Items[0].Kind != "adopted" || r.Items[0].Status != "released in V" || !r.Retirable {
 		t.Fatalf("adopted PR not proven by number: %+v", r)
+	}
+}
+
+func TestStackEdgeStatusAdoptedMoved(t *testing.T) {
+	for _, released := range []bool{false, true} {
+		t.Run(fmt.Sprintf("released-%t", released), func(t *testing.T) {
+			f := newEdgeStatusFixture(t)
+			f.adopted, f.merged, f.published = true, released, released
+			f.manifest(t)
+			before := f.report(t)
+			if before.Items[0].Warning != "" {
+				t.Fatalf("matching head warned: %+v", before.Items[0])
+			}
+			f.adoptedHead = f.release
+			after := f.report(t)
+			warning := after.Items[0].Warning
+			for _, want := range []string{"has moved from " + f.fix + " to " + f.release, "re-run `rig stack edge adopt`", "then update the pin"} {
+				if !strings.Contains(warning, want) {
+					t.Fatalf("missing warning %q: %+v", want, after.Items[0])
+				}
+			}
+			after.Items[0].Warning = ""
+			if !reflect.DeepEqual(before, after) {
+				t.Fatalf("head movement changed pinned-content/release/retirement verdict: before=%+v after=%+v", before, after)
+			}
+			out, err := f.command(t)
+			if err != nil || !strings.Contains(out, "warning: "+warning) {
+				t.Fatalf("text warning: %v\n%s", err, out)
+			}
+		})
 	}
 }
 

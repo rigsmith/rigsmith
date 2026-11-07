@@ -11,6 +11,7 @@ description: >
   setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing edge builds under republished NuGet ids and checking edge retirement, switching consumers from republished/edge package ids back to the original public ids,
+  adopting upstream PRs as import-rooted edge topics,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
@@ -309,6 +310,27 @@ Dry runs: `ci`, `ci-guard`, `deps` (even without `--publish`), setup writers and
 offline seed exports refuse `-n`; `home` is read-only. Seed publication previews
 without cloning/pushing, retaining local safety checks. See the
 [dry-run contract](https://rigsmith.dev/rig/verbs) before previewing other verbs.
+
+### Adopting someone else's upstream PR
+
+Use `rig stack edge adopt lib https://github.com/acme/Lib/pull/412` for a foreign
+PR. It validates the upstream, reads GitHub, fetches only the PR head from its
+head repository, and merges its change onto the member's cursor tree. The topic
+`stack-pr-adopt-412` has the member's import commit as its only parent, preserving
+the import's root and sibling trees. Keep cursor history available locally.
+Conflicts refuse: the PR needs rebasing onto the cursor or importing by hand as
+a topic. An existing identical topic is a no-op; different content refuses
+overwrite. Preserve or rename the old topic before adopting an updated PR.
+`--dry-run` writes no branch; member names complete.
+
+Relay the printed next steps: merge the topic into the integration line, add the
+exact printed `{ "pr": ..., "commit": "<full SHA>" }` to `edge.lib.adopted`, then
+run `rig stack propose lib --track-only`. Adopt never writes the hand-authored
+manifest, merges, proposes or pushes. If a head moves past its pin, `edge status`
+warns per item in text and JSON. Re-run adopt to update the topic, merge it, and
+update the pin. The warning changes no release state or retirement verdict;
+builds keep using pinned content. Do not replace adoption with a build-time PR
+merge list.
 
 ### Four different things called "branch"
 

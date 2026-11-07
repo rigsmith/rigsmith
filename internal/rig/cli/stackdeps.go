@@ -141,6 +141,20 @@ func (a stackDepsAPI) proposal(ctx context.Context, r *stackRepo, p stackProposa
 	}
 	return zero, fmt.Errorf("no PR found for proposal branch")
 }
+
+func (a stackDepsAPI) pullRequest(ctx context.Context, r *stackRepo, number int) (stackDepsPR, error) {
+	var pr stackDepsPR
+	host, slug, ok := strings.Cut(r.Upstream, "/")
+	u, err := url.Parse(a.base)
+	if !ok || err != nil || (u.Hostname() != "127.0.0.1" && u.Hostname() != "localhost" && u.Hostname() != host && !(host == "github.com" && u.Hostname() == "api.github.com")) {
+		return pr, fmt.Errorf("API host does not match upstream")
+	}
+	if number <= 0 {
+		return pr, fmt.Errorf("invalid PR number")
+	}
+	err = a.request(ctx, "GET", fmt.Sprintf("/repos/%s/pulls/%d", slug, number), nil, &pr)
+	return pr, err
+}
 func (a stackDepsAPI) dependency(ctx context.Context, r *stackRepo, p stackProposal, cursor string) (string, bool) {
 	pr, err := a.proposal(ctx, r, p)
 	if err != nil {
