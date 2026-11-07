@@ -45,6 +45,17 @@ publishing requires `--allow-tip-publish`. Third-party dependencies and assembly
 names use the build report’s evaluation claims.
 See [Edge builds](site/rig/stack.md#edge-builds).
 
+`rig stack edge init lib` checks setup, runs a temporary unpublishable pack,
+writes `.github/workflows/stack-edge.yml` at the stackspace root, commits only
+that file and publishes the configured manifest home. Every write, commit and
+outward setup action requires terminal confirmation; there is no `--yes`.
+It creates or updates default-branch-only `edge-publish` in the publishing repo
+and sets its missing environment secret from stdin or `--push-auth`, never
+overwriting it. Repository-secret copies are reported for you to delete.
+`rig stack doctor --edge` checks the same facts without repairing them; `-n`
+skips packing and prints setup plans. Commit other root edits before seed
+publication, and select a reviewed rig release in the generated workflow.
+
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,
 keeping unreachable siblings absent.
@@ -72,7 +83,8 @@ content refuse; identical content is a no-op. `--dry-run` creates no branch,
 and member names complete. Merge the topic into the integration line, add the
 exact `adopted` entry printed by the command, then run
 `rig stack propose lib --track-only`. Adopt never writes the manifest or pushes.
-`edge status` warns in text and JSON when the PR head moves; builds retain pinned
+`edge status` and `edge ci --report` warn in text and JSON when the PR head moves;
+CI records `adoptedMoved: [{pr, pinned, head, warning}]`. Builds retain pinned
 content and release/retirement verdicts are unchanged. See
 [adopting a PR](site/rig/stack.md#adopt-someone-elses-pr).
 

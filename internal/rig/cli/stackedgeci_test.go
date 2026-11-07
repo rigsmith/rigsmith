@@ -372,12 +372,81 @@ func TestStackEdgeCIMenu(t *testing.T) {
 			t.Fatalf("menu entry %q must run without positional arguments", entry.Label)
 		}
 	}
-	if !reflect.DeepEqual(labels, []string{"pack", "status", "adopt"}) {
-		t.Fatalf("interactive edge actions = %q; CI and hidden init must be absent", labels)
+	if !reflect.DeepEqual(labels, []string{"init", "pack", "status", "adopt"}) {
+		t.Fatalf("interactive edge actions = %q; CI must be absent", labels)
 	}
 	edge := newStackEdgeCmd()
 	ci, _, err := edge.Find([]string{"ci"})
 	if err != nil || ci == edge || ci.Hidden {
 		t.Fatal("CI must remain discoverable from the command line")
+	}
+}
+
+func (f *edgeCITestFixture) adoptedMoves(t *testing.T) []stackEdgeAdoptedMove {
+	t.Helper()
+	m, _, err := loadStackManifest(f.checkout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned, head := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	pr := "https://" + m.Repos["lib"].Upstream + "/pull/2"
+	m.Edge["lib"].Adopted = []stackEdgeAdopted{{PR: pr, Commit: pinned}, {PR: strings.TrimSuffix(pr, "2") + "1", Commit: pinned}}
+	data, _ := json.Marshal(m)
+	writeStackManifest(t, f.checkout, string(data))
+	mustGitStack(t, f.checkout, "add", "rig.stack.jsonc")
+	mustGitStack(t, f.checkout, "-c", "user.name=test", "-c", "user.email=test@localhost", "commit", "-qm", "adopted pins")
+	mustGitStack(t, f.checkout, "push", f.o.Seed, "HEAD")
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("movement check wrote: %s", r.Method)
+		}
+		if strings.HasSuffix(r.URL.Path, "/pulls/1") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path != "/repos/acme/lib/pulls/2" {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		fmt.Fprintf(w, `{"head":{"sha":%q}}`, head)
+	}))
+	t.Cleanup(api.Close)
+	t.Setenv("GITHUB_API_URL", api.URL)
+	return []stackEdgeAdoptedMove{{PR: pr, Pinned: pinned, Head: head}}
+}
+
+func TestStackEdgeCIReportAdoptedMoved(t *testing.T) {
+	f := newEdgeCITestFixture(t)
+	want := f.adoptedMoves(t)
+	t.Setenv("EDGE_FEED_KEY", "")
+	f.g.commit(t, "acme/lib", "fix.txt", "upstream conflict\n", "advance upstream")
+	f.o.Publish, f.o.Report, f.o.Tip = "", filepath.Join(t.TempDir(), "edge.json"), true
+	var out bytes.Buffer
+	if err := stackEdgeCI(t.Context(), &out, f.o); err != nil {
+		t.Fatal(err)
+	}
+	r, err := stackEdgeCIReadReport(f.o.Report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "inconclusive" || len(r.AdoptedMoved) != 1 || r.AdoptedMoved[0].PR != want[0].PR || r.AdoptedMoved[0].Pinned != want[0].Pinned || r.AdoptedMoved[0].Head != want[0].Head || r.AdoptedMoved[0].Warning == "" {
+		t.Fatalf("report moves: %+v", r)
+	}
+	if !strings.Contains(out.String(), r.AdoptedMoved[0].Warning) || !strings.Contains(out.String(), "could not check every adopted PR") {
+		t.Fatalf("warnings missing: %s", &out)
+	}
+	data, _ := os.ReadFile(f.o.Report)
+	if !strings.Contains(string(data), `"adoptedMoved"`) || !strings.Contains(string(data), `"pinned"`) {
+		t.Fatal("report fields missing")
+	}
+}
+
+func TestStackEdgeCIPublishAdoptedMovedDoesNotBlock(t *testing.T) {
+	f := newEdgeCITestFixture(t)
+	f.r.AdoptedMoved = []stackEdgeAdoptedMove{{PR: "https://github.com/acme/Lib/pull/2", Pinned: strings.Repeat("a", 40), Head: strings.Repeat("b", 40), Warning: "adopted PR moved"}}
+	if _, err := f.run(t); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.f.pushes) != 1 {
+		t.Fatal("warning blocked publish")
 	}
 }

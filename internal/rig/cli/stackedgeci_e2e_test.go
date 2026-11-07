@@ -21,6 +21,7 @@ func TestStackEdgeCIReportDotnetE2E(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Second)
 	defer cancel()
 	f := newEdgeCITestFixture(t)
+	wantMoves := f.adoptedMoves(t)
 	t.Setenv("EDGE_FEED_KEY", "")
 	t.Setenv("RIG_STACK_CACHE", "")
 	exe := filepath.Join(t.TempDir(), "rig"+stackExeSuffix())
@@ -53,6 +54,9 @@ func TestStackEdgeCIReportDotnetE2E(t *testing.T) {
 	}
 	if r.Status != "packed" || r.Tip || r.Number != 7 || r.Pack.Commit != f.track || r.Pack.Version != "1.2.4-edge.7" || len(r.SHA256) != 1 {
 		t.Fatalf("report=%+v", r)
+	}
+	if len(r.AdoptedMoved) != 1 || r.AdoptedMoved[0].PR != wantMoves[0].PR || r.AdoptedMoved[0].Warning == "" || !strings.Contains(out.String(), r.AdoptedMoved[0].Warning) {
+		t.Fatalf("moved PR warning missing: %+v; %s", r.AdoptedMoved, &out)
 	}
 	b, err := os.ReadFile(f.o.Report)
 	if err != nil {

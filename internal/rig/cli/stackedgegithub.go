@@ -177,7 +177,7 @@ func (s *stackEdgeSetup) secretLocation(name string) (string, string, error) {
 
 func (s *stackEdgeSetup) secretMetadata(slug, secret string) (stackEdgeSecretMetadata, error) {
 	var meta stackEdgeSecretMetadata
-	err := s.api.request(s.ctx, "GET", "/repos/"+slug+"/actions/secrets/"+url.PathEscape(secret), nil, &meta)
+	err := s.api.request(s.ctx, "GET", stackEdgeEnvironmentPath(slug)+"/secrets/"+url.PathEscape(secret), nil, &meta)
 	if err != nil {
 		// A malformed response may echo a credential in a timestamp or JSON error.
 		var status *stackDepsHTTPError
@@ -197,8 +197,14 @@ func (s *stackEdgeSetup) checkSecret(name string) error {
 	if err != nil {
 		return err
 	}
+	repoErr := s.api.request(s.ctx, "GET", "/repos/"+slug+"/actions/secrets/"+url.PathEscape(secret), nil, nil)
+	if repoErr == nil {
+		repoErr = fmt.Errorf("repository secret %s also exists in %s: it bypasses edge-publish branch protection; delete the repository secret yourself (edge never deletes it)", secret, slug)
+	} else if stackEdgeMissing(repoErr) {
+		repoErr = nil
+	}
 	_, err = s.secretMetadata(slug, secret)
-	return err
+	return errors.Join(repoErr, err)
 }
 
 var stackEdgeSecretHTTP5xx = regexp.MustCompile(`(?i)\bHTTP(?:/\S+)?[ :()]+5[0-9][0-9]\b`)
@@ -259,7 +265,10 @@ func (s *stackEdgeSetup) repairSecret(name string) error {
 	} else if !stackEdgeMissing(err) {
 		return err
 	}
-	if err := s.confirm("set push secret " + secret + " in " + slug + " from stdin or the publish-auth reference"); err != nil {
+	if err := s.checkEnvironment(name); err != nil {
+		return fmt.Errorf("protect edge-publish before setting its secret: %w", err)
+	}
+	if err := s.confirm("set environment push secret " + secret + " in " + slug + "/edge-publish from stdin or the publish-auth reference"); err != nil {
 		return err
 	}
 	if _, err := s.secretMetadata(slug, secret); err == nil {
@@ -273,6 +282,9 @@ func (s *stackEdgeSetup) repairSecret(name string) error {
 		return err
 	}
 	for attempt := 0; attempt < 3; attempt++ {
+		if err := s.checkEnvironment(name); err != nil {
+			return fmt.Errorf("edge-publish protection changed before setting its secret: %w", err)
+		}
 		// Credential input and retry delays can outlive the absence check.
 		// GitHub's create-or-update API cannot make this check/write atomic.
 		if _, err := s.secretMetadata(slug, secret); err == nil {
@@ -282,7 +294,7 @@ func (s *stackEdgeSetup) repairSecret(name string) error {
 			return err
 		}
 		started := s.now().UTC()
-		output, setErr := s.run(s.ctx, "gh", []string{"secret", "set", secret, "--repo", "github.com/" + slug}, strings.NewReader(value))
+		output, setErr := s.run(s.ctx, "gh", []string{"secret", "set", secret, "--repo", "github.com/" + slug, "--env", stackEdgePublishEnvironment}, strings.NewReader(value))
 		if setErr == nil {
 			meta, err := s.secretMetadata(slug, secret)
 			if err != nil {

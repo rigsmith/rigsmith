@@ -355,8 +355,10 @@ The top-level `edge` map sits beside `repos`, keyed by member. `rig stack edge
 pack <member>` reconstructs the committed manifest and fork trackBranch, then
 renames, versions, packs and verifies the member’s .NET packages.
 `rig stack edge status [member]` reports carried fixes, freshness and retirement
-evidence. Neither publishes to a feed. **`edge ci` and `edge init` are not built
-yet.** rig treats this block as hand-authored input and never rewrites it. See
+evidence. Neither publishes to a feed. `edge init` sets up the root workflow,
+publishing environment and environment secret; `stack doctor --edge` checks the
+same facts read-only. `edge ci` separates credential-free builds from verified
+publication. Rig treats this block as hand-authored input and never rewrites it. See
 [Edge builds](./stack#edge-builds) for flags and report outcomes.
 
 ```jsonc

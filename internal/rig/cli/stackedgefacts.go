@@ -46,11 +46,11 @@ func (s *stackEdgeSetup) facts() []stackEdgeSetupFact {
 		{"c", "republished references are redirected and the overlay is current", "run rig stack wire at the root, without editing members", s.checkWiring, s.repairWiring},
 		{"d", "local unpublishable pack verifies nuspecs and reports sizes", "reconstruct and build in temporary directories with number 0; runs project code and can take a while", func(name string) error { return s.pack(s.ctx, s.out, s.root, name) }, nil},
 	}
-	// FactEWorkflowPublicationInsertionPoint: add the workflow/home publication
-	// fact here once its template lands. There is deliberately no passing stub.
 	facts = append(facts,
+		stackEdgeSetupFact{"e", "root edge workflow matches the template and is published to the manifest home", "write the root workflow, commit only that path, and run rig stack seed --publish (each confirmed)", s.checkWorkflowPublication, s.repairWorkflowPublication},
 		stackEdgeSetupFact{"f", "publishing repo exists; upstream fork workflows are disabled", "configure the default manifest home with rig stack seed --publish; create an explicit publishFrom repo if missing; disable each non-edge fork workflow (each confirmed and read back)", s.checkPublishingRepo, s.repairPublishingRepo},
-		stackEdgeSetupFact{"g", "publishing repo has the push secret", "set the missing push secret from stdin or --push-auth (confirmed), retry 5xx up to 3 tries, read back fresh metadata", s.checkSecret, s.repairSecret},
+		stackEdgeSetupFact{"g-environment", "edge-publish environment permits only the publishing repo's default branch", "create or update edge-publish and its deployment-branch rule (each confirmed and read back)", s.checkEnvironment, s.repairEnvironment},
+		stackEdgeSetupFact{"g", "edge-publish has the push secret, with no repository copy", "set the missing environment secret from stdin or --push-auth (confirmed), retry 5xx up to 3 tries, read back fresh metadata; report repository copies for manual deletion", s.checkSecret, s.repairSecret},
 		stackEdgeSetupFact{"h", "external consumer package source mapping", "print a nuget.config snippet; never write inside a member", s.printConsumerConfig, nil},
 	)
 	return facts

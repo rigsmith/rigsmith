@@ -21,7 +21,7 @@ func newStackEdgeInitCmd() *cobra.Command {
 	var preview bool
 	var authRef string
 	cmd := &cobra.Command{
-		Use: "init [member]", Hidden: true,
+		Use:   "init [member]",
 		Short: "Check and set up edge publishing from the manifest",
 		Long: "Checks the shared edge setup facts, repairs missing facts, then checks them again.\n" +
 			"Manifest edits and consumer NuGet configuration are printed only. Outward actions\n" +

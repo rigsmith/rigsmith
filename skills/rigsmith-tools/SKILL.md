@@ -11,7 +11,7 @@ description: >
   setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
   forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing and publishing edge builds through separate credential-free build and trusted publish jobs under republished NuGet ids, and checking edge retirement, switching consumers from republished/edge package ids back to the original public ids,
-  adopting upstream PRs as import-rooted edge topics,
+  adopting upstream PRs as import-rooted edge topics, setting up edge publishing with interactive confirmation and checking its shared facts with doctor --edge,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
@@ -121,6 +121,22 @@ Custom commands honor `--dry-run`, forward extra args, and take `env`/`cwd`/
 
 ### Scheduled cursor updates
 
+For edge setup, use `rig stack edge init [member]` and check it with
+`rig stack doctor --edge`. Both read the same ordered facts. Init performs a
+temporary real pack with number 0, writes the root workflow from the embedded
+template, commits only that path, then publishes the configured manifest home.
+It creates a missing explicit `publishFrom` repo, never the home. Every write,
+commit, publish, environment change and fork-workflow disable confirms on a
+terminal; there is no `--yes` or non-TTY bypass. The `edge-publish` environment
+must permit only the publishing repo's default branch. The push key is an
+environment secret, supplied through stdin or `--push-auth`, never argv; init
+sets only missing secrets, retries only 5xx up to three times and verifies fresh
+metadata. Report repository-secret copies for the user to delete; never delete
+them yourself. Commit other root edits before seed publication, and select a
+reviewed rig release in the generated workflow. `-n` prints plans and skips the
+temporary pack and all repairs. Init prints manifest edits and consumer
+`nuget.config` mapping; it never writes inside a member.
+
 Use `rig stack canary --seed acme/rigstack-app@main --report canary.json`
 in a read-only job, then `rig stack canary --seed acme/rigstack-app@main
 --publish canary.json` on a fresh trusted runner with `contents: write`,
@@ -201,6 +217,8 @@ rig stack propose <repo> <b> --from <topic>  # ...or one topic branch (needs tra
 rig stack init                         # scaffold the manifest; run again to import
 rig stack edge pack <member> --number 42 # reconstruct trackBranch; rename, version, pack, verify
 rig stack edge status [member]        # read carried fixes, freshness and retirement evidence
+rig stack edge init [member]          # confirm each setup action; no non-TTY bypass
+rig stack doctor --edge               # read-only setup facts; -n skips temporary pack
 rig stack edge ci --seed acme/stack@main --member lib --number 42 --report edge.json # no credentials
 rig stack edge ci --seed acme/stack@main --member lib --number 42 --publish edge.json # fresh trusted runner
 rig stack pack <repo>                  # build that member's packages HERE (overlay in effect)
@@ -351,7 +369,9 @@ Relay the printed next steps: merge the topic into the integration line, add the
 exact printed `{ "pr": ..., "commit": "<full SHA>" }` to `edge.lib.adopted`, then
 run `rig stack propose lib --track-only`. Adopt never writes the hand-authored
 manifest, merges, proposes or pushes. If a head moves past its pin, `edge status`
-warns per item in text and JSON. Re-run adopt to update the topic, merge it, and
+warns per item in text and JSON, and `edge ci --report` prints the same warnings
+and records `adoptedMoved: [{pr, pinned, head, warning}]`. Neither blocks a build
+or publish; that decision belongs to the user. Re-run adopt to update the topic, merge it, and
 update the pin. The warning changes no release state or retirement verdict;
 builds keep using pinned content. Do not replace adoption with a build-time PR
 merge list.

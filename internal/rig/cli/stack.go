@@ -51,7 +51,7 @@ func newStackCmd() *cobra.Command {
 			"  rig stack wire                          write the build overlay for the members\n" +
 			"  rig stack pack [repo]                   build a member's packages here, where the overlay applies\n" +
 			"  rig stack edge                          build and publish carried fixes; check retirement\n" +
-			"  rig stack doctor                        engine + manifest checks (--fix installs josh)",
+			"  rig stack doctor                        engine + manifest checks; --edge checks edge setup",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -2183,7 +2183,9 @@ func newStackDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "doctor",
 		Long: "Check the engine and manifest. With --fix --dry-run, report the installation\n" +
-			"that would be attempted without downloading or installing anything.",
+			"that would be attempted without downloading or installing anything.\n" +
+			"With --edge, check edge publishing setup facts without repairing them.\n" +
+			"Use rig stack edge init to repair missing edge setup facts.",
 		Short: "Check the stack engine and manifest; --fix installs the pinned josh",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -2270,7 +2272,6 @@ func newStackDoctorCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&fix, "fix", false, "install what's missing")
 	cmd.Flags().BoolVar(&edge, "edge", false, "check edge setup facts without changing them")
-	_ = cmd.Flags().MarkHidden("edge")
 	return cmd
 }
 
@@ -2346,7 +2347,7 @@ func stackMenuItems() []menuItem {
 		{label: "push", desc: "a repo you own back to its own branch, history intact (pick one)", cmd: newStackPushMenuCmd()},
 		{label: "wire", desc: "write the build overlay so members resolve each other from source", cmd: newStackWireCmd()},
 		{label: "pack", desc: "build a member's packages here, where the overlay makes siblings resolve", cmd: newStackPackCmd()},
-		{label: "edge", desc: "pack carried fixes, adopt upstream PRs and check retirement", cmd: newStackEdgeCmd()},
+		{label: "edge", desc: "set up publishing, pack fixes, adopt PRs and check retirement", cmd: newStackEdgeCmd()},
 		{label: "doctor", desc: "check the engine and manifest", cmd: newStackDoctorCmd()},
 		{label: "seed", desc: "export just the root files as a small repo, to rebuild this stackspace elsewhere (asks where)", cmd: newStackSeedMenuCmd()},
 	}
