@@ -4,11 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
+// trackOnly runs an integration-only refresh for lib while restoring the global
+// dry-run setting before returning to the caller.
 func trackOnly(t *testing.T, preview bool) (string, error) {
 	t.Helper()
 	cmd := newStackSendCmd()
@@ -21,6 +25,8 @@ func trackOnly(t *testing.T, preview bool) (string, error) {
 	return runVerbOut(context.Background(), cmd, "lib")
 }
 
+// trackStackspace creates a two-fix stackspace and bare upstream/fork remotes,
+// then makes the stackspace the working directory for the test.
 func trackStackspace(t *testing.T, track string) (string, string, *gitServer) {
 	t.Helper()
 	work := t.TempDir()
@@ -32,6 +38,8 @@ func trackStackspace(t *testing.T, track string) (string, string, *gitServer) {
 	return ws, fork, srv
 }
 
+// assertIntegrationSnapshot checks the remote tree, its single upstream parent,
+// and the local receipt identifying the published integration commit.
 func assertIntegrationSnapshot(t *testing.T, ws, fork, tip string) {
 	t.Helper()
 	commit := strings.TrimSpace(mustGitStack(t, fork, "rev-parse", "stack/integration"))
@@ -46,6 +54,8 @@ func assertIntegrationSnapshot(t *testing.T, ws, fork, tip string) {
 	}
 }
 
+// TestStackProposeFromRequiresIntegrationLine verifies that a checkout missing the
+// selected topic refuses both real and preview proposals before recording a push.
 func TestStackProposeFromRequiresIntegrationLine(t *testing.T) {
 	ws, fork, _ := trackStackspace(t, "stack/integration")
 	// This checkout carries A alone; the topic being proposed is B.
@@ -67,6 +77,8 @@ func TestStackProposeFromRequiresIntegrationLine(t *testing.T) {
 	}
 }
 
+// TestStackProposeTrackOnlyRefresh verifies a refresh after a simulated pull,
+// preserving proposal records and leaving both integration refs untouched in preview.
 func TestStackProposeTrackOnlyRefresh(t *testing.T) {
 	ws, fork, srv := trackStackspace(t, "stack/integration")
 	if out, err := propose(t, "lib", "fix-b", "fix-b"); err != nil {
@@ -120,6 +132,8 @@ func TestStackProposeTrackOnlyRefresh(t *testing.T) {
 	}
 }
 
+// TestStackProposeTrackOnlyIdempotent proves an exact remote match attempts no
+// push and can restore a missing local receipt without recording a proposal.
 func TestStackProposeTrackOnlyIdempotent(t *testing.T) {
 	ws, fork, srv := trackStackspace(t, "stack/integration")
 	if out, err := trackOnly(t, false); err != nil {
@@ -152,6 +166,8 @@ func TestStackProposeTrackOnlyIdempotent(t *testing.T) {
 	}
 }
 
+// TestStackProposeTrackOnlyGuards covers manifest, cursor, prefix cleanliness and
+// local topic ancestry checks, including ignoring a deleted recorded topic.
 func TestStackProposeTrackOnlyGuards(t *testing.T) {
 	for _, guard := range []string{"missing-track", "stale-cursor", "dirty-prefix", "unmerged-topic", "deleted-topic"} {
 		t.Run(guard, func(t *testing.T) {
@@ -204,6 +220,47 @@ func TestStackProposeTrackOnlyGuards(t *testing.T) {
 	}
 }
 
+// TestStackProposeTrackOnlyTopicLookupError ensures a failed branch lookup cannot
+// be mistaken for a deleted topic and bypass the integration ancestry guard.
+func TestStackProposeTrackOnlyTopicLookupError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Git wrapper uses a POSIX shell")
+	}
+	ws, fork, _ := trackStackspace(t, "stack/integration")
+	if out, err := propose(t, "lib", "fix-b", "fix-b"); err != nil {
+		t.Fatalf("initial proposal: %v\n%s", err, out)
+	}
+	beforeRemote := mustGitStack(t, fork, "for-each-ref")
+	beforeLocal := mustGitStack(t, ws, "rev-parse", "refs/rigsmith/integration/lib")
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := t.TempDir()
+	script := "#!/bin/sh\nfor arg in \"$@\"; do\n case \"$arg\" in\n for-each-ref|show-ref) echo 'topic lookup failed' >&2; exit 128 ;;\n esac\ndone\nexec \"$RIG_TEST_REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(wrapper, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RIG_TEST_REAL_GIT", realGit)
+	previousPath := os.Getenv("PATH")
+	t.Setenv("PATH", wrapper+string(os.PathListSeparator)+previousPath)
+	for _, preview := range []bool{true, false} {
+		out, err := trackOnly(t, preview)
+		if err == nil || !strings.Contains(err.Error(), "topic lookup failed") {
+			t.Fatalf("preview=%t: want lookup failure, got %v\n%s", preview, err, out)
+		}
+	}
+	t.Setenv("PATH", previousPath)
+	if got := mustGitStack(t, fork, "for-each-ref"); got != beforeRemote {
+		t.Fatal("lookup failure moved remote refs")
+	}
+	if got := mustGitStack(t, ws, "rev-parse", "refs/rigsmith/integration/lib"); got != beforeLocal {
+		t.Fatal("lookup failure moved local integration ref")
+	}
+}
+
+// TestStackProposeTrackOnlyExactParent verifies that unchanged content still
+// needs a refresh when the upstream parent moves.
 func TestStackProposeTrackOnlyExactParent(t *testing.T) {
 	ws, fork, srv := trackStackspace(t, "stack/integration")
 	if out, err := trackOnly(t, false); err != nil {
@@ -229,6 +286,8 @@ func TestStackProposeTrackOnlyExactParent(t *testing.T) {
 	assertIntegrationSnapshot(t, ws, fork, newTip)
 }
 
+// TestStackProposeTrackOnlyExclusive checks that integration-only refreshes
+// cannot also select a topic for proposal.
 func TestStackProposeTrackOnlyExclusive(t *testing.T) {
 	cmd := newStackSendCmd()
 	for flag, value := range map[string]string{"track-only": "true", "from": "fix-b"} {
@@ -241,6 +300,8 @@ func TestStackProposeTrackOnlyExclusive(t *testing.T) {
 	}
 }
 
+// TestStackProposeTrackOnlyAfterPull exercises a real engine-backed pull and
+// verifies the subsequent refresh carries both the fix and new upstream content.
 func TestStackProposeTrackOnlyAfterPull(t *testing.T) {
 	if os.Getenv("RIG_STACK_E2E") == "" {
 		t.Skip("set RIG_STACK_E2E=1")

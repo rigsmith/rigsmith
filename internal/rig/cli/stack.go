@@ -1297,6 +1297,8 @@ func stackResolveTopic(ctx context.Context, repo *gitrepo.Repo, given string) (s
 	return "", fmt.Errorf("no branch %q in this stackspace, and no %q either — `git branch` to see what is here", given, stackTopicPrefix+given)
 }
 
+// newStackSendCmd builds topic and whole-prefix proposals, or refreshes only the
+// integration snapshot used to rebuild a fork-tracking member.
 func newStackSendCmd() *cobra.Command {
 	var message string
 	var fromBranch string
@@ -1489,8 +1491,12 @@ func newStackSendCmd() *cobra.Command {
 			fullTree := tree
 			if trackOnly {
 				for topic := range m.Proposals[name] {
-					if !repo.BranchExists(ctx, topic) {
-						continue
+					if _, err := stackHomeGit(ctx, repo.Dir, "show-ref", "--verify", "--quiet", "refs/heads/"+topic); err != nil {
+						var exit *exec.ExitError
+						if errors.As(err, &exit) && exit.ExitCode() == 1 {
+							continue // confirmed missing local topic
+						}
+						return fmt.Errorf("cannot look up local topic %s before updating trackBranch: %w", topic, err)
 					}
 					if err := stackRequireIntegrationTopic(ctx, repo, topic); err != nil {
 						return err
@@ -1744,6 +1750,8 @@ func newStackSendCmd() *cobra.Command {
 	return cmd
 }
 
+// stackRequireIntegrationTopic refuses to publish an integration snapshot when
+// HEAD does not contain the named local topic's tip.
 func stackRequireIntegrationTopic(ctx context.Context, repo *gitrepo.Repo, topic string) error {
 	contained, err := repo.IsAncestor(ctx, "refs/heads/"+topic, "HEAD")
 	if err != nil {
@@ -1755,7 +1763,8 @@ func stackRequireIntegrationTopic(ctx context.Context, repo *gitrepo.Repo, topic
 	return nil
 }
 
-// Both topic proposals and integration-only refreshes publish the same snapshot.
+// stackPushIntegration publishes a member's complete tree on its upstream tip,
+// skipping an exact remote match. Preview mode writes neither remote nor local refs.
 func stackPushIntegration(ctx context.Context, repo *gitrepo.Repo, name string, r *stackRepo, tree, tip string, preview bool, out io.Writer) error {
 	remote := stackRemoteURL(r.Fork)
 	ref := "refs/heads/" + r.TrackBranch
