@@ -547,6 +547,8 @@ every id a member produces. `stackRedirects` resolves a reference to a
 republished id back to the project producing the original and emits the
 redirect under the id the consumer wrote, which is what MSBuild matches. A rule
 naming a package the member does not produce is reported, not silently ignored.
+Publishing those ids — upstream plus carried fixes, to a private feed, until the
+fixes ship — is designed in [STACK-EDGE-DESIGN.md](STACK-EDGE-DESIGN.md).
 
 ### Reference assemblies (2026-09-04, #258)
 
