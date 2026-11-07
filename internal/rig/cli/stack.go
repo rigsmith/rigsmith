@@ -2179,7 +2179,7 @@ func stackDirtyUnder(ctx context.Context, repo *gitrepo.Repo, name string) (bool
 }
 
 func newStackDoctorCmd() *cobra.Command {
-	var fix bool
+	var fix, edge bool
 	cmd := &cobra.Command{
 		Use: "doctor",
 		Long: "Check the engine and manifest. With --fix --dry-run, report the installation\n" +
@@ -2187,6 +2187,12 @@ func newStackDoctorCmd() *cobra.Command {
 		Short: "Check the stack engine and manifest; --fix installs the pinned josh",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if edge {
+				if fix {
+					return fmt.Errorf("--edge is check only; cannot combine with --fix")
+				}
+				return stackEdgeSetupCommand(cmd, nil, false, dryRun, "")
+			}
 			ctx := cmd.Context()
 			out := cmd.OutOrStdout()
 			root, err := stackRoot(ctx)
@@ -2263,6 +2269,8 @@ func newStackDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&fix, "fix", false, "install what's missing")
+	cmd.Flags().BoolVar(&edge, "edge", false, "check edge setup facts without changing them")
+	_ = cmd.Flags().MarkHidden("edge")
 	return cmd
 }
 
