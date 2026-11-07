@@ -1,0 +1,27 @@
+cmd/rig/README.md
+  s_f93cedda9cc83a::t_f18b4c11cd4c6e 61-62
+README.md
+  s_f93cedda9cc83a::t_f18b4c11cd4c6e 39
+site/rig/verbs.md
+  s_f93cedda9cc83a::t_f18b4c11cd4c6e 391
+skills/rigsmith-tools/SKILL.md
+  s_f93cedda9cc83a::t_f18b4c11cd4c6e 158-159
+site/rig/stack.md
+  s_f93cedda9cc83a::t_f18b4c11cd4c6e 1286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "97d469b19251d73b39a4ffd82eeaaf08bb368b64",
+  "prompts": {},
+  "sessions": {
+    "s_f93cedda9cc83a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b43a-7922-77d2-ba6d-4dd4fe713411",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "John Campion Jr <john@brightshore.io>"
+    }
+  }
+}
