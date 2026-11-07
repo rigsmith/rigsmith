@@ -78,6 +78,45 @@ func TestShiprigPackagesListJSON(t *testing.T) {
 	}
 }
 
+func TestShiprigPackagesListJSONSkipsTestdata(t *testing.T) {
+	dir := tempDir(t)
+	initChangesets(t, dir)
+	writeFile(t, filepath.Join(dir, "x", "testdata", "y", "Fixture.csproj"),
+		`<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><IsPackable>true</IsPackable></PropertyGroup></Project>`)
+	for _, pkgDir := range []string{"src", "mytestdata"} {
+		writeFile(t, filepath.Join(dir, pkgDir, pkgDir+".csproj"),
+			`<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><Version>1.2.3</Version><IsPackable>true</IsPackable></PropertyGroup></Project>`)
+	}
+	cmd := exec.CommandContext(t.Context(), shiprigBin, "packages", "list", "--json")
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("packages list --json: %v\nstderr:\n%s", err, stderr.String())
+	}
+	var got struct {
+		Packages []struct {
+			Name      string `json:"name"`
+			Dir       string `json:"dir"`
+			Version   string `json:"version"`
+			Ecosystem string `json:"ecosystem"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(stdout, &got); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	if len(got.Packages) != 2 {
+		t.Fatalf("packages = %+v, want src and mytestdata", got.Packages)
+	}
+	for i, name := range []string{"mytestdata", "src"} {
+		p := got.Packages[i]
+		if p.Name != name || p.Dir != name || p.Version != "1.2.3" || p.Ecosystem != "dotnet" {
+			t.Errorf("package = %+v, want %s@1.2.3 (dotnet)", p, name)
+		}
+	}
+}
+
 // Listing packages isn't a changesets command: a repo with no .changeset/ is
 // listed with nothing releasing. `status` still requires the folder, as
 // `changeset status` does.

@@ -3,6 +3,12 @@
 rigsmith's release tool — the Go successor to net-changesets. One uniform
 `add changeset → version → publish` workflow across .NET, Node, and Go.
 
+Shared discovery with changerig excludes packages whose repository-relative
+directory contains a `testdata` path segment, including from
+`shiprig packages list --json`. Directories such as `mytestdata` remain eligible.
+`paths` and per-ecosystem `sourcePath` still narrow discovery; `ignore` marks
+packages as ignored while keeping them listed.
+
 ## The release pipeline
 
 `shiprig release` runs an ordered, configurable pipeline. Each stage is a built-in

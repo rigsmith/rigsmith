@@ -258,3 +258,62 @@ func TestDiscoverWholeRepoByDefault(t *testing.T) {
 		t.Errorf("expected both modules without a sourcePath, got %d: %+v", len(pkgs), pkgs)
 	}
 }
+
+func TestDiscoverSkipsTestdata(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		config string
+		want   map[string]bool
+	}{
+		{"whole repo", `{ "ignore": ["Real"] }`, map[string]bool{"Real": true, "mytestdata": true, "mytestdata2": true}},
+		{"paths", `{ "ignore": ["Real"], "paths": ["src", "x/testdata/y"] }`, map[string]bool{"Real": true}},
+		{"sourcePath", `{ "ignore": ["Real"], "dotnet": { "sourcePath": "src" } }`, map[string]bool{"Real": true}},
+		{"testdata sourcePath", `{ "dotnet": { "sourcePath": "x/testdata" } }`, map[string]bool{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, dir := range []string{"src", "mytestdata", "mytestdata2"} {
+				name := "Real"
+				if dir != "src" {
+					name = dir
+				}
+				writeFileAt(t, filepath.Join(root, dir, name+".csproj"),
+					`<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><Version>1.2.3</Version><IsPackable>true</IsPackable></PropertyGroup></Project>`)
+			}
+			for _, dir := range []string{"x/testdata/y", "testdata"} {
+				writeFileAt(t, filepath.Join(root, dir, "Fixture.csproj"),
+					`<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><IsPackable>true</IsPackable></PropertyGroup></Project>`)
+			}
+			cfg, err := config.Parse([]byte(tt.config))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ws := &Workspace{Root: root, ChangesetDir: filepath.Join(root, ".changeset"), Config: cfg, Registry: ecosystem.Default()}
+			pkgs, ecoOf, err := ws.Discover(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tt.want
+			if len(pkgs) != len(want) || len(ecoOf) != len(want) {
+				t.Fatalf("discovered = %+v, ecosystems = %v, want %v", pkgs, ecoOf, want)
+			}
+			for _, p := range pkgs {
+				if !want[p.Name] || p.Version != "1.2.3" || ecoOf[p.Name] != "dotnet" {
+					t.Errorf("unexpected discovered package: %+v (ecosystem %q)", p, ecoOf[p.Name])
+				}
+			}
+			rps, err := ReleasePackages(t.Context(), ws)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rps) != len(want) {
+				t.Fatalf("release packages = %+v, want %v", rps, want)
+			}
+			for _, p := range rps {
+				if !want[p.Name] || p.Ignored != (p.Name == "Real") {
+					t.Errorf("unexpected release package: %+v", p)
+				}
+			}
+		})
+	}
+}
