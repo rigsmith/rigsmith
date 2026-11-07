@@ -36,7 +36,14 @@ under your publishing ids. `--seed` selects a manifest home; `--here` always
 marks output unpublishable. `rig stack edge status [member]` reports carried fixes,
 freshness and retirement evidence; `rig stack released` previews switching back
 to public ids. Packing writes artifacts and provenance, never pushes a feed.
-`edge ci` and `edge init` are not built yet. See [Edge builds](site/rig/stack.md#edge-builds).
+`rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --report edge.json`
+builds and tests without credentials; a fresh `--number 42 --publish edge.json` job re-verifies
+packages and pushes with the key named by `edge.pushKeySecret`. Both jobs require
+the same trusted `--number`. Put the key in the `edge-publish` environment’s
+secrets, with deployment limited to the default branch. Tip
+publishing requires `--allow-tip-publish`. Third-party dependencies and assembly
+names use the build report’s evaluation claims. `edge init` is not built yet.
+See [Edge builds](site/rig/stack.md#edge-builds).
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,

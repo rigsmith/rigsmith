@@ -35,6 +35,7 @@ rig stack propose some-lib --track-only        # refresh trackBranch after pull;
 rig stack push my-app                # a repo you own: its own branch, history intact
 rig stack edge pack lib --number 42   # reconstruct trackBranch; rename, version, pack and verify
 rig stack edge status lib            # carried fixes, freshness and retirement evidence
+rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --report edge.json
 rig stack pack some-lib              # its packages, built here — a bare checkout of a proposed branch cannot
 rig stack propose some-lib read-timeout --dry-run   # the commit and fork branch that would go; touches no remote
 rig stack push my-app --dry-run      # the target, branch and commits that would go; touches no remote
@@ -58,8 +59,20 @@ with `status: "inconclusive"`. Cleanup preserves other files and all directories
 `rig stack edge status [member]` reports carried fixes, freshness, newest edge
 version and retirement evidence; `--json` emits its report. `rig stack released`
 previews migration to public ids, refusing plans that leave another republished id
-from the same member behind. Pack does not push a feed; `edge ci` and `edge init`
-are not built yet. See [Edge builds](../../site/rig/stack.md#edge-builds).
+from the same member behind. Pack does not push a feed.
+`rig stack edge ci --seed acme/stackspace@main --member lib --number 42 --report edge.json`
+reconstructs, wires, builds, tests and packs without credentials. A fresh
+`--number 42 --publish edge.json` job proves ids, version, feed and fork ancestry, verifies
+packages and hashes, checks monotonicity and pushes over HTTP using the environment
+key named by `edge.pushKeySecret`. Require the same trusted `--number` in both
+jobs. Configure `edge-publish` with a deployment-branch rule limited to the default
+branch; store the key as an environment secret and remove any repository-secret
+copy. Packed ids must be a non-empty subset of the publisher’s text-only allowed
+ids; its own NuGet sibling ids enforce cross-member refusals. Third-party dependency and assembly-name checks
+use the build report’s evaluation claims. `--upstream-tip` conflicts exit 0 with
+an inconclusive report; publishing a tip requires `--allow-tip-publish`.
+See `examples/github-workflows/stack-edge.yml`; `edge init` is not built yet.
+See [Edge builds](../../site/rig/stack.md#edge-builds).
 
 On .NET, `rig stack wire` emits source signals for swapped siblings and their
 transitive PackageReference closure, propagated through evaluated ProjectReferences,

@@ -10,7 +10,7 @@ description: >
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code or Codex CLI
   setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
-  forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing edge builds under republished NuGet ids and checking edge retirement, switching consumers from republished/edge package ids back to the original public ids,
+  forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing and publishing edge builds through separate credential-free build and trusted publish jobs under republished NuGet ids, and checking edge retirement, switching consumers from republished/edge package ids back to the original public ids,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
@@ -154,8 +154,27 @@ unproposed content, freshness, newest edge version and retirement. Private feeds
 needing credentials report can't check. Use `rig stack released` to preview
 returning consumers to public ids; it refuses a single-package plan that leaves
 another republished id of that member, so migrate those together manually.
-`edge ci` and `edge init` are not built yet; do not invent a workflow invoking
-them. See `site/rig/stack.md#edge-builds` for the manifest block and limits.
+For CI, use `rig stack edge ci --seed acme/stackspace@main --member lib
+--number 42 --report edge.json -o edge-out` in a job with no credentials. It
+reconstructs, wires, runs `--build` / `--test` (default `rig build` / `rig test`),
+and packs. Upload the report and packages. On a fresh runner without caches or
+project execution, use `--number 42 --publish report/edge.json -o report/edge-out` with the
+same seed/member and required trusted `--number`. Use the CI run number in both
+jobs; a report claiming another number is refused. Configure `edge-publish` with
+a deployment-branch rule limited to the default branch. Store the key as an
+environment secret, never a repository secret, and remove any repository copy.
+Only that command receives the environment variable named by
+`edge.pushKeySecret`. It re-proves ids, version, feed, size, member dependencies
+and fork ancestry. Packed ids must be a non-empty subset of the publisher’s
+text-only allowed ids; SDK-implied test projects can be omitted. Its own NuGet
+sibling-id list is authoritative, even with non-.NET siblings. It re-verifies
+packages/hashes and checks feed monotonicity before
+HTTP push. Third-party dependency versions and assembly-name expectations remain
+build-job evaluation claims; do not claim that the publisher independently proves
+them. Inconclusive reports exit 0 and must skip publishing. Tip reports require
+`--allow-tip-publish`; the workflow ships with this off. Copy
+`examples/github-workflows/stack-edge.yml` and select a reviewed rig release.
+`edge init` is not built yet. See `site/rig/stack.md#edge-builds` for limits.
 
 A **stack workspace** fuses upstream repos you maintain forks of into one git
 history, each under its own directory (`pty-core/`, `term-core/`, …). A change
@@ -181,6 +200,8 @@ rig stack propose <repo> <b> --from <topic>  # ...or one topic branch (needs tra
 rig stack init                         # scaffold the manifest; run again to import
 rig stack edge pack <member> --number 42 # reconstruct trackBranch; rename, version, pack, verify
 rig stack edge status [member]        # read carried fixes, freshness and retirement evidence
+rig stack edge ci --seed acme/stack@main --member lib --number 42 --report edge.json # no credentials
+rig stack edge ci --seed acme/stack@main --member lib --number 42 --publish edge.json # fresh trusted runner
 rig stack pack <repo>                  # build that member's packages HERE (overlay in effect)
 rig stack doctor --fix                 # install the josh engine if missing
 ```

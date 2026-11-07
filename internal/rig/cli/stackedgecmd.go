@@ -9,11 +9,12 @@ import (
 
 func newStackEdgeCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: "edge", Short: "Pack carried fixes and check edge retirement",
+		Use: "edge", Short: "Build, publish and check retirement of carried fixes",
 		Long: "Build carried fixes under your publishing ids, and check when they can retire.\n\n" +
 			"  rig stack edge pack <member>    reconstruct, rename, version, pack and verify\n" +
-			"  rig stack edge status [member]  carried fixes, freshness and release evidence\n\n" +
-			"edge ci and edge init are not built yet.",
+			"  rig stack edge status [member]  carried fixes, freshness and release evidence\n" +
+			"  rig stack edge ci               build reports or verify and publish packages\n\n" +
+			"edge init is not built yet.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -21,7 +22,7 @@ func newStackEdgeCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackEdgePackCmd(), newStackEdgeStatusCmd())
+	cmd.AddCommand(newStackEdgePackCmd(), newStackEdgeStatusCmd(), newStackEdgeCICmd())
 	return refuseUnknownVerb(cmd)
 }
 
