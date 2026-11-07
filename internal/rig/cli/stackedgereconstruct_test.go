@@ -266,6 +266,16 @@ func TestStackEdgeReconstructTip(t *testing.T) {
 			if got := result.Provenance["lib"]; got != want {
 				t.Fatalf("tip provenance = %+v, want %+v", got, want)
 			}
+			m, _, err := loadStackManifest(result.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m.cursor("lib") != tip || m.cursor("app") != f.base["app"] {
+				t.Fatalf("tip manifest cursors: lib=%s, app=%s", m.cursor("lib"), m.cursor("app"))
+			}
+			if got := mustGitStack(t, result.Root, "status", "--porcelain"); got != "" {
+				t.Fatalf("tip reconstruction left uncommitted changes: %s", got)
+			}
 		})
 	}
 }

@@ -170,6 +170,12 @@ func stackEdgeReconstruct(ctx context.Context, opts stackEdgeReconstructOptions)
 				if _, err = stackCIReplaceRef(ctx, root, root, name, commit); err != nil {
 					return nil, cleanup, err
 				}
+				if err = stackSetCursor(src, m, name, p.UpstreamTip); err != nil {
+					return nil, cleanup, err
+				}
+				if _, err = repo.CommitPaths(ctx, "stack edge: upstream tip cursor "+name, "rig.stack.jsonc"); err != nil {
+					return nil, cleanup, err
+				}
 				p.UpstreamCommit = p.UpstreamTip
 			}
 		}
