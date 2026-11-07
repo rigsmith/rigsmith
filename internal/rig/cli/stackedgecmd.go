@@ -13,7 +13,7 @@ func newStackEdgeCmd() *cobra.Command {
 		Long: "Build carried fixes under your publishing ids, and check when they can retire.\n\n" +
 			"  rig stack edge pack <member>    reconstruct, rename, version, pack and verify\n" +
 			"  rig stack edge status [member]  carried fixes, freshness and release evidence\n\n" +
-			"edge ci and edge init are not built yet.",
+			"edge ci is not built yet.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if stdinStdoutTTY() {
 				return climenu.Run(cmd)
@@ -21,7 +21,7 @@ func newStackEdgeCmd() *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newStackEdgePackCmd(), newStackEdgeStatusCmd())
+	cmd.AddCommand(newStackEdgePackCmd(), newStackEdgeStatusCmd(), newStackEdgeInitCmd())
 	return refuseUnknownVerb(cmd)
 }
 
