@@ -737,6 +737,11 @@ what you gave it is not itself a branch — so `--from reader-wedge` finds
 different repositories and mean different things, and sharing a spelling would only
 invite reading one as the other.
 
+Before proposing, check out the integration line containing the topic. `--from`
+refuses when the topic is not an ancestor of `HEAD`, including with `--dry-run`,
+before any remote write. This keeps trackBranch from losing other carried fixes
+when the checkout does not contain the topic being proposed.
+
 `rig stack status` lists the ones named that way, so what is in flight is something you
 read rather than remember:
 
@@ -848,6 +853,29 @@ rig stack propose term-core reader-wedge --from reader-wedge
 Without it set, `--from` refuses rather than publish a package or a rebuild that is
 quietly missing work.
 :::
+
+#### Refresh the integration branch: `--track-only`
+
+After a pull, refresh trackBranch without re-rooting or re-proposing a topic:
+
+```sh
+rig stack propose term-core --track-only
+rig stack propose term-core --track-only --dry-run
+```
+
+This pushes only the integration snapshot to the member's fork: its tree is
+`HEAD:<prefix>`, with the upstream tip as its single parent, under a force-with-lease.
+It records `refs/rigsmith/integration/<member>` without opening a PR, changing any
+proposal records, or publishing the manifest home. The cursor must equal the
+upstream tip, the member prefix must be clean, and every recorded topic for that
+member that still exists locally must be an ancestor of `HEAD`. Deleted topics
+are ignored; topics rooted before the pull need no re-rooting for this refresh.
+
+`--track-only` requires `trackBranch` in the manifest and cannot be combined with
+`--from` or a proposal branch argument. If the remote already holds the exact tree
+with that single parent, rig reports it up to date and pushes nothing. `--dry-run`
+checks the same guards and previews the refresh without writing remote or local refs.
+Pull itself and whole-prefix proposals do not refresh trackBranch.
 
 `rig stack status` says that `propose` sends the prefix's whole divergence, so you find
 out before a maintainer does:

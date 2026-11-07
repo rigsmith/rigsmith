@@ -10,7 +10,7 @@ description: >
   cutting or publishing a release, creating worktrees/branches, syncing Claude Code or Codex CLI
   setup, reviewing scoped Codex hook trust, switching or running a different Codex login, keeping two Macs' Homebrew
   packages or versions in sync, finding or reopening a past Claude Code or Codex session, or working across several
-  forked repos fused into one history (`rig stack`), publishing a manifest home,
+  forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
   even if the user names a raw
@@ -292,7 +292,7 @@ unrelated to each other, and they live in three different repositories:
 | `<new-branch>` | a branch **you create on your fork** for one change — the pull request | the `propose` argument, named per change |
 | `branchPrefix` | what `propose` prepends to that argument, default `stack/` | the manifest, workspace-wide or per repo |
 | `--from <topic>` | a branch **of the stackspace itself**, holding one in-flight fix | your local stackspace; `stack-pr-<name>` by convention |
-| `trackBranch` | a branch **of your fork** holding everything the prefix carries, so a rebuild is not short | the manifest, per repo; rig writes it when `--from` is used |
+| `trackBranch` | a branch **of your fork** holding everything the prefix carries, so a rebuild is not short | the manifest, per repo; rig writes it when `--from` or `--track-only` is used |
 
 A manifest never names the branch `propose` creates, because that is a property
 of the change rather than of the project. (`branch` is the old name for
@@ -336,6 +336,14 @@ the fallback.
 `--from` requires `trackBranch` in the manifest, and keeps that branch current with the
 whole divergence — a topic is only part of it, and `init` rebuilds from it, so without
 that a rebuild (CI included) would silently build without the fixes you left out.
+Before `propose --from`, check out the integration line containing the topic: the
+topic must be an ancestor of HEAD, and dry runs refuse too. After a pull, use
+`rig stack propose <member> --track-only` to refresh just trackBranch without
+re-proposing a stale topic. It requires trackBranch, a clean prefix, a cursor equal
+to upstream tip, and every recorded topic still present locally to be an ancestor
+of HEAD. It ignores deleted topics, records only the integration ref, opens no PR,
+and changes no proposal records. An exact tree and single-parent match on the fork
+is a no-op. It supports `--dry-run` and cannot combine with `--from`.
 `rig stack status` says when `propose` would send a prefix's whole divergence, and lists the
 `stack-pr-*` topics in flight.
 

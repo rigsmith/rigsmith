@@ -87,7 +87,8 @@ rig stack setup                             # a fresh clone of a stackspace: eng
 rig stack init                              # scaffold rig.stack.jsonc; run again to import
 rig stack status / pull [repo]              # what upstream did, where each topic's PR is, and taking it
 rig stack propose some-lib read-timeout        # ALL of some-lib's changes → stack/read-timeout, PR-ready
-rig stack propose some-lib read-timeout --from read-timeout   # ...or one topic's tree — root it on the import, or it carries its parent's fixes too
+rig stack propose some-lib read-timeout --from read-timeout   # one topic, rooted on the import and merged into this integration line
+rig stack propose some-lib --track-only        # refresh trackBranch after pull; no proposal or PR
 rig stack push my-app                       # → your own repo, fast-forwarded, history intact
 rig stack pack some-lib                     # its packages, built here where siblings resolve from source
 rig stack propose some-lib read-timeout --dry-run   # what would go to your fork, touching nothing
