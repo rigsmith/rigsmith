@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -177,6 +178,55 @@ func TestStackEdgeVerifyPlatformFrameworks(t *testing.T) {
 				t.Fatalf("framework %s vs %s: %v", tc.expected, tc.packed, err)
 			}
 		})
+	}
+}
+
+func TestStackEdgeVerifyMultiTargetDependencies(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		expected, packed []string
+		wantError        string
+	}{
+		{name: "omitted-and-explicit", expected: []string{"net10.0-windows", "net10.0-windows10.0.19041.0"}, packed: []string{"net10.0-windows7.0", "net10.0-windows10.0.19041.0"}},
+		{name: "preserve-later-exact-match", expected: []string{"net10.0-windows7.0", "net10.0-windows10.0.19041.0"}, packed: []string{"net10.0-windows", "net10.0-windows7.0"}},
+		{name: "move-broad-fallback", expected: []string{"", "net10.0-windows", "net10.0-windows7.0"}, packed: []string{"net10.0-windows10.0.19041.0", "net10.0-windows7.0", "net10.0-android34.0"}},
+		{name: "missing-group", expected: []string{"net10.0-windows", "net10.0-windows10.0.19041.0"}, packed: []string{"net10.0-windows7.0"}, wantError: "from discovery is missing"},
+		{name: "extra-duplicate", expected: []string{"net10.0-windows"}, packed: []string{"net10.0-windows7.0", "net10.0-windows7.0"}, wantError: "differs from discovery"},
+		{name: "wrong-explicit-version", expected: []string{"net10.0-windows7.0", "net10.0-windows10.0.19041.0"}, packed: []string{"net10.0-windows7.0", "net10.0-windows11.0"}, wantError: "differs from discovery"},
+	} {
+		for _, reverseExpected := range []bool{false, true} {
+			for _, reversePacked := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/reverse-expected-%t/reverse-packed-%t", tc.name, reverseExpected, reversePacked), func(t *testing.T) {
+					expected, packed := slices.Clone(tc.expected), slices.Clone(tc.packed)
+					if reverseExpected {
+						slices.Reverse(expected)
+					}
+					if reversePacked {
+						slices.Reverse(packed)
+					}
+					want := edgeTestExpectations()
+					want.Packages[1].Dependencies = []stackEdgeDependency{{ID: "You.Lib", Version: want.Version}}
+					for _, framework := range expected {
+						want.Packages[1].Dependencies = append(want.Packages[1].Dependencies, stackEdgeDependency{ID: "ThirdParty", Version: "[3.2.1]", Framework: framework})
+					}
+					deps := `<dependency id="You.Lib" version="1.2.4-edge.7"/>`
+					for _, framework := range packed {
+						deps += fmt.Sprintf(`<group targetFramework="%s"><dependency id="ThirdParty" version="[3.2.1]"/></group>`, framework)
+					}
+					dir := t.TempDir()
+					edgeTestNupkg(t, dir, "lib.nupkg", "You.Lib", want.Version, "", "Lib")
+					edgeTestNupkg(t, dir, "controls.nupkg", "You.Lib.Controls", want.Version, deps, "Lib.Controls")
+					_, err := stackEdgeVerify(dir, want)
+					if tc.wantError == "" {
+						if err != nil {
+							t.Fatal(err)
+						}
+					} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+						t.Fatalf("error = %v; want %q", err, tc.wantError)
+					}
+				})
+			}
+		}
 	}
 }
 

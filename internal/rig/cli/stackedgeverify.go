@@ -118,7 +118,6 @@ func stackEdgeVerify(dir string, want stackEdgeVerifyRequest) ([]stackEdgeVerifi
 				deps = append(deps, dep)
 			}
 		}
-		observed := map[string]bool{}
 		for _, dep := range deps {
 			dkey := strings.ToLower(dep.ID)
 			if other[dkey] {
@@ -129,22 +128,9 @@ func stackEdgeVerify(dir string, want stackEdgeVerifyRequest) ([]stackEdgeVerifi
 					return reports, fmt.Errorf("%s: member dependency %s@%s must name a non-excluded republished id at %s", spec.ID, dep.ID, dep.Version, want.Version)
 				}
 			}
-			match := false
-			for _, original := range pkg.Dependencies {
-				if strings.EqualFold(original.ID, dep.ID) && stackEdgeRange(original.Version) == stackEdgeRange(dep.Version) && (original.Framework == "" || stackEdgeSameFramework(original.Framework, dep.Framework)) {
-					match = true
-					observed[stackEdgeDependencyKey(original)] = true
-					break
-				}
-			}
-			if !match {
-				return reports, fmt.Errorf("%s: dependency %s@%s differs from discovery", spec.ID, dep.ID, dep.Version)
-			}
 		}
-		for _, dep := range pkg.Dependencies {
-			if !observed[stackEdgeDependencyKey(dep)] {
-				return reports, fmt.Errorf("%s: dependency %s@%s from discovery is missing", spec.ID, dep.ID, dep.Version)
-			}
+		if err := stackEdgeCheckDependencies(spec.ID, deps, pkg.Dependencies); err != nil {
+			return reports, err
 		}
 		if pkg.AssemblyBefore == "" || pkg.AssemblyBefore != pkg.AssemblyAfter { // check 5
 			return reports, fmt.Errorf("%s: AssemblyName changed from %q to %q", spec.ID, pkg.AssemblyBefore, pkg.AssemblyAfter)
@@ -214,8 +200,46 @@ func stackEdgeDependencyVersion(got, version string) bool {
 	return stackEdgeRange(got) == stackEdgeRange(version) || strings.HasPrefix(got, "[") && strings.HasSuffix(got, "]") && stackEdgeSameVersion(got[1:len(got)-1], version)
 }
 
-func stackEdgeDependencyKey(dep stackEdgeDependency) string {
-	return strings.ToLower(dep.ID) + "@" + stackEdgeRange(dep.Version) + "/" + stackEdgeFramework(dep.Framework)
+func stackEdgeCheckDependencies(id string, packed, discovered []stackEdgeDependency) error {
+	matched := make([]int, len(discovered))
+	for i := range matched {
+		matched[i] = -1
+	}
+	// Omitted platform versions can match several explicit frameworks. Consume
+	// each expectation once, trying exact matches first and moving an earlier
+	// fallback when necessary, so declaration order cannot change the verdict.
+	var match func(int, []bool) bool
+	match = func(index int, visited []bool) bool {
+		dep := packed[index]
+		for _, exactOnly := range []bool{true, false} {
+			for i, original := range discovered {
+				if visited[i] || !strings.EqualFold(original.ID, dep.ID) || stackEdgeRange(original.Version) != stackEdgeRange(dep.Version) {
+					continue
+				}
+				exact := stackEdgeFramework(original.Framework) == stackEdgeFramework(dep.Framework)
+				if exact != exactOnly || (original.Framework != "" && !stackEdgeSameFramework(original.Framework, dep.Framework)) {
+					continue
+				}
+				visited[i] = true
+				if matched[i] == -1 || match(matched[i], visited) {
+					matched[i] = index
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i, dep := range packed {
+		if !match(i, make([]bool, len(discovered))) {
+			return fmt.Errorf("%s: dependency %s@%s differs from discovery", id, dep.ID, dep.Version)
+		}
+	}
+	for i, dep := range discovered {
+		if matched[i] == -1 {
+			return fmt.Errorf("%s: dependency %s@%s from discovery is missing", id, dep.ID, dep.Version)
+		}
+	}
+	return nil
 }
 
 // The SDK can fill an omitted platform version when writing the nuspec. Treat
