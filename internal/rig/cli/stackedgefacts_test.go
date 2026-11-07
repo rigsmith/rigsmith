@@ -33,11 +33,7 @@ func edgeSetupStackspace(t *testing.T) (*stackEdgeSetup, *edgeSetupAPI, *bytes.B
 	mustGitStack(t, ws, "commit", "-qm", "edge setup input")
 	s.root = ws
 	s.m = m
-	home := filepath.Join(t.TempDir(), "home.git")
-	mustGitStack(t, ws, "init", "--bare", "-b", "main", home)
-	if err := stackConfigureHome(s.ctx, ws, home, "main", ""); err != nil {
-		t.Fatal(err)
-	}
+	edgeWorkflowHome(t, s)
 	return s, f, out, fork
 }
 
