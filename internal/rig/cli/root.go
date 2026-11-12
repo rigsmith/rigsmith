@@ -148,6 +148,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().BoolVarP(&dryRun, "dry-run", "n", false, "print the command instead of running it")
 	root.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress the → command echo")
 	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
+	root.PersistentFlags().BoolVar(&noSecrets, "no-doppler", false, "run without the .rig.json secrets manager (Doppler) this once")
 	root.PersistentFlags().StringVar(&rootFlag, "root", "", "override the working root (skip walk-up discovery)")
 	root.PersistentFlags().BoolVar(&includeWorktrees, "include-worktrees", false, "also discover projects inside nested git worktrees (skipped by default)")
 	// Discovery prunes linked worktrees before rig's own filter ever sees the
@@ -187,6 +188,7 @@ func newRootCmd() *cobra.Command {
 		newInfoCmd(),
 		newExplainCmd(),
 		newConfigCmd(),
+		newSecretsCmd(),
 		newUICmd(),
 		newSelfUpdateCmd(),
 	)
@@ -280,8 +282,21 @@ func verbCmd(verb, short string, aliases ...string) *cobra.Command {
 	}, "rig "+verb+" -- --verbose")
 }
 
-// runCommand runs an ecosystem verb's argv in dir, echoing it first unless quiet.
+// runCommand runs an ecosystem verb's argv in dir, echoing it first unless
+// quiet. A verb that runs the project's code runs under the repo's secrets
+// manager when .rig.json configures one (see withSecrets), and the echo shows
+// the wrapped line.
 func runCommand(cmd *cobra.Command, dir string, argv []string) error {
+	argv, err := withSecrets(cmd, dir, argv)
+	if err != nil {
+		return err
+	}
+	return runCommandAsIs(cmd, dir, argv)
+}
+
+// runCommandAsIs is runCommand for a line that must not be wrapped: an
+// external tool's install, say, which needs no secrets and no sign-in.
+func runCommandAsIs(cmd *cobra.Command, dir string, argv []string) error {
 	echo(cmd, strings.Join(argv, " "))
 	if dryRun {
 		return nil

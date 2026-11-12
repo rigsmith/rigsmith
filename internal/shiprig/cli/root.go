@@ -10,6 +10,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/fang"
+	"github.com/rigsmith/rigsmith/core/secrets"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/spf13/cobra"
 )
@@ -45,6 +46,11 @@ func newRootCmd() *cobra.Command {
 		Long:          "shipRig manages the whole release: it captures changesets, versions packages\nwith the shared engine (the same one changeRig uses), and publishes via the\nnative package managers. One front door for .NET, Node, Go, and Rust.",
 		SilenceUsage:  true,
 		SilenceErrors: false,
+		// Publishing credentials can come from a secrets manager's release
+		// config (.rig.json "doppler": {…}); every verb's context carries the
+		// reader, so a doppler:NAME reference in a publish auth, a signing env
+		// or a release var resolves wherever it is read.
+		PersistentPreRunE: attachSecretsReader,
 	}
 	root.PersistentFlags().BoolVar(&noEnv, "no-env", false, "skip .env/.env.local loading for this run")
 
@@ -80,6 +86,29 @@ func newRootCmd() *cobra.Command {
 		newDoctorCmd(),
 	)
 	return root
+}
+
+// attachSecretsReader puts the repo's release-config Reader in cmd's context.
+// A `.rig.json` provider block that does not validate fails the command: a
+// broken block would otherwise read as "not configured" and send a release to
+// the keychain fallback without a word.
+func attachSecretsReader(cmd *cobra.Command, _ []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil
+	}
+	root, err := commands.FindRoot(cwd)
+	if err != nil {
+		return nil
+	}
+	setup, err := secrets.Load(root)
+	if err != nil {
+		return err
+	}
+	if setup != nil {
+		cmd.SetContext(secrets.WithReader(cmd.Context(), secrets.NewReader(setup, secrets.Release, root)))
+	}
+	return nil
 }
 
 // releaseMenuItems are shiprig's own verbs, contributed to the shared changeset

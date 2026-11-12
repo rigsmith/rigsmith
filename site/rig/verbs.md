@@ -169,7 +169,7 @@ is a terminal.
 ## Passing flags to the underlying tool
 
 rig owns a small set of flags per verb (`--all`, `--filter`, `--watch`, `-i`, plus
-the global `--dry-run` / `--quiet` / `--no-env` / `--root`). Anything else is
+the global `--dry-run` / `--quiet` / `--no-env` / `--no-doppler` / `--root`). Anything else is
 rejected rather than guessed at, so a typo like `--dry-runn` is caught instead of
 being handed to your package manager. To reach the tool underneath, put the flag
 after `--`:
@@ -236,6 +236,48 @@ and `outdated` runs its scans without echoing them — so explain says only that
 it cannot show a guaranteed answer. The same is true for an
 argument that selects a project or a test filter — `rig test MyClass --dry-run`
 rather than `rig explain test MyClass`.
+
+## Secrets in GitHub Actions: `secrets ci` {#secrets-ci}
+
+With a [`doppler` block](./configuration#doppler) in `.rig.json`, a repo holds
+exactly one GitHub secret, `DOPPLER_TOKEN`: a read-only service token for its
+`ci` config. `rig secrets ci` writes the steps a job needs to use it:
+
+```sh
+rig secrets ci POSTGRES_URL REDIS_URL
+```
+
+It prints three steps to paste under the job's `steps:` (stdout holds only the
+steps, so `> steps.yml` works; the guidance goes to stderr):
+
+1. **Check the Doppler token** — fails the job, naming the secret to add, when
+   `DOPPLER_TOKEN` is unset.
+2. **Fetch** — `dopplerhq/secrets-fetch-action` pinned by commit, *without*
+   `inject-env-vars`, so no secret lands in the job's environment.
+3. **Require the secrets this job uses** — fails when the token reads another
+   project/config, or when any named secret is missing or empty. It learns only
+   *whether* each is set (`steps.doppler.outputs.NAME != ''`), never the value.
+
+Then each step that needs a secret takes only that one:
+
+```yaml
+      - run: rig test
+        env:
+          POSTGRES_URL: ${{ steps.doppler.outputs.POSTGRES_URL }}
+```
+
+Never put a secret in a job-level `env:` — every step, the test code included,
+would see all of them. When the list changes, regenerate the steps rather than
+editing them. `--context release` writes the steps for the `release` config
+(with `--token-secret` naming its token), `--id` renames the step, `--indent`
+matches your file. Generated agentic workflows (`gh aw`, `*.lock.yml`) read
+GitHub secrets directly and are left alone.
+
+Why a generator and not a composite action: a composite action must declare its
+outputs in `action.yml`, so it can't hand back `steps.<id>.outputs.NAME` for
+names it doesn't know in advance. Its only ways out are one JSON output — where
+a mistyped `fromJSON(…).NAME` quietly comes back empty — or `$GITHUB_ENV`, which
+puts every secret in every later step.
 
 ## Ecosystem coverage
 

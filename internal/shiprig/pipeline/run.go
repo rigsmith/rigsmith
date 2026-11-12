@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -64,6 +65,9 @@ type Pipeline struct {
 	// secretResolver resolves a var's "secret" reference; nil uses the shared
 	// credential resolver (op://, env:, cmd:). Tests substitute one.
 	secretResolver func(ref string, masker *SecretMasker) (string, error)
+	// ctx carries the secrets-manager Reader a "doppler:NAME" var reads
+	// through (see WithContext); nil is context.Background().
+	ctx context.Context
 	// stoppedAt is the step a real run stopped at without completing it (a
 	// failure, an if-condition error, or a declined confirm gate); "" when it
 	// completed or stopped before any step (a global hook or a variable).
@@ -104,6 +108,13 @@ func New(
 	}
 }
 
+// WithContext sets the context var secrets resolve under — the one shiprig
+// puts the repo's secrets-manager Reader in — and returns p.
+func (p *Pipeline) WithContext(ctx context.Context) *Pipeline {
+	p.ctx = ctx
+	return p
+}
+
 // Run executes the resolved steps. A dry run reports the interpolated plan and
 // executes only the commands a step opts into via "dryRun" (no ${vars.*} are
 // ever captured); see runDry. Returns true when the whole run (including global
@@ -115,6 +126,10 @@ func (p *Pipeline) Run(steps []ResolvedStep, config *Config, dryRun bool) bool {
 	p.scriptDryRun = dryRun
 	scriptEval := func(expr string) (string, error) { return evalScriptString(expr, p.scriptCtx) }
 	p.vars = newVariables(config.Vars, p.runner, p.masker, p.workDir, p.env, scriptEval)
+	p.vars.ctx = p.ctx
+	// Where a secret came from, by name, in the run's own output. Masked like
+	// any output, though it holds names only.
+	p.vars.note = func(line string) { p.reporter.CommandOutput([]string{line}) }
 	if p.secretResolver != nil {
 		resolver := p.secretResolver
 		p.vars.secrets = func(ref string) (string, error) { return resolver(ref, p.masker) }

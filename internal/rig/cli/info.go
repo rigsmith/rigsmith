@@ -56,6 +56,14 @@ func newInfoCmd() *cobra.Command {
 			}
 			fmt.Fprintln(out)
 
+			// Only a repo that opted in gets the section; a broken block shows
+			// its error here rather than failing the whole report.
+			if cfg.Doppler != nil {
+				fmt.Fprintln(out, headerStyle.Render("Secrets"))
+				_ = printSecretsStatus(cmd.Context(), out, cfg, root)
+				fmt.Fprintln(out)
+			}
+
 			// Anything wrong with that config, inside the report about it. `info`
 			// is where you look when rig isn't doing what the config says, so the
 			// answer belongs here too, not only on the per-run stderr notice.

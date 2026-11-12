@@ -111,7 +111,7 @@
                 "linux": { "type": ["string", "array"], "description": "The command on Linux." }
               }
             },
-            "secret": { "type": "string", "description": "A secret reference — op://…, env:NAME, or cmd:… — resolved through the same resolver as the publish `auth` config and masked." },
+            "secret": { "type": "string", "description": "A secret reference — op://…, env:NAME, cmd:…, or doppler:NAME (the .rig.json doppler.release config; in CI, NAME from the step's environment) — resolved through the same resolver as the publish `auth` config and masked. A doppler:NAME secret may also set `command`/`os` as the fallback (a keychain lookup) used only while .rig.json has no doppler.release." },
             "script": { "type": "string", "description": "A Tengo expression evaluated against the script ctx. fail(msg) is in scope to refuse with a message." },
             "lazy": { "type": "boolean", "description": "Defer a captured or secret value until first reference (keeps a time-limited secret fresh)." }
           }

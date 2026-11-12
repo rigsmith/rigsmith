@@ -12,6 +12,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/climenu"
 	"github.com/rigsmith/rigsmith/core/editor"
+	"github.com/rigsmith/rigsmith/core/secrets"
 	"github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/spf13/cobra"
 )
@@ -19,7 +20,8 @@ import (
 // configScalarKeys are the scalar .rig.json knobs `rig config set` understands.
 // Richer fields (env, commands, aliases, tools, coverage, …) stay in
 // `rig config edit` — they don't reduce to a single get/set value.
-var configScalarKeys = []string{"solution", "defaultProject", "ecosystem", "quiet", "worktree.autoOpen", "worktree.openCmd"}
+var configScalarKeys = []string{"solution", "defaultProject", "ecosystem", "quiet", "worktree.autoOpen", "worktree.openCmd",
+	"doppler.project", "doppler.dev", "doppler.ci", "doppler.release"}
 
 // newConfigCmd builds the uniform `config` group: get / set / path / edit over
 // the repo's .rig.json (with the user-wide ~/.rig.json layered under `get`).
@@ -115,7 +117,11 @@ func newConfigSetCmd() *cobra.Command {
 			"  ecosystem         pin the primary ecosystem (dotnet|node|go|cargo)\n" +
 			"  quiet             suppress the `→ command` echo (bool)\n" +
 			"  worktree.autoOpen `rig worktree new` opens a review window (bool, default false)\n" +
-			"  worktree.openCmd  command to open a worktree (path appended), e.g. \"code -n\"",
+			"  worktree.openCmd  command to open a worktree (path appended), e.g. \"code -n\"\n" +
+			"  doppler.project   the Doppler project rig and shiprig read secrets from\n" +
+			"  doppler.dev       config local runs use (`doppler run -p <project> -c <dev>`)\n" +
+			"  doppler.ci        config the repo's DOPPLER_TOKEN reads in GitHub Actions\n" +
+			"  doppler.release   config shiprig reads doppler:NAME credentials from",
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], args[1]
@@ -141,6 +147,8 @@ func newConfigSetCmd() *cobra.Command {
 				ok = config.SetBool(path, []string{"worktree", "autoOpen"}, on)
 			case "worktree.openCmd":
 				ok = config.SetString(path, []string{"worktree", "openCmd"}, value)
+			case "doppler.project", "doppler.dev", "doppler.ci", "doppler.release":
+				ok = config.SetString(path, strings.Split(key, "."), value)
 			default:
 				return unknownConfigKeyErr(key)
 			}
@@ -196,6 +204,13 @@ func configScalarValue(cfg config.Config, key string) (string, bool) {
 		return fmt.Sprintf("%v", cfg.WorktreeAutoOpen()), true
 	case "worktree.openCmd":
 		return strings.Join(cfg.WorktreeOpenCmd(), " "), true
+	case "doppler.project":
+		if cfg.Doppler == nil {
+			return "", true
+		}
+		return cfg.Doppler.Project, true
+	case "doppler.dev", "doppler.ci", "doppler.release":
+		return cfg.Doppler.Config(secrets.Context(strings.TrimPrefix(key, "doppler."))), true
 	default:
 		return "", false
 	}

@@ -16,6 +16,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/planner"
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/core/prestate"
+	"github.com/rigsmith/rigsmith/core/secrets"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -232,6 +233,9 @@ func newPublishCmd() *cobra.Command {
 			// (e.g. `op read`) runs at most once per run.
 			redactor := auth.NewRedactor()
 			authCache := map[string]*plugin.AuthCredential{}
+			// Each secrets-manager credential is named once, by where it came
+			// from — never by value.
+			sourceNamed := map[string]bool{}
 
 			// 1. Registry publish per package (ignored packages are never published).
 			//
@@ -273,6 +277,10 @@ func newPublishCmd() *cobra.Command {
 					if credErr != nil {
 						results[i].err = fmt.Errorf("auth for %s: %s", p.Name, redactor.Redact(credErr.Error()))
 						return
+					}
+					if src := managerCredentialSource(cmd.Context(), ws.Config, ecoID, npmAuth); src != "" && !sourceNamed[src] {
+						sourceNamed[src] = true
+						fmt.Fprintln(out, commands.DimStyle.Render("auth for "+ecoID+": "+src))
 					}
 				}
 				// The workspace `access` describes the packages in the tree. A
@@ -471,7 +479,7 @@ func newPublishCmd() *cobra.Command {
 	f.BoolVar(&noPush, "no-push", false, "create tags locally but do not push them")
 	f.StringVarP(&outputPath, "output", "o", "", "append a git-tag event per tag created to this file (default $CHANGESETS_OUTPUT); tags are then created locally only, for the caller to push")
 	f.StringVar(&access, "access", "", "npm access (public|restricted); defaults to config")
-	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:…); overrides node config")
+	f.StringVar(&npmAuth, "npm-auth", "", "npm auth secret ref (op://… | env:NAME | cmd:… | doppler:NAME); overrides node config")
 	f.StringVar(&distTag, "tag", "", "the npm dist-tag to publish under (default: the prerelease tag in pre mode; not allowed in pre mode or with --from-pack-dir)")
 	f.BoolVar(&allowPend, "allow-pending", false, "publish the versions on disk even though changesets are waiting to bump them (by default publish refuses until shiprig version has run)")
 	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
@@ -519,6 +527,21 @@ func resolvePublishCreds(ctx context.Context, cfg *config.Config, eco, npmAuthOv
 		return nil, true, nil
 	}
 	return nil, false, nil
+}
+
+// managerCredentialSource names where an ecosystem's doppler:NAME auth ref
+// reads from, or "" when its auth is not a secrets-manager ref.
+func managerCredentialSource(ctx context.Context, cfg *config.Config, eco, npmAuthOverride string) string {
+	ref := cfg.EcoConfig(eco).Auth
+	if eco == "node" && npmAuthOverride != "" {
+		ref = npmAuthOverride
+	}
+	_, name, ok := secrets.ParseRef(ref)
+	r := secrets.ReaderFrom(ctx)
+	if !ok || r == nil {
+		return ""
+	}
+	return r.Describe(name)
 }
 
 // ecoSupportsOIDC reports whether an ecosystem can publish via OIDC trusted

@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/jsonc"
+	"github.com/rigsmith/rigsmith/core/secrets"
 )
 
 // CommandSpec is a single command to run as part of a release step or hook.
@@ -327,15 +328,19 @@ type Hooks struct {
 //     set, as the fallback for an OS not listed). Captured values ARE masked in
 //     all output (secret-safe), and `lazy` defers the capture until first
 //     reference so a time-limited secret (an OTP) stays fresh.
-//   - a secret — `{ "secret": "op://…" | "env:NAME" | "cmd:…" }`, the same
-//     references the publish `auth` config takes, resolved through the shared
-//     credential resolver and masked. `lazy` applies as for a captured value.
+//   - a secret — `{ "secret": "op://…" | "env:NAME" | "cmd:…" | "doppler:NAME" }`,
+//     the same references the publish `auth` config takes, resolved through
+//     the shared credential resolver and masked. `lazy` applies as for a
+//     captured value. A "doppler:NAME" secret may also set `command`/`os`: the
+//     capture (a keychain lookup, typically) runs instead when .rig.json gives
+//     Doppler no release config, so a repo can name its new source before it
+//     has moved. Once the release config is set the capture never runs.
 //   - a computed value — `{ "script": "<tengo expr>" }`, evaluated against the
 //     script ctx (e.g. `ctx.version` ? "next" : "latest"). Not masked. fail(msg)
 //     is in scope, so a value that cannot be computed can say why.
 //
 // Exactly one form must be set (enforced by LoadConfig): value, command/os,
-// script, or secret.
+// script, or secret — save the fallback pairing above.
 type VarSpec struct {
 	Value   *string                `json:"value"`
 	Command *CommandSpec           `json:"command"`
@@ -344,6 +349,10 @@ type VarSpec struct {
 	Secret  *string                `json:"secret"`
 	Lazy    bool                   `json:"lazy"`
 }
+
+// hasFallback reports whether a secret var also names a capture command, to
+// run when its secrets manager has no release config.
+func (s *VarSpec) hasFallback() bool { return s.Command != nil || s.OS != nil }
 
 // Captured reports whether resolving the variable runs something — a capture
 // command or a secret lookup — as opposed to a literal or a pure expression.
@@ -490,7 +499,15 @@ func validateVars(vars map[string]*VarSpec) error {
 			return fmt.Errorf("variable '%s' must set one of 'value', 'command' (or 'os'), 'script', or 'secret'", name)
 		}
 		n := 0
-		for _, set := range []bool{spec.Value != nil, spec.Command != nil || spec.OS != nil, spec.Script != nil, spec.Secret != nil} {
+		// A secrets-manager reference may carry a capture command as its
+		// fallback; it counts as one form.
+		managerWithFallback := spec.Secret != nil && spec.hasFallback()
+		if managerWithFallback {
+			if _, _, ok := secrets.ParseRef(*spec.Secret); !ok {
+				return fmt.Errorf("variable '%s': only a secrets-manager reference (doppler:NAME) may set 'command'/'os' beside 'secret', as the fallback when .rig.json gives it no release config", name)
+			}
+		}
+		for _, set := range []bool{spec.Value != nil, (spec.Command != nil || spec.OS != nil) && !managerWithFallback, spec.Script != nil, spec.Secret != nil} {
 			if set {
 				n++
 			}
@@ -507,7 +524,7 @@ func validateVars(vars map[string]*VarSpec) error {
 			}
 		}
 		if spec.Secret != nil && strings.TrimSpace(*spec.Secret) == "" {
-			return fmt.Errorf("variable '%s': 'secret' is blank; want op://…, env:NAME, or cmd:…", name)
+			return fmt.Errorf("variable '%s': 'secret' is blank; want op://…, env:NAME, cmd:…, or doppler:NAME", name)
 		}
 	}
 	return nil

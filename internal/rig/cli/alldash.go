@@ -298,6 +298,19 @@ func allDashboardEligible() bool {
 // runAcrossDashboard runs the tasks under the live dashboard and returns an
 // error when any package failed (or the run was cancelled).
 func runAcrossDashboard(cmd *cobra.Command, tasks []allTask, verb string) error {
+	// Each package's command runs under the secrets manager the way a single
+	// one does through runCommand — wrapped once here, on a copy, since the
+	// dashboard execs the argv itself.
+	wrapped := make([]allTask, len(tasks))
+	for i, t := range tasks {
+		argv, err := withSecrets(cmd, t.dir, t.argv)
+		if err != nil {
+			return err
+		}
+		t.argv = argv
+		wrapped[i] = t
+	}
+	tasks = wrapped
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 

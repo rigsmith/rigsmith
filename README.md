@@ -118,6 +118,7 @@ shiprig publish                             # registries + tags (idempotent, con
 shiprig release                             # the configurable step pipeline (.changeset/release.jsonc)
 
 rig info                                    # what rig discovered
+rig secrets / rig secrets ci NAME...        # the Doppler project + configs .rig.json names; a CI job's pinned fetch steps
 rig build / test / run / format             # the right native command for the detected ecosystem
 rig verify [--stale-only]                   # build+test+run, then prove the artifacts were built together
 rig coverage --min 80 / kill / doctor / cd  # the dev-loop verbs (see cli/README.md for all)

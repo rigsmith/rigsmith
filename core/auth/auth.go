@@ -8,9 +8,11 @@
 //
 //  1. OIDC trusted publishing — a CI OIDC identity exchanged for an ephemeral
 //     token. (Added in a later slice; the seam is shaped for it now.)
-//  2. A configured secret reference — "op://…" (1Password), "env:NAME", or
-//     "cmd:…" (a shell command whose stdout is the token). Resolved just-in-time
-//     so a time-limited secret stays fresh.
+//  2. A configured secret reference — "op://…" (1Password), "env:NAME",
+//     "cmd:…" (a shell command whose stdout is the token), or "doppler:NAME"
+//     (a secrets manager's release config, via the core/secrets Reader the
+//     context carries). Resolved just-in-time so a time-limited secret stays
+//     fresh.
 //  3. A fallback environment variable (e.g. NPM_TOKEN).
 //  4. Nothing — the caller falls back to the package manager's ambient
 //     credential (~/.npmrc and friends), i.e. today's behaviour.
@@ -27,6 +29,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/core/secrets"
 )
 
 // Method names the mechanism that produced a credential.
@@ -41,6 +45,8 @@ const (
 	MethodRef Method = "secret-ref"
 	// MethodOIDC means the token was minted via OIDC trusted publishing.
 	MethodOIDC Method = "oidc"
+	// MethodManager means the token came from a secrets manager (Doppler).
+	MethodManager Method = "secrets-manager"
 )
 
 // Credential is a resolved registry credential.
@@ -53,6 +59,9 @@ type Credential struct {
 	// Provenance asks the adapter to attach a provenance attestation when its
 	// toolchain supports it. Only OIDC sets this today.
 	Provenance bool
+	// Source names where a secrets-manager token came from ("Doppler
+	// owlwatch/release"), for reporting. Never the value.
+	Source string
 }
 
 // Resolved reports whether a usable token was produced.
@@ -78,6 +87,9 @@ type Request struct {
 // A MethodNone credential (no error) means "nothing configured — use ambient".
 func Resolve(ctx context.Context, req Request) (Credential, error) {
 	if ref := strings.TrimSpace(req.Ref); ref != "" {
+		if provider, name, ok := secrets.ParseRef(ref); ok {
+			return resolveManagerRef(ctx, provider, name, req.Masker)
+		}
 		token, method, err := resolveRef(ctx, ref)
 		if err != nil {
 			return Credential{}, err
@@ -117,7 +129,10 @@ func SafeReason(ref string, err error) string {
 		shown = "cmd:…"
 	case strings.HasPrefix(ref, "env:"), strings.HasPrefix(ref, "op://"):
 	default:
-		return "the auth ref isn't one of op://…, env:NAME or cmd:…"
+		if _, _, ok := secrets.ParseRef(ref); ok {
+			break
+		}
+		return "the auth ref isn't one of op://…, env:NAME, cmd:… or doppler:NAME"
 	}
 	if errors.Is(err, ErrEmptyToken) {
 		return fmt.Sprintf("auth ref %q %s", shown, ErrEmptyToken)
@@ -146,7 +161,7 @@ func resolveRef(ctx context.Context, ref string) (string, Method, error) {
 		return out, MethodRef, err
 
 	default:
-		return "", MethodNone, fmt.Errorf("unrecognized auth ref %q: want op://…, env:NAME, or cmd:…", ref)
+		return "", MethodNone, fmt.Errorf("unrecognized auth ref %q: want op://…, env:NAME, cmd:…, or doppler:NAME", ref)
 	}
 }
 
@@ -162,6 +177,26 @@ func runToken(ctx context.Context, name string, args ...string) (string, error) 
 		return "", fmt.Errorf("auth command %q failed: %w: %s", name, err, strings.TrimSpace(errBuf.String()))
 	}
 	return strings.TrimSpace(out.String()), nil
+}
+
+// resolveManagerRef reads a "doppler:NAME" reference through the Reader ctx
+// carries (shiprig puts one there from .rig.json's release config). With no
+// Reader there is nowhere to read from, which is an error, never an empty
+// credential.
+func resolveManagerRef(ctx context.Context, provider, name string, m Masker) (Credential, error) {
+	r := secrets.ReaderFrom(ctx)
+	if r == nil {
+		return Credential{}, fmt.Errorf("auth ref %s:%s needs a %q block in .rig.json naming the project and its release config", provider, name, provider)
+	}
+	if got := r.Provider().Name(); got != provider {
+		return Credential{}, fmt.Errorf("auth ref %s:%s names %s, but .rig.json configures %s", provider, name, provider, got)
+	}
+	token, source, err := r.Get(ctx, name)
+	if err != nil {
+		return Credential{}, err
+	}
+	mask(m, token)
+	return Credential{Token: token, Method: MethodManager, Source: source + " (" + name + ")"}, nil
 }
 
 func mask(m Masker, token string) {

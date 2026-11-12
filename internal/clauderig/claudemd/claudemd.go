@@ -101,6 +101,13 @@ Drives the inner loop; the same verb resolves to each ecosystem's native command
 No config is required — an optional ` + "`.rig.json`" + ` (JSONC) at the repo root supplies
 only what can't be inferred.
 
+**Secrets.** When ` + "`.rig.json`" + ` has a ` + "`doppler`" + ` block, the verbs that build or run
+code go through ` + "`doppler run -p <project> -c <dev>`" + ` (the ` + "`→`" + ` echo shows it). If rig
+refuses because the doppler CLI is missing or signed out, ask the user to run
+` + "`doppler login`" + ` — don't reach for ` + "`--no-doppler`" + ` to get a test to run, and never print
+a secret's value. ` + "`rig secrets`" + ` shows the setup; ` + "`rig secrets ci NAME...`" + ` writes a CI
+job's fetch steps (each step then takes only its own ` + "`steps.doppler.outputs.NAME`" + `).
+
 ### changerig — changesets
 
 The changeset lifecycle. When a change is user-facing, record it in the same PR:
@@ -123,6 +130,9 @@ orchestration. Releasing is usually CI's job; locally:
 - ` + "`shiprig status` / `shiprig version`" + ` — preview and apply the release plan.
 - ` + "`shiprig publish`" + ` — registries + tags, idempotent and confirm-gated on a TTY (` + "`--yes`" + ` for CI).
 - ` + "`shiprig release`" + ` — the configurable step pipeline (` + "`.changeset/release.jsonc`" + `).
+
+Publishing credentials can come from Doppler's release config: ` + "`doppler:NAME`" + ` works
+wherever shiprig takes a secret reference, and shiprig prints only where each came from.
 
 Don't run ` + "`publish`/`release`" + ` unless explicitly asked — they push tags and hit registries.`,
 }

@@ -28,6 +28,18 @@
       "type": "boolean",
       "description": "Suppresses the `\u2192 command` echo before running a verb."
     },
+    "doppler": {
+      "type": "object",
+      "description": "The repo's Doppler project and the config each context reads. Absent means no Doppler. Locally rig runs build/test/run/rebuild/verify/watch/coverage/publish and custom commands under `doppler run -p <project> -c <dev>` (skip once with --no-doppler); `rig secrets ci NAME...` writes a CI job's fetch steps for the `ci` config; shiprig reads `doppler:NAME` publishing credentials from the `release` config.",
+      "required": ["project"],
+      "additionalProperties": false,
+      "properties": {
+        "project": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$", "description": "The Doppler project for this product, e.g. \"foxcraft\"." },
+        "dev": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$", "description": "Config for local runs (rig wraps the dev verbs in `doppler run`)." },
+        "ci": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$", "description": "Config the repo's DOPPLER_TOKEN service token reads in GitHub Actions (checked by the `rig secrets ci` guard)." },
+        "release": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$", "description": "Config shiprig reads `doppler:NAME` publishing credentials from (feed keys, signing material)." }
+      }
+    },
     "exclude": {
       "type": "array",
       "items": {

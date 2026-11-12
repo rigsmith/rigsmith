@@ -298,7 +298,7 @@
         },
         "auth": {
           "type": "string",
-          "description": "Registry credential as a secret ref: \"op://\u2026\", \"env:NAME\", or \"cmd:\u2026\". For dotnet it also answers a private feed's read (publish-plan's version check), sent only when the feed asks."
+          "description": "Registry credential as a secret ref: \"op://\u2026\", \"env:NAME\", \"cmd:\u2026\", or \"doppler:NAME\" (from the .rig.json doppler.release config). For dotnet it also answers a private feed's read (publish-plan's version check), sent only when the feed asks."
         },
         "oidc": {
           "type": "string",
@@ -340,7 +340,7 @@
               "additionalProperties": {
                 "type": "string"
               },
-              "description": "Maps build-tool env vars to secret refs."
+              "description": "Maps build-tool env vars to secret refs (op://\u2026, env:NAME, cmd:\u2026, or doppler:NAME)."
             },
             "signers": {
               "type": "array",

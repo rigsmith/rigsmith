@@ -719,3 +719,40 @@ func TestMergeKeepsPerCommandProvenance(t *testing.T) {
 		t.Errorf("bench came from %q, want the repo config", got)
 	}
 }
+
+func TestDopplerBlockParsesAndIsAKnownKey(t *testing.T) {
+	src := `{ "doppler": { "project": "foxcraft", "dev": "dev", "ci": "ci", "release": "release" } }`
+	c, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Doppler == nil || c.Doppler.Project != "foxcraft" || c.Doppler.Release != "release" {
+		t.Fatalf("Doppler = %+v", c.Doppler)
+	}
+	if u := UnknownKeys(src); len(u) != 0 {
+		t.Fatalf("doppler reported as unknown: %v", u)
+	}
+	setup, err := c.Secrets()
+	if err != nil || setup == nil || setup.Provider.Name() != "doppler" {
+		t.Fatalf("Secrets = %+v, %v", setup, err)
+	}
+}
+
+func TestNoDopplerBlockIsNoSecrets(t *testing.T) {
+	c, _ := Parse(`{ "quiet": true }`)
+	if setup, err := c.Secrets(); setup != nil || err != nil {
+		t.Fatalf("Secrets = %+v, %v; want nil, nil", setup, err)
+	}
+}
+
+func TestRepoDopplerBlockReplacesTheGlobalOneWhole(t *testing.T) {
+	global, _ := Parse(`{ "doppler": { "project": "owlwatch", "dev": "dev", "release": "release" } }`)
+	repo, _ := Parse(`{ "doppler": { "project": "foxcraft", "dev": "dev" } }`)
+	merged := Merge(global, repo)
+	if merged.Doppler.Project != "foxcraft" || merged.Doppler.Release != "" {
+		t.Fatalf("merged = %+v; the repo's block must not inherit another project's release config", merged.Doppler)
+	}
+	if Merge(global, Config{}).Doppler.Project != "owlwatch" {
+		t.Fatal("a repo with no block keeps the global one")
+	}
+}
