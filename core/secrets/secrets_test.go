@@ -489,3 +489,19 @@ func TestLoadRejectsTheSameBlockKeyTwice(t *testing.T) {
 		t.Fatalf("Load = %v; a repeated block key must be refused", err)
 	}
 }
+
+// A field repeated inside the block would let the last copy pick the config —
+// another context's secrets — so it is refused, case variants included.
+func TestLoadRejectsAFieldRepeatedInTheBlock(t *testing.T) {
+	for name, body := range map[string]string{
+		"same spelling": `{ "doppler": { "project": "a", "dev": "dev", "dev": "prod" } }`,
+		"case variant":  `{ "doppler": { "project": "a", "dev": "dev", "Dev": "prod" } }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(writeRigJSON(t, body))
+			if err == nil || !strings.Contains(err.Error(), "doppler.dev is set more than once") {
+				t.Fatalf("Load = %v; a repeated field must be refused", err)
+			}
+		})
+	}
+}

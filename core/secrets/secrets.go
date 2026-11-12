@@ -312,6 +312,9 @@ func LoadFile(path string) (*Setup, error) {
 		if raw == nil || string(raw) == "null" {
 			continue
 		}
+		if err := rejectRepeatedFields(key, raw); err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
 		var fields map[string]jsonRaw
 		if err := jsonc.Unmarshal(raw, &fields); err != nil {
 			return nil, fmt.Errorf("%s %s: %w", name, key, err)
@@ -359,25 +362,12 @@ func (r *jsonRaw) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// rejectRepeatedProviderKeys scans the top-level keys of JSONC data as
-// written and refuses a provider key that appears more than once, in any
-// spelling. The decoded map can't show it: the last copy silently wins.
+// rejectRepeatedProviderKeys refuses a provider key that appears more than
+// once, in any spelling, among the top-level keys of JSONC data as written.
+// The decoded map can't show it: the last copy silently wins.
 func rejectRepeatedProviderKeys(data []byte) error {
-	dec := json.NewDecoder(bytes.NewReader(jsonc.Strip(data)))
-	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
-		return nil // not an object; the decode already judged it
-	}
 	seen := map[string]int{}
-	for dec.More() {
-		tok, err := dec.Token()
-		if err != nil {
-			return nil
-		}
-		key, _ := tok.(string)
-		var skip json.RawMessage
-		if err := dec.Decode(&skip); err != nil {
-			return nil
-		}
+	for _, key := range objectKeys(data) {
 		for _, p := range Keys() {
 			if strings.EqualFold(key, p) {
 				if seen[p]++; seen[p] > 1 {
@@ -387,6 +377,44 @@ func rejectRepeatedProviderKeys(data []byte) error {
 		}
 	}
 	return nil
+}
+
+// rejectRepeatedFields refuses a field given twice (in any spelling) inside a
+// provider block, where the last copy would silently decide which config —
+// whose secrets — a context reads.
+func rejectRepeatedFields(block string, raw []byte) error {
+	seen := map[string]bool{}
+	for _, key := range objectKeys(raw) {
+		k := strings.ToLower(key)
+		if seen[k] {
+			return fmt.Errorf("%s.%s is set more than once — keep one", block, k)
+		}
+		seen[k] = true
+	}
+	return nil
+}
+
+// objectKeys lists the keys of a JSONC object as written, duplicates and all,
+// in order. Anything that isn't an object yields none: the decode judges it.
+func objectKeys(data []byte) []string {
+	dec := json.NewDecoder(bytes.NewReader(jsonc.Strip(data)))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil
+	}
+	var keys []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return keys
+		}
+		key, _ := tok.(string)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return keys
+		}
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // lookupFold finds key in doc case-insensitively, as the rest of `.rig.json`
