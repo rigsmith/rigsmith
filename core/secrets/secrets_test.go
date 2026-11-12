@@ -475,3 +475,17 @@ func TestIndentIsNormalizedAndNeverPanics(t *testing.T) {
 		t.Fatalf("CIEnv with a negative indent = %q", got)
 	}
 }
+
+// encoding/json keeps only the last of two identical keys, so the repeat has
+// to be caught as written — otherwise the later block silently decides the
+// credentials.
+func TestLoadRejectsTheSameBlockKeyTwice(t *testing.T) {
+	_, err := Load(writeRigJSON(t, `{
+		"doppler": { "project": "a", "release": "release" },
+		// a later, forgotten copy
+		"doppler": { "project": "b", "release": "release" },
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "keep one") {
+		t.Fatalf("Load = %v; a repeated block key must be refused", err)
+	}
+}

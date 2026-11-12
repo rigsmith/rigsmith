@@ -22,7 +22,9 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -296,6 +298,11 @@ func LoadFile(path string) (*Setup, error) {
 		}
 		return nil, nil
 	}
+	// encoding/json keeps only the last of two identical keys, so a doubled
+	// "doppler" never reaches lookupFold; count the keys as written.
+	if err := rejectRepeatedProviderKeys(data); err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
 	blocks := map[string]*Settings{}
 	for _, key := range Keys() {
 		raw, err := lookupFold(doc, key)
@@ -349,6 +356,36 @@ type jsonRaw []byte
 
 func (r *jsonRaw) UnmarshalJSON(b []byte) error {
 	*r = append((*r)[:0], b...)
+	return nil
+}
+
+// rejectRepeatedProviderKeys scans the top-level keys of JSONC data as
+// written and refuses a provider key that appears more than once, in any
+// spelling. The decoded map can't show it: the last copy silently wins.
+func rejectRepeatedProviderKeys(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(jsonc.Strip(data)))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil // not an object; the decode already judged it
+	}
+	seen := map[string]int{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil
+		}
+		key, _ := tok.(string)
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return nil
+		}
+		for _, p := range Keys() {
+			if strings.EqualFold(key, p) {
+				if seen[p]++; seen[p] > 1 {
+					return fmt.Errorf("the %q block is set more than once — keep one", p)
+				}
+			}
+		}
+	}
 	return nil
 }
 
