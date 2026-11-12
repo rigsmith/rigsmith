@@ -111,6 +111,9 @@ func CIEnv(stepID string, names []string, indent int) string {
 	if stepID == "" {
 		stepID = DefaultStepID
 	}
+	if indent < 0 {
+		indent = 0
+	}
 	pad := strings.Repeat(" ", indent)
 	var b strings.Builder
 	b.WriteString(pad + "env:\n")
@@ -120,6 +123,18 @@ func CIEnv(stepID string, names []string, indent int) string {
 	return b.String()
 }
 
+// DefaultIndent is the column of a job's `steps:` items in the usual layout.
+const DefaultIndent = 6
+
+// NormalizeIndent turns an unset or nonsensical indent into DefaultIndent, so
+// the steps and the consuming step's env example line up with each other.
+func NormalizeIndent(indent int) int {
+	if indent <= 0 {
+		return DefaultIndent
+	}
+	return indent
+}
+
 func (o CIOptions) normalized() (CIOptions, []string, error) {
 	if o.StepID == "" {
 		o.StepID = DefaultStepID
@@ -127,9 +142,7 @@ func (o CIOptions) normalized() (CIOptions, []string, error) {
 	if o.TokenSecret == "" {
 		o.TokenSecret = DefaultTokenSecret
 	}
-	if o.Indent <= 0 {
-		o.Indent = 6
-	}
+	o.Indent = NormalizeIndent(o.Indent)
 	if !identifier.MatchString(o.Scope.Project) || !identifier.MatchString(o.Scope.Config) {
 		return o, nil, fmt.Errorf("the project and config must be plain names, got %q", o.Scope.String())
 	}

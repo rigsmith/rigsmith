@@ -259,3 +259,51 @@ func TestDecidingTheWrapLeavesDryRunAlone(t *testing.T) {
 		t.Errorf("echo = %q", out.String())
 	}
 }
+
+// A .rig.json that exists but cannot be read may hold the provider block, so
+// it is an error, never a run without secrets.
+func TestAnUnreadableConfigIsAnErrorNotAnOptOut(t *testing.T) {
+	dir := dopplerRepo(t, foxcraftDev, &stubDoppler{})
+	path := filepath.Join(dir, config.FileName)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil { // reads fail, but it is there
+		t.Fatal(err)
+	}
+	cmd, _ := verbHost("test")
+	if argv, err := withSecrets(cmd, dir, []string{"go", "test"}); err == nil {
+		t.Fatalf("withSecrets = %v, nil; an unreadable config must stop the run", argv)
+	}
+}
+
+// A malformed .rig.json that names Doppler may hold the block rig needs, so
+// the run refuses rather than going on without secrets.
+func TestAMalformedConfigNamingDopplerIsAnError(t *testing.T) {
+	dir := dopplerRepo(t, `{ "doppler": { "project": "foxcraft", "dev": "dev" }`, &stubDoppler{}) // no closing brace
+	cmd, _ := verbHost("test")
+	if _, err := withSecrets(cmd, dir, []string{"go", "test"}); err == nil {
+		t.Fatal("a broken file naming doppler ran without secrets")
+	}
+}
+
+// --all leaves a package that doesn't define the verb alone: it never runs,
+// so its folder needs no Doppler sign-in.
+func TestAllTasksWrapOnlyWhatRuns(t *testing.T) {
+	dir := dopplerRepo(t, foxcraftDev, &stubDoppler{})
+	dryRun = true
+	cmd, _ := verbHost("test")
+	got, err := wrapAllTasks(cmd, []allTask{
+		{name: "app", dir: dir, argv: []string{"go", "test"}},
+		{name: "docs", dir: dir, argv: []string{"npm", "test"}, skip: "no test script"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].argv[0] != "doppler" {
+		t.Errorf("runnable task argv = %v, want it wrapped", got[0].argv)
+	}
+	if got[1].argv[0] != "npm" {
+		t.Errorf("skipped task argv = %v, want it untouched", got[1].argv)
+	}
+}

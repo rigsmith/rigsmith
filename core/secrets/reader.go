@@ -57,8 +57,10 @@ func (r *Reader) Get(ctx context.Context, name string) (value, source string, er
 		return "", "", fmt.Errorf("%q is not a secret name (letters, digits and '_')", name)
 	}
 	if InCI() {
-		v := strings.TrimSpace(r.getenv(name))
-		if v == "" {
+		// Emptiness is judged on a trimmed copy; the value itself is passed on
+		// as the step received it, as it would be read locally.
+		v := r.getenv(name)
+		if strings.TrimSpace(v) == "" {
 			return "", "", fmt.Errorf("%s is not set in this CI step — pass it from the %s fetch step "+
 				"(`env: %s: ${{ steps.%s.outputs.%s }}`; `rig secrets ci` writes that step)",
 				name, p.Title(), name, DefaultStepID, name)

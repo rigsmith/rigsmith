@@ -267,7 +267,10 @@ Then each step that needs a secret takes only that one:
 ```
 
 Never put a secret in a job-level `env:` — every step, the test code included,
-would see all of them. When the list changes, regenerate the steps rather than
+would see all of them. The fetch action masks each secret in the job log
+except two kinds: Doppler's own metadata (`DOPPLER_PROJECT`, `DOPPLER_CONFIG`,
+`DOPPLER_ENVIRONMENT`) and any secret set to `unmasked` visibility in Doppler —
+keep credentials masked. When the list changes, regenerate the steps rather than
 editing them. `--context release` writes the steps for the `release` config
 (with `--token-secret` naming its token), `--id` renames the step, `--indent`
 matches your file. Generated agentic workflows (`gh aw`, `*.lock.yml`) read

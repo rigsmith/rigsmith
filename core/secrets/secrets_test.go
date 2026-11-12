@@ -422,3 +422,56 @@ func (fakeProvider) Get(context.Context, string, Scope, string) (string, error) 
 func (fakeProvider) All(context.Context, string, Scope) (map[string]string, error) {
 	return nil, nil
 }
+
+func TestLoadRejectsAnUnknownKeyInTheBlock(t *testing.T) {
+	_, err := Load(writeRigJSON(t, `{ "doppler": { "project": "owlwatch", "releasee": "release" } }`))
+	if err == nil || !strings.Contains(err.Error(), "doppler.releasee") {
+		t.Fatalf("Load = %v; a typo'd key must be refused, not read as no release config", err)
+	}
+}
+
+func TestLoadRejectsTheBlockTwice(t *testing.T) {
+	_, err := Load(writeRigJSON(t, `{ "doppler": { "project": "a", "release": "r" }, "Doppler": { "project": "b", "release": "r" } }`))
+	if err == nil || !strings.Contains(err.Error(), "keep one") {
+		t.Fatalf("Load = %v; two spellings of the block must be refused", err)
+	}
+}
+
+func TestLoadOfAMalformedFile(t *testing.T) {
+	if _, err := Load(writeRigJSON(t, `{ "doppler": { "project": "a" `)); err == nil {
+		t.Error("a broken file naming doppler must be refused")
+	}
+	if s, err := Load(writeRigJSON(t, `{ "quiet": true `)); s != nil || err != nil {
+		t.Errorf("a broken file naming no provider = %v, %v; want nil, nil (rig warns about it)", s, err)
+	}
+}
+
+func TestLoadLayeredFallsBackToTheGlobalFile(t *testing.T) {
+	global := filepath.Join(writeRigJSON(t, `{ "doppler": { "project": "owlwatch", "release": "release" } }`), ".rig.json")
+	s, err := LoadLayered(t.TempDir(), global)
+	if err != nil || s == nil || s.Settings.Project != "owlwatch" {
+		t.Fatalf("LoadLayered = %+v, %v; want the global block", s, err)
+	}
+	repo := writeRigJSON(t, `{ "doppler": { "project": "foxcraft", "release": "release" } }`)
+	if s, _ := LoadLayered(repo, global); s.Settings.Project != "foxcraft" {
+		t.Fatalf("the repo's block must win, got %q", s.Settings.Project)
+	}
+}
+
+func TestReaderInCIPassesTheValueOnAsReceived(t *testing.T) {
+	pinCI(t, true)
+	r := NewReader(&Setup{Provider: (&fakeCLI{}).provider(), Settings: Settings{Project: "p", CI: "ci"}}, Release, "/repo")
+	r.getenv = func(string) string { return "  " + planted + "  " }
+	if v, _, err := r.Get(context.Background(), "KEY"); err != nil || v != "  "+planted+"  " {
+		t.Fatalf("Get = %q, %v; the value must not be trimmed", v, err)
+	}
+}
+
+func TestIndentIsNormalizedAndNeverPanics(t *testing.T) {
+	if NormalizeIndent(0) != DefaultIndent || NormalizeIndent(-3) != DefaultIndent || NormalizeIndent(4) != 4 {
+		t.Fatal("NormalizeIndent")
+	}
+	if got := CIEnv("", []string{"A"}, -3); !strings.HasPrefix(got, "env:") {
+		t.Fatalf("CIEnv with a negative indent = %q", got)
+	}
+}

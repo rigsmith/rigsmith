@@ -251,7 +251,35 @@ func Select(blocks map[string]*Settings) (*Setup, error) {
 // tools that do not otherwise read `.rig.json` (shiprig); rig decodes the
 // block with the rest of its config and calls Select.
 func Load(root string) (*Setup, error) {
-	data, err := os.ReadFile(filepath.Join(root, ".rig.json"))
+	return LoadFile(filepath.Join(root, ".rig.json"))
+}
+
+// LoadLayered reads the repo's `.rig.json` at root and, when it names no
+// provider, the user-wide config at global ("" skips it) — the layering rig
+// applies to every key. It is the loader both rig and shiprig decide a run's
+// secrets with, so a block is read the same strict way by each.
+func LoadLayered(root, global string) (*Setup, error) {
+	setup, err := Load(root)
+	if err != nil || setup != nil || global == "" {
+		return setup, err
+	}
+	return LoadFile(global)
+}
+
+// settingsKeys are the keys a provider block may hold.
+var settingsKeys = []string{"project", "dev", "ci", "release"}
+
+// LoadFile is Load for one config file by path — the user-wide ~/.rig.json,
+// say, which rig layers under every repo's. It is strict where a lenient read
+// would quietly run without secrets: a file that exists but can't be read, a
+// file that can't be parsed but names a provider, a provider block given
+// twice (keys differ only by case), and a key inside a block that isn't one
+// of project/dev/ci/release (a "releasee" typo would otherwise read as "no
+// release config" and send a release to the keychain). A file that can't be
+// parsed and names no provider is not this package's to judge: (nil, nil).
+func LoadFile(path string) (*Setup, error) {
+	name := filepath.Base(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -263,21 +291,57 @@ func Load(root string) (*Setup, error) {
 	}
 	var doc map[string]jsonRaw
 	if err := jsonc.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf(".rig.json: %w", err)
+		if mentionsProvider(string(data)) {
+			return nil, fmt.Errorf("%s is not valid JSON (%v), and it names a secrets manager — fix it rather than run without secrets", path, err)
+		}
+		return nil, nil
 	}
 	blocks := map[string]*Settings{}
 	for _, key := range Keys() {
-		raw, ok := lookupFold(doc, key)
-		if !ok || string(raw) == "null" {
+		raw, err := lookupFold(doc, key)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		if raw == nil || string(raw) == "null" {
 			continue
+		}
+		var fields map[string]jsonRaw
+		if err := jsonc.Unmarshal(raw, &fields); err != nil {
+			return nil, fmt.Errorf("%s %s: %w", name, key, err)
+		}
+		for field := range fields {
+			if !knownSettingsKey(field) {
+				return nil, fmt.Errorf("%s: %s.%s is not a key (want %s)", name, key, field, strings.Join(settingsKeys, ", "))
+			}
 		}
 		var s Settings
 		if err := jsonc.Unmarshal(raw, &s); err != nil {
-			return nil, fmt.Errorf(".rig.json %s: %w", key, err)
+			return nil, fmt.Errorf("%s %s: %w", name, key, err)
 		}
 		blocks[key] = &s
 	}
 	return Select(blocks)
+}
+
+func knownSettingsKey(field string) bool {
+	for _, k := range settingsKeys {
+		if strings.EqualFold(k, field) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionsProvider reports whether unparseable config text names a provider
+// key, so a broken file that may hold a block is refused rather than skipped.
+func mentionsProvider(text string) bool {
+	low := strings.ToLower(text)
+	for _, key := range Keys() {
+		if strings.Contains(low, `"`+key+`"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // jsonRaw defers decoding a block until its key is known to name a provider.
@@ -289,14 +353,22 @@ func (r *jsonRaw) UnmarshalJSON(b []byte) error {
 }
 
 // lookupFold finds key in doc case-insensitively, as the rest of `.rig.json`
-// is matched.
-func lookupFold(doc map[string]jsonRaw, key string) ([]byte, bool) {
+// is matched. Two spellings of one key are an error: which one won would
+// depend on map order, so the credential scope could change between runs.
+func lookupFold(doc map[string]jsonRaw, key string) ([]byte, error) {
+	var found []string
+	var value []byte
 	for k, v := range doc {
 		if strings.EqualFold(k, key) {
-			return v, true
+			found = append(found, k)
+			value = v
 		}
 	}
-	return nil, false
+	if len(found) > 1 {
+		sort.Strings(found)
+		return nil, fmt.Errorf("%s each set the %q block — keep one", strings.Join(found, " and "), key)
+	}
+	return value, nil
 }
 
 // InCI reports whether this process runs in a CI job, where secrets arrive

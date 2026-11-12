@@ -91,9 +91,24 @@ matters. Only a provider reference may carry a fallback.
 
 **Names, never values.** Every source is reported by name
 (`vars.key ← Doppler owlwatch/release (FEEDZ_API_KEY)`, `auth for dotnet: …`,
-`sign app: APPLE_ID_PASSWORD ← …`). Values are masked in all output; errors are
-built from names, scopes and the CLI's stderr — never its stdout, and never a
-JSON decoder's message (which can quote the input).
+`sign app: APPLE_ID_PASSWORD ← …`). shiprig masks every value it resolves in
+its own output; errors are built from names, scopes and the CLI's stderr —
+never its stdout, and never a JSON decoder's message (which can quote the
+input).
+
+In CI, masking is the fetch action's, with two exceptions: it does not mask
+Doppler's metadata outputs (`DOPPLER_PROJECT`, `DOPPLER_CONFIG`,
+`DOPPLER_ENVIRONMENT`), and it does not mask a secret whose visibility is set
+to `unmasked` in Doppler. A later step that prints one of those prints it in
+clear. Keep credentials at Doppler's default (masked) visibility.
+
+**Strict where lenient means "no secrets".** rig reads `.rig.json` leniently —
+a malformed file degrades to defaults with a warning. The secrets decision
+does not: rig and shiprig both use `secrets.LoadLayered`, which refuses a file
+that can't be read, can't be parsed and names a provider, sets a provider
+block twice (keys differing only by case), or has an unknown key inside the
+block (`"releasee"`). A malformed file that names no provider keeps rig's
+usual warn-and-continue.
 
 ## Not done
 

@@ -67,13 +67,12 @@ func secretsFor(cmd *cobra.Command) (localSecrets, bool, error) {
 		return localSecrets{}, false, nil
 	}
 	cwd, _ := os.Getwd()
-	cfg, err := config.LoadMerged(resolveRoot(cwd))
+	// The strict loader, not the config rig reads for everything else: that
+	// one degrades a broken file to defaults with a warning, which here would
+	// mean running without secrets. shiprig decides with the same loader.
+	setup, err := secrets.LoadLayered(resolveRoot(cwd), config.GlobalPath())
 	if err != nil {
-		return localSecrets{}, false, nil
-	}
-	setup, err := cfg.Secrets()
-	if err != nil {
-		return localSecrets{}, false, fmt.Errorf("%s: %w", config.FileName, err)
+		return localSecrets{}, false, err
 	}
 	scope, ok := setup.Scope(secrets.Dev)
 	if !ok {
@@ -185,9 +184,7 @@ func newSecretsCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			root := resolveRoot(cwd)
-			cfg, _ := config.LoadMerged(root)
-			return printSecretsStatus(cmd.Context(), cmd.OutOrStdout(), cfg, root)
+			return printSecretsStatus(cmd.Context(), cmd.OutOrStdout(), resolveRoot(cwd))
 		},
 	}
 	cmd.AddCommand(newSecretsCICmd())
@@ -197,8 +194,8 @@ func newSecretsCmd() *cobra.Command {
 // printSecretsStatus is the report `rig secrets` prints and `rig info` shares:
 // the provider and project, each context's config, what a local run here
 // does, and the CLI's readiness.
-func printSecretsStatus(ctx context.Context, w io.Writer, cfg config.Config, root string) error {
-	setup, err := cfg.Secrets()
+func printSecretsStatus(ctx context.Context, w io.Writer, root string) error {
+	setup, err := secrets.LoadLayered(root, config.GlobalPath())
 	if err != nil {
 		fmt.Fprintln(w, warnStyle.Render("  ! "+err.Error()))
 		return err
@@ -250,8 +247,7 @@ func newSecretsCICmd() *cobra.Command {
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cwd, _ := os.Getwd()
-			cfg, _ := config.LoadMerged(resolveRoot(cwd))
-			setup, err := cfg.Secrets()
+			setup, err := secrets.LoadLayered(resolveRoot(cwd), config.GlobalPath())
 			if err != nil {
 				return err
 			}
@@ -266,6 +262,7 @@ func newSecretsCICmd() *cobra.Command {
 			if !ok {
 				return fmt.Errorf(".rig.json sets no %s.%s config", setup.Provider.Name(), context)
 			}
+			indent = secrets.NormalizeIndent(indent)
 			yaml, err := stepper.CISteps(secrets.CIOptions{
 				Scope: scope, Names: args, StepID: stepID, TokenSecret: tokenSecret, Indent: indent,
 			})
@@ -284,6 +281,6 @@ func newSecretsCICmd() *cobra.Command {
 	f.StringVar(&context, "context", string(secrets.CI), "which .rig.json config the token reads: ci or release")
 	f.StringVar(&stepID, "id", secrets.DefaultStepID, "the fetch step's id (steps.<id>.outputs.NAME)")
 	f.StringVar(&tokenSecret, "token-secret", secrets.DefaultTokenSecret, "the GitHub Actions secret holding the service token")
-	f.IntVar(&indent, "indent", 6, "column of each step's leading '-'")
+	f.IntVar(&indent, "indent", secrets.DefaultIndent, "column of each step's leading '-'")
 	return cmd
 }

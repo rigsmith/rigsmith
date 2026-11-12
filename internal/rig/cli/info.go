@@ -60,7 +60,7 @@ func newInfoCmd() *cobra.Command {
 			// its error here rather than failing the whole report.
 			if cfg.Doppler != nil {
 				fmt.Fprintln(out, headerStyle.Render("Secrets"))
-				_ = printSecretsStatus(cmd.Context(), out, cfg, root)
+				_ = printSecretsStatus(cmd.Context(), out, root)
 				fmt.Fprintln(out)
 			}
 

@@ -12,6 +12,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/rigsmith/rigsmith/core/secrets"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
+	rigconfig "github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/spf13/cobra"
 )
 
@@ -101,7 +102,10 @@ func attachSecretsReader(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return nil
 	}
-	setup, err := secrets.Load(root)
+	// rig layers ~/.rig.json under the repo's file, and a repo with no block
+	// of its own inherits the global one; shiprig reads the same way, with
+	// the same strict loader rig decides a run's secrets with.
+	setup, err := secrets.LoadLayered(root, rigconfig.GlobalPath())
 	if err != nil {
 		return err
 	}
