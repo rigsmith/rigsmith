@@ -187,7 +187,7 @@ func (t extTool) runInstall(cmd *cobra.Command, root string) {
 	if len(t.install) == 0 {
 		return
 	}
-	if err := runCommand(cmd, root, t.install); err != nil {
+	if err := runCommandAsIs(cmd, root, t.install); err != nil {
 		fmt.Fprintln(cmd.ErrOrStderr(), dimStyle.Render(fmt.Sprintf("installing %s failed: %v", t.name, err)))
 	}
 }
@@ -200,7 +200,7 @@ func (t extTool) installNow(cmd *cobra.Command, root string) error {
 	if len(t.install) == 0 {
 		return fmt.Errorf("no install command for %s", t.name)
 	}
-	return runCommand(cmd, root, t.install)
+	return runCommandAsIs(cmd, root, t.install)
 }
 
 // unavailableErr is the guidance error require() returns when the tool can't be

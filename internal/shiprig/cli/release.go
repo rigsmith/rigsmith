@@ -18,6 +18,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/envstack"
 	"github.com/rigsmith/rigsmith/core/gitutil"
 	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/secrets"
 	"github.com/rigsmith/rigsmith/core/shellrun"
 	"github.com/rigsmith/rigsmith/core/sign"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
@@ -365,7 +366,7 @@ func newReleaseCmd() *cobra.Command {
 
 				return pipeline.New(releaseRunner, reporter, masker, prompter, ws.Root,
 					releaseEnv, map[string]pipeline.NativeHandler{"build": buildHandler, "sign": signHandler, "release": releaseHandler, "issues": issuesHandler},
-					relctx)
+					relctx).WithContext(cmd.Context())
 			}
 
 			fail := func() error {
@@ -830,6 +831,19 @@ func resolveSigningEnv(ctx context.Context, cfg *config.Config, eco string, mask
 		}
 		out(label + ": " + err.Error())
 		return nil, false
+	}
+	// Name where each secrets-manager value came from — never the value.
+	if r := secrets.ReaderFrom(ctx); r != nil {
+		keys := make([]string, 0, len(sc.Env))
+		for k := range sc.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if _, name, ok := secrets.ParseRef(sc.Env[k]); ok {
+				out(label + ": " + k + " ← " + r.Describe(name))
+			}
+		}
 	}
 	return env, true
 }

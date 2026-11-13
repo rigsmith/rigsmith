@@ -15,7 +15,15 @@ rig lint
 rig typecheck
 rig build --dry-run      # print the command, don't run it
 rig build --quiet        # suppress the → command echo
+rig test --no-doppler    # once without the .rig.json secrets manager
+rig secrets              # the Doppler project/configs and whether the CLI is signed in
+rig secrets ci PG_URL    # the GitHub Actions steps that fetch a job's secrets
 ```
+
+With a `"doppler": { "project": …, "dev": …, "ci": …, "release": … }` block in
+`.rig.json`, the verbs that build or run code go through
+`doppler run -p <project> -c <dev>`; see
+[Secrets from Doppler](https://rigsmith.dev/rig/configuration#doppler).
 
 Beyond the dev loop it manages parallel worktrees, and **stackspaces** —
 your app and the libraries you have forked, fused into one history, so a change

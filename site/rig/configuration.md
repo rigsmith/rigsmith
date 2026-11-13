@@ -39,6 +39,7 @@ unknown keys get a did-you-mean warning.
 | `worktree.autoOpen` / `worktree.openCmd` | bool / string | Whether `rig worktree new` opens a review window, and the command to open it ([see below](#worktree)) |
 | `commands` | map | Custom verbs: shell string, argv array, Tengo `script`, or object with per-OS (`macos`/`windows`/`linux`), `env`, `cwd`, `description`, `shell` ([see below](#commands)) |
 | `shell` | string | How a shell-string command runs: `portable` (default, cross-platform) or `system` (the OS shell). A command's own `shell` overrides it |
+| `doppler` | object | The repo's Doppler project and the config each context reads (`project`, `dev`, `ci`, `release`); absent means no Doppler ([see below](#doppler)) |
 | `aliases` / `dotnet.*` | — | Aliases; `dotnet`-namespaced keys fold over legacy top-level |
 
 Custom commands honor `--dry-run`; extra args are forwarded. A custom name that
@@ -56,6 +57,70 @@ preserve comments via the JSONC editor.
 Whatever a command resolves to — after OS selection, shell choice, `cwd` and the
 env layers — is printable with [`rig explain <verb>`](./verbs#explain), which
 runs nothing.
+
+## Secrets from Doppler {#doppler}
+
+A repo that keeps its secrets in [Doppler](https://www.doppler.com) names the
+project and the config each context reads, once:
+
+```jsonc
+{
+  "doppler": { "project": "acme", "dev": "dev", "ci": "ci", "release": "release" }
+}
+```
+
+| Key | Used by | Meaning |
+|-----|---------|---------|
+| `project` | everything (required) | The Doppler project for this product |
+| `dev` | `rig`, on your machine | Local runs go through `doppler run -p <project> -c <dev>` |
+| `ci` | `rig secrets ci` | The config the repo's `DOPPLER_TOKEN` reads in GitHub Actions; the generated guard fails a job whose token reads anything else |
+| `release` | `shiprig` | Where `doppler:NAME` publishing credentials come from ([shiprig](../shiprig/pipeline#publishing-credentials-from-doppler)) |
+
+`rig config set doppler.project acme` (and `doppler.dev`, `doppler.ci`,
+`doppler.release`) writes the keys without disturbing the file's comments.
+
+Leave a context out and nothing reads secrets for it. Leave the block out and
+nothing changes at all. A repo's block replaces a `~/.rig.json` one whole — a
+repo never reads its configs from another product's project.
+
+**Locally.** `rig build`, `test`, `run`, `rebuild`, `verify`, `watch`,
+`coverage`, `publish`, every custom command and every package script run under
+Doppler, and the `→` echo says so:
+
+```
+$ rig test
+→ doppler run -p acme -c dev -- go test ./...
+$ rig migrate                    # a portable-shell custom command
+→ [doppler acme/dev] ./scripts/migrate.sh
+```
+
+`-n` prints the wrapped line without asking Doppler anything. Formatting, linting,
+installs and housekeeping are never wrapped and never need a sign-in. rig names
+the project and config on every call, so it works in a fresh git worktree with no
+`doppler setup` there (commit a `doppler.yaml` for people who run `doppler` by
+hand; rig doesn't need it).
+
+If the `doppler` CLI is missing or signed out, rig refuses rather than running
+without secrets — an empty connection string reads as "skip these tests", and a
+run that skips everything still shows green:
+
+```
+the doppler CLI is not signed in — run `doppler login`
+  (or run once without Doppler: --no-doppler)
+```
+
+`--no-doppler` runs once without it, for a run you know needs no secrets.
+`rig secrets` (and `rig info`) show the project, each context's config, the
+wrapped line and whether the CLI is signed in.
+
+A command rig runs itself — a portable-shell line or a Tengo script — has no
+single child process to wrap, so rig reads the dev config once and adds the
+secrets to that command's environment instead (a script's `ctx.env` doesn't get
+them, so a script that logs its environment can't print one).
+
+**In CI** rig wraps nothing: the workflow fetches the secrets and passes each
+step only the ones it needs. `rig secrets ci` writes that fetch — see
+[Secrets in GitHub Actions](./verbs#secrets-ci).
 
 ## Custom commands {#commands}
 

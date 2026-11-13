@@ -298,6 +298,10 @@ func allDashboardEligible() bool {
 // runAcrossDashboard runs the tasks under the live dashboard and returns an
 // error when any package failed (or the run was cancelled).
 func runAcrossDashboard(cmd *cobra.Command, tasks []allTask, verb string) error {
+	tasks, err := wrapAllTasks(cmd, tasks)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
@@ -333,6 +337,25 @@ func runAcrossDashboard(cmd *cobra.Command, tasks []allTask, verb string) error 
 	// A user-initiated cancel (no failures) exits cleanly — the dashboard already
 	// rendered "(cancelled)".
 	return nil
+}
+
+// wrapAllTasks runs each package's command under the secrets manager the way
+// a single one does through runCommand — on a copy, since the dashboard execs
+// the argv itself. A skipped task never runs, so it is left alone: it needs no
+// secrets and must not demand a sign-in for its folder.
+func wrapAllTasks(cmd *cobra.Command, tasks []allTask) ([]allTask, error) {
+	wrapped := make([]allTask, len(tasks))
+	for i, t := range tasks {
+		if t.skip == "" {
+			argv, err := withSecrets(cmd, t.dir, t.argv)
+			if err != nil {
+				return nil, err
+			}
+			t.argv = argv
+		}
+		wrapped[i] = t
+	}
+	return wrapped, nil
 }
 
 // runAllTask runs one package's command, streaming combined output line-by-line

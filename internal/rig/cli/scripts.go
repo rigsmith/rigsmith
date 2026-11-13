@@ -89,10 +89,16 @@ func scriptEntryCmds(entries []scriptEntry) []*cobra.Command {
 	var cmds []*cobra.Command
 	for _, e := range entries {
 		e := e
+		// Every surfaced script runs the repo's own code, so it runs under
+		// the secrets manager like `rig run` does (see secretsApply).
+		annotations := map[string]string{runsProjectCodeAnnotation: "true"}
+		for k, v := range e.annotations {
+			annotations[k] = v
+		}
 		cmds = append(cmds, &cobra.Command{
 			Use:                e.name,
 			Short:              e.short,
-			Annotations:        e.annotations,
+			Annotations:        annotations,
 			FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
 			RunE: func(cmd *cobra.Command, args []string) error {
 				return e.run(cmd, args)
@@ -302,7 +308,13 @@ func runPlan(cmd *cobra.Command, cfg config.Config, p commandPlan) error {
 		return runScript(cmd, cfg, p)
 	case planShell:
 		if p.shell == shellrun.ShellPortable {
-			return runPortableIn(cmd, p.dir, env, p.line)
+			// rig interprets this line itself, so there is no child to
+			// wrap: the secrets join the environment instead.
+			vars, label, err := inProcessSecrets(cmd, p.dir)
+			if err != nil {
+				return err
+			}
+			return runPortableIn(cmd, p.dir, overlayEnv(env, vars), secretsLabel(label, p.line), p.line)
 		}
 		return runIn(cmd, p.dir, env, p.line, p.argv...)
 	default:
@@ -318,13 +330,20 @@ func runPlan(cmd *cobra.Command, cfg config.Config, p commandPlan) error {
 // side effects are previewed, not performed.
 func runScript(cmd *cobra.Command, cfg config.Config, p commandPlan) error {
 	envMap := mergedEnv(p.layers)
-	runnerEnv := envstack.Environ(envMap)
+	// A script's sh() runs in-process too: the secrets join the environment
+	// its commands see. ctx.env stays without them, so a script that logs its
+	// environment can't print one.
+	vars, label, err := inProcessSecrets(cmd, p.dir)
+	if err != nil {
+		return err
+	}
+	runnerEnv := overlayEnv(envstack.Environ(envMap), vars)
 	runner := shellrun.NewPortableRunner(runnerEnv)
 	if p.shell == shellrun.ShellSystem {
 		runner = shellrun.NewExecRunner(runnerEnv)
 	}
 
-	echo(cmd, "(tengo script)")
+	echo(cmd, secretsLabel(label, "(tengo script)"))
 	// In a dry run RunnerHost previews sh()/file ops while the script's own logic
 	// still runs, so the command is exercised without side effects.
 	report := func(line string) { fmt.Fprintln(cmd.OutOrStdout(), line) }
@@ -423,8 +442,8 @@ func (e *exitError) ExitCode() int { return e.code }
 // streaming live (so interactive and long-running commands behave like a real
 // shell), honoring --dry-run. A non-zero exit surfaces as an *exitError, the
 // ExitCode()-bearing parallel to the OS-shell path's *exec.ExitError.
-func runPortableIn(cmd *cobra.Command, dir string, env []string, line string) error {
-	echo(cmd, line)
+func runPortableIn(cmd *cobra.Command, dir string, env []string, display, line string) error {
+	echo(cmd, display)
 	if dryRun {
 		return nil
 	}
@@ -441,6 +460,14 @@ func runPortableIn(cmd *cobra.Command, dir string, env []string, line string) er
 // runIn echoes display, then runs argv in dir with env (nil = inherit),
 // honoring --dry-run.
 func runIn(cmd *cobra.Command, dir string, env []string, display string, argv ...string) error {
+	wrapped, err := withSecrets(cmd, dir, argv)
+	if err != nil {
+		return err
+	}
+	if extra := len(wrapped) - len(argv); extra > 0 {
+		display = strings.Join(wrapped[:extra], " ") + " " + display
+	}
+	argv = wrapped
 	echo(cmd, display)
 	if dryRun {
 		return nil

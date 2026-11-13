@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/rigsmith/rigsmith/core/jsonc"
+	"github.com/rigsmith/rigsmith/core/secrets"
 )
 
 // FileName is the config file rig looks for (per-repo and in $HOME).
@@ -108,6 +109,12 @@ type Config struct {
 	// sequence, and how long it is given to prove it starts).
 	Verify *Verify `json:"verify,omitempty"`
 
+	// Doppler names the repo's Doppler project and the config each context
+	// reads: "dev" for local runs (rig wraps them in `doppler run`), "ci" for
+	// GitHub Actions (`rig secrets ci`), "release" for shiprig's publishing
+	// credentials. Nil is no Doppler, and nothing changes. See core/secrets.
+	Doppler *secrets.Settings `json:"doppler,omitempty"`
+
 	// Path is the resolved location the config was loaded from, "" if none.
 	Path string `json:"-"`
 	// CommandPaths records which FILE declared each entry in Commands.
@@ -121,6 +128,13 @@ type Config struct {
 	// defaults, unknown keys with did-you-mean suggestions). The loader never
 	// prints; the caller decides what to surface.
 	Warnings []string `json:"-"`
+}
+
+// Secrets returns the repo's secrets manager, nil when none is configured, and
+// an error when the block is there but wrong — a run must never take a broken
+// block for "no secrets".
+func (c Config) Secrets() (*secrets.Setup, error) {
+	return secrets.Select(map[string]*secrets.Settings{"doppler": c.Doppler})
 }
 
 // IsQuiet reports whether quiet mode is enabled (false when unset).
@@ -520,6 +534,13 @@ func Merge(base, overlay Config) Config {
 	if worktree == nil {
 		worktree = base.Worktree
 	}
+	// A secrets block names one product's project: the repo's replaces a
+	// global one whole, never field by field, so a repo can't end up reading
+	// its configs from another product's project.
+	doppler := overlay.Doppler
+	if doppler == nil {
+		doppler = base.Doppler
+	}
 	quiet := overlay.Quiet
 	if quiet == nil {
 		quiet = base.Quiet
@@ -545,6 +566,7 @@ func Merge(base, overlay Config) Config {
 		Worktree:        worktree,
 		Artifacts:       mergeDict(base.Artifacts, overlay.Artifacts),
 		Verify:          mergeVerify(base.Verify, overlay.Verify),
+		Doppler:         doppler,
 		Publish:         mergePublish(base.Publish, overlay.Publish),
 		Env:             mergeDict(base.Env, overlay.Env),
 		Commands:        mergeDict(base.Commands, overlay.Commands),
@@ -699,7 +721,7 @@ var knownKeys = []string{
 	"$schema", "solution", "defaultProject", "ecosystem", "test", "coverage",
 	"kill", "rebuild", "publish", "env", "envPresets", "commands", "aliases",
 	"tools", "exclude", "quiet", "dotnet", "node", "worktree", "shell",
-	"artifacts", "verify", "stack",
+	"artifacts", "verify", "stack", "doppler",
 }
 
 // UnknownKey is a top-level key rig doesn't recognize, with the closest known

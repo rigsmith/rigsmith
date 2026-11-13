@@ -168,7 +168,7 @@ URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
   build, over a placeholder. A lazy var nothing in the plan references is
   left alone, as it always was; an optional credential behind a disabled
   step stays optional.
-- **Secret** — `{ "secret": "op://…" | "env:NAME" | "cmd:…" }`: the same
+- **Secret** — `{ "secret": "op://…" | "env:NAME" | "cmd:…" | "doppler:NAME" }`: the same
   references the [publish `auth` config](#publish-authentication) takes,
   read against the release — `env:NAME` from the [layered environment](#environment-env)
   (so a key that lives only in `.env.local` is found), `cmd:…` through the
@@ -176,6 +176,8 @@ URL). These also appear on the script `ctx` (`ctx.version`, `ctx.lastVersion`,
   1Password CLI — and masked. A reference that resolves to nothing fails the
   var rather than handing a step an empty value. `lazy` applies as for a
   captured value. Prefer this for a credential; it is what a credential is for.
+  A `doppler:NAME` secret may keep the capture it replaced — see
+  [Publishing credentials from Doppler](#publishing-credentials-from-doppler).
 - **Computed** — `{ "script": "<tengo-expr>" }` evaluated over the script
   context. Not masked. `fail(msg)` is in scope, so a value that cannot be
   computed — an environment variable that must be set, say — refuses with a
@@ -273,8 +275,8 @@ simply never read, so a `"npm"` block configures nothing at all.
 ```
 
 - **`auth`** takes a secret reference: `op://vault/item/field` (1Password, via
-  `op read`), `env:NAME`, or `cmd:…` (a command's stdout). Resolved secrets are
-  masked from logs.
+  `op read`), `env:NAME`, `cmd:…` (a command's stdout), or `doppler:NAME` (see
+  below). Resolved secrets are masked from logs.
 - **`oidc`** is `"auto"` (use OIDC trusted publishing when a CI OIDC context is
   present) or `"off"` (force a token). Supported for npm, crates.io, and
   NuGet.org.
@@ -288,6 +290,57 @@ Precedence per registry: an explicit `auth` ref wins; otherwise OIDC when a CI
 context is present and not turned off; otherwise the ambient environment. See the
 [publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md)
 for the full matrix.
+
+## Publishing credentials from Doppler
+
+With a `release` config in the [`.rig.json` `doppler` block](../rig/configuration#doppler),
+`doppler:NAME` is a secret reference anywhere shiprig takes one — a publish
+`auth`, a `signing.env` entry, a release var's `secret`:
+
+```jsonc
+// .rig.json
+"doppler": { "project": "acme", "dev": "dev", "ci": "ci", "release": "release" }
+
+// .changeset/config.json
+"dotnet":  { "auth": "doppler:NUGET_API_KEY" },
+"electron": { "signing": { "enabled": true, "env": { "APPLE_ID_PASSWORD": "doppler:APPLE_ID_PASSWORD" } } }
+```
+
+On your machine it reads `doppler secrets get NAME -p <project> -c <release>`,
+and refuses — naming `doppler login` — when the CLI is missing or signed out. In
+CI it reads `NAME` from the step's environment, which the step gets from the
+fetch [`rig secrets ci --context release`](../rig/verbs#secrets-ci) writes. A
+missing or empty secret fails the release; shiprig never falls back to an empty
+value.
+
+A repo moving off the keychain can name both, in a release var: the keychain
+lookup runs only while `.rig.json` has no `release` config.
+
+```jsonc
+"vars": {
+  "key": {
+    "secret": "doppler:FEEDZ_API_KEY",
+    "os": {
+      "macos": ["security", "find-generic-password", "-s", "feedz-push-acme", "-w"],
+      "linux": ["secret-tool", "lookup", "service", "feedz-push-acme"]
+    },
+    "lazy": true
+  }
+}
+```
+
+Once the release config is set, the keychain never runs — a secret missing from
+Doppler fails rather than quietly reading the old item. Either way shiprig says
+where each credential came from, by name only:
+
+```
+    vars.key ← Doppler acme/release (FEEDZ_API_KEY)
+    vars.key ← capture command (fallback: no doppler.release in .rig.json)
+auth for dotnet: Doppler acme/release (NUGET_API_KEY)
+```
+
+No value is ever printed — not in output, not in an error, not in `--dry-run`
+(which resolves no credential at all).
 
 ## Signing (desktop ecosystems)
 

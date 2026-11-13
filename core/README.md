@@ -29,8 +29,9 @@ not a detail — everything else in the table is stdlib.
 | `ecosystem/{cargo,dotnet,gomod,node}` | built-in language adapters (reference impls of `plugin.Ecosystem`) |
 | `ecosystem/{electron,tauri,velopack}` | desktop-app adapters, each overlaying a base language adapter |
 | `ecosystem/regex` | generic version stamping for files that aren't a recognized manifest |
-| `auth` | registry credential precedence: OIDC → secret ref (`op:`/`env:`/`cmd:`) → env var → ambient |
+| `auth` | registry credential precedence: OIDC → secret ref (`op:`/`env:`/`cmd:`/`doppler:`) → env var → ambient |
 | `sign` | the same seam for a desktop build's signing/notarization secrets (opt-in) |
+| `secrets` | the secrets-manager seam: `.rig.json` provider block (`doppler` today), a `Provider` interface (ready / wrap / get / all), the release-config `Reader`, and the pinned GitHub Actions fetch steps |
 
 ## CLI plumbing
 

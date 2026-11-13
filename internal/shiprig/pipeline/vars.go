@@ -12,6 +12,7 @@ import (
 
 	"github.com/rigsmith/rigsmith/core/auth"
 	"github.com/rigsmith/rigsmith/core/envstack"
+	"github.com/rigsmith/rigsmith/core/secrets"
 )
 
 // varResolution is the outcome of resolving a variable: its value, or why the
@@ -52,6 +53,24 @@ type variables struct {
 	secrets func(ref string) (string, error)
 	// osToken names the OS the release runs on, in the `os` map's vocabulary.
 	osToken string
+	// ctx carries the secrets-manager Reader a "doppler:NAME" secret reads
+	// through; nil is context.Background().
+	ctx context.Context
+	// note reports where a secret came from, by name only.
+	note func(line string)
+}
+
+func (v *variables) context() context.Context {
+	if v.ctx == nil {
+		return context.Background()
+	}
+	return v.ctx
+}
+
+func (v *variables) noteSource(name, source string) {
+	if v.note != nil {
+		v.note(fmt.Sprintf("vars.%s ← %s", name, source))
+	}
 }
 
 // currentOSToken is the running OS in the vocabulary a per-OS command map uses
@@ -100,7 +119,7 @@ func (v *variables) resolveSecret(ref string) (string, error) {
 		}
 		return value, nil
 	}
-	cred, err := auth.Resolve(context.Background(), auth.Request{Ref: ref, Masker: v.masker})
+	cred, err := auth.Resolve(v.context(), auth.Request{Ref: ref, Masker: v.masker})
 	if err != nil {
 		return "", err
 	}
@@ -179,6 +198,9 @@ func (v *variables) checkEnvRefs(referenced map[string]bool) error {
 		}
 		if spec.Lazy && !referenced[name] {
 			continue
+		}
+		if spec.Secret != nil && v.managerAvailable() {
+			continue // the fallback command will not run
 		}
 		names = append(names, name)
 	}
@@ -285,8 +307,18 @@ func (v *variables) resolve(name string) varResolution {
 		return varSuccess(value)
 	}
 
+	// A secrets-manager reference with a capture command beside it is a repo
+	// mid-move: the manager when .rig.json gives it a release config (or in
+	// CI, where the workflow passes the secret in), the command — the keychain
+	// item the repo used before — when it does not. Once the manager is
+	// configured a missing secret fails; it never falls back to the keychain.
+	if spec.Secret != nil && spec.hasFallback() && !v.managerAvailable() {
+		v.noteSource(name, "capture command (fallback: no "+managerKey(*spec.Secret)+".release in .rig.json)")
+		return v.capture(name, spec)
+	}
+
 	// A secret goes through the credential resolver the publish auth config
-	// uses — op://, env:, cmd: — which masks what it finds.
+	// uses — op://, env:, cmd:, doppler: — which masks what it finds.
 	if spec.Secret != nil {
 		resolve := v.secrets
 		if resolve == nil {
@@ -301,9 +333,36 @@ func (v *variables) resolve(name string) varResolution {
 		}
 		v.masker.Add(value)
 		v.cache[name] = value
+		if provider, secretName, ok := secrets.ParseRef(*spec.Secret); ok {
+			source := provider + ":" + secretName
+			if r := secrets.ReaderFrom(v.context()); r != nil {
+				source = r.Describe(secretName)
+			}
+			v.noteSource(name, source)
+		}
 		return varSuccess(value)
 	}
 
+	return v.capture(name, spec)
+}
+
+// managerAvailable reports whether a "doppler:NAME" secret has somewhere to
+// read from this run.
+func (v *variables) managerAvailable() bool {
+	return secrets.ReaderFrom(v.context()).Available()
+}
+
+// managerKey is the provider key a "doppler:NAME" reference names.
+func managerKey(ref string) string {
+	if provider, _, ok := secrets.ParseRef(ref); ok {
+		return provider
+	}
+	return "secrets"
+}
+
+// capture resolves a var by running its capture command (the `os` entry for
+// this OS, else `command`) and taking the trimmed output, masked.
+func (v *variables) capture(name string, spec *VarSpec) varResolution {
 	command, ok := v.commandFor(spec)
 	if !ok {
 		if spec.OS != nil {

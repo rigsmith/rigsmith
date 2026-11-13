@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/rigsmith/rigsmith/core/secrets"
 )
 
 // resolveOpRef resolves a 1Password secret reference ("op://vault/item/field")
@@ -84,7 +86,10 @@ func PreflightRef(ctx context.Context, ref string) (detail string, ok bool) {
 	case strings.HasPrefix(ref, "cmd:"):
 		return "command ref — resolved at publish time", true
 	default:
-		return fmt.Sprintf("unrecognized ref %q (want op://… | env:NAME | cmd:…)", ref), false
+		if provider, name, ok := secrets.ParseRef(ref); ok {
+			return preflightManagerRef(ctx, provider, name)
+		}
+		return fmt.Sprintf("unrecognized ref %q (want op://… | env:NAME | cmd:… | doppler:NAME)", ref), false
 	}
 }
 
@@ -95,4 +100,23 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+// preflightManagerRef checks a "doppler:NAME" ref the way the op:// check
+// does: that there is a release config to read and the CLI is signed in,
+// without reading the secret.
+func preflightManagerRef(ctx context.Context, provider, name string) (string, bool) {
+	r := secrets.ReaderFrom(ctx)
+	switch {
+	case r == nil:
+		return fmt.Sprintf("%s:%s — no %q block in .rig.json", provider, name, provider), false
+	case !r.Available():
+		return fmt.Sprintf("%s:%s — .rig.json sets no %s.release config", provider, name, provider), false
+	case secrets.InCI():
+		return fmt.Sprintf("%s:%s — read from the job environment in CI", provider, name), true
+	}
+	if err := r.Ready(ctx); err != nil {
+		return err.Error(), false
+	}
+	return r.Provider().Title() + " CLI signed in", true
 }

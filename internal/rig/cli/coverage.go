@@ -289,6 +289,10 @@ func runGoCoverage(cmd *cobra.Command, root string, argv []string, min *float64,
 	if profile != "" {
 		argv = withGoCoverProfile(argv, profile)
 	}
+	argv, err := withSecrets(cmd, root, argv)
+	if err != nil {
+		return err
+	}
 	echo(cmd, strings.Join(argv, " "))
 	if dryRun {
 		return nil

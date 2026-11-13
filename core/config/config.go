@@ -753,7 +753,8 @@ type EcosystemConfig struct {
 // SigningConfig is the optional `signing` block of a desktop ecosystem. It is
 // off unless Enabled is true; when enabled, Env maps the environment variables
 // the build tool reads (e.g. APPLE_ID, CSC_LINK, TAURI_SIGNING_PRIVATE_KEY) to a
-// secret reference resolved at build time ("op://…", "env:NAME", or "cmd:…") —
+// secret reference resolved at build time ("op://…", "env:NAME", "cmd:…", or
+// "doppler:NAME") —
 // the same reference forms as the per-ecosystem `auth` key. Secrets are resolved
 // just-in-time and masked; nothing is read unless Enabled.
 type SigningConfig struct {

@@ -13,7 +13,8 @@ description: >
   forked repos fused into one history (`rig stack`), publishing a manifest home, safely refreshing trackBranch after a pull, preparing and publishing edge builds through separate credential-free build and trusted publish jobs under republished NuGet ids, and checking edge retirement, switching consumers from republished/edge package ids back to the original public ids,
   adopting upstream PRs as import-rooted edge topics, setting up edge publishing with interactive confirmation and checking its shared facts with doctor --edge,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
-  or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001) —
+  or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001),
+  or secrets in Doppler (running tests or releases that need secrets, `doppler run`, a GitHub Actions secrets fetch, DOPPLER_TOKEN, a publish key or signing credential) —
   even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
@@ -87,6 +88,38 @@ rig prune                     # one sweep: reap merged worktrees, then their bra
 `rig` needs **zero config**. An optional `.rig.json` (JSONC, repo root) supplies
 only what can't be inferred — read `rig config path` / `rig config get <key>`, and
 write with `rig config set` (comment-preserving).
+
+### Secrets (Doppler)
+
+A repo that keeps its secrets in Doppler says so once in `.rig.json`:
+
+```jsonc
+"doppler": { "project": "foxcraft", "dev": "dev", "ci": "ci", "release": "release" }
+```
+
+Then `rig build | test | run | rebuild | verify | watch | coverage | publish` and
+every custom command or package script run under `doppler run -p <project> -c <dev>`
+— the `→` echo shows it, `-n` prints the wrapped line. Format, lint, installs and
+housekeeping are never wrapped.
+
+- **Never bypass it to "make the test run".** If rig refuses because the doppler
+  CLI is missing or signed out, tell the user to run `doppler login` (the error
+  says so). `--no-doppler` exists for a run that genuinely needs no secrets; using
+  it to get past a refusal turns a loud failure into tests that skip and pass.
+- Never call `doppler` yourself without `-p` and `-c`: a bare `doppler run` only
+  works after `doppler setup` in that exact folder, and every git worktree is a new
+  folder.
+- `rig secrets` shows the project, each context's config and whether the CLI is
+  signed in; `rig info` has the same section.
+- **CI:** `rig secrets ci NAME...` prints the job steps — a token check, the fetch
+  (`dopplerhq/secrets-fetch-action` pinned by commit, no `inject-env-vars`), and a
+  guard that fails the job when the token reads the wrong config or any NAME is
+  empty. Each step that needs a secret then takes only that one:
+  `env: NAME: ${{ steps.doppler.outputs.NAME }}`. Never put secrets in a job-level
+  `env:`, and regenerate the steps rather than editing them. In CI rig wraps
+  nothing. Generated agentic workflows (`gh aw`, `*.lock.yml`) are left alone.
+- Never print, echo or log a secret's value — not to check it is set, not in a
+  dry run. Check presence (`[ -n "$NAME" ]`), never content.
 
 ### Before inventing a custom verb — check what already exists
 
@@ -529,6 +562,24 @@ shiprig release                  # the configurable step pipeline (.changeset/re
 ```
 
 Pipeline order: `version → commit → publish → tag → push → release → artifacts`.
+
+**Publishing credentials from Doppler.** With `"release": "<config>"` in the
+`.rig.json` `doppler` block, `doppler:NAME` is a secret reference anywhere shiprig
+takes one — a publish `auth`, a signing `env` entry, a release var's `secret`. A
+var may keep its old keychain lookup beside it as the fallback for a repo that has
+not moved yet:
+
+```jsonc
+"key": { "secret": "doppler:FEEDZ_API_KEY",
+         "os": { "macos": ["security", "find-generic-password", "-s", "feedz-push-jcamp", "-w"] },
+         "lazy": true }
+```
+
+The keychain runs only when there is no release config. Once there is, a missing
+secret fails the release. shiprig prints where each credential came from
+(`vars.key ← Doppler owlwatch/release (FEEDZ_API_KEY)`), never the value. In CI a
+`doppler:NAME` reference reads `NAME` from the step's environment, which the
+generated fetch step supplies.
 
 In a `rig stack` stackspace, `shiprig` stamps no member manifest (the versions go
 to `.changeset/versions.json` and `${version.<pkg>}`), and `tag`/`push`/`release`

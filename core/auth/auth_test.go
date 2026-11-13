@@ -98,7 +98,7 @@ func TestSafeReasonKeepsResolverOutputOut(t *testing.T) {
 		{"env:SHIPRIG_TEST_UNSET", `auth ref "env:SHIPRIG_TEST_UNSET" resolved to an empty token`},
 		{"cmd:echo " + leaked + " >&2; echo " + leaked + "; exit 3", `auth ref "cmd:…" failed`},
 		{"cmd:true", `auth ref "cmd:…" resolved to an empty token`},
-		{"nope:" + leaked, "the auth ref isn't one of op://…, env:NAME or cmd:…"},
+		{"nope:" + leaked, "the auth ref isn't one of op://…, env:NAME, cmd:… or doppler:NAME"},
 	} {
 		_, err := Resolve(context.Background(), Request{Ref: tc.ref})
 		if err == nil {
