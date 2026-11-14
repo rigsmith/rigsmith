@@ -292,7 +292,8 @@ changerig version --changelog --release-as pkg-b=3.0.0   # preview it first
 
 It's repeatable. The package has to be releasing already, from a changeset or a
 commit: an override changes the number, not whether it ships. The version must
-be valid semver above the current one. Packages sharing a version file move
+be valid semver above the current one — or equal to it, for
+[a first release](#initial-release) of a version never published. Packages sharing a version file move
 together, as they do at the prompt, and the dependency cascade isn't
 recomputed: dependents already in the release get the new version in their
 ranges and changelogs, and an override that would push past the range of a
@@ -314,6 +315,37 @@ member's changes under their own bump, as @changesets does.
 
 It's for normal releases only; a prerelease or snapshot sets its own suffix. @changesets has no equivalent (there you write a changeset with
 the bump you want), so without the flag nothing changes.
+
+### A first release of the version on disk {#initial-release}
+
+A new package is often set up at its first version by hand — `0.1.0` in
+`package.json` — and then never published, so there is nothing to bump from
+and no changelog entry for it. `--release-as` at the version a package is
+already at is that first release:
+
+```sh
+changerig version --yes --release-as @acme/core=0.1.0 --release-as @acme/theme=0.1.0
+changerig version --yes --release-as @acme/core=0.1.0 --initial-message "First public release"
+```
+
+Each named package gets a changelog entry for its current version, and nothing
+is bumped: not the package, not the ranges that point at it, and nothing
+depending on it is cascaded. Pending changesets for the package are the entry's
+notes, consumed as usual; with none, it's one line, `--initial-message` or
+"Initial release", under the heading the version reads as from nothing
+(`1.0.0` **Major Changes**, `0.1.0` **Minor Changes**, `0.1.3` **Patch
+Changes**). No changesets are needed at all, where a plain `version` would stop
+with nothing to version.
+
+It's only for a version that never shipped. Before writing anything, the
+version is looked for as a git tag — locally and on the default remote, named
+as `publish` would tag it — and on the package's registry (`npm view`, NuGet,
+crates.io; a private package, or a Go module, has only the tag). Found either
+way, the run is refused, since re-releasing it would rewrite the notes of
+something already out; give it a changeset instead. A registry that can't
+answer is an error too, not a guess. Name the package; a bare version counts
+only when the workspace has a single package. In shiprig-action, `releaseAs`
+in `shiprig-action.jsonc` passes the same `--release-as`.
 
 ### Versions that do not live in the tree {#no-stamp}
 

@@ -33,7 +33,9 @@ grouping, stamps the new versions into each ecosystem's manifest, and writes
 The whole workflow is wired:
 
 - `init`, `add` (`--since`), `status` (`--since`, `--output`)
-- `version` (normal / pre / snapshot, changelog enrichment + `format:`)
+- `version` (normal / pre / snapshot, changelog enrichment + `format:`;
+  `--release-as <pkg>=<current>` is the first release of a version never
+  published or tagged: a changelog entry, no bump)
 - `pre` — enter/exit prerelease mode
 - `config` — `show` / `get` / `set` / `path` / `edit` the `.changeset/config.json`
 - `info`, `ui`
@@ -77,7 +79,14 @@ The whole workflow is wired:
   and commit first, or `shiprig release` to do it all, or pass `--allow-pending`
   to publish the versions on disk anyway. Commit-derived changes don't count, since a
   pipeline publishes before it tags. A NuGet version the feed already holds is
-  reported as skipped, "already on" the feed, not as pushed. In pre mode
+  reported as skipped, "already on" the feed, not as pushed. In a pnpm
+  workspace each npm package is packed with pnpm, which rewrites `workspace:`
+  ranges to real versions, and npm publishes that tarball; elsewhere a
+  `workspace:` dependency is refused rather than shipped. npm provenance follows
+  `node.provenance` (`auto` attests in GitHub Actions with an id-token, whatever
+  the auth). A custom `steps.publish` action in the release config is
+  `shiprig release`'s, not this command's: `publish` says so and publishes the
+  built-in way (see [the pipeline](./pipeline#publish-run)). In pre mode
   npm packages go out under the prerelease tag (`next`, say) rather than
   `latest`, as `changeset publish` does; `--tag <name>` picks another dist-tag
   outside pre mode.

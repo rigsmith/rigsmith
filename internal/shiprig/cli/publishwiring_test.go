@@ -210,3 +210,38 @@ func TestPublishMasksCredentialsInARegistryURL(t *testing.T) {
 		t.Errorf("want the registry URL with its credentials masked, got:\n%s", all)
 	}
 }
+
+// The node block's provenance setting reaches the adapter on every publish,
+// whatever the run authenticates with.
+func TestPublishPassesTheProvenanceSetting(t *testing.T) {
+	planRepo(t, `{ "node": { "provenance": "always" } }`)
+	reqs := runPublishRecording(t)
+	if len(reqs) == 0 {
+		t.Fatal("publish asked for nothing")
+	}
+	for _, r := range reqs {
+		if r.Provenance != "always" {
+			t.Errorf("%s: provenance %q, want always", r.Package.Name, r.Provenance)
+		}
+	}
+}
+
+// A custom publish action in the release config isn't run by `shiprig
+// publish`, which says so — except under `shiprig release`, which runs it.
+func TestCustomPublishNote(t *testing.T) {
+	root := planRepo(t, `{}`)
+	t.Setenv(releaseRunEnv, "")
+	if note := customPublishNote(root, filepath.Join(root, ".changeset")); note != "" {
+		t.Errorf("with no release config: note %q", note)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".changeset", "release.jsonc"), []byte(`{ "steps": { "publish": { "run": "pnpm -r publish" } } }`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if note := customPublishNote(root, filepath.Join(root, ".changeset")); !strings.Contains(note, "shiprig release --only publish") {
+		t.Errorf("note = %q, want it to point at `shiprig release --only publish`", note)
+	}
+	t.Setenv(releaseRunEnv, "1")
+	if note := customPublishNote(root, filepath.Join(root, ".changeset")); note != "" {
+		t.Errorf("under shiprig release: note %q", note)
+	}
+}

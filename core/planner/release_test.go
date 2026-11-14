@@ -136,3 +136,27 @@ func TestGraduatePrereleases(t *testing.T) {
 		t.Errorf("graduated version = %s, want 1.1.0", got)
 	}
 }
+
+// An initial release keeps the version on disk and heads its one change by the
+// move the version reads as from nothing.
+func TestInitialRelease(t *testing.T) {
+	for version, want := range map[string]changeset.Bump{
+		"1.0.0": changeset.BumpMajor,
+		"2.0.0": changeset.BumpMajor,
+		"0.1.0": changeset.BumpMinor,
+		"1.2.0": changeset.BumpMinor,
+		"0.1.3": changeset.BumpPatch,
+		"0.0.1": changeset.BumpPatch,
+	} {
+		m := InitialRelease(plugin.Package{Name: "@acme/core", Version: version, ManifestPath: "package.json"}, "Initial release")
+		if m.ResolvedVersion() != version {
+			t.Errorf("%s: resolved version %s, want it unchanged", version, m.ResolvedVersion())
+		}
+		if m.HighestBump() != want {
+			t.Errorf("%s: bump %s, want %s", version, m.HighestBump(), want)
+		}
+		if len(m.Changes) != 1 || m.Changes[0].Description != "Initial release" {
+			t.Errorf("%s: changes %+v", version, m.Changes)
+		}
+	}
+}

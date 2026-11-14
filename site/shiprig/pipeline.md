@@ -41,7 +41,7 @@ be reordered, disabled, replaced, or have custom steps slotted between them.
 | `commit` | Commit the version/changelog changes (message via `message`) |
 | `build` | Build release artifacts — runs early as a packaging preflight so a broken build fails before anything ships |
 | `sign` | Code-sign built artifacts in place (desktop ecosystems) |
-| `publish` | Push to the native registries (idempotent, registry-aware) |
+| `publish` | Push to the native registries (idempotent, registry-aware; a pnpm workspace is packed with pnpm, see [below](#publishing-a-pnpm-workspace)) |
 | `tag` | Create the git tags for the released versions |
 | `push` | Push commits + tags to the remote |
 | `release` | Create the forge (GitHub/GitLab/Gitea) release + upload assets (idempotent) |
@@ -280,6 +280,11 @@ simply never read, so a `"npm"` block configures nothing at all.
 - **`oidc`** is `"auto"` (use OIDC trusted publishing when a CI OIDC context is
   present) or `"off"` (force a token). Supported for npm, crates.io, and
   NuGet.org.
+- **`provenance`** (node) is `"auto"` (default: attest whenever the run is in
+  GitHub Actions with an id-token, `id-token: write`), `"always"` (attest or
+  fail) or `"off"`. It doesn't depend on `auth` or `oidc`: a token publish —
+  every new package's first — attests as well. See the
+  [publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md#npm-provenance).
 - **`publishDirs`** are repo-relative globs naming package directories a build
   generates rather than sources anyone checked in — npm binary wrappers built
   from release artifacts, say. They are published, never versioned, and a glob
@@ -290,6 +295,34 @@ Precedence per registry: an explicit `auth` ref wins; otherwise OIDC when a CI
 context is present and not turned off; otherwise the ambient environment. See the
 [publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md)
 for the full matrix.
+
+## Publishing a pnpm workspace {#publishing-a-pnpm-workspace}
+
+npm publishes pnpm's `workspace:` ranges as written, and no registry can
+resolve `"@acme/core": "workspace:*"`. So in a pnpm workspace — a
+`pnpm-workspace.yaml` or `pnpm-lock.yaml` in the package's directory or above
+it, up to the repository root — `publish` has pnpm pack each package
+(`pnpm pack`, which rewrites `workspace:*` to the exact version, `workspace:^`
+to `^` it, and so on) and npm publish that tarball. Auth, OIDC, provenance and
+the registry are npm's as ever. `shiprig pack` packs with pnpm the same way, so
+`--from-pack-dir` sends the same files. pnpm resolves those ranges from the
+installed workspace, so run `pnpm install` first, as the build has.
+
+Outside a pnpm workspace (npm, yarn or bun workspaces), a dependency written
+with `workspace:` is refused before anything is published, a dry run included,
+rather than shipped unresolvable.
+
+### `steps.publish.run` and `shiprig publish` {#publish-run}
+
+A custom publish action (`run` or `script` under `steps.publish`) replaces the
+publish step in `shiprig release`. `shiprig publish` doesn't run it: it is the
+built-in that action replaces (the step's default action is
+`shiprig publish --no-git-tag`), and a custom action commonly calls it in
+turn, so running the action from inside it would run it again inside itself.
+Run on its own with such an action configured, `shiprig publish` says so and
+publishes the built-in way; `shiprig release --only publish` runs the custom
+action. Commands `shiprig release` runs carry `SHIPRIG_RELEASE=1`, so a
+`shiprig publish` inside a custom action doesn't repeat the note.
 
 ## Publishing credentials from Doppler
 

@@ -151,7 +151,8 @@ func promptVersionTarget(rep *planner.Module, group []*planner.Module) (string, 
 // applyReleaseAs is the prompt's "custom version" without the prompt, for CI:
 // each spec is `<package>=<version>`, or a bare `<version>` when the run
 // releases a single version. The version must be valid semver above the
-// package's current one, and like a prompted override it applies to every
+// package's current one (a spec at the current version is a first release,
+// which initialReleases takes before this runs), and like a prompted override it applies to every
 // package sharing that version file and doesn't recompute the cascade. A
 // package that isn't releasing has nothing to override: an error, so a typo
 // or a missing changeset isn't silently a no-op.
@@ -186,7 +187,7 @@ func applyReleaseAs(out io.Writer, plan []*planner.Module, specs []string) error
 			return fmt.Errorf("--release-as %s: %q is not a valid semver version", spec, version)
 		}
 		if semver.Compare(v, rep.Current) <= 0 {
-			return fmt.Errorf("--release-as %s: must be greater than the current %s", spec, rep.Current)
+			return fmt.Errorf("--release-as %s: must be greater than the current %s (or name the package at its current version, for the first release of a version never published or tagged)", spec, rep.Current)
 		}
 		if prev, ok := chosen[rep]; ok && prev != v.String() {
 			return fmt.Errorf("--release-as gives %s two versions, %s and %s: its packages share a version file", groupLabel(group), prev, v)

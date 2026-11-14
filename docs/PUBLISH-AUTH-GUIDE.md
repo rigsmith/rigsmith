@@ -26,6 +26,7 @@ once per secret).
 | OIDC switch | `oidc: "auto"｜"off"` | same | same |
 | secret-ref | `auth: "op://…"` | same | same |
 | extra for OIDC | — | — | `user: "<nuget username>"` |
+| provenance | `provenance: "auto"｜"always"｜"off"` | — | — |
 | env fallback | `NPM_TOKEN` | `CARGO_REGISTRY_TOKEN` | `NUGET_API_KEY` |
 
 Config lives in `.changeset/config.json` under the per-ecosystem block, keyed
@@ -120,8 +121,29 @@ GitLab works too: configure an `id_tokens` entry with
 `aud: npm:registry.npmjs.org` (npm) / the registry's audience and shiprig picks
 up `NPM_ID_TOKEN`. To force a token instead of OIDC, set `<eco>.oidc: "off"`.
 
-> npm provenance needs npm ≥ 11.5.1 on the runner; auth itself does not, so an
-> older npm still publishes (without the attestation).
+## npm provenance
+
+Provenance is decided apart from how the publish authenticates, by
+`node.provenance` in `.changeset/config.json`:
+
+```jsonc
+"node": { "provenance": "auto" }   // "auto" (default) | "always" | "off"
+```
+
+- **`auto`** attests whenever the run is in GitHub Actions with an id-token
+  available (`id-token: write`, which sets `ACTIONS_ID_TOKEN_REQUEST_URL`) —
+  with an `NPM_TOKEN` or `auth` ref as much as with OIDC. That matters for a
+  new package: its first publish has to use a token, since a Trusted Publisher
+  can only be registered for a package that exists. Without an id-token it
+  publishes without the attestation, quietly.
+- **`always`** attests or fails the publish, before anything is uploaded.
+- **`off`** never attests.
+
+The attestation needs a new enough npm on the runner: npm ≥ 9.5.0 with a token
+or ambient auth, npm ≥ 11.5.1 when shiprig publishes through OIDC trusted
+publishing. Auth itself never does, so under `auto` an older npm still
+publishes (the result says the attestation was skipped); under `always` it
+fails. npm reads the id-token itself; nothing else is configured.
 
 ## 1Password and other secret managers (local / non-OIDC)
 

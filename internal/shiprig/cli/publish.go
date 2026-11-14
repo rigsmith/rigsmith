@@ -118,6 +118,9 @@ func newPublishCmd() *cobra.Command {
 			if _, err := applyReleaseEnv(ws.Root, noEnv); err != nil {
 				return err
 			}
+			if note := customPublishNote(ws.Root, ws.ChangesetDir); note != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), commands.DimStyle.Render("note: "+note))
+			}
 			pkgs, ecoOf, err := ws.Discover(cmd.Context())
 			if err != nil {
 				return err
@@ -311,6 +314,7 @@ func newPublishCmd() *cobra.Command {
 					OIDCUser:      ws.Config.EcoConfig(ecoID).User,
 					ArtifactPath:  pr.file,
 					Tag:           pr.tag,
+					Provenance:    ws.Config.EcoConfig(ecoID).Provenance,
 				})
 				if pubErr != nil {
 					// As in publish-plan: an adapter's error can carry a registry URL with credentials in it (npm
@@ -484,6 +488,34 @@ func newPublishCmd() *cobra.Command {
 	f.BoolVar(&allowPend, "allow-pending", false, "publish the versions on disk even though changesets are waiting to bump them (by default publish refuses until shiprig version has run)")
 	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
 	return cmd
+}
+
+// releaseRunEnv is set in the environment of every command `shiprig release`
+// runs.
+const releaseRunEnv = "SHIPRIG_RELEASE"
+
+// customPublishNote says, when the release config gives the publish step an
+// action of its own (`steps.publish.run` or `script`), that this command
+// doesn't run it. `shiprig publish` is the built-in that action replaces: the
+// publish step runs `shiprig publish --no-git-tag` unless told otherwise, and
+// a custom action commonly calls it in turn, so running the action from here
+// would run this command again, inside itself. Empty under `shiprig release`,
+// which has already run the custom action (and may be running this command
+// as part of it), and when there is no such action or no readable config.
+func customPublishNote(root, changesetDir string) string {
+	if os.Getenv(releaseRunEnv) != "" {
+		return ""
+	}
+	cfg, err := resolveReleaseConfig(root, changesetDir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	sc := cfg.Steps["publish"]
+	if sc == nil || (sc.Run == nil && sc.Script == nil) {
+		return ""
+	}
+	return "the release config sets its own publish action (steps.publish), which `shiprig release` runs in place of this command; " +
+		"`shiprig publish` is the built-in it replaces and doesn't run it. Use `shiprig release --only publish` to run it"
 }
 
 // resolvePublishCreds decides how an ecosystem's publish authenticates:

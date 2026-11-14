@@ -308,6 +308,16 @@
           ],
           "description": "Trusted publishing via CI OIDC identity: \"auto\" (default) or \"off\"."
         },
+        "provenance": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "off"
+          ],
+          "default": "auto",
+          "description": "npm provenance attestation, whatever the publish authenticates with: \"auto\" (default) attests when running in GitHub Actions with an id-token available (id-token: write), \"always\" attests or fails, \"off\" never attests. Honored by node."
+        },
         "user": {
           "type": "string",
           "description": "Registry account/subject some OIDC exchanges require (e.g. NuGet), and, for dotnet, the account name sent with `auth` to a private feed that checks it."

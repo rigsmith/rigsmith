@@ -34,6 +34,7 @@ func NewVersionCmd() *cobra.Command {
 		ignoreFlag       []string
 		onlyFlag         []string
 		releaseAs        []string
+		initialMessage   string
 		showChangelog    bool
 		snapshotTag      string
 		snapshotTemplate string
@@ -213,7 +214,20 @@ func NewVersionCmd() *cobra.Command {
 				}
 			}
 
-			if len(active) == 0 && mode != planner.ModeExit {
+			// --release-as at the version a package is already at is its
+			// first release, when that version was never published or tagged:
+			// a changelog entry for it, no bump, with or without changesets.
+			var initial map[string]string
+			if len(releaseAs) > 0 && mode == planner.ModeNormal {
+				if initial, releaseAs, err = initialReleases(cmd.Context(), ws, pkgs, ecoOf, releaseAs); err != nil {
+					return err
+				}
+			}
+			if cmd.Flags().Changed("initial-message") && len(initial) == 0 {
+				return errors.New("--initial-message is the changelog line of a first release: use it with --release-as <package>=<its current version>")
+			}
+
+			if len(active) == 0 && mode != planner.ModeExit && len(initial) == 0 {
 				// A failure, as in @changesets v3: a release pipeline that reaches
 				// `version` with nothing to release has gone wrong upstream of it.
 				return errors.New("no unreleased changesets found — nothing to version")
@@ -335,6 +349,11 @@ func NewVersionCmd() *cobra.Command {
 				}
 			}
 
+			if len(initial) > 0 {
+				plan = applyInitialReleases(out, plan, pkgs, initial, initialMessage)
+				planner.RefreshDependencies(plan)
+			}
+
 			if len(plan) == 0 {
 				fmt.Fprintln(out, DimStyle.Render("Nothing to version."))
 				return nil
@@ -402,7 +421,7 @@ func NewVersionCmd() *cobra.Command {
 			// Only for a normal release on a real terminal — snapshot/prerelease set
 			// their own version suffixes, and --yes / non-interactive runs accept the
 			// computed plan as-is.
-			if !yes && len(releaseAs) == 0 && mode == planner.ModeNormal && Interactive() {
+			if !yes && len(releaseAs) == 0 && len(initial) == 0 && mode == planner.ModeNormal && Interactive() {
 				changed, err := promptVersionOverrides(out, plan)
 				if err != nil {
 					return err
@@ -675,8 +694,9 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	f.BoolVarP(&yes, "yes", "y", false, "accept the computed versions; skip the interactive version-override prompt")
-	f.StringArrayVar(&releaseAs, "release-as", nil, "release a package at this exact version, <package>=<version> (or a bare <version> when one version is releasing); repeatable, and skips the prompt")
+	f.StringArrayVar(&releaseAs, "release-as", nil, "release a package at this exact version, <package>=<version> (or a bare <version> when one version is releasing); repeatable, and skips the prompt. Its current version, when never published or tagged, is its first release: a changelog entry, no bump")
 	_ = cmd.RegisterFlagCompletionFunc("release-as", completeReleaseAs)
+	f.StringVar(&initialMessage, "initial-message", "", "the changelog line of a first release (--release-as <package>=<its current version>) that has no changesets (default \""+DefaultInitialMessage+"\")")
 	f.BoolVar(&noStamp, "no-stamp", false, "compute and record the versions (.changeset/versions.json) without writing them into any manifest")
 	return cmd
 }

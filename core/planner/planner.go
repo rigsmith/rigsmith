@@ -512,6 +512,29 @@ func newModule(p plugin.Package) *Module {
 	}
 }
 
+// InitialRelease is the release of the version a package's manifest already
+// carries, never published or tagged (`version --release-as <pkg>=<current>`
+// on a package with no changesets): no bump, and one change, summary, so its
+// changelog gets an entry for that version. The change is headed by the move
+// the version reads as from nothing — 1.0.0 a major, 0.1.0 a minor, 0.1.3 a
+// patch — since there is no previous version to measure from. It joins the
+// plan after the cascade, so nothing that depends on it is bumped for it.
+func InitialRelease(p plugin.Package, summary string) *Module {
+	m := newModule(p)
+	m.VersionOverride = m.Current.String()
+	m.ExactVersion = true
+	v := m.Current
+	bump := changeset.BumpPatch
+	switch {
+	case v.Patch == 0 && v.Minor == 0 && v.Major > 0:
+		bump = changeset.BumpMajor
+	case v.Patch == 0 && (v.Minor > 0 || v.Major > 0):
+		bump = changeset.BumpMinor
+	}
+	m.Changes = []Change{{Description: summary, Bump: bump}}
+	return m
+}
+
 // materializeDeps (re-)builds the module's "Updated dependencies" changelog
 // changes and manifest DepUpdates from its recorded depLinks, using each dep's
 // ResolvedVersion so pre/snapshot overrides flow through. With exact set

@@ -234,6 +234,10 @@ type PublishRequest struct {
 	// Tag is the registry's distribution tag to publish under (npm's
 	// dist-tag), when the caller sets one. Empty leaves the registry default.
 	Tag string `json:"tag,omitempty"`
+	// Provenance is the ecosystem block's `provenance` setting: "auto" (empty
+	// means auto), "always" or "off". Independent of how the publish
+	// authenticates. Honored by npm.
+	Provenance string `json:"provenance,omitempty"`
 }
 
 // AuthCredential is a registry credential the engine resolved (OIDC exchange,

@@ -722,6 +722,11 @@ type EcosystemConfig struct {
 	// ref is set, else fall back) or "off" (never). Honored by the npm, cargo,
 	// and dotnet ecosystems.
 	OIDC string `json:"oidc,omitempty"`
+	// Provenance controls npm provenance attestation, whatever the publish
+	// authenticates with: "auto" (default — attest when running in GitHub
+	// Actions with an id-token available), "always" (attest or fail) or "off".
+	// Honored by the npm ecosystem.
+	Provenance string `json:"provenance,omitempty"`
 	// User is the registry account/subject an OIDC exchange requires for some
 	// registries — NuGet keys its trusted-publishing token to the policy
 	// creator's username — and, for dotnet, the account name sent with the
