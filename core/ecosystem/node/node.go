@@ -383,19 +383,24 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if oidc && (req.Auth == nil || req.Auth.Token == "") {
 		minNpm = provenanceMinNpmOIDC
 	}
-	// npm refuses to attest a package not published with access public
-	// ("Can't generate provenance for new or private package").
 	// npm attests a package published with access other than public only
 	// when the registry already holds it as public; it refuses a new or
 	// private one ("Can't generate provenance for new or private package").
-	// The registry is asked only when an attestation is otherwise on.
-	if access != "public" && provenance != provenanceOff && provenanceIDTokenAvailable() &&
-		!npmPackagePublic(ctx, dir, env, req.Package.Name, npmRegistryArgs(req.Package.Name, registry)) {
-		switch provenance {
-		case provenanceAlways:
+	// The registry is asked only when an attestation is otherwise on, and a
+	// lookup that failed is reported as that, not as a new or private package.
+	if access != "public" && provenance != provenanceOff && provenanceIDTokenAvailable() {
+		public, lerr := npmPackagePublic(ctx, dir, env, req.Package.Name, npmRegistryArgs(req.Package.Name, registry))
+		switch {
+		case lerr != nil && provenance == provenanceAlways:
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but npm attests a package published with access %s only when the registry already holds it as public, "+
+				"and the registry visibility lookup failed: %v", spec, access, lerr)
+		case lerr != nil:
+			provenanceNote = fmt.Sprintf(" (provenance skipped — registry visibility lookup failed: %v)", lerr)
+			provenance = provenanceOff
+		case !public && provenance == provenanceAlways:
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but npm attests a package published with access %s only when the registry already holds it as public, "+
 				"and this one is new or private; set access to public, or provenance to auto or off", spec, access)
-		case provenanceAuto:
+		case !public:
 			provenanceNote = " (provenance skipped — npm attests only public packages)"
 			provenance = provenanceOff
 		}
@@ -594,19 +599,27 @@ var npmAccessStatus = func(ctx context.Context, dir string, env []string, args .
 
 // npmPackagePublic reports whether the registry holds the package as public,
 // as npm itself checks before it attests one published with access other
-// than public. A package the registry doesn't have (a first publish), a
-// private one, or a lookup that fails all count as not public: npm would
-// refuse the attestation in each case.
-func npmPackagePublic(ctx context.Context, dir string, env []string, name string, registryArgs []string) bool {
-	out, _, err := npmAccessStatus(ctx, dir, env, append([]string{name}, registryArgs...)...)
+// than public. A package the registry doesn't have (E404: a first publish, or
+// a private one the caller can't see) is not public. Any other failure is an
+// error rather than "not public", after one more try: a lookup that never
+// answered says nothing about the package.
+func npmPackagePublic(ctx context.Context, dir string, env []string, name string, registryArgs []string) (bool, error) {
+	args := append([]string{name}, registryArgs...)
+	out, stderr, err := npmAccessStatus(ctx, dir, env, args...)
+	if err != nil && !strings.Contains(stderr, "E404") {
+		out, stderr, err = npmAccessStatus(ctx, dir, env, args...)
+	}
 	if err != nil {
-		return false
+		if strings.Contains(stderr, "E404") {
+			return false, nil
+		}
+		return false, errors.New(strings.TrimSpace(stderr + " " + err.Error()))
 	}
 	var status map[string]string
-	if json.Unmarshal([]byte(out), &status) != nil {
-		return false
+	if err := json.Unmarshal([]byte(out), &status); err != nil {
+		return false, fmt.Errorf("npm access get status printed %q: %w", strings.TrimSpace(out), err)
 	}
-	return status[name] == "public"
+	return status[name] == "public", nil
 }
 
 // scriptsIgnored reports whether the package's scripts are turned off: an
