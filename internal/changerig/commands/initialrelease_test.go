@@ -277,3 +277,19 @@ func TestVersionInitialReleasePromotesARangeOnlyPackage(t *testing.T) {
 		t.Errorf("core, an ordinary release, wasn't bumped:\n%s", got)
 	}
 }
+
+// A configured credential that can't be resolved refuses the first release
+// before the registry is asked: asked without it, a registry that answers an
+// unauthorized read with 404 would make a published version look unpublished.
+func TestVersionInitialReleaseRefusesWhenTheConfiguredAuthIsUnavailable(t *testing.T) {
+	root := initialWorkspace(t)
+	writeFileAt(t, filepath.Join(root, ".changeset", "config.json"), `{"baseBranch": "main", "node": {"auth": "env:ACME_UNSET_NPM_TOKEN"}}`)
+	t.Setenv("ACME_UNSET_NPM_TOKEN", "")
+	_, err := runVersionErr(t, "--release-as", "@acme/core=0.1.0")
+	if err == nil || !strings.Contains(err.Error(), "the configured node.auth couldn't be resolved") || !strings.Contains(err.Error(), "env:ACME_UNSET_NPM_TOKEN") {
+		t.Fatalf("err = %v, want a refusal naming the unresolved node.auth", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "packages", "core", "CHANGELOG.md")); !os.IsNotExist(err) {
+		t.Error("a changelog was written")
+	}
+}

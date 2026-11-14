@@ -175,7 +175,15 @@ var releasedAt = func(ctx context.Context, ws *Workspace, pkgs []plugin.Package,
 	if !ok {
 		return "", nil
 	}
-	resp, err := eco.Published(ctx, publishedRequest(ctx, ws, ecoID, p))
+	req := publishedRequest(ctx, ws, ecoID, p)
+	// Asked without the configured credential, a registry that answers an
+	// unauthorized read with 404 (GitHub Packages does) would make a
+	// published version look unpublished — and adapters may fall back to the
+	// ambient npm auth, another account's view. A first release has to know.
+	if req.AuthUnavailable {
+		return "", fmt.Errorf("couldn't tell whether %s@%s is on its registry, which a first release has to know: the configured %s.auth couldn't be resolved (%s)", p.Name, p.Version, ecoID, req.AuthError)
+	}
+	resp, err := eco.Published(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("couldn't tell whether %s@%s is on its registry, which a first release has to know: %w", p.Name, p.Version, err)
 	}

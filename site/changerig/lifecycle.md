@@ -346,7 +346,9 @@ crates.io; a private package, or a Go module, has only the tag). Found either
 way, the run is refused, since re-releasing it would rewrite the notes of
 something already out; give it a changeset instead. A remote or registry that
 can't answer is an error too, not a guess: a shallow checkout's missing tag may
-still be on the remote. Name the package; a bare version counts
+still be on the remote. So is an `auth` configured for the ecosystem that can't
+be resolved, since a private registry asked without it can answer 404 for a
+version it holds. Name the package; a bare version counts
 only when the workspace has a single package.
 
 shiprig-action's `releaseAs` (in `shiprig-action.jsonc`) can't start a first
