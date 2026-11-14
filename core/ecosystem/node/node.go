@@ -300,12 +300,14 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	// scripts, and pnpm pack runs only prepack, prepare and postpack. The
 	// rest of the sequence a directory publish runs — prepublishOnly before
 	// the pack, publish and postpublish after the upload — is run here, in
-	// npm's order, unless scripts are turned off.
+	// npm's order, unless scripts are turned off. A file `shiprig pack` built
+	// in a pnpm workspace had prepublishOnly run before its pack (Artifacts),
+	// so only publish and postpublish are left for the upload.
 	var scripts map[string]bool
-	if pnpm && !scriptsIgnored(ctx, dir) {
+	if inPnpm && !scriptsIgnored(ctx, dir) {
 		scripts = packageScripts(dir)
 	}
-	if scripts["prepublishOnly"] {
+	if pnpm && scripts["prepublishOnly"] {
 		if err := runPackageScript(ctx, dir, "prepublishOnly"); err != nil {
 			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: prepublishOnly: %w", spec, err)
 		}
@@ -383,18 +385,19 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	}
 	// npm refuses to attest a package not published with access public
 	// ("Can't generate provenance for new or private package").
-	if access != "public" {
+	// npm attests a package published with access other than public only
+	// when the registry already holds it as public; it refuses a new or
+	// private one ("Can't generate provenance for new or private package").
+	// The registry is asked only when an attestation is otherwise on.
+	if access != "public" && provenance != provenanceOff && provenanceIDTokenAvailable() &&
+		!npmPackagePublic(ctx, dir, env, req.Package.Name, npmRegistryArgs(req.Package.Name, registry)) {
 		switch provenance {
 		case provenanceAlways:
-			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but npm attests only a package published with access public, and this one is %s; "+
-				"set access to public, or provenance to auto or off", spec, access)
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but npm attests a package published with access %s only when the registry already holds it as public, "+
+				"and this one is new or private; set access to public, or provenance to auto or off", spec, access)
 		case provenanceAuto:
-			// Only where auto would have attested: without an id-token it
-			// says nothing either way, as for a public package.
-			if provenanceIDTokenAvailable() {
-				provenanceNote = " (provenance skipped — npm attests only packages published with access public)"
-				provenance = provenanceOff
-			}
+			provenanceNote = " (provenance skipped — npm attests only public packages)"
+			provenance = provenanceOff
 		}
 	}
 	attest, note, err := decideProvenance(provenance, provenanceIDTokenAvailable(), minNpm, func() bool {
@@ -403,13 +406,14 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: %w", spec, err)
 	}
-	switch {
-	case attest:
+	// node.provenance decides, not npm's own config: leaving the flag out
+	// when not attesting would let an .npmrc's provenance=true (or
+	// NPM_CONFIG_PROVENANCE) have npm attest anyway, which fails a publish
+	// with no id-token to sign with, or a restricted one. The flag outranks
+	// both, either way.
+	if attest {
 		args = append(args, "--provenance")
-	case provenance == provenanceOff:
-		// Leaving the flag out isn't off: npm still attests when an .npmrc or
-		// NPM_CONFIG_PROVENANCE says provenance=true, and fails a token publish
-		// that has no id-token to sign with. The flag outranks both.
+	} else {
 		args = append(args, "--provenance=false")
 	}
 	if note != "" {
@@ -533,6 +537,29 @@ func workspaceProtocolDep(p plugin.Package) (plugin.Dependency, bool) {
 	return plugin.Dependency{}, false
 }
 
+// npmAccessStatus runs `npm access get status` in dir, with env: a variable
+// so a test can stand in for npm.
+var npmAccessStatus = func(ctx context.Context, dir string, env []string, args ...string) (stdout, stderr string, err error) {
+	return runCmdEnv(ctx, dir, env, "npm", append([]string{"access", "get", "status", "--json"}, args...)...)
+}
+
+// npmPackagePublic reports whether the registry holds the package as public,
+// as npm itself checks before it attests one published with access other
+// than public. A package the registry doesn't have (a first publish), a
+// private one, or a lookup that fails all count as not public: npm would
+// refuse the attestation in each case.
+func npmPackagePublic(ctx context.Context, dir string, env []string, name string, registryArgs []string) bool {
+	out, _, err := npmAccessStatus(ctx, dir, env, append([]string{name}, registryArgs...)...)
+	if err != nil {
+		return false
+	}
+	var status map[string]string
+	if json.Unmarshal([]byte(out), &status) != nil {
+		return false
+	}
+	return status[name] == "public"
+}
+
 // scriptsIgnored reports whether the package's scripts are turned off: an
 // ignore-scripts set in the environment or in pnpm's config (.npmrc). A
 // variable so a test can stand in for pnpm.
@@ -546,10 +573,12 @@ var scriptsIgnored = func(ctx context.Context, dir string) bool {
 	return err == nil && strings.TrimSpace(out) == "true"
 }
 
-// runPackageScript runs one of the package's scripts with pnpm: a variable so
-// a test can stand in for pnpm.
+// runPackageScript runs one of the package's scripts with pnpm, that script
+// alone: pnpm's own pre/post expansion is off, or `pnpm run publish` would
+// also run postpublish (run again after it) and prepublish (which npm
+// doesn't run on publish). A variable so a test can stand in for pnpm.
 var runPackageScript = func(ctx context.Context, dir, name string) error {
-	_, _, err := runCmd(ctx, dir, "pnpm", "run", name)
+	_, _, err := runCmd(ctx, dir, "pnpm", "--config.enable-pre-post-scripts=false", "run", name)
 	return err
 }
 
@@ -701,6 +730,14 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	}
 	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("npm pack: mkdir %s: %w", req.OutputDir, err)
+	}
+	// prepublishOnly runs before the pack, as npm runs it before its own:
+	// the file built here is what a --from-pack-dir publish sends, too late
+	// for it then. pnpm pack runs prepack, prepare and postpack itself.
+	if pnpm && !scriptsIgnored(ctx, dir) && packageScripts(dir)["prepublishOnly"] {
+		if err := runPackageScript(ctx, dir, "prepublishOnly"); err != nil {
+			return plugin.ArtifactsResponse{}, fmt.Errorf("pnpm pack %s: prepublishOnly: %w", spec, err)
+		}
 	}
 	if pnpm {
 		path, err := pnpmPackTarball(ctx, dir, req.OutputDir)

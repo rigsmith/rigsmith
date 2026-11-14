@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -78,23 +79,28 @@ func initialReleases(ctx context.Context, ws *Workspace, pkgs []plugin.Package, 
 		initial[p.Name] = v.String()
 	}
 
-	for _, name := range sortedKeys(initial) {
+	// Packages that must move with a first release join it: those sharing
+	// its version file (lockstep), and the members of its `fixed` group,
+	// which always release together at one version. A worklist, so a
+	// member's own group is followed too.
+	work := sortedKeys(initial)
+	for len(work) > 0 {
+		name := work[0]
+		work = work[1:]
 		p := byName[name]
-		if p.VersionFile == "" || independent || ecoStrategy(ws.Config, ecoOf[name]) == config.Independent {
-			continue
-		}
-		for _, sib := range releasable {
-			if _, done := initial[sib.Name]; done || sib.VersionFile != p.VersionFile || ecoOf[sib.Name] != ecoOf[name] {
+		for _, mate := range groupMates(ws, p, releasable, ecoOf, independent) {
+			if _, done := initial[mate.pkg.Name]; done {
 				continue
 			}
-			spec := sib.Name + "=" + initial[name] + " (sharing " + p.VersionFile + " with " + name + ")"
-			if sib.Version != p.Version {
-				return nil, nil, fmt.Errorf("--release-as %s: it is at %s, not %s, so the shared version file disagrees with itself", spec, sib.Version, p.Version)
+			spec := mate.pkg.Name + "=" + initial[name] + " (" + mate.why + " " + name + ")"
+			if mate.pkg.Version != p.Version {
+				return nil, nil, fmt.Errorf("--release-as %s: it is at %s, not %s, and it must release at the same version", spec, mate.pkg.Version, p.Version)
 			}
-			if err := checkUnreleased(ctx, ws, pkgs, ecoOf, sib, spec); err != nil {
+			if err := checkUnreleased(ctx, ws, pkgs, ecoOf, mate.pkg, spec); err != nil {
 				return nil, nil, err
 			}
-			initial[sib.Name] = initial[name]
+			initial[mate.pkg.Name] = initial[name]
+			work = append(work, mate.pkg.Name)
 		}
 	}
 
@@ -112,6 +118,38 @@ func initialReleases(ctx context.Context, ws *Workspace, pkgs []plugin.Package, 
 		}
 	}
 	return initial, rest, nil
+}
+
+// groupMate is a package that must release with another, and why.
+type groupMate struct {
+	pkg plugin.Package
+	why string
+}
+
+// groupMates lists the releasable packages that move with p: those sharing
+// its version file under lockstep, and the other members of a `fixed` group
+// it belongs to.
+func groupMates(ws *Workspace, p plugin.Package, releasable []plugin.Package, ecoOf map[string]string, independent bool) []groupMate {
+	var out []groupMate
+	shared := p.VersionFile != "" && !independent && ecoStrategy(ws.Config, ecoOf[p.Name]) != config.Independent
+	inFixed := map[string]bool{}
+	for _, grp := range ws.Config.Fixed {
+		if slices.Contains(grp, p.Name) {
+			for _, n := range grp {
+				inFixed[n] = true
+			}
+		}
+	}
+	for _, q := range releasable {
+		switch {
+		case q.Name == p.Name:
+		case shared && q.VersionFile == p.VersionFile && ecoOf[q.Name] == ecoOf[p.Name]:
+			out = append(out, groupMate{q, "sharing " + p.VersionFile + " with"})
+		case inFixed[q.Name]:
+			out = append(out, groupMate{q, "in a fixed group with"})
+		}
+	}
+	return out
 }
 
 // checkUnreleased refuses a first release of p when its current version is
@@ -240,10 +278,12 @@ func applyInitialReleases(out io.Writer, plan []*planner.Module, pkgs []plugin.P
 		if m == nil {
 			m = planner.InitialRelease(p, message)
 			plan = append(plan, m)
-		} else if m.RangeOnly {
-			// Planned only to have a range rewritten (an out-of-range
-			// devDependency): asked for by name, it is released, with its
-			// first entry, and keeps the rewrite.
+		} else {
+			// Already planned: by its own changesets (whose notes it keeps),
+			// to have a range rewritten (an out-of-range devDependency), or
+			// by a group's coordination with nothing of its own to say. Each
+			// becomes a release at its version, the last two with the first
+			// release's note as their entry.
 			m.MakeInitial(message)
 		}
 		m.VersionOverride = version

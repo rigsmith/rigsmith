@@ -84,7 +84,8 @@ The whole workflow is wired:
   ranges to real versions, and npm publishes that tarball; elsewhere a
   `workspace:` dependency is refused rather than shipped. npm provenance follows
   `node.provenance`: `auto` attests in GitHub Actions with an id-token, whatever
-  the auth, for a package published with access `public` (npm attests no other),
+  the auth, for a package published with access `public` or already public on
+  the registry (npm attests no other),
   and needs npm ≥ 9.5.0 for a token or ambient auth (≥ 11.5.1 through OIDC);
   with an older npm it publishes without the attestation and says so. A custom `steps.publish` action in the release config is
   `shiprig release`'s, not this command's: `publish` says so and publishes the

@@ -157,7 +157,7 @@ func TestPublishPacksWithPnpmInAPnpmWorkspace(t *testing.T) {
 			if len(*args) < 2 || !strings.HasSuffix((*args)[1], "acme-theme-0.1.0.tgz") {
 				t.Fatalf("npm publish args = %v, want the packed tarball second", *args)
 			}
-			if want := []string{"--access", "public"}; !slices.Equal((*args)[2:], want) {
+			if want := []string{"--access", "public", "--provenance=false"}; !slices.Equal((*args)[2:], want) {
 				t.Errorf("npm publish args after the tarball = %v, want %v", (*args)[2:], want)
 			}
 			deps, _ := (*manifest)["dependencies"].(map[string]any)
@@ -371,5 +371,92 @@ func TestPnpmPublishRunsTheLifecycleScripts(t *testing.T) {
 	}
 	if want := []string{"pnpm pack", "npm publish"}; !slices.Equal(*steps, want) {
 		t.Errorf("with ignore-scripts: steps = %v, want %v", *steps, want)
+	}
+}
+
+// With real pnpm (skipped without it): every publish hook runs exactly once,
+// in npm's order, and none npm doesn't run on publish. pnpm's own pre/post
+// expansion would otherwise run postpublish a second time (from `pnpm run
+// publish`) and add prepublish and preprepublishOnly.
+func TestPnpmPublishRunsEachHookOnce(t *testing.T) {
+	if _, err := exec.LookPath("pnpm"); err != nil {
+		t.Skip("pnpm not installed")
+	}
+	t.Setenv("NODE_DISABLE_COMPILE_CACHE", "1")
+	noProvenanceEnv(t)
+	repo, theme := pnpmWorkspaceFixture(t)
+	hooks := []string{"preprepublishOnly", "prepublishOnly", "prepublish", "prepack", "prepare", "postpack", "publish", "postpublish"}
+	scripts := map[string]string{}
+	for _, h := range hooks {
+		scripts[h] = "echo " + h + " >> ../../hooks.log"
+	}
+	manifest, _ := json.Marshal(map[string]any{
+		"name": "@acme/theme", "version": "0.1.0", "scripts": scripts,
+		"dependencies": map[string]string{"@acme/core": "workspace:*"},
+	})
+	writeFiles(t, repo, map[string]string{"packages/theme/package.json": string(manifest)})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	install := exec.CommandContext(ctx, "pnpm", "install", "--offline")
+	install.Dir = repo
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("pnpm install: %v\n%s", err, out)
+	}
+	logPath := filepath.Join(repo, "hooks.log")
+	os.Remove(logPath) // install runs prepare too; only the publish counts
+
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	was := npmPublish
+	npmPublish = func(context.Context, string, []string, ...string) (string, string, error) {
+		f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return "", "", err
+		}
+		defer f.Close()
+		_, err = f.WriteString("upload\n")
+		return "", "", err
+	}
+	t.Cleanup(func() { npmPublish = was })
+
+	if _, err := (&Adapter{}).Publish(ctx, plugin.PublishRequest{RepoRoot: repo, Package: theme}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Fields(string(raw))
+	if want := []string{"prepublishOnly", "prepack", "prepare", "postpack", "upload", "publish", "postpublish"}; !slices.Equal(got, want) {
+		t.Errorf("hooks ran %v, want each once: %v", got, want)
+	}
+}
+
+// The split flow runs the same hooks: `shiprig pack` runs prepublishOnly
+// before pnpm packs (too late at publish time — the file is built), and the
+// publish of that file runs publish and postpublish after the upload, and
+// prepublishOnly not again.
+func TestPackThenPublishRunsTheLifecycleScripts(t *testing.T) {
+	noProvenanceEnv(t)
+	repo, theme := pnpmWorkspaceFixture(t)
+	writeFiles(t, repo, map[string]string{"packages/theme/package.json": `{"name":"@acme/theme","version":"0.1.0","scripts":{"prepublishOnly":"tsc","publish":"x","postpublish":"notify"},"dependencies":{"@acme/core":"workspace:*"}}`})
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubPnpmPack(t)
+	steps := stubScripts(t, false)
+
+	resp, err := (&Adapter{}).Artifacts(context.Background(), plugin.ArtifactsRequest{RepoRoot: repo, Package: theme, OutputDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"script:prepublishOnly", "pnpm pack"}; !slices.Equal(*steps, want) {
+		t.Errorf("pack steps = %v, want %v", *steps, want)
+	}
+
+	*steps = nil
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: theme, ArtifactPath: resp.Artifacts[0].Path}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"npm publish", "script:publish", "script:postpublish"}; !slices.Equal(*steps, want) {
+		t.Errorf("publish steps = %v, want %v", *steps, want)
 	}
 }

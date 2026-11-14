@@ -339,6 +339,13 @@ notes, consumed as usual; with none, it's one line, `--initial-message` or
 Changes**). No changesets are needed at all, where a plain `version` would stop
 with nothing to version.
 
+Packages that always move with the one named come along: those sharing its
+version file (lockstep, unless `--independent`), and the other members of its
+`fixed` group. Each must be at the same version and pass the same "never
+released" check, or the run is refused; each gets its own entry, its pending
+changesets' notes or else the first-release line. Naming one of them at another
+version in the same run is refused, since the group can hold only one.
+
 It's only for a version that never shipped. Before writing anything, the
 version is looked for as a git tag — locally and on the default remote, named
 as `publish` would tag it — and on the package's registry (`npm view`, NuGet,

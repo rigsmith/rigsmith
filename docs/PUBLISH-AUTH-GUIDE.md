@@ -135,14 +135,20 @@ Provenance is decided apart from how the publish authenticates, by
   with an `NPM_TOKEN` or `auth` ref as much as with OIDC. That matters for a
   new package: its first publish has to use a token, since a Trusted Publisher
   can only be registered for a package that exists. Without an id-token it
-  publishes without the attestation, quietly.
+  publishes without the attestation.
 - **`always`** attests or fails the publish, before anything is uploaded.
+- **`off`** never attests.
 
-npm attests only a package published with access `public` ("Can't generate
-provenance for new or private package"), so `auto` skips a restricted package,
-passing `--provenance=false`, and `always` fails on one.
-- **`off`** never attests: it passes `--provenance=false`, which overrides a
-  `provenance=true` in an `.npmrc` or `NPM_CONFIG_PROVENANCE`.
+Whenever shiprig doesn't attest — `off`, or `auto` with no id-token or a
+package it skips — it passes `--provenance=false`, which overrides a
+`provenance=true` in an `.npmrc` or `NPM_CONFIG_PROVENANCE`: npm would
+otherwise try to attest anyway and fail the publish.
+
+npm attests a package published with access `public`, or one the registry
+already holds as public; it refuses a new or private one ("Can't generate
+provenance for new or private package"). With any other access, shiprig asks
+the registry first (`npm access get status`), as npm does: a public package is
+attested, and otherwise `auto` skips the attestation and `always` fails.
 
 The attestation needs a new enough npm on the runner: npm ≥ 9.5.0 with a token
 or ambient auth, npm ≥ 11.5.1 when shiprig publishes through OIDC trusted

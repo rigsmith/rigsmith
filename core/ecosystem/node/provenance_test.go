@@ -122,20 +122,22 @@ func TestProvenanceOffNeverAttests(t *testing.T) {
 	}
 }
 
-// auto without an id-token says nothing either way, leaving npm's own config
-// (an .npmrc's provenance setting) to decide, as before.
-func TestProvenanceAutoWithoutAnIDTokenLeavesNpmConfigAlone(t *testing.T) {
+// Whenever auto decides not to attest — no id-token, for a public package
+// or a restricted one — it says so to npm, so an .npmrc's provenance=true
+// can't have npm attest anyway and fail the publish.
+func TestProvenanceAutoNotAttestingOverridesNpmConfig(t *testing.T) {
 	noProvenanceEnv(t)
 	repo, pkg := workspace(t, nil)
 	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
 	stubNpmProvenance(t, true)
 	args, _ := stubPublish(t)
-	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Access: "public"}); err != nil {
-		t.Fatal(err)
-	}
-	for _, a := range *args {
-		if strings.HasPrefix(a, "--provenance") {
-			t.Errorf("npm publish args = %v, want no provenance flag", *args)
+	for _, access := range []string{"public", "restricted"} {
+		*args = nil
+		if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Access: access}); err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(*args, "--provenance") || !slices.Contains(*args, "--provenance=false") {
+			t.Errorf("access %s: npm publish args = %v, want --provenance=false and no --provenance", access, *args)
 		}
 	}
 }
@@ -173,6 +175,7 @@ func TestProvenanceSkipsARestrictedPackage(t *testing.T) {
 	idTokenEnv(t)
 	repo, pkg := workspace(t, nil)
 	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmAccess(t, "", errors.New("npm error code E404")) // a new package: the registry doesn't have it
 	stubNpmProvenance(t, true)
 	args, _ := stubPublish(t)
 	resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
@@ -185,7 +188,7 @@ func TestProvenanceSkipsARestrictedPackage(t *testing.T) {
 	if slices.Contains(*args, "--provenance") || !slices.Contains(*args, "--provenance=false") {
 		t.Errorf("npm publish args = %v, want --provenance=false and no --provenance", *args)
 	}
-	if !strings.Contains(resp.Message, "access public") {
+	if !strings.Contains(resp.Message, "npm attests only public packages") {
 		t.Errorf("message = %q, want it to say why provenance was skipped", resp.Message)
 	}
 
@@ -194,10 +197,47 @@ func TestProvenanceSkipsARestrictedPackage(t *testing.T) {
 		RepoRoot: repo, Package: pkg, Access: "restricted", Provenance: "always",
 		Auth: &plugin.AuthCredential{Token: "npm_secret"},
 	})
-	if err == nil || !strings.Contains(err.Error(), "access public") {
-		t.Fatalf("always: err = %v, want the access-public refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "new or private") || !strings.Contains(err.Error(), "set access to public") {
+		t.Fatalf("always: err = %v, want the new-or-private refusal", err)
 	}
 	if *args != nil {
 		t.Errorf("npm publish ran with %v", *args)
+	}
+}
+
+// stubNpmAccess stands in for `npm access get status`, recording its arguments.
+func stubNpmAccess(t *testing.T, out string, err error) *[]string {
+	t.Helper()
+	var got []string
+	was := npmAccessStatus
+	npmAccessStatus = func(_ context.Context, _ string, _ []string, args ...string) (string, string, error) {
+		got = args
+		return out, "", err
+	}
+	t.Cleanup(func() { npmAccessStatus = was })
+	return &got
+}
+
+// npm attests a package published with access other than public when the
+// registry already holds it as public, so auto asks the registry rather than
+// skipping it on the access setting alone.
+func TestProvenanceAttestsAnAlreadyPublicPackageWhateverTheAccess(t *testing.T) {
+	idTokenEnv(t)
+	repo, pkg := workspace(t, nil)
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmProvenance(t, true)
+	asked := stubNpmAccess(t, `{"@acme/lib": "public"}`, nil)
+	args, _ := stubPublish(t)
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*asked) == 0 || (*asked)[0] != "@acme/lib" {
+		t.Errorf("visibility asked with %v, want the package named", *asked)
+	}
+	if !slices.Contains(*args, "--provenance") {
+		t.Errorf("npm publish args = %v, want --provenance", *args)
 	}
 }

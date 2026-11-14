@@ -327,3 +327,27 @@ func TestVersionOnlyWithAFirstReleaseUsesThePinnedPlan(t *testing.T) {
 		t.Errorf("core changelog:\n%s", log)
 	}
 }
+
+// A fixed group releases together at one version: a first release of one
+// member is a first release of each. The theme, with no changeset of its own,
+// joins at 0.1.0 (not the group's minor) and gets the first-release line,
+// while the core keeps its changeset's notes.
+func TestVersionInitialReleaseTakesInTheFixedGroup(t *testing.T) {
+	root := initialWorkspace(t)
+	writeFileAt(t, filepath.Join(root, ".changeset", "config.json"), `{"baseBranch": "main", "fixed": [["@acme/core", "@acme/theme"]]}`)
+	writeFileAt(t, filepath.Join(root, ".changeset", "core-buttons.md"), "---\n\"@acme/core\": minor\n---\n\nButtons and inputs\n")
+	stubReleasedAt(t, nil)
+	runVersion(t, "--release-as", "@acme/core=0.1.0", "--initial-message", "First public release")
+
+	for _, dir := range []string{"core", "theme"} {
+		if got := mustRead(t, filepath.Join(root, "packages", dir, "package.json")); !strings.Contains(got, `"version": "0.1.0"`) {
+			t.Errorf("%s left 0.1.0:\n%s", dir, got)
+		}
+	}
+	if log := mustRead(t, filepath.Join(root, "packages", "core", "CHANGELOG.md")); !strings.Contains(log, "## 0.1.0\n") || !strings.Contains(log, "Buttons and inputs") {
+		t.Errorf("core changelog:\n%s", log)
+	}
+	if log := mustRead(t, filepath.Join(root, "packages", "theme", "CHANGELOG.md")); !strings.Contains(log, "## 0.1.0\n") || !strings.Contains(log, "- First public release") {
+		t.Errorf("theme changelog (want its first-release line):\n%s", log)
+	}
+}

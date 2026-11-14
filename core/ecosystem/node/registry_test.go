@@ -184,7 +184,7 @@ func TestPublishUsesTheWorkspaceRegistry(t *testing.T) {
 	if !slices.Equal(*view, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.acme.example/", "--@acme:registry=https://npm.acme.example/"}) {
 		t.Errorf("pre-check npm view args = %v", *view)
 	}
-	if !slices.Equal(got, []string{"publish", "--access", "restricted", "--registry", "https://npm.acme.example/", "--@acme:registry=https://npm.acme.example/"}) {
+	if !slices.Equal(got, []string{"publish", "--access", "restricted", "--registry", "https://npm.acme.example/", "--@acme:registry=https://npm.acme.example/", "--provenance=false"}) {
 		t.Errorf("npm publish args = %v", got)
 	}
 }

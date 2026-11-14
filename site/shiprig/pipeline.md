@@ -282,9 +282,11 @@ simply never read, so a `"npm"` block configures nothing at all.
   NuGet.org.
 - **`provenance`** (node) is `"auto"` (default: attest whenever the run is in
   GitHub Actions with an id-token, `id-token: write`), `"always"` (attest or
-  fail) or `"off"` (`--provenance=false`, overriding an `.npmrc`'s
-  `provenance=true`). npm attests only a package published with `access`
-  `public`: `auto` skips any other, and `always` fails. It doesn't depend on `auth` or `oidc`: a token publish —
+  fail) or `"off"`. Whenever it doesn't attest, shiprig passes
+  `--provenance=false`, overriding an `.npmrc`'s `provenance=true`. npm
+  attests only a package published with `access` `public` or one the registry
+  already holds as public (shiprig asks it): `auto` skips any other, and
+  `always` fails. It doesn't depend on `auth` or `oidc`: a token publish —
   every new package's first — attests as well. See the
   [publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md#npm-provenance).
 - **`publishDirs`** are repo-relative globs naming package directories a build
@@ -310,10 +312,15 @@ the registry are npm's as ever. `shiprig pack` packs with pnpm the same way, so
 `--from-pack-dir` sends the same files. pnpm resolves those ranges from the
 installed workspace, so run `pnpm install` first, as the build has.
 
-The package's publish scripts run as a directory publish would run them, in
-npm's order: `prepublishOnly`, then pnpm pack's own `prepack`, `prepare` and
-`postpack`, the upload, then `publish` and `postpublish` (npm runs none for a
-tarball, so shiprig runs those three with `pnpm run`). `ignore-scripts`, in the
+The package's publish scripts run as a directory publish would run them, each
+once, in npm's order: `prepublishOnly`, then pnpm pack's own `prepack`,
+`prepare` and `postpack`, the upload, then `publish` and `postpublish`. npm
+runs none for a tarball, so shiprig runs those three itself, with pnpm's own
+pre/post expansion off (`pnpm run publish` would otherwise run `postpublish`
+a second time, and a `prepublish` npm doesn't run on publish). Split into
+`shiprig pack` and `publish --from-pack-dir`, the same scripts run:
+`prepublishOnly` before the pack, since the file is built by then, and
+`publish` and `postpublish` after the upload. `ignore-scripts`, in the
 environment or an `.npmrc`, turns them all off. A failed `publish` or
 `postpublish` fails the run after the upload; a re-run finds the version
 published and skips it.
