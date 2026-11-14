@@ -19,7 +19,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache: false
       - name: Install pinned rig
         # Replace vX.Y.Z with a reviewed release containing stack canary.
@@ -61,7 +61,7 @@ jobs:
       # upstream checkout, or any executable supplied by the build job.
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache: false
       - name: Install pinned rig
         # Replace vX.Y.Z with a reviewed release containing stack canary.
