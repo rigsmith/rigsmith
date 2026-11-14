@@ -286,9 +286,11 @@ func TestWorkspaceProtocolRefusedOnThePackPathOutsidePnpm(t *testing.T) {
 	}
 
 	out := t.TempDir()
-	_, err = (&Adapter{}).Artifacts(context.Background(), plugin.ArtifactsRequest{RepoRoot: repo, Package: theme, OutputDir: out})
-	if err == nil || !strings.Contains(err.Error(), "npm pack @acme/theme@0.1.0") {
-		t.Errorf("pack: err = %v, want the workspace: refusal before npm pack", err)
+	for _, dry := range []bool{true, false} {
+		_, err = (&Adapter{}).Artifacts(context.Background(), plugin.ArtifactsRequest{RepoRoot: repo, Package: theme, OutputDir: out, DryRun: dry})
+		if err == nil || !strings.Contains(err.Error(), "npm pack @acme/theme@0.1.0") {
+			t.Errorf("pack (dry run %v): err = %v, want the workspace: refusal before npm pack", dry, err)
+		}
 	}
 }
 

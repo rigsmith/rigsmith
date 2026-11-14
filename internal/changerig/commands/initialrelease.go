@@ -78,17 +78,6 @@ func initialReleases(ctx context.Context, ws *Workspace, pkgs []plugin.Package, 
 		initial[p.Name] = v.String()
 	}
 
-	for _, spec := range rest {
-		name, version, named := strings.Cut(spec, "=")
-		name = strings.TrimSpace(name)
-		if !named && len(releasable) == 1 {
-			name, version = releasable[0].Name, spec
-		}
-		if first, ok := initial[name]; ok {
-			return nil, nil, fmt.Errorf("--release-as gives %s two versions, %s (its first release) and %s: give it one", name, first, strings.TrimSpace(version))
-		}
-	}
-
 	for _, name := range sortedKeys(initial) {
 		p := byName[name]
 		if p.VersionFile == "" || independent || ecoStrategy(ws.Config, ecoOf[name]) == config.Independent {
@@ -106,6 +95,20 @@ func initialReleases(ctx context.Context, ws *Workspace, pkgs []plugin.Package, 
 				return nil, nil, err
 			}
 			initial[sib.Name] = initial[name]
+		}
+	}
+
+	// After the expansion, so a spec naming a package that shares a version
+	// file with a first release is caught too: applyReleaseAs would move the
+	// whole group, overwriting the first release's pin.
+	for _, spec := range rest {
+		name, version, named := strings.Cut(spec, "=")
+		name = strings.TrimSpace(name)
+		if !named && len(releasable) == 1 {
+			name, version = releasable[0].Name, spec
+		}
+		if first, ok := initial[name]; ok {
+			return nil, nil, fmt.Errorf("--release-as gives %s two versions, %s (its first release) and %s: give it one", name, first, strings.TrimSpace(version))
 		}
 	}
 	return initial, rest, nil

@@ -238,7 +238,7 @@ func NewVersionCmd() *cobra.Command {
 			// future run). Mixed and unknown-package changesets are hard
 			// errors before anything is written, matching @changesets.
 			if len(onlyFlag) > 0 {
-				if err := checkWholeGroups(onlyFlag, active, pkgs, ecoOf, ws.Config, configIgnore, independent); err != nil {
+				if err := checkWholeGroups(onlyFlag, active, pkgs, ecoOf, ws.Config, configIgnore, independent, initial); err != nil {
 					return err
 				}
 			}
@@ -935,9 +935,12 @@ func completePackageNames(c *cobra.Command, _ []string, _ string) ([]string, cob
 // requires every planned member of each named package's group to be named
 // too. The other refusals catch a split changeset or dependency; a fixed or
 // linked group, or a shared version file, splits without either.
-func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugin.Package, ecoOf map[string]string, cfg *config.Config, configIgnore []string, independent bool) error {
+func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugin.Package, ecoOf map[string]string, cfg *config.Config, configIgnore []string, independent bool, initial map[string]string) error {
 	full := *cfg
 	full.Ignore = configIgnore
+	// Planned as the run plans, first releases pinned: unpinned, a first
+	// release's changeset would cascade into groups the run never forms.
+	full.InitialReleases = initial
 	if independent {
 		full.VersionStrategy = config.Independent
 	} else {

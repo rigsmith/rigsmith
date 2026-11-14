@@ -683,20 +683,21 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	// In a pnpm workspace pnpm packs, so the tarball's workspace: ranges are
 	// the real versions: the same file Publish would send.
 	pnpm := pnpmWorkspace(req.RepoRoot, dir)
+	// npm pack writes workspace: ranges into the tarball as they are, and the
+	// file is what a later --from-pack-dir publish sends: refused before
+	// anything is built, and before the dry run answers, so the preview says
+	// what the pack would.
+	if !pnpm {
+		if err := refuseWorkspaceProtocol("npm pack "+spec, req.Package); err != nil {
+			return plugin.ArtifactsResponse{}, err
+		}
+	}
 	if req.DryRun {
 		tool := "npm"
 		if pnpm {
 			tool = "pnpm"
 		}
 		return plugin.ArtifactsResponse{Message: fmt.Sprintf("dry-run: would %s pack %s", tool, spec)}, nil
-	}
-	// npm pack writes workspace: ranges into the tarball as they are, and the
-	// file is what a later --from-pack-dir publish sends: refused here, before
-	// anything is built.
-	if !pnpm {
-		if err := refuseWorkspaceProtocol("npm pack "+spec, req.Package); err != nil {
-			return plugin.ArtifactsResponse{}, err
-		}
 	}
 	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("npm pack: mkdir %s: %w", req.OutputDir, err)

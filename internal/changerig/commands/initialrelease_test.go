@@ -293,3 +293,37 @@ func TestVersionInitialReleaseRefusesWhenTheConfiguredAuthIsUnavailable(t *testi
 		t.Error("a changelog was written")
 	}
 }
+
+// A spec naming a package that joins the first release through its version
+// file clashes with that first release: refused, where applyReleaseAs would
+// have moved the whole group and overwritten the pin.
+func TestInitialReleaseRefusesASpecForAVersionFileSibling(t *testing.T) {
+	pkgs := []plugin.Package{
+		{Name: "Acme.Core", Version: "1.0.0", ManifestPath: "src/Core/Core.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "Acme.Web", Version: "1.0.0", ManifestPath: "src/Web/Web.csproj", VersionFile: "Directory.Build.props"},
+	}
+	ecoOf := map[string]string{"Acme.Core": "dotnet", "Acme.Web": "dotnet"}
+	ws := &Workspace{Root: "/repo", Config: config.Default()}
+	stubReleasedAt(t, nil)
+	_, _, err := initialReleases(context.Background(), ws, pkgs, ecoOf, []string{"Acme.Core=1.0.0", "Acme.Web=2.0.0"}, false)
+	if err == nil || !strings.Contains(err.Error(), "Acme.Web two versions, 1.0.0 (its first release) and 2.0.0") {
+		t.Fatalf("err = %v, want the two-versions refusal for the sibling", err)
+	}
+}
+
+// --only plans as the run does, first releases pinned: the core's minor
+// changeset doesn't cascade to the theme there either, so --only the core is
+// its whole group and isn't refused.
+func TestVersionOnlyWithAFirstReleaseUsesThePinnedPlan(t *testing.T) {
+	root := initialWorkspace(t)
+	writeFileAt(t, filepath.Join(root, "packages", "theme", "package.json"), "{\n  \"name\": \"@acme/theme\",\n  \"version\": \"0.1.0\",\n  \"dependencies\": {\n    \"@acme/core\": \"^0.1.0\"\n  }\n}\n")
+	writeFileAt(t, filepath.Join(root, ".changeset", "core-buttons.md"), "---\n\"@acme/core\": minor\n---\n\nButtons and inputs\n")
+	stubReleasedAt(t, nil)
+	out, err := runVersionErr(t, "--only", "@acme/core", "--release-as", "@acme/core=0.1.0")
+	if err != nil {
+		t.Fatalf("version --only: %v\n%s", err, out)
+	}
+	if log := mustRead(t, filepath.Join(root, "packages", "core", "CHANGELOG.md")); !strings.Contains(log, "## 0.1.0\n") || !strings.Contains(log, "Buttons and inputs") {
+		t.Errorf("core changelog:\n%s", log)
+	}
+}
