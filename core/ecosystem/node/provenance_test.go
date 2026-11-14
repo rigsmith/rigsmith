@@ -3,6 +3,8 @@ package node
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -74,6 +76,9 @@ func stubNpmProvenance(t *testing.T, ok bool) *[3]int {
 func idTokenEnv(t *testing.T) {
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://token.actions.example/?x=1")
+	// A real Actions runner points this at its own event, whose repository
+	// visibility would then decide; tests that want one set it.
+	t.Setenv("GITHUB_EVENT_PATH", "")
 }
 
 // A token publish — every first publish of a new package — attests in GitHub
@@ -239,5 +244,69 @@ func TestProvenanceAttestsAnAlreadyPublicPackageWhateverTheAccess(t *testing.T) 
 	}
 	if !slices.Contains(*args, "--provenance") {
 		t.Errorf("npm publish args = %v, want --provenance", *args)
+	}
+}
+
+// eventFile writes a GitHub Actions event payload naming the repository's
+// visibility and points GITHUB_EVENT_PATH at it.
+func eventFile(t *testing.T, payload string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "event.json")
+	if err := os.WriteFile(path, []byte(payload), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_EVENT_PATH", path)
+}
+
+// npm's registry refuses a provenance statement from a private repository
+// (HTTP 422), which npm doesn't check first: auto skips it, explicitly, and
+// always fails before the upload.
+func TestProvenanceSkipsAPrivateSourceRepository(t *testing.T) {
+	idTokenEnv(t)
+	repo, pkg := workspace(t, nil)
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmProvenance(t, true)
+	args, _ := stubPublish(t)
+	for _, payload := range []string{`{"repository": {"visibility": "private"}}`, `{"repository": {"private": true}}`} {
+		eventFile(t, payload)
+		*args = nil
+		resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+			RepoRoot: repo, Package: pkg, Access: "public",
+			Auth: &plugin.AuthCredential{Token: "npm_secret"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(*args, "--provenance") || !slices.Contains(*args, "--provenance=false") {
+			t.Errorf("%s: npm publish args = %v, want --provenance=false and no --provenance", payload, *args)
+		}
+		if !strings.Contains(resp.Message, "only from a public repository") {
+			t.Errorf("%s: message = %q, want it to say why provenance was skipped", payload, resp.Message)
+		}
+	}
+
+	*args = nil
+	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "public", Provenance: "always",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "repository is private") {
+		t.Fatalf("always: err = %v, want the private-repository refusal", err)
+	}
+	if *args != nil {
+		t.Errorf("npm publish ran with %v", *args)
+	}
+
+	// A public repository attests as before.
+	eventFile(t, `{"repository": {"visibility": "public"}}`)
+	*args = nil
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "public",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(*args, "--provenance") {
+		t.Errorf("public repository: npm publish args = %v, want --provenance", *args)
 	}
 }

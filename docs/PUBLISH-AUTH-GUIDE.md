@@ -150,6 +150,12 @@ provenance for new or private package"). With any other access, shiprig asks
 the registry first (`npm access get status`), as npm does: a public package is
 attested, and otherwise `auto` skips the attestation and `always` fails.
 
+The registry also refuses a provenance statement from a private (or internal)
+GitHub repository, with HTTP 422 after the upload has started; npm doesn't
+check beforehand. shiprig reads the repository's visibility from the workflow's
+event payload (`GITHUB_EVENT_PATH`): from a non-public repository `auto` skips
+the attestation and `always` fails before anything is uploaded.
+
 The attestation needs a new enough npm on the runner: npm ≥ 9.5.0 with a token
 or ambient auth, npm ≥ 11.5.1 when shiprig publishes through OIDC trusted
 publishing. Auth itself never does, so under `auto` an older npm still

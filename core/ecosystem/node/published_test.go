@@ -97,6 +97,8 @@ func TestPublishSendsAPackedTarballWithItsDistTag(t *testing.T) {
 		Access:       "public",
 		ArtifactPath: "/pack/packages/acme-lib-1.2.0-next.0.tgz",
 		Tag:          "next",
+		// Pinned, so a runner with an id-token can't make auto attest.
+		Provenance: provenanceOff,
 	})
 	if err != nil {
 		t.Fatal(err)

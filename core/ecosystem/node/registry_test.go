@@ -178,7 +178,7 @@ func TestPublishUsesTheWorkspaceRegistry(t *testing.T) {
 	}
 	t.Cleanup(func() { npmPublish = was })
 
-	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Access: "restricted"}); err != nil {
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Access: "restricted", Provenance: provenanceOff}); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(*view, []string{"@acme/lib@1.2.0", "version", "--registry", "https://npm.acme.example/", "--@acme:registry=https://npm.acme.example/"}) {

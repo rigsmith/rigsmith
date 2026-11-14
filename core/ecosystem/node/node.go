@@ -400,6 +400,21 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 			provenance = provenanceOff
 		}
 	}
+	// The registry also refuses a statement whose source is a private
+	// GitHub repository (HTTP 422, "Unsupported GitHub Actions source
+	// repository visibility"), which npm doesn't check before uploading.
+	if provenance != provenanceOff && provenanceIDTokenAvailable() {
+		if vis := githubRepositoryVisibility(); vis != "" && vis != "public" {
+			switch provenance {
+			case provenanceAlways:
+				return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but this workflow's repository is %s, and npm accepts provenance only from a public repository; "+
+					"set provenance to auto or off", spec, vis)
+			case provenanceAuto:
+				provenanceNote = " (provenance skipped — npm accepts it only from a public repository, and this one is " + vis + ")"
+				provenance = provenanceOff
+			}
+		}
+	}
 	attest, note, err := decideProvenance(provenance, provenanceIDTokenAvailable(), minNpm, func() bool {
 		return npmSupportsProvenance(ctx, minNpm)
 	})
@@ -459,6 +474,40 @@ func provenanceMode(v string) (string, error) {
 		return m, nil
 	}
 	return "", fmt.Errorf("node.provenance is %q: want \"auto\", \"always\" or \"off\"", v)
+}
+
+// githubRepositoryVisibility is the GitHub Actions workflow's repository
+// visibility — "public", "private" or "internal" — read from the event
+// payload GitHub writes to GITHUB_EVENT_PATH, or "" when it can't be told
+// (not in Actions, or a payload without the repository). An older payload
+// with only `private` counts as private or public by it.
+func githubRepositoryVisibility() string {
+	path := os.Getenv("GITHUB_EVENT_PATH")
+	if path == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var event struct {
+		Repository *struct {
+			Visibility string `json:"visibility"`
+			Private    *bool  `json:"private"`
+		} `json:"repository"`
+	}
+	if json.Unmarshal(raw, &event) != nil || event.Repository == nil {
+		return ""
+	}
+	switch {
+	case event.Repository.Visibility != "":
+		return strings.ToLower(event.Repository.Visibility)
+	case event.Repository.Private != nil && *event.Repository.Private:
+		return "private"
+	case event.Repository.Private != nil:
+		return "public"
+	}
+	return ""
 }
 
 // provenanceIDTokenAvailable reports whether npm can get the id-token it signs

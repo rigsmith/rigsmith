@@ -351,3 +351,22 @@ func TestVersionInitialReleaseTakesInTheFixedGroup(t *testing.T) {
 		t.Errorf("theme changelog (want its first-release line):\n%s", log)
 	}
 }
+
+// Two members of a fixed group, each named at its own current version, are
+// both selected already: the group's one-version check still applies, so the
+// run is refused rather than releasing the group at two versions.
+func TestInitialReleaseRefusesAFixedGroupAtTwoVersions(t *testing.T) {
+	pkgs := []plugin.Package{
+		{Name: "a", Version: "1.0.0", ManifestPath: "a/package.json"},
+		{Name: "b", Version: "2.0.0", ManifestPath: "b/package.json"},
+	}
+	ecoOf := map[string]string{"a": "node", "b": "node"}
+	cfg := config.Default()
+	cfg.Fixed = [][]string{{"a", "b"}}
+	ws := &Workspace{Root: "/repo", Config: cfg}
+	stubReleasedAt(t, nil)
+	_, _, err := initialReleases(context.Background(), ws, pkgs, ecoOf, []string{"a=1.0.0", "b=2.0.0"}, false)
+	if err == nil || !strings.Contains(err.Error(), "must release at the same version") {
+		t.Fatalf("err = %v, want the one-version refusal", err)
+	}
+}

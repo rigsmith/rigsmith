@@ -89,12 +89,15 @@ func initialReleases(ctx context.Context, ws *Workspace, pkgs []plugin.Package, 
 		work = work[1:]
 		p := byName[name]
 		for _, mate := range groupMates(ws, p, releasable, ecoOf, independent) {
-			if _, done := initial[mate.pkg.Name]; done {
-				continue
-			}
 			spec := mate.pkg.Name + "=" + initial[name] + " (" + mate.why + " " + name + ")"
+			// Checked before the skip below: two members each named at
+			// their own current version are both selected already, and
+			// would otherwise release the group at two versions.
 			if mate.pkg.Version != p.Version {
 				return nil, nil, fmt.Errorf("--release-as %s: it is at %s, not %s, and it must release at the same version", spec, mate.pkg.Version, p.Version)
+			}
+			if _, done := initial[mate.pkg.Name]; done {
+				continue
 			}
 			if err := checkUnreleased(ctx, ws, pkgs, ecoOf, mate.pkg, spec); err != nil {
 				return nil, nil, err

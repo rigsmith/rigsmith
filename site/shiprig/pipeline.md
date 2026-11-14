@@ -285,8 +285,8 @@ simply never read, so a `"npm"` block configures nothing at all.
   fail) or `"off"`. Whenever it doesn't attest, shiprig passes
   `--provenance=false`, overriding an `.npmrc`'s `provenance=true`. npm
   attests only a package published with `access` `public` or one the registry
-  already holds as public (shiprig asks it): `auto` skips any other, and
-  `always` fails. It doesn't depend on `auth` or `oidc`: a token publish —
+  already holds as public (shiprig asks it), and only from a public GitHub
+  repository: `auto` skips any other, and `always` fails before the upload. It doesn't depend on `auth` or `oidc`: a token publish —
   every new package's first — attests as well. See the
   [publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md#npm-provenance).
 - **`publishDirs`** are repo-relative globs naming package directories a build
