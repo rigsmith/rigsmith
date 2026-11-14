@@ -121,20 +121,37 @@ The npm-specific bits (audience string `npm:registry.npmjs.org`, exchange URL
 `{registry}-/npm/v1/oidc/token/exchange/package/{name}`) are registered by the
 **node adapter**, not hardcoded in core — that's what keeps the seam general.
 
-### Provenance is layered on top of auth
+### Provenance is decided apart from auth
 
-Auth via the exchanged token works on any npm. **Provenance** still needs the npm
-CLI's attestation machinery, so it stays best-effort and version-gated:
+*As built (PR #577), superseding the original OIDC-only gate.* Provenance is its
+own setting, `node.provenance` in `.changeset/config.json` — `auto` (default),
+`always` or `off` — and doesn't depend on how the publish authenticates. A token
+publish (every new package's first, since a Trusted Publisher can only be
+registered for a package that exists) attests as well as an OIDC one.
 
-- shiprig leaves the CI OIDC env vars in place (GHA already sets them) and, when
-  `method == OIDC`, passes `--provenance` to `npm publish` **iff** the runner's
-  `npm` ≥ 11.5.1. The CLI then builds + uploads the provenance bundle using the
-  ambient OIDC identity.
-- Older npm → publish succeeds (tokenless auth), provenance is skipped, and we
-  log one line saying so. Auth never depends on the npm version; only the
-  provenance attestation does.
-- Provenance is off for private repos / self-hosted / CircleCI (npm limitation) —
-  we detect and note rather than fail.
+- **`auto`** attests when the run is in GitHub Actions with an id-token available
+  (`GITHUB_ACTIONS=true` and `ACTIONS_ID_TOKEN_REQUEST_URL` set, i.e.
+  `id-token: write`). Without one it doesn't attest.
+- **`always`** attests, or fails the publish before anything is uploaded.
+- **`off`** never attests. Anything else is a config error (`Config.EcoProvenance`),
+  so a mistyped value isn't read as `auto`.
+- **npm version.** `--provenance` needs npm ≥ 9.5.0 for a token or ambient-auth
+  publish, and npm ≥ 11.5.1 when shiprig publishes through OIDC trusted
+  publishing (the original gate, kept). Under `auto` an older npm still publishes,
+  with a note that the attestation was skipped; under `always` it fails. Auth
+  never depends on the npm version.
+- **Package visibility.** npm attests only a package published with access
+  `public`, or one the registry already holds as public. With any other access
+  shiprig asks the registry first (`npm access get status`), as npm does:
+  otherwise `auto` skips the attestation and `always` fails.
+- **Repository visibility.** The registry refuses a provenance statement from a
+  private or internal GitHub repository (HTTP 422, after the upload starts),
+  which npm doesn't check first. shiprig reads the visibility from the event
+  payload (`GITHUB_EVENT_PATH`): from a non-public repository `auto` skips the
+  attestation and `always` fails before the upload.
+- **Whenever shiprig doesn't attest** it passes `--provenance=false`, so an
+  `.npmrc`'s `provenance=true` (or `NPM_CONFIG_PROVENANCE`) can't have npm attest
+  anyway. There is no `never` value.
 
 ## Auth seam — where the code lives
 
@@ -191,7 +208,7 @@ A general `auth` block on the per-ecosystem config (`EcoConfig`), not npm-only:
     "oidc": "auto",
     // secret-manager ref or command for the local/automation path
     "auth": "op://CI/npm/token",     // or "env:NPM_TOKEN" (default), or omit
-    "provenance": "auto"             // auto (default) | always | never
+    "provenance": "auto"             // auto (default) | always | off
   }
 }
 ```
@@ -203,7 +220,8 @@ A general `auth` block on the per-ecosystem config (`EcoConfig`), not npm-only:
 
 - `--npm-auth <op://… | env:NAME>` — one-off auth ref.
 - `--oidc <auto|off>` — force-disable OIDC for a run.
-- `--provenance` / `--no-provenance` — override the provenance gate.
+- Provenance has no flag: it is `node.provenance` in the config only (see
+  "Provenance is decided apart from auth").
 
 ### What CI looks like (OIDC)
 
@@ -258,7 +276,8 @@ supplies a fresh OTP.
 
 Other cases: missing `id-token: write` → *"no OIDC token available — did you grant
 `id-token: write` to this job?"*; old npm + provenance → *"published; provenance
-skipped (needs npm ≥ 11.5.1, runner has 10.8.2)."*
+skipped — needs npm ≥ 9.5.0"* (≥ 11.5.1 through OIDC) under `auto`, and an
+error under `always`.
 
 ## `release-init` wizard changes
 
@@ -275,8 +294,9 @@ skipped (needs npm ≥ 11.5.1, runner has 10.8.2)."*
 - **OIDC: official npm registry only.** Custom registries / GitHub Packages use
   the secret-ref or env path. (NuGet/crates OIDC are future adapters on the same
   seam.)
-- **Provenance** needs npm ≥ 11.5.1, a public repo, and a hosted runner — best
-  effort, never blocks auth.
+- **Provenance** needs GitHub Actions with an id-token, npm ≥ 9.5.0 (≥ 11.5.1
+  through OIDC), a public package and a public repository. Under `auto` it is
+  skipped, with a note, when any of those is missing; it never blocks auth.
 - **Staged publishing** (npm's human-approval queue) is out of scope: an OIDC
   token can publish to the stage but *cannot approve* it by design. If a package
   enforces staging, shiprig publishes to the stage and reports that a human must
@@ -298,6 +318,9 @@ skipped (needs npm ≥ 11.5.1, runner has 10.8.2)."*
    error copy. `npm.oidc` config. *Built; httptest-covered end-to-end.*
 3. ✅ **Provenance gate.** `npm --version` detection (≥ 11.5.1), `--provenance`
    on the OIDC path only, skip-note when too old. *Built; unit-tested.*
+   *Superseded by PR #577:* provenance is now `node.provenance`
+   (`auto`/`always`/`off`), independent of auth — see "Provenance is decided
+   apart from auth".
 4. ✅ **Wizard + CI templates.** OIDC `release.yml`; `ReleaseInitRequest.OIDC` +
    node `ReleaseInit` drops the required `NPM_TOKEN` and emits trusted-publisher
    setup notes when OIDC is in play. (A live npm-version warning in the preflight
