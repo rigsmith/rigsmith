@@ -44,6 +44,7 @@ shiprig version --changelog --since main   # preview only this branch's entries 
 shiprig version --ignore my/app   # leave a package out of this run; its changesets wait
 shiprig version --only my/lib     # version only this release group (from `status --output`); the rest wait
 shiprig version --yes --release-as my/pkg=2.0.0   # an exact version, no prompt (CI)
+shiprig version --yes --release-as my/pkg=0.1.0   # first release of the unpublished version on disk: changelog only, no bump
 shiprig info
 ```
 

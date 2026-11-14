@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -82,6 +83,7 @@ type packageJSON struct {
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
 	PeerDeps        map[string]string `json:"peerDependencies"`
+	OptionalDeps    map[string]string `json:"optionalDependencies"`
 	Workspaces      json.RawMessage   `json:"workspaces"`
 }
 
@@ -253,10 +255,35 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		}
 	}
 
+	// Checked before the dry run returns, so a preview shows a bad value too.
+	provenance, err := provenanceMode(req.Provenance)
+	if err != nil {
+		return plugin.PublishResponse{}, err
+	}
+
+	// npm publishes `workspace:` ranges as written, which no registry can
+	// resolve. In a pnpm workspace, pnpm packs the tarball (rewriting them to
+	// the real versions) and npm publishes that file, so auth, OIDC and
+	// provenance stay npm's. Elsewhere a `workspace:` range is refused rather
+	// than shipped.
+	// The refusal holds for a packed artifact too: outside pnpm, `shiprig
+	// pack` ran npm pack, which leaves the ranges as written.
+	inPnpm := pnpmWorkspace(req.RepoRoot, dir)
+	pnpm := req.ArtifactPath == "" && inPnpm
+	if !inPnpm {
+		if err := refuseWorkspaceProtocol("npm publish "+spec, req.Package); err != nil {
+			return plugin.PublishResponse{}, err
+		}
+	}
+
 	if req.DryRun {
+		verb := "npm publish"
+		if pnpm {
+			verb = "pnpm pack and npm publish"
+		}
 		return plugin.PublishResponse{
 			Published: false,
-			Message:   fmt.Sprintf("dry-run: would npm publish %s", spec),
+			Message:   fmt.Sprintf("dry-run: would %s %s", verb, spec),
 		}, nil
 	}
 
@@ -267,8 +294,37 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	args := []string{"publish"}
 	// A file `shiprig pack` built goes out as it is; npm publish takes a
 	// tarball path in place of the package directory.
-	if req.ArtifactPath != "" {
-		args = append(args, req.ArtifactPath)
+	artifact := req.ArtifactPath
+	packNote := ""
+	// npm publishes a tarball without running any of the package's publish
+	// scripts, and pnpm pack runs only prepack, prepare and postpack. The
+	// rest of the sequence a directory publish runs — prepublishOnly before
+	// the pack, publish and postpublish after the upload — is run here, in
+	// npm's order, unless scripts are turned off. A file `shiprig pack` built
+	// in a pnpm workspace had prepublishOnly run before its pack (Artifacts),
+	// so only publish and postpublish are left for the upload.
+	var scripts map[string]bool
+	if inPnpm && !scriptsIgnored(ctx, dir) {
+		scripts = packageScripts(dir)
+	}
+	if pnpm && scripts["prepublishOnly"] {
+		if err := runPackageScript(ctx, dir, "prepublishOnly"); err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: prepublishOnly: %w", spec, err)
+		}
+	}
+	if pnpm {
+		tmp, err := os.MkdirTemp("", "shiprig-pnpm-pack-")
+		if err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("pnpm pack: temp dir: %w", err)
+		}
+		defer os.RemoveAll(tmp)
+		if artifact, err = pnpmPackTarball(ctx, dir, tmp); err != nil {
+			return plugin.PublishResponse{}, err
+		}
+		packNote = " (packed with pnpm)"
+	}
+	if artifact != "" {
+		args = append(args, artifact)
 	}
 	args = append(args, "--access", access)
 	if req.Tag != "" {
@@ -284,6 +340,7 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	// above project/user .npmrc without putting the token on the command line.
 	env := os.Environ()
 	authNote := ""
+	provenanceNote := ""
 	// The CI id-token is minted for npmjs.com's trusted publishing and is exchanged where it always was: a configured
 	// package source, else npmjs.com. A registry found in publishConfig or an .npmrc is never sent it — OIDC is skipped
 	// there, as `oidc: off` would, and npm publishes with its own auth for that registry.
@@ -315,24 +372,313 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		}
 		defer cleanup()
 		env = authEnv
+		authNote = " (auth via OIDC trusted publishing)"
+	}
 
-		// Provenance attestation rides on top of OIDC auth, but needs the npm
-		// CLI's attestation machinery (npm ≥ 11.5.1). When the runner is too old
-		// we still publish — auth never depends on the npm version, only the
-		// attestation does.
-		if npmSupportsProvenance(ctx) {
-			args = append(args, "--provenance")
-			authNote = " (auth via OIDC trusted publishing, provenance attested)"
-		} else {
-			authNote = " (auth via OIDC trusted publishing; provenance skipped — needs npm ≥ 11.5.1)"
+	// Provenance is decided apart from auth: a token publish (every first
+	// publish of a new package) attests as well as an OIDC one. Auth never
+	// depends on the npm version, only the attestation does, so `auto` on a
+	// runner whose npm is too old still publishes.
+	minNpm := provenanceMinNpmToken
+	if oidc && (req.Auth == nil || req.Auth.Token == "") {
+		minNpm = provenanceMinNpmOIDC
+	}
+	// npm refuses to attest a package not published with access public
+	// ("Can't generate provenance for new or private package").
+	// npm attests a package published with access other than public only
+	// when the registry already holds it as public; it refuses a new or
+	// private one ("Can't generate provenance for new or private package").
+	// The registry is asked only when an attestation is otherwise on.
+	if access != "public" && provenance != provenanceOff && provenanceIDTokenAvailable() &&
+		!npmPackagePublic(ctx, dir, env, req.Package.Name, npmRegistryArgs(req.Package.Name, registry)) {
+		switch provenance {
+		case provenanceAlways:
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but npm attests a package published with access %s only when the registry already holds it as public, "+
+				"and this one is new or private; set access to public, or provenance to auto or off", spec, access)
+		case provenanceAuto:
+			provenanceNote = " (provenance skipped — npm attests only public packages)"
+			provenance = provenanceOff
 		}
+	}
+	// The registry also refuses a statement whose source is a private
+	// GitHub repository (HTTP 422, "Unsupported GitHub Actions source
+	// repository visibility"), which npm doesn't check before uploading.
+	if provenance != provenanceOff && provenanceIDTokenAvailable() {
+		if vis := githubRepositoryVisibility(); vis != "" && vis != "public" {
+			switch provenance {
+			case provenanceAlways:
+				return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but this workflow's repository is %s, and npm accepts provenance only from a public repository; "+
+					"set provenance to auto or off", spec, vis)
+			case provenanceAuto:
+				provenanceNote = " (provenance skipped — npm accepts it only from a public repository, and this one is " + vis + ")"
+				provenance = provenanceOff
+			}
+		}
+	}
+	attest, note, err := decideProvenance(provenance, provenanceIDTokenAvailable(), minNpm, func() bool {
+		return npmSupportsProvenance(ctx, minNpm)
+	})
+	if err != nil {
+		return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: %w", spec, err)
+	}
+	// node.provenance decides, not npm's own config: leaving the flag out
+	// when not attesting would let an .npmrc's provenance=true (or
+	// NPM_CONFIG_PROVENANCE) have npm attest anyway, which fails a publish
+	// with no id-token to sign with, or a restricted one. The flag outranks
+	// both, either way.
+	if attest {
+		args = append(args, "--provenance")
+	} else {
+		args = append(args, "--provenance=false")
+	}
+	if note != "" {
+		provenanceNote = note
 	}
 
 	if _, _, err := npmPublish(ctx, dir, env, args...); err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
 	}
+	for _, name := range []string{"publish", "postpublish"} {
+		if scripts[name] {
+			if err := runPackageScript(ctx, dir, name); err != nil {
+				return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: published, but its %s script failed: %w", spec, name, err)
+			}
+		}
+	}
 
-	return plugin.PublishResponse{Published: true, Message: "published " + spec + authNote}, nil
+	return plugin.PublishResponse{Published: true, Message: "published " + spec + authNote + provenanceNote + packNote}, nil
+}
+
+// Provenance modes, the ecosystem block's `provenance` values.
+const (
+	provenanceAuto   = "auto"
+	provenanceAlways = "always"
+	provenanceOff    = "off"
+)
+
+// The npm a provenance attestation needs: --provenance arrived in npm 9.5.0;
+// shiprig's OIDC path has asked for 11.5.1, the npm that brought trusted
+// publishing, since it was written, and still does.
+var (
+	provenanceMinNpmToken = [3]int{9, 5, 0}
+	provenanceMinNpmOIDC  = [3]int{11, 5, 1}
+)
+
+// provenanceMode normalizes the `provenance` setting: empty is auto, and
+// anything but auto/always/off is an error rather than a silent default.
+func provenanceMode(v string) (string, error) {
+	switch m := strings.ToLower(strings.TrimSpace(v)); m {
+	case "":
+		return provenanceAuto, nil
+	case provenanceAuto, provenanceAlways, provenanceOff:
+		return m, nil
+	}
+	return "", fmt.Errorf("node.provenance is %q: want \"auto\", \"always\" or \"off\"", v)
+}
+
+// githubRepositoryVisibility is the GitHub Actions workflow's repository
+// visibility — "public", "private" or "internal" — read from the event
+// payload GitHub writes to GITHUB_EVENT_PATH, or "" when it can't be told
+// (not in Actions, or a payload without the repository). An older payload
+// with only `private` counts as private or public by it.
+func githubRepositoryVisibility() string {
+	path := os.Getenv("GITHUB_EVENT_PATH")
+	if path == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var event struct {
+		Repository *struct {
+			Visibility string `json:"visibility"`
+			Private    *bool  `json:"private"`
+		} `json:"repository"`
+	}
+	if json.Unmarshal(raw, &event) != nil || event.Repository == nil {
+		return ""
+	}
+	switch {
+	case event.Repository.Visibility != "":
+		return strings.ToLower(event.Repository.Visibility)
+	case event.Repository.Private != nil && *event.Repository.Private:
+		return "private"
+	case event.Repository.Private != nil:
+		return "public"
+	}
+	return ""
+}
+
+// provenanceIDTokenAvailable reports whether npm can get the id-token it signs
+// a provenance statement with: GitHub Actions with `id-token: write`, which
+// is what sets ACTIONS_ID_TOKEN_REQUEST_URL.
+func provenanceIDTokenAvailable() bool {
+	return os.Getenv("GITHUB_ACTIONS") == "true" && os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL") != ""
+}
+
+// decideProvenance decides whether the publish passes --provenance, and the
+// note the result carries. auto attests when an id-token is available and the
+// npm is new enough, saying so when only the npm is missing; always attests
+// or fails; off never attests. npmOK is only asked when it matters, since it
+// runs npm.
+func decideProvenance(mode string, idToken bool, minNpm [3]int, npmOK func() bool) (attest bool, note string, err error) {
+	need := fmt.Sprintf("npm ≥ %d.%d.%d", minNpm[0], minNpm[1], minNpm[2])
+	switch mode {
+	case provenanceOff:
+		return false, "", nil
+	case provenanceAlways:
+		if !idToken {
+			return false, "", errors.New("node.provenance is \"always\", but there is no id-token to sign it with: " +
+				"provenance needs GitHub Actions with the `id-token: write` permission (ACTIONS_ID_TOKEN_REQUEST_URL is unset)")
+		}
+		if !npmOK() {
+			return false, "", fmt.Errorf("node.provenance is \"always\", but provenance needs %s on the runner", need)
+		}
+		return true, " (provenance attested)", nil
+	default: // auto
+		if !idToken {
+			return false, "", nil
+		}
+		if !npmOK() {
+			return false, " (provenance skipped — needs " + need + ")", nil
+		}
+		return true, " (provenance attested)", nil
+	}
+}
+
+// pnpmWorkspace reports whether the package at dir belongs to a pnpm
+// workspace: a pnpm-workspace.yaml or pnpm-lock.yaml in dir or a directory
+// above it, up to the repository root.
+func pnpmWorkspace(repoRoot, dir string) bool {
+	root := filepath.Clean(repoRoot)
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
+		if fileExists(filepath.Join(d, "pnpm-workspace.yaml")) || fileExists(filepath.Join(d, "pnpm-lock.yaml")) {
+			return true
+		}
+		if d == root || filepath.Dir(d) == d || !strings.HasPrefix(d, root) {
+			return false
+		}
+	}
+}
+
+// refuseWorkspaceProtocol is the error for a package outside a pnpm workspace
+// that names an in-repo dependency with the workspace: protocol, or nil.
+func refuseWorkspaceProtocol(what string, p plugin.Package) error {
+	dep, ok := workspaceProtocolDep(p)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("%s: %s is %q, and npm writes workspace: ranges into the package unrewritten; "+
+		"only a pnpm workspace (pnpm-workspace.yaml or pnpm-lock.yaml) is packed with pnpm, which rewrites them", what, dep.Name, dep.Range)
+}
+
+// workspaceProtocolDep returns an in-repo dependency written with pnpm's
+// workspace: protocol, which only pnpm's pack rewrites. Discovery records
+// dependencies, peer and optional dependencies; a devDependency isn't
+// installed for the package's users, so it doesn't count.
+func workspaceProtocolDep(p plugin.Package) (plugin.Dependency, bool) {
+	for _, d := range p.Dependencies {
+		if d.Kind != plugin.DepDev && strings.HasPrefix(d.Range, "workspace:") {
+			return d, true
+		}
+	}
+	return plugin.Dependency{}, false
+}
+
+// npmAccessStatus runs `npm access get status` in dir, with env: a variable
+// so a test can stand in for npm.
+var npmAccessStatus = func(ctx context.Context, dir string, env []string, args ...string) (stdout, stderr string, err error) {
+	return runCmdEnv(ctx, dir, env, "npm", append([]string{"access", "get", "status", "--json"}, args...)...)
+}
+
+// npmPackagePublic reports whether the registry holds the package as public,
+// as npm itself checks before it attests one published with access other
+// than public. A package the registry doesn't have (a first publish), a
+// private one, or a lookup that fails all count as not public: npm would
+// refuse the attestation in each case.
+func npmPackagePublic(ctx context.Context, dir string, env []string, name string, registryArgs []string) bool {
+	out, _, err := npmAccessStatus(ctx, dir, env, append([]string{name}, registryArgs...)...)
+	if err != nil {
+		return false
+	}
+	var status map[string]string
+	if json.Unmarshal([]byte(out), &status) != nil {
+		return false
+	}
+	return status[name] == "public"
+}
+
+// scriptsIgnored reports whether the package's scripts are turned off: an
+// ignore-scripts set in the environment or in pnpm's config (.npmrc). A
+// variable so a test can stand in for pnpm.
+var scriptsIgnored = func(ctx context.Context, dir string) bool {
+	for _, k := range []string{"npm_config_ignore_scripts", "NPM_CONFIG_IGNORE_SCRIPTS"} {
+		if strings.EqualFold(os.Getenv(k), "true") {
+			return true
+		}
+	}
+	out, _, err := runCmd(ctx, dir, "pnpm", "config", "get", "ignore-scripts")
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
+// runPackageScript runs one of the package's scripts with pnpm, that script
+// alone: pnpm's own pre/post expansion is off, or `pnpm run publish` would
+// also run postpublish (run again after it) and prepublish (which npm
+// doesn't run on publish). A variable so a test can stand in for pnpm.
+var runPackageScript = func(ctx context.Context, dir, name string) error {
+	_, _, err := runCmd(ctx, dir, "pnpm", "--config.enable-pre-post-scripts=false", "run", name)
+	return err
+}
+
+// packageScripts names the scripts the package.json in dir defines.
+func packageScripts(dir string) map[string]bool {
+	content, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return nil
+	}
+	var pj struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(content, &pj) != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(pj.Scripts))
+	for name := range pj.Scripts {
+		out[name] = true
+	}
+	return out
+}
+
+// pnpmPack runs `pnpm pack` in dir, writing the tarball into dest: a variable
+// so a test can stand in for pnpm.
+var pnpmPack = func(ctx context.Context, dir, dest string) (stdout, stderr string, err error) {
+	return runCmd(ctx, dir, "pnpm", "pack", "--pack-destination", dest)
+}
+
+// pnpmPackTarball packs the package at dir with pnpm, which rewrites
+// workspace: ranges to the versions they resolve to, and returns the
+// tarball's path in dest. pnpm packs into an empty directory of its own and
+// the one .tgz there is taken, since `pnpm pack --json` has changed shape
+// between pnpm versions.
+func pnpmPackTarball(ctx context.Context, dir, dest string) (string, error) {
+	tmp, err := os.MkdirTemp(dest, ".pnpm-pack-")
+	if err != nil {
+		return "", fmt.Errorf("pnpm pack: temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+	if _, _, err := pnpmPack(ctx, dir, tmp); err != nil {
+		return "", fmt.Errorf("pnpm pack: %w", err)
+	}
+	found, _ := filepath.Glob(filepath.Join(tmp, "*.tgz"))
+	if len(found) != 1 {
+		return "", fmt.Errorf("pnpm pack in %s: want one tarball, found %d", dir, len(found))
+	}
+	out := filepath.Join(dest, filepath.Base(found[0]))
+	if err := os.Rename(found[0], out); err != nil {
+		return "", fmt.Errorf("pnpm pack: %w", err)
+	}
+	return out, nil
 }
 
 // npmAuthConfig writes a temporary npmrc carrying the auth token for the target
@@ -411,13 +757,48 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{Skipped: true, Message: "private"}, nil
 	}
 	spec := req.Package.Name + "@" + req.Package.Version
+	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
+	// In a pnpm workspace pnpm packs, so the tarball's workspace: ranges are
+	// the real versions: the same file Publish would send.
+	pnpm := pnpmWorkspace(req.RepoRoot, dir)
+	// npm pack writes workspace: ranges into the tarball as they are, and the
+	// file is what a later --from-pack-dir publish sends: refused before
+	// anything is built, and before the dry run answers, so the preview says
+	// what the pack would.
+	if !pnpm {
+		if err := refuseWorkspaceProtocol("npm pack "+spec, req.Package); err != nil {
+			return plugin.ArtifactsResponse{}, err
+		}
+	}
 	if req.DryRun {
-		return plugin.ArtifactsResponse{Message: fmt.Sprintf("dry-run: would npm pack %s", spec)}, nil
+		tool := "npm"
+		if pnpm {
+			tool = "pnpm"
+		}
+		return plugin.ArtifactsResponse{Message: fmt.Sprintf("dry-run: would %s pack %s", tool, spec)}, nil
 	}
 	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("npm pack: mkdir %s: %w", req.OutputDir, err)
 	}
-	dir := filepath.Join(req.RepoRoot, req.Package.Dir)
+	// prepublishOnly runs before the pack, as npm runs it before its own:
+	// the file built here is what a --from-pack-dir publish sends, too late
+	// for it then. pnpm pack runs prepack, prepare and postpack itself.
+	if pnpm && !scriptsIgnored(ctx, dir) && packageScripts(dir)["prepublishOnly"] {
+		if err := runPackageScript(ctx, dir, "prepublishOnly"); err != nil {
+			return plugin.ArtifactsResponse{}, fmt.Errorf("pnpm pack %s: prepublishOnly: %w", spec, err)
+		}
+	}
+	if pnpm {
+		path, err := pnpmPackTarball(ctx, dir, req.OutputDir)
+		if err != nil {
+			return plugin.ArtifactsResponse{}, err
+		}
+		return plugin.ArtifactsResponse{
+			Built:     true,
+			Artifacts: []plugin.Artifact{{Path: path, Kind: plugin.ArtifactPackage, Attach: false}},
+			Message:   "packed " + spec + " (with pnpm)",
+		}, nil
+	}
 	// --json prints the produced tarball's filename on stdout; --pack-destination
 	// places it in OutputDir rather than the package directory.
 	out, _, err := runCmd(ctx, dir, "npm", "pack", "--pack-destination", req.OutputDir, "--json")
@@ -452,7 +833,7 @@ func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest
 			Notes: []string{
 				"publishes to npm via OIDC trusted publishing — no NPM_TOKEN needed",
 				"one-time: add your release workflow as a Trusted Publisher (npmjs.com → package → Settings → Trusted Publisher)",
-				"CI must grant `id-token: write` and run actions/setup-node with registry-url; provenance needs npm ≥ 11.5.1",
+				"CI must grant `id-token: write` and run actions/setup-node with registry-url; provenance (node.provenance, default auto) needs npm ≥ 11.5.1 here",
 				"to use a token instead, set npm.oidc=\"off\" and provide NPM_TOKEN (or npm.auth)",
 			},
 		}, nil
@@ -463,7 +844,10 @@ func (a *Adapter) ReleaseInit(ctx context.Context, req plugin.ReleaseInitRequest
 			For:    "npm publish",
 			URL:    "https://www.npmjs.com/settings/~/tokens",
 		}},
-		Notes: []string{"publishes to the npm registry (set npm.oidc to enable tokenless OIDC publishing)"},
+		Notes: []string{
+			"publishes to the npm registry (set npm.oidc to enable tokenless OIDC publishing)",
+			"provenance is attested in GitHub Actions with `id-token: write` (node.provenance: auto|always|off; npm ≥ 9.5.0)",
+		},
 	}, nil
 }
 
@@ -512,6 +896,9 @@ func intraRepoDeps(pj packageJSON, known map[string]bool) []plugin.Dependency {
 	collect(pj.Dependencies, plugin.DepNormal)
 	collect(pj.DevDependencies, plugin.DepDev)
 	collect(pj.PeerDeps, plugin.DepPeer)
+	// Installed with the package like a dependency (unless they fail to
+	// build), so a release of one moves the dependent the same way.
+	collect(pj.OptionalDeps, plugin.DepNormal)
 	return deps
 }
 

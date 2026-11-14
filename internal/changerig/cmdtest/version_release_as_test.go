@@ -57,14 +57,23 @@ func TestVersionReleaseAsShowsInThePreview(t *testing.T) {
 func TestVersionReleaseAsRefusals(t *testing.T) {
 	for _, tc := range []struct {
 		name, spec, want string
+		// tag, when set, is a release tag made before the run.
+		tag string
 	}{
-		{"not releasing", "pkg-z=3.0.0", "isn't releasing"},
-		{"not above current", "pkg-b=1.0.0", "greater than the current"},
-		{"not semver", "pkg-b=three", "not a valid semver"},
-		{"bare with two versions", "3.0.0", "name the package"},
+		{name: "not releasing", spec: "pkg-z=3.0.0", want: "isn't releasing"},
+		{name: "below current", spec: "pkg-b=0.9.0", want: "greater than the current"},
+		// The current version is a first release only when it never shipped.
+		// Released — here by its tag, which answers before any registry is
+		// asked, so the case needs no network — it is refused.
+		{name: "current version already released", spec: "pkg-b=1.0.0", want: "already released (tag pkg-b@1.0.0)", tag: "pkg-b@1.0.0"},
+		{name: "not semver", spec: "pkg-b=three", want: "not a valid semver"},
+		{name: "bare with two versions", spec: "3.0.0", want: "name the package"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := releaseAsRepo(t)
+			if tc.tag != "" {
+				git(t, dir, "tag", tc.tag)
+			}
 			code, out := runChangerig(t, dir, "version", "--yes", "--release-as", tc.spec)
 			assertExitNonZero(t, code, out)
 			assertContains(t, out, tc.want)

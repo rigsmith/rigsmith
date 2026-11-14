@@ -97,11 +97,13 @@ func TestPublishSendsAPackedTarballWithItsDistTag(t *testing.T) {
 		Access:       "public",
 		ArtifactPath: "/pack/packages/acme-lib-1.2.0-next.0.tgz",
 		Tag:          "next",
+		// Pinned, so a runner with an id-token can't make auto attest.
+		Provenance: provenanceOff,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"publish", "/pack/packages/acme-lib-1.2.0-next.0.tgz", "--access", "public", "--tag", "next"}
+	want := []string{"publish", "/pack/packages/acme-lib-1.2.0-next.0.tgz", "--access", "public", "--tag", "next", "--provenance=false"}
 	if !slices.Equal(got, want) {
 		t.Errorf("npm args = %v, want %v", got, want)
 	}

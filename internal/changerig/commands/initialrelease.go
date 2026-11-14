@@ -1,0 +1,297 @@
+package commands
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"slices"
+	"sort"
+	"strings"
+
+	"github.com/rigsmith/rigsmith/core/auth"
+	"github.com/rigsmith/rigsmith/core/config"
+	"github.com/rigsmith/rigsmith/core/gitutil"
+	"github.com/rigsmith/rigsmith/core/planner"
+	"github.com/rigsmith/rigsmith/core/plugin"
+	"github.com/rigsmith/rigsmith/core/semver"
+)
+
+// DefaultInitialMessage is the changelog line of an initial release that has
+// no changesets of its own and no --initial-message.
+const DefaultInitialMessage = "Initial release"
+
+// initialReleases picks out the --release-as specs that name the version a
+// package is already at: the release of a version that was written into the
+// manifest but never published (a new package, set up at 0.1.0). Each must be
+// unreleased — no git tag for it and not on its registry — or it's refused,
+// since releasing it again would rewrite the changelog of something that
+// shipped. It returns those packages with their version, and the specs left
+// for applyReleaseAs, which handles every move upward.
+//
+// A bare <version> counts only when the workspace has one package to release:
+// with nothing releasing yet, there is no other way to tell which it names.
+//
+// Packages sharing a version file with one named here (lockstep, unless
+// independent says otherwise) are released with it: they carry the same
+// version, and `publish` would otherwise ship them with no changelog entry.
+// A package given both its current version and another is refused, since
+// splitting the specs here would keep applyReleaseAs from seeing the clash.
+func initialReleases(ctx context.Context, ws *Workspace, pkgs []plugin.Package, ecoOf map[string]string, specs []string, independent bool) (map[string]string, []string, error) {
+	byName := make(map[string]plugin.Package, len(pkgs))
+	var releasable []plugin.Package
+	for _, p := range pkgs {
+		byName[p.Name] = p
+		if !ws.Config.IsIgnored(p.Name) {
+			releasable = append(releasable, p)
+		}
+	}
+	initial := map[string]string{}
+	var rest []string
+	for _, spec := range specs {
+		name, version, named := strings.Cut(spec, "=")
+		name = strings.TrimSpace(name)
+		var p plugin.Package
+		switch {
+		case named:
+			var ok bool
+			if p, ok = byName[name]; !ok {
+				rest = append(rest, spec)
+				continue
+			}
+		case len(releasable) == 1:
+			version, p = name, releasable[0]
+		default:
+			rest = append(rest, spec)
+			continue
+		}
+		v, ok := semver.Parse(strings.TrimSpace(version))
+		cur, curOK := semver.Parse(p.Version)
+		if !ok || !curOK || semver.Compare(v, cur) != 0 {
+			rest = append(rest, spec)
+			continue
+		}
+		if ws.Config.IsIgnored(p.Name) {
+			return nil, nil, fmt.Errorf("--release-as %s: %s is ignored, so it isn't released", spec, p.Name)
+		}
+		if err := checkUnreleased(ctx, ws, pkgs, ecoOf, p, spec); err != nil {
+			return nil, nil, err
+		}
+		initial[p.Name] = v.String()
+	}
+
+	// Packages that must move with a first release join it: those sharing
+	// its version file (lockstep), and the members of its `fixed` group,
+	// which always release together at one version. A worklist, so a
+	// member's own group is followed too.
+	work := sortedKeys(initial)
+	for len(work) > 0 {
+		name := work[0]
+		work = work[1:]
+		p := byName[name]
+		for _, mate := range groupMates(ws, p, releasable, ecoOf, independent) {
+			spec := mate.pkg.Name + "=" + initial[name] + " (" + mate.why + " " + name + ")"
+			// Checked before the skip below: two members each named at
+			// their own current version are both selected already, and
+			// would otherwise release the group at two versions.
+			if mate.pkg.Version != p.Version {
+				return nil, nil, fmt.Errorf("--release-as %s: it is at %s, not %s, and it must release at the same version", spec, mate.pkg.Version, p.Version)
+			}
+			if _, done := initial[mate.pkg.Name]; done {
+				continue
+			}
+			if err := checkUnreleased(ctx, ws, pkgs, ecoOf, mate.pkg, spec); err != nil {
+				return nil, nil, err
+			}
+			initial[mate.pkg.Name] = initial[name]
+			work = append(work, mate.pkg.Name)
+		}
+	}
+
+	// After the expansion, so a spec naming a package that shares a version
+	// file with a first release is caught too: applyReleaseAs would move the
+	// whole group, overwriting the first release's pin.
+	for _, spec := range rest {
+		name, version, named := strings.Cut(spec, "=")
+		name = strings.TrimSpace(name)
+		if !named && len(releasable) == 1 {
+			name, version = releasable[0].Name, spec
+		}
+		if first, ok := initial[name]; ok {
+			return nil, nil, fmt.Errorf("--release-as gives %s two versions, %s (its first release) and %s: give it one", name, first, strings.TrimSpace(version))
+		}
+	}
+	return initial, rest, nil
+}
+
+// groupMate is a package that must release with another, and why.
+type groupMate struct {
+	pkg plugin.Package
+	why string
+}
+
+// groupMates lists the releasable packages that move with p: those sharing
+// its version file under lockstep, and the other members of a `fixed` group
+// it belongs to.
+func groupMates(ws *Workspace, p plugin.Package, releasable []plugin.Package, ecoOf map[string]string, independent bool) []groupMate {
+	var out []groupMate
+	shared := p.VersionFile != "" && !independent && ecoStrategy(ws.Config, ecoOf[p.Name]) != config.Independent
+	inFixed := map[string]bool{}
+	for _, grp := range ws.Config.Fixed {
+		if slices.Contains(grp, p.Name) {
+			for _, n := range grp {
+				inFixed[n] = true
+			}
+		}
+	}
+	for _, q := range releasable {
+		switch {
+		case q.Name == p.Name:
+		case shared && q.VersionFile == p.VersionFile && ecoOf[q.Name] == ecoOf[p.Name]:
+			out = append(out, groupMate{q, "sharing " + p.VersionFile + " with"})
+		case inFixed[q.Name]:
+			out = append(out, groupMate{q, "in a fixed group with"})
+		}
+	}
+	return out
+}
+
+// checkUnreleased refuses a first release of p when its current version is
+// already tagged or published, or when that can't be found out.
+func checkUnreleased(ctx context.Context, ws *Workspace, pkgs []plugin.Package, ecoOf map[string]string, p plugin.Package, spec string) error {
+	where, err := releasedAt(ctx, ws, pkgs, ecoOf, p)
+	if err != nil {
+		return fmt.Errorf("--release-as %s: %w", spec, err)
+	}
+	if where != "" {
+		return fmt.Errorf("--release-as %s: %s %s is already released (%s); --release-as at the current version is only for a first release of a version never published or tagged. "+
+			"To release again, give it a changeset, or --release-as a higher version", spec, p.Name, p.Version, where)
+	}
+	return nil
+}
+
+// ecoStrategy is the version strategy a package in ecosystem eco follows: its
+// block's versionStrategy, else the top-level one.
+func ecoStrategy(cfg *config.Config, eco string) config.VersionStrategy {
+	if s := cfg.EcoStrategy(eco); s != "" {
+		return s
+	}
+	return cfg.VersionStrategy
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// releasedAt says where a package's current version has already been
+// released — "tag <name>" or "on its registry" — or "" when nowhere. A tag
+// counts locally or on the default remote; the registry is asked through the
+// package's ecosystem, and a private package, or an ecosystem released by its
+// tag alone, has none. A remote or registry that can't answer is an error: an
+// initial release needs to know.
+//
+// A variable so a test can stand in for the registry.
+var releasedAt = func(ctx context.Context, ws *Workspace, pkgs []plugin.Package, ecoOf map[string]string, p plugin.Package) (string, error) {
+	ecoID := ecoOf[p.Name]
+	tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoID, p.Dir, p.Name, p.Version, len(pkgs) == 1)
+	if gitutil.TagExists(ctx, ws.Root, tag) {
+		return "tag " + tag, nil
+	}
+	if remote := gitutil.DefaultRemote(ctx, ws.Root); remote != "" {
+		// A remote that can't be asked is no proof the tag isn't there: a
+		// shallow checkout may have left the tag behind on it.
+		found, err := gitutil.LookupRemoteTag(ctx, ws.Root, remote, tag)
+		if err != nil {
+			return "", fmt.Errorf("couldn't check %s for tag %s, which a first release has to know: %w", remote, tag, err)
+		}
+		if found {
+			return "tag " + tag + " on " + remote, nil
+		}
+	}
+	if p.Private {
+		return "", nil
+	}
+	eco, ok := ws.EcosystemFor(ecoID)
+	if !ok {
+		return "", nil
+	}
+	req := publishedRequest(ctx, ws, ecoID, p)
+	// Asked without the configured credential, a registry that answers an
+	// unauthorized read with 404 (GitHub Packages does) would make a
+	// published version look unpublished — and adapters may fall back to the
+	// ambient npm auth, another account's view. A first release has to know.
+	if req.AuthUnavailable {
+		return "", fmt.Errorf("couldn't tell whether %s@%s is on its registry, which a first release has to know: the configured %s.auth couldn't be resolved (%s)", p.Name, p.Version, ecoID, req.AuthError)
+	}
+	resp, err := eco.Published(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("couldn't tell whether %s@%s is on its registry, which a first release has to know: %w", p.Name, p.Version, err)
+	}
+	if resp.Published {
+		return "on its registry", nil
+	}
+	return "", nil
+}
+
+// publishedRequest is the registry lookup for p, carrying the ecosystem's
+// configured publish credential (`auth`) as publish-plan's does, for a feed
+// that won't answer an anonymous read: the adapter sends it only when the
+// registry asks. A credential that can't be resolved is marked unavailable,
+// with a reason that holds no secret, so the adapter doesn't substitute an
+// ambient one.
+func publishedRequest(ctx context.Context, ws *Workspace, ecoID string, p plugin.Package) plugin.PublishedRequest {
+	ec := ws.Config.EcoConfig(ecoID)
+	req := plugin.PublishedRequest{RepoRoot: ws.Root, Package: p, PackageSource: ec.PackageSource, User: ec.User}
+	if ref := strings.TrimSpace(ec.Auth); ref != "" {
+		cred, err := auth.Resolve(ctx, auth.Request{Ref: ref})
+		switch {
+		case err != nil:
+			req.AuthUnavailable, req.AuthError = true, auth.SafeReason(ref, err)
+		case cred.Resolved():
+			req.Auth = &plugin.AuthCredential{Token: cred.Token, Method: string(cred.Method)}
+		}
+	}
+	return req
+}
+
+// applyInitialReleases puts each initial release into the plan at the version
+// it is already at. A package its changesets already planned keeps their
+// changes; one with none gets a module of its own whose single change is
+// message. Either way the version isn't bumped, and nothing is cascaded for it.
+func applyInitialReleases(out io.Writer, plan []*planner.Module, pkgs []plugin.Package, initial map[string]string, message string) []*planner.Module {
+	if strings.TrimSpace(message) == "" {
+		message = DefaultInitialMessage
+	}
+	for _, p := range pkgs {
+		version, ok := initial[p.Name]
+		if !ok {
+			continue
+		}
+		var m *planner.Module
+		for _, pm := range plan {
+			if pm.Name == p.Name {
+				m = pm
+				break
+			}
+		}
+		if m == nil {
+			m = planner.InitialRelease(p, message)
+			plan = append(plan, m)
+		} else {
+			// Already planned: by its own changesets (whose notes it keeps),
+			// to have a range rewritten (an out-of-range devDependency), or
+			// by a group's coordination with nothing of its own to say. Each
+			// becomes a release at its version, the last two with the first
+			// release's note as their entry.
+			m.MakeInitial(message)
+		}
+		m.VersionOverride = version
+		m.ExactVersion = true
+		fmt.Fprintln(out, DimStyle.Render(fmt.Sprintf("  initial release %s %s (never published or tagged)", m.DisplayName, version)))
+	}
+	return plan
+}

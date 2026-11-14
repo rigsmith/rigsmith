@@ -269,6 +269,13 @@ type Config struct {
 	// "use VersionStrategy for every package". Runtime-only, never serialized.
 	PerPackageStrategy map[string]VersionStrategy `json:"-"`
 
+	// InitialReleases are the packages a run releases for the first time at
+	// the version already on disk (`version --release-as <pkg>=<current>`),
+	// keyed by name. The planner releases each at that version and cascades
+	// nothing from it: its version doesn't move, so nothing depending on it
+	// has a range to leave. Runtime-only, never serialized.
+	InitialReleases map[string]string `json:"-"`
+
 	// TagTemplate overrides the git tag name for a release. Empty (the default)
 	// uses the canonical tag: `<name>@<version>` for a multi-package repo, the
 	// module-path `dir/vX.Y.Z` for Go, and — for a single-app repo (exactly one
@@ -722,6 +729,11 @@ type EcosystemConfig struct {
 	// ref is set, else fall back) or "off" (never). Honored by the npm, cargo,
 	// and dotnet ecosystems.
 	OIDC string `json:"oidc,omitempty"`
+	// Provenance controls npm provenance attestation, whatever the publish
+	// authenticates with: "auto" (default — attest when running in GitHub
+	// Actions with an id-token available), "always" (attest or fail) or "off".
+	// Honored by the npm ecosystem.
+	Provenance string `json:"provenance,omitempty"`
 	// User is the registry account/subject an OIDC exchange requires for some
 	// registries — NuGet keys its trusted-publishing token to the policy
 	// creator's username — and, for dotnet, the account name sent with the
@@ -801,6 +813,35 @@ func (c *Config) EcoConfig(id string) EcosystemConfig {
 	var ec EcosystemConfig
 	_, _ = c.Ecosystem(id, &ec)
 	return ec
+}
+
+// EcoProvenance returns the ecosystem block's `provenance` setting, checked:
+// "auto", "always", "off", or "" when unset. EcoConfig can't be trusted with
+// it — it drops a decode error, so `"provenance": false` would come back as
+// "" and be read as auto, attesting in CI after being told not to. Anything
+// but one of the three strings is a config error.
+func (c *Config) EcoProvenance(id string) (string, error) {
+	var block struct {
+		Provenance json.RawMessage `json:"provenance"`
+	}
+	raw, ok := c.Ecosystems[id]
+	if !ok {
+		return "", nil
+	}
+	if err := json.Unmarshal(raw, &block); err != nil {
+		return "", fmt.Errorf("config: ecosystem %q: %w", id, err)
+	}
+	if len(block.Provenance) == 0 || string(block.Provenance) == "null" {
+		return "", nil
+	}
+	var mode string
+	if err := json.Unmarshal(block.Provenance, &mode); err == nil {
+		switch mode {
+		case "auto", "always", "off":
+			return mode, nil
+		}
+	}
+	return "", fmt.Errorf("config: %s.provenance is %s: want \"auto\", \"always\" or \"off\"", id, string(block.Provenance))
 }
 
 // EcoStrategy returns the per-ecosystem versionStrategy override for id, or ""

@@ -518,3 +518,36 @@ func TestChangelogOptions(t *testing.T) {
 		}
 	}
 }
+
+// A provenance that isn't one of the three mode strings is a config error, not
+// unset: EcoConfig drops the decode error, so `false` would read as auto and
+// attest in CI.
+func TestEcoProvenance(t *testing.T) {
+	for _, tc := range []struct {
+		json, want string
+		wantErr    bool
+	}{
+		{json: `{}`, want: ""},
+		{json: `{"node": {"auth": "env:NPM_TOKEN"}}`, want: ""},
+		{json: `{"node": {"provenance": "always"}}`, want: "always"},
+		{json: `{"node": {"provenance": "off"}}`, want: "off"},
+		{json: `{"node": {"provenance": false}}`, wantErr: true},
+		{json: `{"node": {"provenance": true}}`, wantErr: true},
+		{json: `{"node": {"provenance": "yes"}}`, wantErr: true},
+	} {
+		cfg, err := Parse([]byte(tc.json))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.json, err)
+		}
+		got, err := cfg.EcoProvenance("node")
+		if tc.wantErr {
+			if err == nil || !strings.Contains(err.Error(), "node.provenance") {
+				t.Errorf("%s: got %q, %v; want an error naming node.provenance", tc.json, got, err)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("%s: got %q, %v; want %q", tc.json, got, err, tc.want)
+		}
+	}
+}

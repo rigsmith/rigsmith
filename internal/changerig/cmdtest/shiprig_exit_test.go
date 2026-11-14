@@ -67,7 +67,9 @@ esac
 	code, out := runShiprig(t, dir, "publish", "--yes")
 
 	assertExitNonZero(t, code, out)
-	assertContains(t, out, "404 Not Found")
+	// The error box wraps long lines, so the registry's message is matched
+	// with the wrapping undone.
+	assertContains(t, strings.Join(strings.Fields(out), " "), "404 Not Found")
 }
 
 // A failed pipeline step fails the release, and the exit code says so even

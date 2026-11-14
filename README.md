@@ -112,6 +112,7 @@ changerig version --changelog --since main  # preview this branch's changelog en
 changerig version --ignore pkg              # leave a package out of this run (as changeset version --ignore)
 changerig version --only pkg                # version only this release group; the rest wait for a later run
 changerig version --yes --release-as pkg=2.0.0   # release a package at an exact version (CI)
+changerig version --yes --release-as pkg=0.1.0   # first release of an unpublished version on disk (changelog, no bump)
 changerig ui                                # interactive bubbletea menu
 shiprig packages list --json                # read-only release package inventory
 shiprig publish                             # registries + tags (idempotent, confirm-gated on a TTY)

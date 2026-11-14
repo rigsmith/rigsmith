@@ -292,7 +292,9 @@ changerig version --changelog --release-as pkg-b=3.0.0   # preview it first
 
 It's repeatable. The package has to be releasing already, from a changeset or a
 commit: an override changes the number, not whether it ships. The version must
-be valid semver above the current one. Packages sharing a version file move
+be valid semver above the current one. The exception is
+[a first release](#initial-release): the current version, never published or
+tagged, needs no changeset or commit to release it. Packages sharing a version file move
 together, as they do at the prompt, and the dependency cascade isn't
 recomputed: dependents already in the release get the new version in their
 ranges and changelogs, and an override that would push past the range of a
@@ -314,6 +316,53 @@ member's changes under their own bump, as @changesets does.
 
 It's for normal releases only; a prerelease or snapshot sets its own suffix. @changesets has no equivalent (there you write a changeset with
 the bump you want), so without the flag nothing changes.
+
+### A first release of the version on disk {#initial-release}
+
+A new package is often set up at its first version by hand — `0.1.0` in
+`package.json` — and then never published, so there is nothing to bump from
+and no changelog entry for it. `--release-as` at the version a package is
+already at is that first release:
+
+```sh
+changerig version --yes --release-as @acme/core=0.1.0 --release-as @acme/theme=0.1.0
+changerig version --yes --release-as @acme/core=0.1.0 --initial-message "First public release"
+```
+
+Each named package gets a changelog entry for its current version, and nothing
+is bumped: not the package, not the ranges that point at it, and nothing
+depending on it is cascaded, even when its pending changesets carry a bump
+that would otherwise leave a dependent's range. Pending changesets for the package are the entry's
+notes, consumed as usual; with none, it's one line, `--initial-message` or
+"Initial release", under the heading the version reads as from nothing
+(`1.0.0` **Major Changes**, `0.1.0` **Minor Changes**, `0.1.3` **Patch
+Changes**). No changesets are needed at all, where a plain `version` would stop
+with nothing to version.
+
+Packages that always move with the one named come along: those sharing its
+version file (lockstep, unless `--independent`), and the other members of its
+`fixed` group. Each must be at the same version and pass the same "never
+released" check, or the run is refused; each gets its own entry, its pending
+changesets' notes or else the first-release line. Naming one of them at another
+version in the same run is refused, since the group can hold only one.
+
+It's only for a version that never shipped. Before writing anything, the
+version is looked for as a git tag — locally and on the default remote, named
+as `publish` would tag it — and on the package's registry (`npm view`, NuGet,
+crates.io; a private package, or a Go module, has only the tag). Found either
+way, the run is refused, since re-releasing it would rewrite the notes of
+something already out; give it a changeset instead. A remote or registry that
+can't answer is an error too, not a guess: a shallow checkout's missing tag may
+still be on the remote. So is an `auth` configured for the ecosystem that can't
+be resolved, since a private registry asked without it can answer 404 for a
+version it holds. Name the package; a bare version counts
+only when the workspace has a single package.
+
+shiprig-action's `releaseAs` (in `shiprig-action.jsonc`) can't start a first
+release in the action's current release: it skips an entry already at its
+version, and runs `version` only when there are changesets. That needs the
+action version that ships rigsmith/shiprig-action PR 44, not yet released; until
+then, run the first release with the CLI.
 
 ### Versions that do not live in the tree {#no-stamp}
 

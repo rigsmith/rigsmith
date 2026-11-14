@@ -100,14 +100,16 @@ func npmExchangeMessage(body []byte) string {
 	return msg
 }
 
-// npmSupportsProvenance reports whether the local npm can attach a provenance
-// attestation (npm ≥ 11.5.1). A missing/unparseable npm is treated as "no".
-func npmSupportsProvenance(ctx context.Context) bool {
+// npmSupportsProvenance reports whether the local npm is at least min, the
+// version a provenance attestation needs (see provenanceMinNpmToken). A
+// missing/unparseable npm is treated as "no". A variable so a test can stand
+// in for npm.
+var npmSupportsProvenance = func(ctx context.Context, min [3]int) bool {
 	out, _, err := runCmd(ctx, "", "npm", "--version")
 	if err != nil {
 		return false
 	}
-	return npmVersionAtLeast(strings.TrimSpace(out), 11, 5, 1)
+	return npmVersionAtLeast(strings.TrimSpace(out), min[0], min[1], min[2])
 }
 
 // npmVersionAtLeast reports whether semver string v is >= maj.min.pat. A

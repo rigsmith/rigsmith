@@ -136,3 +136,76 @@ func TestGraduatePrereleases(t *testing.T) {
 		t.Errorf("graduated version = %s, want 1.1.0", got)
 	}
 }
+
+// An initial release keeps the version on disk and heads its one change by the
+// move the version reads as from nothing.
+func TestInitialRelease(t *testing.T) {
+	for version, want := range map[string]changeset.Bump{
+		"1.0.0": changeset.BumpMajor,
+		"2.0.0": changeset.BumpMajor,
+		"0.1.0": changeset.BumpMinor,
+		"1.2.0": changeset.BumpMinor,
+		"0.1.3": changeset.BumpPatch,
+		"0.0.1": changeset.BumpPatch,
+	} {
+		m := InitialRelease(plugin.Package{Name: "@acme/core", Version: version, ManifestPath: "package.json"}, "Initial release")
+		if m.ResolvedVersion() != version {
+			t.Errorf("%s: resolved version %s, want it unchanged", version, m.ResolvedVersion())
+		}
+		if m.HighestBump() != want {
+			t.Errorf("%s: bump %s, want %s", version, m.HighestBump(), want)
+		}
+		if len(m.Changes) != 1 || m.Changes[0].Description != "Initial release" {
+			t.Errorf("%s: changes %+v", version, m.Changes)
+		}
+	}
+}
+
+// A first release is pinned in planning: its changesets' bump would put it
+// past a dependent's range, but its version doesn't move, so the dependent is
+// neither bumped nor has its range rewritten.
+func TestInitialReleaseCascadesNothing(t *testing.T) {
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "0.1.0", ManifestPath: "a/package.json"},
+		{Name: "B", Version: "0.1.0", ManifestPath: "b/package.json", Dependencies: []plugin.Dependency{{Name: "A", Kind: plugin.DepNormal, Range: "^0.1.0"}}},
+	}
+	changesets := []*changeset.Changeset{{Summary: "a feature", Releases: []changeset.Release{{Name: "A", Bump: changeset.BumpMinor}}}}
+
+	cfg := config.Default()
+	cfg.InitialReleases = map[string]string{"A": "0.1.0"}
+	plan := Plan(changesets, pkgs, cfg)
+	if len(plan) != 1 || plan[0].Name != "A" {
+		names := []string{}
+		for _, m := range plan {
+			names = append(names, m.Name+"@"+m.ResolvedVersion())
+		}
+		t.Fatalf("plan = %v, want A alone", names)
+	}
+	if got := plan[0].ResolvedVersion(); got != "0.1.0" {
+		t.Errorf("A resolved %s, want 0.1.0", got)
+	}
+
+	// Without the pin, the same changeset cascades to B, which is what a pin
+	// applied after planning would leave behind.
+	if b := findModule(Plan(changesets, pkgs, config.Default()), "B"); b == nil || b.ResolvedVersion() != "0.1.1" {
+		t.Fatalf("control: B = %+v, want it cascaded to 0.1.1", b)
+	}
+}
+
+// A version-file group released for the first time stays one version even
+// when a member has a pending changeset: the group is pinned whole, so no
+// member resolves to the changeset's bump while the file holds the pin.
+func TestInitialReleaseOfAVersionFileGroupStaysOneVersion(t *testing.T) {
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "1.0.0", ManifestPath: "A/A.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "B", Version: "1.0.0", ManifestPath: "B/B.csproj", VersionFile: "Directory.Build.props"},
+	}
+	changesets := []*changeset.Changeset{{Summary: "b feature", Releases: []changeset.Release{{Name: "B", Bump: changeset.BumpMinor}}}}
+	cfg := config.Default()
+	cfg.InitialReleases = map[string]string{"A": "1.0.0", "B": "1.0.0"}
+	for _, m := range Plan(changesets, pkgs, cfg) {
+		if m.ResolvedVersion() != "1.0.0" {
+			t.Errorf("%s resolved %s, want the group's 1.0.0", m.Name, m.ResolvedVersion())
+		}
+	}
+}

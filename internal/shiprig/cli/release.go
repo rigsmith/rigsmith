@@ -67,6 +67,11 @@ func newReleaseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Marks the steps' commands as run by the pipeline, so a
+			// `shiprig publish` among them knows it is the publish step's
+			// action, or what a custom one calls, and needn't say that a
+			// custom one exists.
+			_ = os.Setenv(releaseRunEnv, "1")
 			// The Go binaries are their own changeset engine — default the
 			// built-in version/publish steps to shiprig itself, not the Node CLI.
 			if cfg.Tool == "" {

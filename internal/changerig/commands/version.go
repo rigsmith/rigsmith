@@ -34,6 +34,7 @@ func NewVersionCmd() *cobra.Command {
 		ignoreFlag       []string
 		onlyFlag         []string
 		releaseAs        []string
+		initialMessage   string
 		showChangelog    bool
 		snapshotTag      string
 		snapshotTemplate string
@@ -213,7 +214,20 @@ func NewVersionCmd() *cobra.Command {
 				}
 			}
 
-			if len(active) == 0 && mode != planner.ModeExit {
+			// --release-as at the version a package is already at is its
+			// first release, when that version was never published or tagged:
+			// a changelog entry for it, no bump, with or without changesets.
+			var initial map[string]string
+			if len(releaseAs) > 0 && mode == planner.ModeNormal {
+				if initial, releaseAs, err = initialReleases(cmd.Context(), ws, pkgs, ecoOf, releaseAs, independent); err != nil {
+					return err
+				}
+			}
+			if cmd.Flags().Changed("initial-message") && len(initial) == 0 {
+				return errors.New("--initial-message is the changelog line of a first release: use it with --release-as <package>=<its current version>")
+			}
+
+			if len(active) == 0 && mode != planner.ModeExit && len(initial) == 0 {
 				// A failure, as in @changesets v3: a release pipeline that reaches
 				// `version` with nothing to release has gone wrong upstream of it.
 				return errors.New("no unreleased changesets found — nothing to version")
@@ -224,7 +238,7 @@ func NewVersionCmd() *cobra.Command {
 			// future run). Mixed and unknown-package changesets are hard
 			// errors before anything is written, matching @changesets.
 			if len(onlyFlag) > 0 {
-				if err := checkWholeGroups(onlyFlag, active, pkgs, ecoOf, ws.Config, configIgnore, independent); err != nil {
+				if err := checkWholeGroups(onlyFlag, active, pkgs, ecoOf, ws.Config, configIgnore, independent, initial); err != nil {
 					return err
 				}
 			}
@@ -313,6 +327,9 @@ func NewVersionCmd() *cobra.Command {
 				ws.Config.PerPackageStrategy = ws.Config.StrategyByPackage(ecoOf)
 			}
 
+			// First releases are pinned in the planning itself, so their
+			// changesets' bump cascades to nothing.
+			ws.Config.InitialReleases = initial
 			plan := planner.Plan(active, pkgs, ws.Config)
 
 			// Apply the mode's version overrides.
@@ -333,6 +350,11 @@ func NewVersionCmd() *cobra.Command {
 				if ws.Graduates() {
 					plan = planner.GraduatePrereleases(plan, pkgs)
 				}
+			}
+
+			if len(initial) > 0 {
+				plan = applyInitialReleases(out, plan, pkgs, initial, initialMessage)
+				planner.RefreshDependencies(plan)
 			}
 
 			if len(plan) == 0 {
@@ -402,7 +424,7 @@ func NewVersionCmd() *cobra.Command {
 			// Only for a normal release on a real terminal — snapshot/prerelease set
 			// their own version suffixes, and --yes / non-interactive runs accept the
 			// computed plan as-is.
-			if !yes && len(releaseAs) == 0 && mode == planner.ModeNormal && Interactive() {
+			if !yes && len(releaseAs) == 0 && len(initial) == 0 && mode == planner.ModeNormal && Interactive() {
 				changed, err := promptVersionOverrides(out, plan)
 				if err != nil {
 					return err
@@ -675,8 +697,9 @@ func NewVersionCmd() *cobra.Command {
 	f.StringVar(&snapshotTemplate, "snapshot-template", "", "snapshot suffix template ({tag}/{commit}/{datetime}/{timestamp})")
 	f.BoolVar(&independent, "independent", false, "version each package on its own changesets, writing inline (overrides a shared version file)")
 	f.BoolVarP(&yes, "yes", "y", false, "accept the computed versions; skip the interactive version-override prompt")
-	f.StringArrayVar(&releaseAs, "release-as", nil, "release a package at this exact version, <package>=<version> (or a bare <version> when one version is releasing); repeatable, and skips the prompt")
+	f.StringArrayVar(&releaseAs, "release-as", nil, "release a package at this exact version, <package>=<version> (or a bare <version> when one version is releasing); repeatable, and skips the prompt. Its current version, when never published or tagged, is its first release: a changelog entry, no bump")
 	_ = cmd.RegisterFlagCompletionFunc("release-as", completeReleaseAs)
+	f.StringVar(&initialMessage, "initial-message", "", "the changelog line of a first release (--release-as <package>=<its current version>) that has no changesets (default \""+DefaultInitialMessage+"\")")
 	f.BoolVar(&noStamp, "no-stamp", false, "compute and record the versions (.changeset/versions.json) without writing them into any manifest")
 	return cmd
 }
@@ -912,9 +935,12 @@ func completePackageNames(c *cobra.Command, _ []string, _ string) ([]string, cob
 // requires every planned member of each named package's group to be named
 // too. The other refusals catch a split changeset or dependency; a fixed or
 // linked group, or a shared version file, splits without either.
-func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugin.Package, ecoOf map[string]string, cfg *config.Config, configIgnore []string, independent bool) error {
+func checkWholeGroups(only []string, active []*changeset.Changeset, pkgs []plugin.Package, ecoOf map[string]string, cfg *config.Config, configIgnore []string, independent bool, initial map[string]string) error {
 	full := *cfg
 	full.Ignore = configIgnore
+	// Planned as the run plans, first releases pinned: unpinned, a first
+	// release's changeset would cascade into groups the run never forms.
+	full.InitialReleases = initial
 	if independent {
 		full.VersionStrategy = config.Independent
 	} else {

@@ -1,6 +1,6 @@
 module github.com/rigsmith/rigsmith // rigsmith:version 1.25.0
 
-go 1.26.10
+go 1.26.11
 
 // lefthook is pinned as a build tool so the git hooks resolve it via `go tool`
 // without relying on $PATH. (Was the standalone tools/ module pre-consolidation.)
