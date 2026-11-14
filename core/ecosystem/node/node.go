@@ -606,20 +606,42 @@ var npmAccessStatus = func(ctx context.Context, dir string, env []string, args .
 func npmPackagePublic(ctx context.Context, dir string, env []string, name string, registryArgs []string) (bool, error) {
 	args := append([]string{name}, registryArgs...)
 	out, stderr, err := npmAccessStatus(ctx, dir, env, args...)
-	if err != nil && !strings.Contains(stderr, "E404") {
+	if err != nil && !npmErrorCode.MatchString(stderr) {
 		out, stderr, err = npmAccessStatus(ctx, dir, env, args...)
 	}
 	if err != nil {
-		if strings.Contains(stderr, "E404") {
+		if npmErrorCode.MatchString(stderr) {
 			return false, nil
 		}
-		return false, errors.New(strings.TrimSpace(stderr + " " + err.Error()))
+		return false, errors.New(redactCredentials(strings.TrimSpace(stderr + " " + err.Error())))
 	}
 	var status map[string]string
 	if err := json.Unmarshal([]byte(out), &status); err != nil {
 		return false, fmt.Errorf("npm access get status printed %q: %w", strings.TrimSpace(out), err)
 	}
 	return status[name] == "public", nil
+}
+
+var (
+	// npmErrorCode matches the line npm reports a 404's error code on
+	// ("npm error code E404", or "npm ERR! code E404" before npm 10), not an
+	// E404 anywhere in the output: a request URL npm echoes can hold one.
+	npmErrorCode = regexp.MustCompile(`(?m)^npm (?:error|ERR!) code E404\s*$`)
+	// urlUserinfo matches the user[:password]@ part of a URL, up to the last
+	// '@' before the path: a password can hold an unencoded '@'.
+	urlUserinfo = regexp.MustCompile(`(://)[^/?#\s]*@`)
+	// authHeaderValue matches a Basic or Bearer credential as npm's verbose
+	// output can print it.
+	authHeaderValue = regexp.MustCompile(`(?i)\b(basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}`)
+)
+
+// redactCredentials masks credentials npm can echo in its output (a registry
+// URL's user:token@, an Authorization value) before that output goes into a
+// message: a publish's own message is printed as is, where its errors are
+// redacted again by the caller.
+func redactCredentials(s string) string {
+	s = urlUserinfo.ReplaceAllString(s, "${1}***@")
+	return authHeaderValue.ReplaceAllString(s, "$1 ***")
 }
 
 // scriptsIgnored reports whether the package's scripts are turned off: an
