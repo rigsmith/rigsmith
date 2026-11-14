@@ -180,7 +180,7 @@ func TestProvenanceSkipsARestrictedPackage(t *testing.T) {
 	idTokenEnv(t)
 	repo, pkg := workspace(t, nil)
 	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
-	stubNpmAccess(t, "", errors.New("npm error code E404")) // a new package: the registry doesn't have it
+	stubNpmAccess(t, "", "npm error code E404\nnpm error 404 Not Found", errors.New("exit status 1")) // a new package: the registry doesn't have it
 	stubNpmProvenance(t, true)
 	args, _ := stubPublish(t)
 	resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
@@ -211,13 +211,13 @@ func TestProvenanceSkipsARestrictedPackage(t *testing.T) {
 }
 
 // stubNpmAccess stands in for `npm access get status`, recording its arguments.
-func stubNpmAccess(t *testing.T, out string, err error) *[]string {
+func stubNpmAccess(t *testing.T, out, stderr string, err error) *[]string {
 	t.Helper()
 	var got []string
 	was := npmAccessStatus
 	npmAccessStatus = func(_ context.Context, _ string, _ []string, args ...string) (string, string, error) {
 		got = args
-		return out, "", err
+		return out, stderr, err
 	}
 	t.Cleanup(func() { npmAccessStatus = was })
 	return &got
@@ -231,7 +231,7 @@ func TestProvenanceAttestsAnAlreadyPublicPackageWhateverTheAccess(t *testing.T) 
 	repo, pkg := workspace(t, nil)
 	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
 	stubNpmProvenance(t, true)
-	asked := stubNpmAccess(t, `{"@acme/lib": "public"}`, nil)
+	asked := stubNpmAccess(t, `{"@acme/lib": "public"}`, "", nil)
 	args, _ := stubPublish(t)
 	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
 		RepoRoot: repo, Package: pkg, Access: "restricted",
@@ -244,6 +244,57 @@ func TestProvenanceAttestsAnAlreadyPublicPackageWhateverTheAccess(t *testing.T) 
 	}
 	if !slices.Contains(*args, "--provenance") {
 		t.Errorf("npm publish args = %v, want --provenance", *args)
+	}
+}
+
+// A visibility lookup that fails (the registry unreachable, a refused token)
+// says nothing about the package, so it isn't read as "new or private": it is
+// asked once more, then auto skips the attestation naming the failure, and
+// always fails with it.
+func TestProvenanceReportsAFailedVisibilityLookup(t *testing.T) {
+	idTokenEnv(t)
+	repo, pkg := workspace(t, nil)
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmProvenance(t, true)
+	calls := 0
+	was := npmAccessStatus
+	npmAccessStatus = func(context.Context, string, []string, ...string) (string, string, error) {
+		calls++
+		return "", "npm error code ECONNRESET", errors.New("exit status 1")
+	}
+	t.Cleanup(func() { npmAccessStatus = was })
+	args, _ := stubPublish(t)
+
+	resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Errorf("visibility asked %d times, want 2 (one retry)", calls)
+	}
+	if !slices.Contains(*args, "--provenance=false") {
+		t.Errorf("npm publish args = %v, want --provenance=false", *args)
+	}
+	if !strings.Contains(resp.Message, "visibility lookup failed") || !strings.Contains(resp.Message, "ECONNRESET") {
+		t.Errorf("message = %q, want the lookup failure and its cause", resp.Message)
+	}
+
+	*args = nil
+	_, err = (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted", Provenance: "always",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "visibility lookup failed") || !strings.Contains(err.Error(), "ECONNRESET") {
+		t.Fatalf("always: err = %v, want the lookup failure and its cause", err)
+	}
+	if strings.Contains(err.Error(), "new or private") {
+		t.Errorf("always: err = %v, says new or private for a failed lookup", err)
+	}
+	if *args != nil {
+		t.Errorf("npm publish ran with %v", *args)
 	}
 }
 
@@ -308,5 +359,69 @@ func TestProvenanceSkipsAPrivateSourceRepository(t *testing.T) {
 	}
 	if !slices.Contains(*args, "--provenance") {
 		t.Errorf("public repository: npm publish args = %v, want --provenance", *args)
+	}
+}
+
+// A failed lookup's npm output can echo the registry URL with its
+// credentials, and the auto note is printed as is on a successful publish:
+// the credentials are masked before the failure reaches the note or the error.
+func TestProvenanceLookupFailureRedactsCredentials(t *testing.T) {
+	idTokenEnv(t)
+	repo, pkg := workspace(t, nil)
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmProvenance(t, true)
+	stubNpmAccess(t, "", "npm error code E500\nnpm error 500 Internal Server Error - GET https://ci:s3cr3t@npm.acme.dev/-/package/@acme%2flib/access\nAuthorization: Basic Y2k6czNjcjN0dG9rZW4=\nAuthorization: Basic dTpw\nAuthorization: Bearer abc1234", errors.New("exit status 1"))
+	stubPublish(t)
+
+	resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted", Provenance: "always",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err == nil {
+		t.Fatal("always: published, want the lookup failure")
+	}
+	for name, text := range map[string]string{"auto message": resp.Message, "always error": err.Error()} {
+		if strings.Contains(text, "s3cr3t") || strings.Contains(text, "Y2k6czNjcjN0dG9rZW4=") || strings.Contains(text, "dTpw") || strings.Contains(text, "abc1234") {
+			t.Errorf("%s = %q, leaks the registry credentials", name, text)
+		}
+		if !strings.Contains(text, "https://***@npm.acme.dev") || !strings.Contains(text, "E500") {
+			t.Errorf("%s = %q, want the failure with the URL masked", name, text)
+		}
+	}
+}
+
+// Only npm's own error code says the registry doesn't have the package: a
+// 503 whose request URL happens to hold "E404" is a failed lookup, retried
+// and reported, not a new or private package.
+func TestProvenanceLookupMatchesNpmsErrorCodeNotAnyE404(t *testing.T) {
+	idTokenEnv(t)
+	repo, pkg := workspace(t, nil)
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmProvenance(t, true)
+	calls := 0
+	was := npmAccessStatus
+	npmAccessStatus = func(context.Context, string, []string, ...string) (string, string, error) {
+		calls++
+		return "", "npm error code E503\nnpm error 503 Service Unavailable - GET https://npm.acme.dev/E404/-/package/@acme%2flib/access", errors.New("exit status 1")
+	}
+	t.Cleanup(func() { npmAccessStatus = was })
+	stubPublish(t)
+
+	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted", Provenance: "always",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "visibility lookup failed") || strings.Contains(err.Error(), "new or private") {
+		t.Fatalf("err = %v, want the lookup failure, not new or private", err)
+	}
+	if calls != 2 {
+		t.Errorf("visibility asked %d times, want 2 (one retry)", calls)
 	}
 }
