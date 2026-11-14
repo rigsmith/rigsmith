@@ -631,8 +631,9 @@ var (
 	// '@' before the path: a password can hold an unencoded '@'.
 	urlUserinfo = regexp.MustCompile(`(://)[^/?#\s]*@`)
 	// authHeaderValue matches a Basic or Bearer credential as npm's verbose
-	// output can print it.
-	authHeaderValue = regexp.MustCompile(`(?i)\b(basic|bearer)\s+[A-Za-z0-9+/=._~-]{8,}`)
+	// output can print it, however short: a short token is still a token, and
+	// masking a word of prose after "basic" costs nothing that matters.
+	authHeaderValue = regexp.MustCompile(`(?i)\b(basic|bearer)\s+[A-Za-z0-9+/=._~-]+`)
 )
 
 // redactCredentials masks credentials npm can echo in its output (a registry

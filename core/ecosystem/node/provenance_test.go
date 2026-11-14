@@ -370,7 +370,7 @@ func TestProvenanceLookupFailureRedactsCredentials(t *testing.T) {
 	repo, pkg := workspace(t, nil)
 	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
 	stubNpmProvenance(t, true)
-	stubNpmAccess(t, "", "npm error code E500\nnpm error 500 Internal Server Error - GET https://ci:s3cr3t@npm.acme.dev/-/package/@acme%2flib/access\nAuthorization: Basic Y2k6czNjcjN0dG9rZW4=", errors.New("exit status 1"))
+	stubNpmAccess(t, "", "npm error code E500\nnpm error 500 Internal Server Error - GET https://ci:s3cr3t@npm.acme.dev/-/package/@acme%2flib/access\nAuthorization: Basic Y2k6czNjcjN0dG9rZW4=\nAuthorization: Basic dTpw\nAuthorization: Bearer abc1234", errors.New("exit status 1"))
 	stubPublish(t)
 
 	resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
@@ -388,7 +388,7 @@ func TestProvenanceLookupFailureRedactsCredentials(t *testing.T) {
 		t.Fatal("always: published, want the lookup failure")
 	}
 	for name, text := range map[string]string{"auto message": resp.Message, "always error": err.Error()} {
-		if strings.Contains(text, "s3cr3t") || strings.Contains(text, "Y2k6czNjcjN0dG9rZW4=") {
+		if strings.Contains(text, "s3cr3t") || strings.Contains(text, "Y2k6czNjcjN0dG9rZW4=") || strings.Contains(text, "dTpw") || strings.Contains(text, "abc1234") {
 			t.Errorf("%s = %q, leaks the registry credentials", name, text)
 		}
 		if !strings.Contains(text, "https://***@npm.acme.dev") || !strings.Contains(text, "E500") {
