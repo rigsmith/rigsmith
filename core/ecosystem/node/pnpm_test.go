@@ -321,3 +321,53 @@ func TestOptionalWorkspaceDependencyIsDiscoveredAndRefused(t *testing.T) {
 		t.Errorf("err = %v, want the workspace: refusal", err)
 	}
 }
+
+// stubScripts stands in for pnpm's script runner and the ignore-scripts
+// lookup, recording each step (pack and upload included) in order.
+func stubScripts(t *testing.T, ignored bool) *[]string {
+	t.Helper()
+	var steps []string
+	wasRun, wasIgnored, wasPack, wasPublish := runPackageScript, scriptsIgnored, pnpmPack, npmPublish
+	runPackageScript = func(_ context.Context, _, name string) error { steps = append(steps, "script:"+name); return nil }
+	scriptsIgnored = func(context.Context, string) bool { return ignored }
+	pnpmPack = func(ctx context.Context, dir, dest string) (string, string, error) {
+		steps = append(steps, "pnpm pack")
+		return wasPack(ctx, dir, dest)
+	}
+	npmPublish = func(context.Context, string, []string, ...string) (string, string, error) {
+		steps = append(steps, "npm publish")
+		return "", "", nil
+	}
+	t.Cleanup(func() {
+		runPackageScript, scriptsIgnored, pnpmPack, npmPublish = wasRun, wasIgnored, wasPack, wasPublish
+	})
+	return &steps
+}
+
+// A pnpm-packed publish runs the publish scripts a directory publish would, in
+// npm's order: prepublishOnly before the pack (pnpm pack runs its own prepack,
+// prepare and postpack), publish and postpublish after the upload. A script
+// the package doesn't define isn't run, and ignore-scripts runs none.
+func TestPnpmPublishRunsTheLifecycleScripts(t *testing.T) {
+	noProvenanceEnv(t)
+	repo, theme := pnpmWorkspaceFixture(t)
+	writeFiles(t, repo, map[string]string{"packages/theme/package.json": `{"name":"@acme/theme","version":"0.1.0","scripts":{"prepublishOnly":"tsc","prepack":"x","postpublish":"notify"},"dependencies":{"@acme/core":"workspace:*"}}`})
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubPnpmPack(t)
+
+	steps := stubScripts(t, false)
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: theme}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"script:prepublishOnly", "pnpm pack", "npm publish", "script:postpublish"}; !slices.Equal(*steps, want) {
+		t.Errorf("steps = %v, want %v", *steps, want)
+	}
+
+	steps = stubScripts(t, true)
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: theme}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"pnpm pack", "npm publish"}; !slices.Equal(*steps, want) {
+		t.Errorf("with ignore-scripts: steps = %v, want %v", *steps, want)
+	}
+}

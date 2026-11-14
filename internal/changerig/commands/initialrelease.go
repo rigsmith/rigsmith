@@ -229,6 +229,11 @@ func applyInitialReleases(out io.Writer, plan []*planner.Module, pkgs []plugin.P
 		if m == nil {
 			m = planner.InitialRelease(p, message)
 			plan = append(plan, m)
+		} else if m.RangeOnly {
+			// Planned only to have a range rewritten (an out-of-range
+			// devDependency): asked for by name, it is released, with its
+			// first entry, and keeps the rewrite.
+			m.MakeInitial(message)
 		}
 		m.VersionOverride = version
 		m.ExactVersion = true

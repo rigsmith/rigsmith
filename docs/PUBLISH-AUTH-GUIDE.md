@@ -137,6 +137,10 @@ Provenance is decided apart from how the publish authenticates, by
   can only be registered for a package that exists. Without an id-token it
   publishes without the attestation, quietly.
 - **`always`** attests or fails the publish, before anything is uploaded.
+
+npm attests only a package published with access `public` ("Can't generate
+provenance for new or private package"), so `auto` skips a restricted package,
+passing `--provenance=false`, and `always` fails on one.
 - **`off`** never attests: it passes `--provenance=false`, which overrides a
   `provenance=true` in an `.npmrc` or `NPM_CONFIG_PROVENANCE`.
 

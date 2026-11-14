@@ -255,3 +255,25 @@ func TestInitialReleaseTakesInPackagesSharingTheVersionFile(t *testing.T) {
 		t.Errorf("err = %v, want the sibling's already-released refusal", err)
 	}
 }
+
+// A package the plan holds only to rewrite a range (an out-of-range
+// devDependency) is released when named for its first release: it gets its
+// entry, keeps its version, and keeps the rewrite.
+func TestVersionInitialReleasePromotesARangeOnlyPackage(t *testing.T) {
+	root := initialWorkspace(t)
+	writeFileAt(t, filepath.Join(root, "packages", "theme", "package.json"), "{\n  \"name\": \"@acme/theme\",\n  \"version\": \"0.1.0\",\n  \"devDependencies\": {\n    \"@acme/core\": \"^0.1.0\"\n  }\n}\n")
+	writeFileAt(t, filepath.Join(root, ".changeset", "core-buttons.md"), "---\n\"@acme/core\": minor\n---\n\nButtons and inputs\n")
+	stubReleasedAt(t, nil)
+	runVersion(t, "--release-as", "@acme/theme=0.1.0")
+
+	theme := mustRead(t, filepath.Join(root, "packages", "theme", "package.json"))
+	if !strings.Contains(theme, `"version": "0.1.0"`) || !strings.Contains(theme, `"@acme/core": "^0.2.0"`) {
+		t.Errorf("theme manifest (want 0.1.0, its range rewritten to ^0.2.0):\n%s", theme)
+	}
+	if log := mustRead(t, filepath.Join(root, "packages", "theme", "CHANGELOG.md")); !strings.Contains(log, "## 0.1.0\n") || !strings.Contains(log, "- Initial release") {
+		t.Errorf("theme changelog:\n%s", log)
+	}
+	if got := mustRead(t, filepath.Join(root, "packages", "core", "package.json")); !strings.Contains(got, `"version": "0.2.0"`) {
+		t.Errorf("core, an ordinary release, wasn't bumped:\n%s", got)
+	}
+}

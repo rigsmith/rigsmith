@@ -233,14 +233,7 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 	// pre-1.0 rule applies to; set before the cascade reads their versions.
 	for _, m := range directOrder {
 		m.minorPreMajor = cfg.Versioning.BumpMinorPreMajor
-		// A first release is pinned before the cascade reads its version:
-		// applied afterwards, its changesets' bump would already have pushed
-		// its dependents out of range.
-		if v, ok := cfg.InitialReleases[m.Name]; ok {
-			m.initial = true
-			m.VersionOverride = v
-			m.ExactVersion = true
-		}
+		pinInitial(m, cfg)
 	}
 	rel := map[string]*Module{}
 	order := make([]string, 0, len(directOrder))
@@ -283,6 +276,10 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 		changed := false
 		for _, name := range order {
 			m := rel[name]
+			// However it joined the plan — its own changesets, a group's
+			// coordination, a cascade — a first release is pinned before it
+			// is read as a cascade source.
+			pinInitial(m, cfg)
 			rb := m.HighestBump()
 			if rb == changeset.BumpNone || m.initial {
 				continue
@@ -405,6 +402,17 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 		}
 	}
 	return out
+}
+
+// pinInitial pins m to its first-release version when cfg names it
+// (cfg.InitialReleases): applied after the cascade reads its version, its
+// planned bump would already have pushed its dependents out of range.
+func pinInitial(m *Module, cfg *config.Config) {
+	if v, ok := cfg.InitialReleases[m.Name]; ok && !m.initial {
+		m.initial = true
+		m.VersionOverride = v
+		m.ExactVersion = true
+	}
 }
 
 // rewriteRange replaces the version in a dependency range with newVersion,
@@ -533,8 +541,24 @@ func newModule(p plugin.Package) *Module {
 // plan after the cascade, so nothing that depends on it is bumped for it.
 func InitialRelease(p plugin.Package, summary string) *Module {
 	m := newModule(p)
+	m.MakeInitial(summary)
+	return m
+}
+
+// MakeInitial turns a planned module into a first release at its current
+// version. A range-only module (a dev-dependent whose range is rewritten, no
+// release of its own) becomes a real release, keeping its range rewrites, and
+// gets summary as its one change, as a module with nothing else to say does.
+func (m *Module) MakeInitial(summary string) {
 	m.VersionOverride = m.Current.String()
 	m.ExactVersion = true
+	m.initial = true
+	m.RangeOnly = false
+	for _, c := range m.Changes {
+		if !c.Dependencies {
+			return
+		}
+	}
 	v := m.Current
 	bump := changeset.BumpPatch
 	switch {
@@ -543,8 +567,7 @@ func InitialRelease(p plugin.Package, summary string) *Module {
 	case v.Patch == 0 && (v.Minor > 0 || v.Major > 0):
 		bump = changeset.BumpMinor
 	}
-	m.Changes = []Change{{Description: summary, Bump: bump}}
-	return m
+	m.Changes = append([]Change{{Description: summary, Bump: bump}}, m.Changes...)
 }
 
 // materializeDeps (re-)builds the module's "Updated dependencies" changelog

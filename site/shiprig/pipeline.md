@@ -283,7 +283,8 @@ simply never read, so a `"npm"` block configures nothing at all.
 - **`provenance`** (node) is `"auto"` (default: attest whenever the run is in
   GitHub Actions with an id-token, `id-token: write`), `"always"` (attest or
   fail) or `"off"` (`--provenance=false`, overriding an `.npmrc`'s
-  `provenance=true`). It doesn't depend on `auth` or `oidc`: a token publish —
+  `provenance=true`). npm attests only a package published with `access`
+  `public`: `auto` skips any other, and `always` fails. It doesn't depend on `auth` or `oidc`: a token publish —
   every new package's first — attests as well. See the
   [publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md#npm-provenance).
 - **`publishDirs`** are repo-relative globs naming package directories a build
@@ -308,6 +309,14 @@ to `^` it, and so on) and npm publish that tarball. Auth, OIDC, provenance and
 the registry are npm's as ever. `shiprig pack` packs with pnpm the same way, so
 `--from-pack-dir` sends the same files. pnpm resolves those ranges from the
 installed workspace, so run `pnpm install` first, as the build has.
+
+The package's publish scripts run as a directory publish would run them, in
+npm's order: `prepublishOnly`, then pnpm pack's own `prepack`, `prepare` and
+`postpack`, the upload, then `publish` and `postpublish` (npm runs none for a
+tarball, so shiprig runs those three with `pnpm run`). `ignore-scripts`, in the
+environment or an `.npmrc`, turns them all off. A failed `publish` or
+`postpublish` fails the run after the upload; a re-run finds the version
+published and skips it.
 
 Outside a pnpm workspace (npm, yarn or bun workspaces), a dependency written
 with `workspace:` is refused before anything is published, a dry run included,

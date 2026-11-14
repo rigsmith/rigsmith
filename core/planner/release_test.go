@@ -191,3 +191,21 @@ func TestInitialReleaseCascadesNothing(t *testing.T) {
 		t.Fatalf("control: B = %+v, want it cascaded to 0.1.1", b)
 	}
 }
+
+// A version-file group released for the first time stays one version even
+// when a member has a pending changeset: the group is pinned whole, so no
+// member resolves to the changeset's bump while the file holds the pin.
+func TestInitialReleaseOfAVersionFileGroupStaysOneVersion(t *testing.T) {
+	pkgs := []plugin.Package{
+		{Name: "A", Version: "1.0.0", ManifestPath: "A/A.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "B", Version: "1.0.0", ManifestPath: "B/B.csproj", VersionFile: "Directory.Build.props"},
+	}
+	changesets := []*changeset.Changeset{{Summary: "b feature", Releases: []changeset.Release{{Name: "B", Bump: changeset.BumpMinor}}}}
+	cfg := config.Default()
+	cfg.InitialReleases = map[string]string{"A": "1.0.0", "B": "1.0.0"}
+	for _, m := range Plan(changesets, pkgs, cfg) {
+		if m.ResolvedVersion() != "1.0.0" {
+			t.Errorf("%s resolved %s, want the group's 1.0.0", m.Name, m.ResolvedVersion())
+		}
+	}
+}

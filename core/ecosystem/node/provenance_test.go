@@ -130,7 +130,7 @@ func TestProvenanceAutoWithoutAnIDTokenLeavesNpmConfigAlone(t *testing.T) {
 	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
 	stubNpmProvenance(t, true)
 	args, _ := stubPublish(t)
-	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg}); err != nil {
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Access: "public"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, a := range *args {
@@ -147,7 +147,7 @@ func TestProvenanceAlwaysFailsWithoutAnIDToken(t *testing.T) {
 	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
 	stubNpmProvenance(t, true)
 	args, _ := stubPublish(t)
-	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Provenance: "always"})
+	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Access: "public", Provenance: "always"})
 	if err == nil || !strings.Contains(err.Error(), "id-token") {
 		t.Fatalf("err = %v, want a refusal naming the id-token", err)
 	}
@@ -163,5 +163,41 @@ func TestProvenanceRejectsAnUnknownValue(t *testing.T) {
 	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg, Provenance: "true", DryRun: true})
 	if err == nil || !strings.Contains(err.Error(), "node.provenance") {
 		t.Errorf("err = %v, want one naming node.provenance", err)
+	}
+}
+
+// npm attests only a package published with access public. auto skips any
+// other, explicitly, so an .npmrc's provenance=true can't make npm refuse a
+// publish that used to work; always fails with the reason.
+func TestProvenanceSkipsARestrictedPackage(t *testing.T) {
+	idTokenEnv(t)
+	repo, pkg := workspace(t, nil)
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmProvenance(t, true)
+	args, _ := stubPublish(t)
+	resp, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(*args, "--provenance") || !slices.Contains(*args, "--provenance=false") {
+		t.Errorf("npm publish args = %v, want --provenance=false and no --provenance", *args)
+	}
+	if !strings.Contains(resp.Message, "access public") {
+		t.Errorf("message = %q, want it to say why provenance was skipped", resp.Message)
+	}
+
+	*args = nil
+	_, err = (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{
+		RepoRoot: repo, Package: pkg, Access: "restricted", Provenance: "always",
+		Auth: &plugin.AuthCredential{Token: "npm_secret"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "access public") {
+		t.Fatalf("always: err = %v, want the access-public refusal", err)
+	}
+	if *args != nil {
+		t.Errorf("npm publish ran with %v", *args)
 	}
 }

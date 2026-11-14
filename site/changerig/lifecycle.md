@@ -292,8 +292,9 @@ changerig version --changelog --release-as pkg-b=3.0.0   # preview it first
 
 It's repeatable. The package has to be releasing already, from a changeset or a
 commit: an override changes the number, not whether it ships. The version must
-be valid semver above the current one — or equal to it, for
-[a first release](#initial-release) of a version never published. Packages sharing a version file move
+be valid semver above the current one. The exception is
+[a first release](#initial-release): the current version, never published or
+tagged, needs no changeset or commit to release it. Packages sharing a version file move
 together, as they do at the prompt, and the dependency cascade isn't
 recomputed: dependents already in the release get the new version in their
 ranges and changelogs, and an override that would push past the range of a
@@ -346,8 +347,13 @@ way, the run is refused, since re-releasing it would rewrite the notes of
 something already out; give it a changeset instead. A remote or registry that
 can't answer is an error too, not a guess: a shallow checkout's missing tag may
 still be on the remote. Name the package; a bare version counts
-only when the workspace has a single package. In shiprig-action, `releaseAs`
-in `shiprig-action.jsonc` passes the same `--release-as`.
+only when the workspace has a single package.
+
+shiprig-action's `releaseAs` (in `shiprig-action.jsonc`) can't start a first
+release in the action's current release: it skips an entry already at its
+version, and runs `version` only when there are changesets. That needs the
+action version that ships rigsmith/shiprig-action PR 44, not yet released; until
+then, run the first release with the CLI.
 
 ### Versions that do not live in the tree {#no-stamp}
 

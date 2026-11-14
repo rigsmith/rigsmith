@@ -296,6 +296,20 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	// tarball path in place of the package directory.
 	artifact := req.ArtifactPath
 	packNote := ""
+	// npm publishes a tarball without running any of the package's publish
+	// scripts, and pnpm pack runs only prepack, prepare and postpack. The
+	// rest of the sequence a directory publish runs — prepublishOnly before
+	// the pack, publish and postpublish after the upload — is run here, in
+	// npm's order, unless scripts are turned off.
+	var scripts map[string]bool
+	if pnpm && !scriptsIgnored(ctx, dir) {
+		scripts = packageScripts(dir)
+	}
+	if scripts["prepublishOnly"] {
+		if err := runPackageScript(ctx, dir, "prepublishOnly"); err != nil {
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: prepublishOnly: %w", spec, err)
+		}
+	}
 	if pnpm {
 		tmp, err := os.MkdirTemp("", "shiprig-pnpm-pack-")
 		if err != nil {
@@ -367,6 +381,22 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if oidc && (req.Auth == nil || req.Auth.Token == "") {
 		minNpm = provenanceMinNpmOIDC
 	}
+	// npm refuses to attest a package not published with access public
+	// ("Can't generate provenance for new or private package").
+	if access != "public" {
+		switch provenance {
+		case provenanceAlways:
+			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: node.provenance is \"always\", but npm attests only a package published with access public, and this one is %s; "+
+				"set access to public, or provenance to auto or off", spec, access)
+		case provenanceAuto:
+			// Only where auto would have attested: without an id-token it
+			// says nothing either way, as for a public package.
+			if provenanceIDTokenAvailable() {
+				provenanceNote = " (provenance skipped — npm attests only packages published with access public)"
+				provenance = provenanceOff
+			}
+		}
+	}
 	attest, note, err := decideProvenance(provenance, provenanceIDTokenAvailable(), minNpm, func() bool {
 		return npmSupportsProvenance(ctx, minNpm)
 	})
@@ -382,10 +412,19 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 		// that has no id-token to sign with. The flag outranks both.
 		args = append(args, "--provenance=false")
 	}
-	provenanceNote = note
+	if note != "" {
+		provenanceNote = note
+	}
 
 	if _, _, err := npmPublish(ctx, dir, env, args...); err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("npm publish: %w", err)
+	}
+	for _, name := range []string{"publish", "postpublish"} {
+		if scripts[name] {
+			if err := runPackageScript(ctx, dir, name); err != nil {
+				return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: published, but its %s script failed: %w", spec, name, err)
+			}
+		}
 	}
 
 	return plugin.PublishResponse{Published: true, Message: "published " + spec + authNote + provenanceNote + packNote}, nil
@@ -492,6 +531,45 @@ func workspaceProtocolDep(p plugin.Package) (plugin.Dependency, bool) {
 		}
 	}
 	return plugin.Dependency{}, false
+}
+
+// scriptsIgnored reports whether the package's scripts are turned off: an
+// ignore-scripts set in the environment or in pnpm's config (.npmrc). A
+// variable so a test can stand in for pnpm.
+var scriptsIgnored = func(ctx context.Context, dir string) bool {
+	for _, k := range []string{"npm_config_ignore_scripts", "NPM_CONFIG_IGNORE_SCRIPTS"} {
+		if strings.EqualFold(os.Getenv(k), "true") {
+			return true
+		}
+	}
+	out, _, err := runCmd(ctx, dir, "pnpm", "config", "get", "ignore-scripts")
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
+// runPackageScript runs one of the package's scripts with pnpm: a variable so
+// a test can stand in for pnpm.
+var runPackageScript = func(ctx context.Context, dir, name string) error {
+	_, _, err := runCmd(ctx, dir, "pnpm", "run", name)
+	return err
+}
+
+// packageScripts names the scripts the package.json in dir defines.
+func packageScripts(dir string) map[string]bool {
+	content, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return nil
+	}
+	var pj struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(content, &pj) != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(pj.Scripts))
+	for name := range pj.Scripts {
+		out[name] = true
+	}
+	return out
 }
 
 // pnpmPack runs `pnpm pack` in dir, writing the tarball into dest: a variable
