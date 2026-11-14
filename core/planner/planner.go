@@ -86,6 +86,10 @@ type Module struct {
 	// cascadeBump is the bump determined for this package by the dependency
 	// cascade (range-aware), independent of any direct changeset changes.
 	cascadeBump changeset.Bump
+	// initial marks a first release at the version on disk
+	// (cfg.InitialReleases): its version doesn't move, so it cascades nothing
+	// and no dependent's range is rewritten for it.
+	initial bool
 	// bumpOverride, when set, coordinates the version of packages in a
 	// fixed/linked/lockstep group.
 	bumpOverride changeset.Bump
@@ -229,6 +233,14 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 	// pre-1.0 rule applies to; set before the cascade reads their versions.
 	for _, m := range directOrder {
 		m.minorPreMajor = cfg.Versioning.BumpMinorPreMajor
+		// A first release is pinned before the cascade reads its version:
+		// applied afterwards, its changesets' bump would already have pushed
+		// its dependents out of range.
+		if v, ok := cfg.InitialReleases[m.Name]; ok {
+			m.initial = true
+			m.VersionOverride = v
+			m.ExactVersion = true
+		}
 	}
 	rel := map[string]*Module{}
 	order := make([]string, 0, len(directOrder))
@@ -272,7 +284,7 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 		for _, name := range order {
 			m := rel[name]
 			rb := m.HighestBump()
-			if rb == changeset.BumpNone {
+			if rb == changeset.BumpNone || m.initial {
 				continue
 			}
 			newVer := m.NewVersion().String()
@@ -339,7 +351,7 @@ func Plan(changesets []*changeset.Changeset, packages []plugin.Package, cfg *con
 		releasing := m.HighestBump() != changeset.BumpNone
 		for _, d := range byName[name].Dependencies {
 			dep, ok := rel[d.Name]
-			if !ok || dep.HighestBump() == changeset.BumpNone {
+			if !ok || dep.HighestBump() == changeset.BumpNone || dep.initial {
 				continue
 			}
 			inRange := d.Range != "" && semver.SatisfiesString(dep.NewVersion().String(), d.Range)

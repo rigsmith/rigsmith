@@ -114,8 +114,29 @@ func TestProvenanceOffNeverAttests(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(*args, "--provenance") {
-		t.Errorf("npm publish args = %v, want no --provenance", *args)
+	// Leaving --provenance out isn't off: an .npmrc's provenance=true (or
+	// NPM_CONFIG_PROVENANCE) would still have npm attest. The explicit flag
+	// outranks both.
+	if slices.Contains(*args, "--provenance") || !slices.Contains(*args, "--provenance=false") {
+		t.Errorf("npm publish args = %v, want --provenance=false and no --provenance", *args)
+	}
+}
+
+// auto without an id-token says nothing either way, leaving npm's own config
+// (an .npmrc's provenance setting) to decide, as before.
+func TestProvenanceAutoWithoutAnIDTokenLeavesNpmConfigAlone(t *testing.T) {
+	noProvenanceEnv(t)
+	repo, pkg := workspace(t, nil)
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	stubNpmProvenance(t, true)
+	args, _ := stubPublish(t)
+	if _, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: pkg}); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range *args {
+		if strings.HasPrefix(a, "--provenance") {
+			t.Errorf("npm publish args = %v, want no provenance flag", *args)
+		}
 	}
 }
 

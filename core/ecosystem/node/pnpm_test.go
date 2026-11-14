@@ -262,3 +262,62 @@ func TestPnpmPackRewritesWorkspaceProtocol(t *testing.T) {
 		t.Errorf("output dir holds %d entries, want just the tarball", len(entries))
 	}
 }
+
+// Outside pnpm the refusal doesn't depend on how the package is shipped: a
+// file `shiprig pack` built is refused at publish, and pack refuses before npm
+// writes the ranges into a tarball.
+func TestWorkspaceProtocolRefusedOnThePackPathOutsidePnpm(t *testing.T) {
+	noProvenanceEnv(t)
+	repo, theme := pnpmWorkspaceFixture(t)
+	os.Remove(filepath.Join(repo, "pnpm-workspace.yaml"))
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	args, _ := stubPublish(t)
+
+	artifact := filepath.Join(t.TempDir(), "acme-theme-0.1.0.tgz")
+	if err := writeTarball(artifact, `{"name":"@acme/theme","version":"0.1.0","dependencies":{"@acme/core":"workspace:*"}}`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: theme, ArtifactPath: artifact})
+	if err == nil || !strings.Contains(err.Error(), "workspace:*") {
+		t.Errorf("publish of a packed artifact: err = %v, want the workspace: refusal", err)
+	}
+	if *args != nil {
+		t.Errorf("npm publish ran with %v", *args)
+	}
+
+	out := t.TempDir()
+	_, err = (&Adapter{}).Artifacts(context.Background(), plugin.ArtifactsRequest{RepoRoot: repo, Package: theme, OutputDir: out})
+	if err == nil || !strings.Contains(err.Error(), "npm pack @acme/theme@0.1.0") {
+		t.Errorf("pack: err = %v, want the workspace: refusal before npm pack", err)
+	}
+}
+
+// optionalDependencies are discovered as in-repo edges, so one written with
+// workspace: is refused like a dependency.
+func TestOptionalWorkspaceDependencyIsDiscoveredAndRefused(t *testing.T) {
+	noProvenanceEnv(t)
+	repo := filepath.Join(t.TempDir(), "repo")
+	writeFiles(t, repo, map[string]string{
+		"package.json":                `{"name":"root","private":true,"workspaces":["packages/*"]}`,
+		"packages/core/package.json":  `{"name":"@acme/core","version":"0.1.0"}`,
+		"packages/theme/package.json": `{"name":"@acme/theme","version":"0.1.0","optionalDependencies":{"@acme/core":"workspace:*"}}`,
+	})
+	resp, err := (&Adapter{}).Discover(context.Background(), plugin.DiscoverRequest{RepoRoot: repo, SourcePath: "."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var theme plugin.Package
+	for _, p := range resp.Packages {
+		if p.Name == "@acme/theme" {
+			theme = p
+		}
+	}
+	if len(theme.Dependencies) != 1 || theme.Dependencies[0].Name != "@acme/core" || theme.Dependencies[0].Range != "workspace:*" {
+		t.Fatalf("theme dependencies = %+v, want the optional @acme/core edge", theme.Dependencies)
+	}
+	stubNpmView(t, "", "npm error code E404", errors.New("exit status 1"))
+	_, err = (&Adapter{}).Publish(context.Background(), plugin.PublishRequest{RepoRoot: repo, Package: theme, DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "workspace:*") {
+		t.Errorf("err = %v, want the workspace: refusal", err)
+	}
+}

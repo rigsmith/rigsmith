@@ -294,6 +294,13 @@ func newPublishCmd() *cobra.Command {
 				if a, ok := gen.Access[p.Name]; ok && a != "" {
 					pkgAccess = a
 				}
+				// Checked here rather than left to EcoConfig, which would read
+				// a mistyped `provenance` (a boolean, say) as unset: auto.
+				provenance, perr := ws.Config.EcoProvenance(ecoID)
+				if perr != nil {
+					results[i].err = fmt.Errorf("publish %s: %w", p.Name, perr)
+					return
+				}
 				// A packed release carries the access and dist-tag its plan was
 				// made with.
 				pr, fromPack := packed[p.Name]
@@ -314,7 +321,7 @@ func newPublishCmd() *cobra.Command {
 					OIDCUser:      ws.Config.EcoConfig(ecoID).User,
 					ArtifactPath:  pr.file,
 					Tag:           pr.tag,
-					Provenance:    ws.Config.EcoConfig(ecoID).Provenance,
+					Provenance:    provenance,
 				})
 				if pubErr != nil {
 					// As in publish-plan: an adapter's error can carry a registry URL with credentials in it (npm

@@ -83,6 +83,7 @@ type packageJSON struct {
 	Dependencies    map[string]string `json:"dependencies"`
 	DevDependencies map[string]string `json:"devDependencies"`
 	PeerDeps        map[string]string `json:"peerDependencies"`
+	OptionalDeps    map[string]string `json:"optionalDependencies"`
 	Workspaces      json.RawMessage   `json:"workspaces"`
 }
 
@@ -265,11 +266,13 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	// the real versions) and npm publishes that file, so auth, OIDC and
 	// provenance stay npm's. Elsewhere a `workspace:` range is refused rather
 	// than shipped.
-	pnpm := req.ArtifactPath == "" && pnpmWorkspace(req.RepoRoot, dir)
-	if req.ArtifactPath == "" && !pnpm {
-		if dep, ok := workspaceProtocolDep(req.Package); ok {
-			return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: %s is %q, and npm publishes workspace: ranges unrewritten; "+
-				"only a pnpm workspace (pnpm-workspace.yaml or pnpm-lock.yaml) is packed with pnpm, which rewrites them", spec, dep.Name, dep.Range)
+	// The refusal holds for a packed artifact too: outside pnpm, `shiprig
+	// pack` ran npm pack, which leaves the ranges as written.
+	inPnpm := pnpmWorkspace(req.RepoRoot, dir)
+	pnpm := req.ArtifactPath == "" && inPnpm
+	if !inPnpm {
+		if err := refuseWorkspaceProtocol("npm publish "+spec, req.Package); err != nil {
+			return plugin.PublishResponse{}, err
 		}
 	}
 
@@ -370,8 +373,14 @@ func (a *Adapter) Publish(ctx context.Context, req plugin.PublishRequest) (plugi
 	if err != nil {
 		return plugin.PublishResponse{}, fmt.Errorf("npm publish %s: %w", spec, err)
 	}
-	if attest {
+	switch {
+	case attest:
 		args = append(args, "--provenance")
+	case provenance == provenanceOff:
+		// Leaving the flag out isn't off: npm still attests when an .npmrc or
+		// NPM_CONFIG_PROVENANCE says provenance=true, and fails a token publish
+		// that has no id-token to sign with. The flag outranks both.
+		args = append(args, "--provenance=false")
 	}
 	provenanceNote = note
 
@@ -461,8 +470,21 @@ func pnpmWorkspace(repoRoot, dir string) bool {
 	}
 }
 
+// refuseWorkspaceProtocol is the error for a package outside a pnpm workspace
+// that names an in-repo dependency with the workspace: protocol, or nil.
+func refuseWorkspaceProtocol(what string, p plugin.Package) error {
+	dep, ok := workspaceProtocolDep(p)
+	if !ok {
+		return nil
+	}
+	return fmt.Errorf("%s: %s is %q, and npm writes workspace: ranges into the package unrewritten; "+
+		"only a pnpm workspace (pnpm-workspace.yaml or pnpm-lock.yaml) is packed with pnpm, which rewrites them", what, dep.Name, dep.Range)
+}
+
 // workspaceProtocolDep returns an in-repo dependency written with pnpm's
-// workspace: protocol, which only pnpm's pack rewrites.
+// workspace: protocol, which only pnpm's pack rewrites. Discovery records
+// dependencies, peer and optional dependencies; a devDependency isn't
+// installed for the package's users, so it doesn't count.
 func workspaceProtocolDep(p plugin.Package) (plugin.Dependency, bool) {
 	for _, d := range p.Dependencies {
 		if d.Kind != plugin.DepDev && strings.HasPrefix(d.Range, "workspace:") {
@@ -590,6 +612,14 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		}
 		return plugin.ArtifactsResponse{Message: fmt.Sprintf("dry-run: would %s pack %s", tool, spec)}, nil
 	}
+	// npm pack writes workspace: ranges into the tarball as they are, and the
+	// file is what a later --from-pack-dir publish sends: refused here, before
+	// anything is built.
+	if !pnpm {
+		if err := refuseWorkspaceProtocol("npm pack "+spec, req.Package); err != nil {
+			return plugin.ArtifactsResponse{}, err
+		}
+	}
 	if err := os.MkdirAll(req.OutputDir, 0o755); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("npm pack: mkdir %s: %w", req.OutputDir, err)
 	}
@@ -701,6 +731,9 @@ func intraRepoDeps(pj packageJSON, known map[string]bool) []plugin.Dependency {
 	collect(pj.Dependencies, plugin.DepNormal)
 	collect(pj.DevDependencies, plugin.DepDev)
 	collect(pj.PeerDeps, plugin.DepPeer)
+	// Installed with the package like a dependency (unless they fail to
+	// build), so a release of one moves the dependent the same way.
+	collect(pj.OptionalDeps, plugin.DepNormal)
 	return deps
 }
 

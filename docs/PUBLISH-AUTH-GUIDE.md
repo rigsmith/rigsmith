@@ -137,7 +137,8 @@ Provenance is decided apart from how the publish authenticates, by
   can only be registered for a package that exists. Without an id-token it
   publishes without the attestation, quietly.
 - **`always`** attests or fails the publish, before anything is uploaded.
-- **`off`** never attests.
+- **`off`** never attests: it passes `--provenance=false`, which overrides a
+  `provenance=true` in an `.npmrc` or `NPM_CONFIG_PROVENANCE`.
 
 The attestation needs a new enough npm on the runner: npm ≥ 9.5.0 with a token
 or ambient auth, npm ≥ 11.5.1 when shiprig publishes through OIDC trusted

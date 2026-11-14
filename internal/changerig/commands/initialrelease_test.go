@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rigsmith/rigsmith/core/config"
 	"github.com/rigsmith/rigsmith/core/plugin"
 )
 
@@ -146,5 +147,111 @@ func TestVersionInitialReleaseRefusals(t *testing.T) {
 	}
 	if _, err := runVersionErr(t, "--release-as", "@acme/core=0.2.0", "--initial-message", "hi"); err == nil || !strings.Contains(err.Error(), "--initial-message") {
 		t.Errorf("err = %v, want --initial-message refused without an initial release", err)
+	}
+}
+
+// The reviewed case: A at 0.1.0 with a pending minor changeset, B depending
+// on it through ^0.1.0. A's first release leaves A at 0.1.0, so B, whose
+// range still holds it, is not released at all.
+func TestVersionInitialReleaseCascadesNothing(t *testing.T) {
+	root := initialWorkspace(t)
+	writeFileAt(t, filepath.Join(root, "packages", "theme", "package.json"), "{\n  \"name\": \"@acme/theme\",\n  \"version\": \"0.1.0\",\n  \"dependencies\": {\n    \"@acme/core\": \"^0.1.0\"\n  }\n}\n")
+	writeFileAt(t, filepath.Join(root, ".changeset", "core-buttons.md"), "---\n\"@acme/core\": minor\n---\n\nButtons and inputs\n")
+	stubReleasedAt(t, nil)
+	runVersion(t, "--release-as", "@acme/core=0.1.0")
+
+	theme := mustRead(t, filepath.Join(root, "packages", "theme", "package.json"))
+	if !strings.Contains(theme, `"version": "0.1.0"`) || !strings.Contains(theme, `"@acme/core": "^0.1.0"`) {
+		t.Errorf("the theme was touched by the core's first release:\n%s", theme)
+	}
+	if _, err := os.Stat(filepath.Join(root, "packages", "theme", "CHANGELOG.md")); !os.IsNotExist(err) {
+		t.Error("the theme got a changelog entry, so it was released")
+	}
+	if log := mustRead(t, filepath.Join(root, "packages", "core", "CHANGELOG.md")); !strings.Contains(log, "## 0.1.0\n") {
+		t.Errorf("core changelog:\n%s", log)
+	}
+}
+
+// A remote that can't be asked isn't proof the tag is missing: the real
+// lookup refuses, before any registry is asked.
+func TestVersionInitialReleaseRefusesWhenTheRemoteCantBeChecked(t *testing.T) {
+	root := initialWorkspace(t)
+	gitCmd(t, root, "remote", "add", "origin", filepath.Join(t.TempDir(), "no-such-remote"))
+	_, err := runVersionErr(t, "--release-as", "@acme/core=0.1.0")
+	if err == nil || !strings.Contains(err.Error(), "couldn't check origin for tag @acme/core@0.1.0") {
+		t.Fatalf("err = %v, want a refusal naming the remote it couldn't check", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "packages", "core", "CHANGELOG.md")); !os.IsNotExist(err) {
+		t.Error("a changelog was written")
+	}
+}
+
+// The current version and a higher one for the same package clash: refused,
+// where splitting the specs used to let the higher one win silently.
+func TestVersionInitialReleaseRefusesConflictingSpecs(t *testing.T) {
+	root := initialWorkspace(t)
+	writeFileAt(t, filepath.Join(root, ".changeset", "core-buttons.md"), "---\n\"@acme/core\": minor\n---\n\nButtons and inputs\n")
+	stubReleasedAt(t, nil)
+	_, err := runVersionErr(t, "--release-as", "@acme/core=0.1.0", "--release-as", "@acme/core=0.3.0")
+	if err == nil || !strings.Contains(err.Error(), "two versions, 0.1.0 (its first release) and 0.3.0") {
+		t.Fatalf("err = %v, want the two-versions refusal", err)
+	}
+	if got := mustRead(t, filepath.Join(root, "packages", "core", "package.json")); !strings.Contains(got, `"version": "0.1.0"`) {
+		t.Errorf("core was written:\n%s", got)
+	}
+}
+
+// The registry lookup carries the ecosystem's configured credential, as
+// publish-plan's does, for a private feed; one that can't be resolved is
+// marked unavailable rather than dropped.
+func TestInitialReleaseLookupCarriesTheConfiguredAuth(t *testing.T) {
+	t.Setenv("ACME_NPM_TOKEN", "npm_secret")
+	cfg, err := config.Parse([]byte(`{"node": {"auth": "env:ACME_NPM_TOKEN", "user": "ci"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := &Workspace{Root: "/repo", Config: cfg}
+	p := plugin.Package{Name: "@acme/core", Version: "0.1.0", Dir: "packages/core"}
+	req := publishedRequest(context.Background(), ws, "node", p)
+	if req.Auth == nil || req.Auth.Token != "npm_secret" || req.User != "ci" || req.AuthUnavailable {
+		t.Errorf("request = %+v (auth %+v), want the resolved token and user", req, req.Auth)
+	}
+
+	t.Setenv("ACME_NPM_TOKEN", "")
+	req = publishedRequest(context.Background(), ws, "node", p)
+	if req.Auth != nil || !req.AuthUnavailable || !strings.Contains(req.AuthError, "env:ACME_NPM_TOKEN") {
+		t.Errorf("unresolvable: request = %+v, want it marked unavailable with the reference named", req)
+	}
+}
+
+// Packages sharing a version file move in lockstep: a first release of one is
+// a first release of each, or publish would ship the others with no entry.
+func TestInitialReleaseTakesInPackagesSharingTheVersionFile(t *testing.T) {
+	pkgs := []plugin.Package{
+		{Name: "Acme.Core", Version: "1.0.0", ManifestPath: "src/Core/Core.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "Acme.Web", Version: "1.0.0", ManifestPath: "src/Web/Web.csproj", VersionFile: "Directory.Build.props"},
+		{Name: "Acme.Tool", Version: "1.0.0", ManifestPath: "tools/Tool.csproj"},
+	}
+	ecoOf := map[string]string{"Acme.Core": "dotnet", "Acme.Web": "dotnet", "Acme.Tool": "dotnet"}
+	ws := &Workspace{Root: "/repo", Config: config.Default()}
+
+	stubReleasedAt(t, nil)
+	initial, rest, err := initialReleases(context.Background(), ws, pkgs, ecoOf, []string{"Acme.Core=1.0.0"}, false)
+	if err != nil || len(rest) != 0 {
+		t.Fatalf("initial %v, rest %v, err %v", initial, rest, err)
+	}
+	if initial["Acme.Core"] != "1.0.0" || initial["Acme.Web"] != "1.0.0" || initial["Acme.Tool"] != "" {
+		t.Errorf("initial = %v, want Core and Web (sharing the version file), not Tool", initial)
+	}
+
+	// --independent writes each inline: nothing is shared, nothing taken in.
+	if initial, _, _ := initialReleases(context.Background(), ws, pkgs, ecoOf, []string{"Acme.Core=1.0.0"}, true); len(initial) != 1 {
+		t.Errorf("independent: initial = %v, want Core alone", initial)
+	}
+
+	// A sibling already released refuses the whole first release.
+	stubReleasedAt(t, map[string]string{"Acme.Web": "on its registry"})
+	if _, _, err := initialReleases(context.Background(), ws, pkgs, ecoOf, []string{"Acme.Core=1.0.0"}, false); err == nil || !strings.Contains(err.Error(), "Acme.Web 1.0.0 is already released") {
+		t.Errorf("err = %v, want the sibling's already-released refusal", err)
 	}
 }

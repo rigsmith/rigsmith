@@ -282,7 +282,8 @@ simply never read, so a `"npm"` block configures nothing at all.
   NuGet.org.
 - **`provenance`** (node) is `"auto"` (default: attest whenever the run is in
   GitHub Actions with an id-token, `id-token: write`), `"always"` (attest or
-  fail) or `"off"`. It doesn't depend on `auth` or `oidc`: a token publish —
+  fail) or `"off"` (`--provenance=false`, overriding an `.npmrc`'s
+  `provenance=true`). It doesn't depend on `auth` or `oidc`: a token publish —
   every new package's first — attests as well. See the
   [publish-auth guide](https://github.com/rigsmith/rigsmith/blob/main/docs/PUBLISH-AUTH-GUIDE.md#npm-provenance).
 - **`publishDirs`** are repo-relative globs naming package directories a build
@@ -333,7 +334,9 @@ With a `release` config in the [`.rig.json` `doppler` block](../rig/configuratio
 ```jsonc
 // .rig.json
 "doppler": { "project": "acme", "dev": "dev", "ci": "ci", "release": "release" }
+```
 
+```jsonc
 // .changeset/config.json
 "dotnet":  { "auth": "doppler:NUGET_API_KEY" },
 "electron": { "signing": { "enabled": true, "env": { "APPLE_ID_PASSWORD": "doppler:APPLE_ID_PASSWORD" } } }

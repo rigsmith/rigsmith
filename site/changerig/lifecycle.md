@@ -330,7 +330,8 @@ changerig version --yes --release-as @acme/core=0.1.0 --initial-message "First p
 
 Each named package gets a changelog entry for its current version, and nothing
 is bumped: not the package, not the ranges that point at it, and nothing
-depending on it is cascaded. Pending changesets for the package are the entry's
+depending on it is cascaded, even when its pending changesets carry a bump
+that would otherwise leave a dependent's range. Pending changesets for the package are the entry's
 notes, consumed as usual; with none, it's one line, `--initial-message` or
 "Initial release", under the heading the version reads as from nothing
 (`1.0.0` **Major Changes**, `0.1.0` **Minor Changes**, `0.1.3` **Patch
@@ -342,8 +343,9 @@ version is looked for as a git tag — locally and on the default remote, named
 as `publish` would tag it — and on the package's registry (`npm view`, NuGet,
 crates.io; a private package, or a Go module, has only the tag). Found either
 way, the run is refused, since re-releasing it would rewrite the notes of
-something already out; give it a changeset instead. A registry that can't
-answer is an error too, not a guess. Name the package; a bare version counts
+something already out; give it a changeset instead. A remote or registry that
+can't answer is an error too, not a guess: a shallow checkout's missing tag may
+still be on the remote. Name the package; a bare version counts
 only when the workspace has a single package. In shiprig-action, `releaseAs`
 in `shiprig-action.jsonc` passes the same `--release-as`.
 

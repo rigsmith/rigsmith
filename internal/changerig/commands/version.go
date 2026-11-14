@@ -219,7 +219,7 @@ func NewVersionCmd() *cobra.Command {
 			// a changelog entry for it, no bump, with or without changesets.
 			var initial map[string]string
 			if len(releaseAs) > 0 && mode == planner.ModeNormal {
-				if initial, releaseAs, err = initialReleases(cmd.Context(), ws, pkgs, ecoOf, releaseAs); err != nil {
+				if initial, releaseAs, err = initialReleases(cmd.Context(), ws, pkgs, ecoOf, releaseAs, independent); err != nil {
 					return err
 				}
 			}
@@ -327,6 +327,9 @@ func NewVersionCmd() *cobra.Command {
 				ws.Config.PerPackageStrategy = ws.Config.StrategyByPackage(ecoOf)
 			}
 
+			// First releases are pinned in the planning itself, so their
+			// changesets' bump cascades to nothing.
+			ws.Config.InitialReleases = initial
 			plan := planner.Plan(active, pkgs, ws.Config)
 
 			// Apply the mode's version overrides.

@@ -245,3 +245,18 @@ func TestCustomPublishNote(t *testing.T) {
 		t.Errorf("under shiprig release: note %q", note)
 	}
 }
+
+// A mistyped provenance fails the publish before any registry is touched,
+// rather than being read as auto.
+func TestPublishRefusesANonStringProvenance(t *testing.T) {
+	planRepo(t, `{ "node": { "provenance": false } }`)
+	cmd := newPublishCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes", "--no-git-tag", "--dry-run"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "node.provenance is false") {
+		t.Fatalf("err = %v, want the node.provenance config error\n%s", err, out.String())
+	}
+}

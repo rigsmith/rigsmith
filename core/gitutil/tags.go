@@ -227,11 +227,20 @@ func TagExists(ctx context.Context, repoRoot, tag string) bool {
 // distinguish "fully published" from "tagged locally but the push failed", so a
 // re-run can recover by pushing the existing tag rather than skipping it.
 func RemoteTagExists(ctx context.Context, repoRoot, remote, tag string) bool {
+	found, _ := LookupRemoteTag(ctx, repoRoot, remote, tag)
+	return found
+}
+
+// LookupRemoteTag is RemoteTagExists for a caller that must not take a failed
+// lookup (an unreachable remote, no credentials) for an answer: it reports
+// the tag missing only when the remote said so, and returns the error
+// otherwise.
+func LookupRemoteTag(ctx context.Context, repoRoot, remote, tag string) (bool, error) {
 	out, err := runGit(ctx, repoRoot, "ls-remote", "--tags", remote, "refs/tags/"+tag)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return strings.TrimSpace(out) != ""
+	return strings.TrimSpace(out) != "", nil
 }
 
 // CreateTag creates an annotated tag at HEAD with the given message. It is a
