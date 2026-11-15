@@ -701,8 +701,11 @@ exactly as for any project in that language. For a **dotnet** base the build run
   (which must still be set — it names the profile). `vpk` and the DMG's
   `codesign`/`notarytool` are pointed at that keychain with `--keychain`, so your
   login keychain is not read; the keychain is deleted when the build ends,
-  failed or not. A notary key without a cert is an error (vpk reads both from one
-  keychain). Without these variables nothing changes. Snapshot builds skip it.
+  failed or not. vpk reads the cert and the notary profile from that one
+  keychain, so the two travel together: a notary key without a cert is an error,
+  and so is a cert with `notaryProfile` set but no notary key (a profile in your
+  login keychain can't be reached; clear `notaryProfile` to sign without
+  notarizing). Without these variables nothing changes. Snapshot builds skip it.
 - **Updates need no `vpk upload`.** Velopack's in-app updater finds updates by
   listing a release's assets over the GitHub API — the `releases.<channel>.json`
   index `vpk pack` produces plus the `.nupkg` payloads — so attaching those to the

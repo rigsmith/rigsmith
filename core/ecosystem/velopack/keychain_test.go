@@ -114,6 +114,10 @@ func TestSetupKeychainImportsCertAndStoresNotaryProfile(t *testing.T) {
 	if string(f.certBytes) != "p12-bytes" {
 		t.Errorf("imported cert = %q, want the decoded MACOS_SIGN_P12", f.certBytes)
 	}
+	// No flags on set-keychain-settings: no lock timeout, no lock on sleep.
+	if settings := f.cmds[1]; len(settings) != 3 || settings[2] != kc {
+		t.Errorf("set-keychain-settings must run with no lock options, got %v", settings)
+	}
 	if string(f.keyBytes) != "notary-p8-bytes" {
 		t.Errorf("notary key file = %q, want the decoded MACOS_NOTARY_KEY", f.keyBytes)
 	}
@@ -248,7 +252,8 @@ func TestSetupKeychainRejectsIncompleteConfig(t *testing.T) {
 		{"cert without signIdentity", noID, keychainEnv(), "macos.signIdentity"},
 		{"notary key without notaryProfile", noProfile, notaryEnv(), "macos.notaryProfile"},
 		{"notary key without key id", signedMacos(), keychainEnv(envNotaryKey + "=a2V5"), envNotaryKeyID},
-		{"cert not base64", signedMacos(), []string{envSignP12 + "=not base64!"}, "base64"},
+		{"notaryProfile without notary key", signedMacos(), keychainEnv(), envNotaryKey},
+		{"cert not base64", noProfile, []string{envSignP12 + "=not base64!"}, "base64"},
 	}
 	for _, c := range cases {
 		f := &fakeKeychain{}

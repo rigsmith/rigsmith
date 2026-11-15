@@ -48,6 +48,12 @@ func setupKeychain(m Macos, env []string, run keychainRun) (string, func(), erro
 		return "", noop, fmt.Errorf("velopack: %s is set but macos.signIdentity is empty — name the identity in the cert (e.g. \"Developer ID Application: Acme (TEAMID)\")", envSignP12)
 	}
 	notarize := strings.TrimSpace(notaryKey) != ""
+	// vpk looks for the notary profile in the one keychain it is given, so a
+	// profile kept only in the login keychain would fail at notarization, after
+	// the whole build. Refuse it now instead.
+	if !notarize && strings.TrimSpace(m.NotaryProfile) != "" {
+		return "", noop, fmt.Errorf("velopack: %s is set and macos.notaryProfile names a profile, but %s is not — vpk reads the notary profile from the same temporary keychain as the cert, so supply the notary key too (or clear macos.notaryProfile to skip notarization)", envSignP12, envNotaryKey)
+	}
 	if notarize {
 		if strings.TrimSpace(m.NotaryProfile) == "" {
 			return "", noop, fmt.Errorf("velopack: %s is set but macos.notaryProfile is empty — set it to name the profile shiprig stores the key under", envNotaryKey)
@@ -99,9 +105,10 @@ func setupKeychain(m Macos, env []string, run keychainRun) (string, func(), erro
 		return fail("create", err)
 	}
 	created = true
-	// No auto-lock for an hour: notarization can run long, and a keychain that
-	// locks mid-build stops codesign with a prompt nobody is there to answer.
-	if _, err := run("security", "set-keychain-settings", "-lut", "3600", kc); err != nil {
+	// No flags: no lock timeout and no lock on sleep. It is unlocked once, below,
+	// and a keychain that locked mid-build (a long compile, a slow notarization)
+	// would stop codesign with a prompt nobody is there to answer.
+	if _, err := run("security", "set-keychain-settings", kc); err != nil {
 		return fail("settings", err)
 	}
 	if _, err := run("security", "unlock-keychain", "-p", pass, kc); err != nil {

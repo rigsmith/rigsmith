@@ -601,7 +601,9 @@ applies) and needs `signIdentity`. To sign where the login keychain has neither
 
 shiprig then builds a throwaway keychain, passes it to vpk and the DMG steps with
 `--keychain`, and deletes it afterwards; `notaryProfile` must still be set (it
-names the profile stored there). A notary key without the cert is an error. To
+names the profile stored there). The cert and the notary key travel together: a
+notary key without the cert, or the cert with `notaryProfile` but no notary key,
+is an error (vpk reads both from the one keychain). To
 check a signed build without publishing: `shiprig release --only build`, then
 `spctl -a -vv -t install <dmg>` should say `source=Notarized Developer ID`.
 
