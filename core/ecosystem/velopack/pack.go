@@ -89,6 +89,10 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{Skipped: true, Message: "no Velopack channels buildable on this host" + skipNote(skipped)}, nil
 	}
 
+	if err := checkEntitlements(req.RepoRoot, cfg.Macos, planned, req.Snapshot); err != nil {
+		return plugin.ArtifactsResponse{}, err
+	}
+
 	// Preflight: the `vpk` CLI must be present and (when the csproj pins Velopack)
 	// share its major version, since pack flags shift across majors.
 	if err := a.checkVpkMajor(ctx, req); err != nil {
@@ -310,11 +314,32 @@ func ridRustTarget(rid string) string {
 	}
 }
 
+// checkEntitlements fails when a signed build of a planned macOS channel names a
+// macos.entitlements file that isn't there, before any channel is built — so a
+// typo'd path is a config error rather than a late vpk failure or a quiet sign
+// with vpk's permissive default. Snapshot builds are unsigned and skip it.
+func checkEntitlements(repoRoot string, m Macos, planned []string, snapshot bool) error {
+	path := strings.TrimSpace(m.Entitlements)
+	if snapshot || path == "" {
+		return nil
+	}
+	for _, ch := range planned {
+		if osOf(ch) != osMac {
+			continue
+		}
+		if !fileExists(filepath.Join(repoRoot, path)) {
+			return fmt.Errorf("velopack: macos.entitlements %q not found (relative to the repo root %s)", path, repoRoot)
+		}
+		return nil
+	}
+	return nil
+}
+
 // buildPackArgs is the `vpk pack` argv for one channel, built for the given host.
 // When the channel targets a different OS than the host it is prefixed with vpk's
 // cross-compile directive (`[win]` / `[osx]` / `[linux]`); a native build omits it.
 // It dispatches per OS: macOS gets --bundleId and, unless snapshot, the Developer
-// ID identity + notary profile; Windows gets the .exe mainExe and, unless snapshot,
+// ID identity, entitlements + notary profile; Windows gets the .exe mainExe and, unless snapshot,
 // the host-appropriate code-signing flags; Linux gets the common flags only. Empty
 // optional values are omitted so a partially-configured velopack.json still
 // produces a valid command.
@@ -350,6 +375,7 @@ func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool
 		args = appendFlag(args, "--icon", cfg.Icon.Macos)
 		if !snapshot {
 			args = appendFlag(args, "--signAppIdentity", cfg.Macos.SignIdentity)
+			args = appendFlag(args, "--signEntitlements", cfg.Macos.Entitlements)
 			args = appendFlag(args, "--notaryProfile", cfg.Macos.NotaryProfile)
 		}
 	case osWindows:

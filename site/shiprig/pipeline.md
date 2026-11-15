@@ -603,6 +603,7 @@ exactly as for any project in that language. For a **dotnet** base the build run
   "macos":   { "bundleId": "com.acme.myapp",
                "signIdentity": "Developer ID Application: …",
                "notaryProfile": "myapp-notary",        // xcrun notarytool profile
+               "entitlements": "app/MyApp.entitlements", // optional; default is vpk's permissive set
                "plist": "app/Info.plist" },            // optional custom Info.plist (NSServices, URL schemes, …)
   "windows": {
     // cross-compiling from macOS/Linux: a custom signer (jsign), {{file}} per binary
@@ -657,6 +658,14 @@ exactly as for any project in that language. For a **dotnet** base the build run
   `CFBundleVersion` still tracks releases; the adapter drops `--bundleId`
   automatically (your plist supplies `CFBundleIdentifier`). `--icon` still applies
   (the `.icns` is copied into `Contents/Resources`).
+- **Entitlements (macOS).** Set `macos.entitlements` to a repo-root-relative
+  `.entitlements` plist and the app is signed with it (`vpk --signEntitlements`).
+  Without it `vpk` signs with its bundled default, which grants JIT, unsigned
+  executable memory, Apple Events automation, `DYLD_*` environment variables and
+  disabled library validation — broader than most apps need. Entitlements are part
+  of the signature, so the setting needs `signIdentity` (a config with one and not
+  the other is rejected) and is skipped on a snapshot build. A path that doesn't
+  exist fails the build before any channel is built.
 - **Signing is build-time**, inside `vpk pack` (not the `sign` step). The
   non-secret identifiers live in `velopack.json`; the secrets (the macOS `.p12`
   password, the signing token) come from the [signing
