@@ -139,3 +139,27 @@ func TestResolveSigningEnv_NotConfiguredIsQuiet(t *testing.T) {
 		t.Fatalf("signing off: ok=%v env=%v output=%q", ok, env, output)
 	}
 }
+
+// A build meant to be unsigned (--dry-build, --unsigned) must not find the
+// signing variables in its environment either: electron-builder and Tauri
+// read them from there as readily as from the signing creds.
+func TestWithoutSigningVars_DropsWhatSigningEnvNames(t *testing.T) {
+	cfg := signingConfig(t, `{ "CSC_LINK": "env:X", "APPLE_ID": "env:Y" }`)
+	env := []string{"PATH=/usr/bin", "CSC_LINK=/tmp/cert.p12", "APPLE_ID=you@example.com", "CSC_LINK_EXTRA=keep"}
+	got := withoutSigningVars(env, cfg, "velopack")
+	want := []string{"PATH=/usr/bin", "CSC_LINK_EXTRA=keep"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("withoutSigningVars = %v, want %v", got, want)
+	}
+	if len(env) != 4 {
+		t.Fatal("the caller's env was modified")
+	}
+	// No signing block: nothing to drop.
+	plain, err := config.Parse([]byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := withoutSigningVars(env, plain, "velopack"); len(got) != 4 {
+		t.Fatalf("no signing config, yet %v", got)
+	}
+}

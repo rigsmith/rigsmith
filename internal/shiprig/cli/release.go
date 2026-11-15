@@ -228,15 +228,19 @@ func newReleaseCmd() *cobra.Command {
 						if !ok {
 							return false
 						}
-						// A --dry-build snapshot is unsigned: the Electron and Tauri
-						// adapters would sign with whatever they are handed.
+						// A --dry-build snapshot, and an --unsigned build, are unsigned:
+						// the Electron and Tauri adapters would sign with whatever they
+						// are handed, from the creds or from the build's environment.
 						var signing *plugin.SigningCreds
-						if len(env) > 0 && !dryBuild {
+						buildEnv := runnerEnv
+						if dryBuild || unsigned {
+							buildEnv = withoutSigningVars(runnerEnv, ws.Config, ecoOf[pkg.Name])
+						} else if len(env) > 0 {
 							signing = &plugin.SigningCreds{Env: env}
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
 							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild,
-							Channels: channels, Env: runnerEnv, Signing: signing,
+							Channels: channels, Env: buildEnv, Signing: signing,
 						})
 						if err != nil {
 							out("build " + pkg.Name + ": " + err.Error())
@@ -974,6 +978,24 @@ func resolveSigningEnv(ctx context.Context, cfg *config.Config, eco string, mask
 		}
 	}
 	return env, true
+}
+
+// withoutSigningVars is env (KEY=value entries) without the variables eco's
+// signing.env names, so a build meant to be unsigned can't pick them up from
+// the shell or a .env file. env itself is not modified. Pure.
+func withoutSigningVars(env []string, cfg *config.Config, eco string) []string {
+	sc := cfg.EcoConfig(eco).Signing
+	if sc == nil || len(sc.Env) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, signing := sc.Env[name]; !signing {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // signingFailure is what a release configured to sign says when a signing
