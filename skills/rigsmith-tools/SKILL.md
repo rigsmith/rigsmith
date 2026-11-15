@@ -875,6 +875,7 @@ it can silently stop reporting third-party tap formulae.
 - "what was I working on", "find that chat", "reopen it in Desktop" → **clauderig** (`recent` / `search` / `desktop open`)
 - "sync my Codex setup", "run or switch Codex logins", "find or resume that Codex session" → **codexrig** (`recent -l` / `search` / `account`)
 - "sync Homebrew packages or versions", "what's installed on my other Mac" → **brewrig**
+- "update the rigsmith tools", "are they current?" → `self-update` (any tool; it updates the whole family to one release, `--check` only reports). Never run it unasked: it replaces the user's installed binaries
 
 When driving `rig stack push`, use `--dry-run` to inspect the same plan a real
 push uses. Squash/rebase merges with identical member content need no push.

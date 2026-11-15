@@ -80,6 +80,11 @@ var distSurfaces = []surface{
 		section: regexp.MustCompile(`(?s)\n(?:homebrew_casks|scoops):\n(.*?)\n[a-z_]+:`),
 		list:    regexp.MustCompile(`(?m)^\s+- name: ([\w-]+)$`)},
 
+	// `<tool> self-update` reads each family member's version before and after
+	// the install; a tool missing here would be updated without being reported.
+	{file: filepath.Join("..", "core", "selfupdate", "selfupdate.go"), what: "Family",
+		section: regexp.MustCompile(`(?m)^var Family = \[\]string\{(.*)\}$`), list: regexp.MustCompile(`"([\w-]+)"`)},
+
 	// `curl rigsmith.sh/<tool> | sh` is a public installer route, and the edge
 	// function gates it on a list written out by hand: a tool missing from TOOLS
 	// is refused and redirected to the docs instead of being installed.

@@ -1,12 +1,17 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/rigsmith/rigsmith/core/selfupdate"
+)
 
 // NewRootCmd builds the changerig command tree: the changeset lifecycle plus the
 // bare-invocation `add` shortcut and the interactive menu. main wires fang
 // styling and the bare-TTY → menu routing around it; keeping the tree here lets
 // consistency checks (core/cliguard) construct it without the runtime concerns.
-func NewRootCmd() *cobra.Command {
+// version is the ldflags-stamped build version, which self-update compares.
+func NewRootCmd(version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "changerig",
 		Aliases:       []string{"changeset"},
@@ -37,6 +42,7 @@ func NewRootCmd() *cobra.Command {
 		NewChangelogCmd(),
 		NewUICmd(MenuItem{Label: "Doctor", Desc: "check the changeset setup", Build: NewDoctorCmd}),
 		NewDoctorCmd(),
+		selfupdate.NewCmd(selfupdate.Options{Tool: "changerig", Version: version}),
 	)
 	return root
 }

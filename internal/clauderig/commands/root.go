@@ -1,6 +1,10 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/rigsmith/rigsmith/core/selfupdate"
+)
 
 // NewRootCmd builds the clauderig command tree: the sync lifecycle, the scoped
 // hook/config groups, and the interactive dashboard. main wires fang styling and
@@ -37,6 +41,7 @@ func NewRootCmd(version string) *cobra.Command {
 		NewGuardCmd(),
 		NewGuideCmd(),
 		NewDoctorCmd(version),
+		selfupdate.NewCmd(selfupdate.Options{Tool: "clauderig", Version: version}),
 		NewConfigCmd(),
 		NewMCPCmd(),
 		NewAccountCmd(),

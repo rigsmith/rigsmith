@@ -19,14 +19,19 @@
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME/.local) -> bin/ underneath
+#     RIGSMITH_BIN_DIR   install into exactly this directory (overrides RIGSMITH_INSTALL)
 #     RIGSMITH_VERSION   pin a release tag (default: latest)
+#     RIGSMITH_REPO      GitHub repo to download from (default: rigsmith/rigsmith)
+#
+# `<tool> self-update` runs this with all four set: the release it found, the
+# directory the running tool lives in, and the repo it checked.
 #
 set -e
 
-REPO="rigsmith/rigsmith"
+REPO="${RIGSMITH_REPO:-rigsmith/rigsmith}"
 
 INSTALL_PREFIX="${RIGSMITH_INSTALL:-$HOME/.local}"
-BIN_DIR="$INSTALL_PREFIX/bin"
+BIN_DIR="${RIGSMITH_BIN_DIR:-$INSTALL_PREFIX/bin}"
 VERSION="${RIGSMITH_VERSION:-latest}"
 
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$1"; }

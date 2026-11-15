@@ -513,6 +513,14 @@ Artifacts are signed in place by the `sign` step before `release` attaches them.
 (Velopack apps sign differently — at `vpk pack` time, configured in
 `velopack.json`; see [Desktop apps with Velopack](#desktop-apps-with-velopack).)
 
+A release configured to sign never builds unsigned without being asked. When a
+signing secret can't be read — Doppler signed out, a `doppler:NAME` missing from
+the release config, an unset `env:NAME` — the `build` (or `sign`) step stops,
+naming the variable and how to supply it, on a terminal as in CI. To build
+unsigned on purpose, pass `shiprig release --unsigned`: no signing secret is read
+and no signer runs. A `--dry-build` snapshot is unsigned anyway and ships nowhere,
+so there a missing secret is reported and the rehearsal carries on.
+
 ### Where the release config lives
 
 shiprig resolves the pipeline file from **one** of these locations. If more than

@@ -40,7 +40,7 @@ func roots() []*cobra.Command {
 	return []*cobra.Command{
 		rig.NewRootCmd(),
 		shiprig.NewRootCmd(),
-		changerig.NewRootCmd(),
+		changerig.NewRootCmd("dev"),
 		clauderig.NewRootCmd("dev"),
 		codexrig.NewRootCmd("dev"),
 		brewrig.NewRootCmd("dev"),

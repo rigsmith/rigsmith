@@ -17,6 +17,19 @@ import (
 	"github.com/rigsmith/rigsmith/core/auth"
 )
 
+// SecretError is a signing secret that could not be read: the variable it was
+// for and the reference it names — never a value — so a caller can say which
+// secret is missing and how to supply it.
+type SecretError struct {
+	Env string // the signing variable, e.g. MACOS_SIGN_P12
+	Ref string // its secret reference, e.g. doppler:MACOS_SIGN_P12
+	Err error
+}
+
+func (e *SecretError) Error() string { return "signing secret " + e.Env + ": " + e.Err.Error() }
+
+func (e *SecretError) Unwrap() error { return e.Err }
+
 // ResolveEnv resolves each ENV_VAR -> secret-reference entry in refs to its value
 // via the auth precedence chain, masking every resolved value. It returns nil
 // when refs is empty (nothing to sign with). A reference that errors or resolves
@@ -37,10 +50,10 @@ func ResolveEnv(ctx context.Context, refs map[string]string, masker auth.Masker)
 	for _, k := range keys {
 		cred, err := auth.Resolve(ctx, auth.Request{Ref: refs[k], Masker: masker})
 		if err != nil {
-			return nil, fmt.Errorf("signing secret %s: %w", k, err)
+			return nil, &SecretError{Env: k, Ref: refs[k], Err: err}
 		}
 		if !cred.Resolved() {
-			return nil, fmt.Errorf("signing secret %s: reference %q resolved to an empty value", k, refs[k])
+			return nil, &SecretError{Env: k, Ref: refs[k], Err: fmt.Errorf("reference %q resolved to an empty value", refs[k])}
 		}
 		out[k] = cred.Token
 	}

@@ -269,7 +269,7 @@ source tools; **rigsmith** is the Go `cli/` module.
 | env presets as flags | ✅ | ✅ | ✅ | | | Each `.rig.json` env preset becomes a `--<name>` flag on the dev verbs (`rig test --log`); selected presets merge as the top env layer. Names colliding with a reserved flag are skipped. | |
 | custom commands (shell/argv/OS/env/cwd) | ✅ | ⬜ | ✅ | 🟢 | Adds the argv form over the Node rig's gap. | Full support — shell/argv specs, per-OS (`macos`/`windows`/`linux`) overrides via `Resolve()`, plus per-command `env` and `cwd` (`cli/internal/config/command.go`, executed in `scripts.go`). | |
 | `--no-env` / `--root` | ✅ | ✅ | ✅ | | | Persistent root flags: `--no-env` drops the `.env`/`.env.local` layer for the run; `--root <dir>` overrides walk-up discovery (every verb resolves through `resolveRoot`). | |
-| self-update | ✅ | ✅ | ✅ | | | `rig self-update` (+ menu entry): releases/latest vs stamped version, install.sh handoff; goreleaser now stamps the version ldflag. | |
+| self-update | ✅ | ✅ | ✅ | | | `rig self-update` (+ menu entry): releases/latest vs stamped version, install.sh handoff — now shared by every tool (core/selfupdate) and updating the whole family to one tag; goreleaser now stamps the version ldflag. | |
 
 ---
 

@@ -106,6 +106,26 @@ curl -fsSL https://rigsmith.sh/brewrig | sh    # just brewrig (macOS / Linux)
 Binaries install to `~/.local/bin` by default (override with `RIGSMITH_INSTALL`).
 Make sure that directory is on your `PATH`.
 
+### Updating {#updating}
+
+Every tool carries `self-update`, and it updates the whole family, whichever
+tool you run it from:
+
+```sh
+rig self-update          # or shiprig self-update, changerig self-update, …
+rig self-update --check  # each tool's installed version against the latest
+```
+
+It re-runs the installer once, pinned to the latest release and pointed at the
+directory the running tool lives in, so every tool there ends on the same
+version — one that was already current is re-installed too — and reports what
+moved. A Homebrew install is left to `brew upgrade --cask rigsmith`, and on
+Windows it points you at the release to download.
+
+`RIGSMITH_BIN_DIR` installs into exactly that directory, overriding
+`RIGSMITH_INSTALL`; `RIGSMITH_REPO` downloads from a fork's releases. When
+`RIG_SELFUPDATE_REPO` names a fork, `self-update` checks and installs from it.
+
 ::: tip Auditing the script
 `https://rigsmith.sh` returns the install script as plain text — open it in a
 browser to read it before piping it to a shell.
