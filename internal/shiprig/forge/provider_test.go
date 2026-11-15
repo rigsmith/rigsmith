@@ -70,7 +70,7 @@ func TestGitLabExplicit_CreatesReleaseWithName(t *testing.T) {
 	if !ok {
 		t.Fatalf("Run ok = false, want true (message: %q)", message)
 	}
-	create := findCall(runner, "glab", "create", "pkg-a@1.2.0")
+	create := findCall(runner, "glab", "create", "v1.2.0")
 	if create == nil {
 		t.Fatalf("no glab release create call; calls: %v", runner.calls)
 	}
@@ -93,7 +93,7 @@ func TestGiteaExplicit_CreatesReleaseWithTagFlag(t *testing.T) {
 	if findCall(runner, "tea", "login", "list") == nil {
 		t.Errorf("expected `tea login list` readiness probe; calls: %v", runner.calls)
 	}
-	create := findCall(runner, "tea", "create", "--tag", "pkg-a@1.2.0")
+	create := findCall(runner, "tea", "create", "--tag", "v1.2.0")
 	if create == nil {
 		t.Fatalf("no tea release create call with --tag; calls: %v", runner.calls)
 	}
@@ -143,7 +143,7 @@ func TestAutoMode_GitLabOrigin_CreatesRelease(t *testing.T) {
 	if findCall(runner, "glab", "auth", "status") == nil {
 		t.Errorf("auto should probe glab readiness; calls: %v", runner.calls)
 	}
-	if findCall(runner, "glab", "create", "pkg-a@1.2.0") == nil {
+	if findCall(runner, "glab", "create", "v1.2.0") == nil {
 		t.Fatalf("no glab create for gitlab.com origin; calls: %v", runner.calls)
 	}
 	// And it must NOT have fallen through to gh.

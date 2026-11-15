@@ -100,12 +100,12 @@ func TestGithubMode_CreatesReleaseForMissingTag(t *testing.T) {
 	}
 	creates := 0
 	for _, call := range runner.calls {
-		if call.name == "gh" && call.has("create") && call.has("pkg-a@1.2.0") {
+		if call.name == "gh" && call.has("create") && call.has("v1.2.0") {
 			creates++
 		}
 	}
 	if creates != 1 {
-		t.Fatalf("gh create calls for pkg-a@1.2.0 = %d, want 1 (calls: %v)", creates, runner.calls)
+		t.Fatalf("gh create calls for v1.2.0 = %d, want 1 (calls: %v)", creates, runner.calls)
 	}
 }
 
@@ -232,7 +232,7 @@ func TestAutoMode_GithubOriginAndGhReady_CreatesRelease(t *testing.T) {
 		if call.has("auth") {
 			authChecked = true // gh auth status was checked
 		}
-		if call.has("create") && call.has("pkg-a@1.2.0") {
+		if call.has("create") && call.has("v1.2.0") {
 			creates++
 		}
 	}
@@ -240,7 +240,7 @@ func TestAutoMode_GithubOriginAndGhReady_CreatesRelease(t *testing.T) {
 		t.Fatalf("gh auth status was not checked (calls: %v)", runner.calls)
 	}
 	if creates != 1 {
-		t.Fatalf("gh create calls for pkg-a@1.2.0 = %d, want 1 (calls: %v)", creates, runner.calls)
+		t.Fatalf("gh create calls for v1.2.0 = %d, want 1 (calls: %v)", creates, runner.calls)
 	}
 }
 
@@ -487,6 +487,65 @@ func TestPerPackageMode_CreateArgvUnchanged(t *testing.T) {
 	want := []string{"release", "create", "a@1.0.0-next.0", "--title", "a@1.0.0-next.0", "--notes", "a@1.0.0-next.0"}
 	if strings.Join(creates[0].args, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("argv = %q, want %q", creates[0].args, want)
+	}
+}
+
+// Per-package releases are titled after their tag on every forge, as changesets'
+// own action titles them: a single package's vX.Y.Z (not name@X.Y.Z, nor its
+// DisplayName), a monorepo's name@X.Y.Z, a tagTemplate's or an ecosystem's tag
+// as it renders. The Result reports the title used.
+func TestPerPackageMode_TitledAfterTag(t *testing.T) {
+	forges := []struct {
+		forge, cli, titleFlag string
+	}{
+		{"github", "gh", "--title"},
+		{"gitlab", "glab", "--name"},
+		{"gitea", "tea", "--title"},
+	}
+	cases := []struct {
+		name        string
+		packages    []plugin.Package
+		ecoOf       map[string]string
+		tagTemplate string
+		want        []string // tag == title, one per package in title order
+	}{
+		{"single package", []plugin.Package{{Name: "acme-tool", DisplayName: "Acme Tool", Version: "1.2.3", Dir: "."}}, nil, "", []string{"v1.2.3"}},
+		{"monorepo", []plugin.Package{pkg("@acme/widgets", "1.2.3"), pkg("@acme/gadgets", "2.0.0")}, nil, "", []string{"@acme/gadgets@2.0.0", "@acme/widgets@1.2.3"}},
+		{"tagTemplate", []plugin.Package{pkg("lib", "1.2.3"), pkg("app", "2.0.0")}, nil, "release-${name}-${version}", []string{"release-app-2.0.0", "release-lib-1.2.3"}},
+		{"go module", []plugin.Package{{Name: "core", Version: "1.2.3", Dir: "core"}}, map[string]string{"core": "go"}, "", []string{"core/v1.2.3"}},
+	}
+	for _, f := range forges {
+		for _, c := range cases {
+			t.Run(f.forge+"/"+c.name, func(t *testing.T) {
+				runner := &recordingRunner{responder: failView()}
+				cfg := config.Default()
+				cfg.TagTemplate = c.tagTemplate
+				results, ok, msg := Make(Request{
+					Packages: c.packages, EcoOf: c.ecoOf, Config: cfg,
+					Selection: Selection{Forge: f.forge}, RepoRoot: t.TempDir(), Run: runner.run,
+				})
+				if !ok {
+					t.Fatalf("Make: %s", msg)
+				}
+				var creates []recordedCall
+				for _, call := range runner.calls {
+					if call.name == f.cli && call.has("create") {
+						creates = append(creates, call)
+					}
+				}
+				if len(creates) != len(c.want) || len(results) != len(c.want) {
+					t.Fatalf("creates %d, results %d, want %d: %v", len(creates), len(results), len(c.want), runner.calls)
+				}
+				for i, want := range c.want {
+					if got := argAfter(&creates[i], f.titleFlag); got != want {
+						t.Errorf("%s %s = %q, want the tag %q (argv %q)", f.cli, f.titleFlag, got, want, creates[i].args)
+					}
+					if results[i].Tag != want || results[i].Name != want {
+						t.Errorf("result tag %q name %q, want both %q", results[i].Tag, results[i].Name, want)
+					}
+				}
+			})
+		}
 	}
 }
 

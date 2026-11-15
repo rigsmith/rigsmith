@@ -74,7 +74,9 @@ tag already present locally or on the remote, and pushes nothing. The tags stay
 local for the caller to push (changesets/action, shiprig-action). `publish`
 checks that the file can be written before it touches any registry.
 
-Forge releases are one per package by default. `forgeRelease` in
+Forge releases are one per package by default, each titled after its tag
+(`v1.2.3` in a single-package repo, `@acme/web@1.2.3` in a monorepo).
+`forgeRelease` in
 `.changeset/config.json` (`{"mode": "combined", "name": "Acme ${version}",
 "tag": "v${version}"}`) makes one release per version instead, marked latest,
 with every released package's changelog entry under its own heading. It never
