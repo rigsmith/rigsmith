@@ -375,7 +375,7 @@ func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool
 		args = appendFlag(args, "--icon", cfg.Icon.Macos)
 		if !snapshot {
 			args = appendFlag(args, "--signAppIdentity", cfg.Macos.SignIdentity)
-			args = appendFlag(args, "--signEntitlements", cfg.Macos.Entitlements)
+			args = appendFlag(args, "--signEntitlements", strings.TrimSpace(cfg.Macos.Entitlements))
 			args = appendFlag(args, "--notaryProfile", cfg.Macos.NotaryProfile)
 		}
 	case osWindows:

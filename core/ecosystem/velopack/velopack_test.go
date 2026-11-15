@@ -616,6 +616,14 @@ func TestCheckEntitlementsRequiresTheFile(t *testing.T) {
 	if err := checkEntitlements(root, m, mac, false); err != nil {
 		t.Errorf("an existing entitlements file should pass: %v", err)
 	}
+
+	// The path vpk gets is the trimmed one the check just accepted.
+	cfg := fullCfg()
+	cfg.Macos.Entitlements = "  app/x.entitlements \n"
+	if err := checkEntitlements(root, cfg.Macos, mac, false); err != nil {
+		t.Errorf("a padded path to an existing file should pass: %v", err)
+	}
+	assertHas(t, buildPackArgs(cfg, "osx-arm64", "p", "o", "1.0.0", false, osMac, ""), "--signEntitlements", "app/x.entitlements")
 }
 
 // TestRenderPlistSubstitutesVersion: ${version} is replaced with the release

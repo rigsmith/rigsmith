@@ -663,8 +663,9 @@ exactly as for any project in that language. For a **dotnet** base the build run
   Without it `vpk` signs with its bundled default, which grants JIT, unsigned
   executable memory, Apple Events automation, `DYLD_*` environment variables and
   disabled library validation — broader than most apps need. Entitlements are part
-  of the signature, so the setting needs `signIdentity` (a config with one and not
-  the other is rejected) and is skipped on a snapshot build. A path that doesn't
+  of the signature, so the setting needs `signIdentity` (a config with
+  `entitlements` but no `signIdentity` is rejected) and is skipped on a snapshot
+  build. A path that doesn't
   exist fails the build before any channel is built.
 - **Signing is build-time**, inside `vpk pack` (not the `sign` step). The
   non-secret identifiers live in `velopack.json`; the secrets (the macOS `.p12`
