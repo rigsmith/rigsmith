@@ -359,6 +359,12 @@ func TestConfigDefaultsAndValidate(t *testing.T) {
 	if err := (Config{PackId: "X", Channels: []string{"osx-arm64"}, Macos: Macos{NotaryProfile: "p", SignIdentity: "id"}}).validate(); err != nil {
 		t.Errorf("a notaryProfile with a signIdentity should be valid: %v", err)
 	}
+	if err := (Config{PackId: "X", Channels: []string{"osx-arm64"}, Macos: Macos{Entitlements: "app/x.entitlements"}}).validate(); err == nil {
+		t.Error("entitlements without a signIdentity should be invalid (they would be dropped silently)")
+	}
+	if err := (Config{PackId: "X", Channels: []string{"osx-arm64"}, Macos: Macos{Entitlements: "app/x.entitlements", SignIdentity: "id"}}).validate(); err != nil {
+		t.Errorf("entitlements with a signIdentity should be valid: %v", err)
+	}
 }
 
 func TestMacosWrapDmgDefault(t *testing.T) {
@@ -437,7 +443,7 @@ func fullCfg() Config {
 		Channels: []string{"osx-arm64", "win-x64"},
 		Icon:     Icon{Macos: "app/halyards.icns", Windows: "app/halyards.ico"},
 		Output:   "dist/releases",
-		Macos:    Macos{BundleId: "com.acme.halyards", SignIdentity: "Developer ID Application: Acme", NotaryProfile: "halyards-notary"},
+		Macos:    Macos{BundleId: "com.acme.halyards", SignIdentity: "Developer ID Application: Acme", NotaryProfile: "halyards-notary", Entitlements: "app/halyards.entitlements"},
 		Windows: Windows{
 			SignTemplate:   "jsign --storetype TRUSTEDSIGNING --keystore https://eus.codesigning.azure.net --storepass TOKEN --alias Acme/Acme {{file}}",
 			TrustedSigning: &TrustedSigning{Endpoint: "https://eus.codesigning.azure.net", Account: "Acme", Profile: "Acme"},
@@ -455,6 +461,7 @@ func TestBuildPackArgsMacSigned(t *testing.T) {
 	assertHas(t, got, "--mainExe", "Halyards") // no .exe on macOS
 	assertHas(t, got, "--bundleId", "com.acme.halyards")
 	assertHas(t, got, "--signAppIdentity", "Developer ID Application: Acme")
+	assertHas(t, got, "--signEntitlements", "app/halyards.entitlements")
 	assertHas(t, got, "--notaryProfile", "halyards-notary")
 	assertHas(t, got, "--channel", "osx-arm64")
 	assertHas(t, got, "--icon", "app/halyards.icns")
@@ -465,7 +472,7 @@ func TestBuildPackArgsMacSigned(t *testing.T) {
 
 func TestBuildPackArgsMacSnapshotIsUnsigned(t *testing.T) {
 	got := buildPackArgs(fullCfg(), "osx-arm64", "p", "o", "1.0.0", true, osMac, "")
-	if contains(got, "--signAppIdentity") || contains(got, "--notaryProfile") {
+	if contains(got, "--signAppIdentity") || contains(got, "--signEntitlements") || contains(got, "--notaryProfile") {
 		t.Errorf("snapshot pack must be unsigned, got %v", got)
 	}
 	// Identity-independent flags still present.
@@ -579,6 +586,44 @@ func TestBuildPackArgsMacPlistDropsBundleId(t *testing.T) {
 	if contains(got, "--bundleId") {
 		t.Errorf("--bundleId must be dropped when --plist is set, got %v", got)
 	}
+}
+
+// TestCheckEntitlementsRequiresTheFile: a signed macOS build naming a missing
+// entitlements file is an error up front; the file present, a snapshot build, or
+// no macOS channel in the plan all pass.
+func TestCheckEntitlementsRequiresTheFile(t *testing.T) {
+	root := t.TempDir()
+	m := Macos{SignIdentity: "id", Entitlements: "app/x.entitlements"}
+	mac := []string{"win-x64", "osx-arm64"}
+
+	err := checkEntitlements(root, m, mac, false)
+	if err == nil || !strings.Contains(err.Error(), "app/x.entitlements") {
+		t.Errorf("a missing entitlements file should fail naming the path, got %v", err)
+	}
+	if err := checkEntitlements(root, m, mac, true); err != nil {
+		t.Errorf("a snapshot build is unsigned and must not check entitlements: %v", err)
+	}
+	if err := checkEntitlements(root, m, []string{"win-x64"}, false); err != nil {
+		t.Errorf("no macOS channel planned, nothing to check: %v", err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(root, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app", "x.entitlements"), []byte("<plist/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkEntitlements(root, m, mac, false); err != nil {
+		t.Errorf("an existing entitlements file should pass: %v", err)
+	}
+
+	// The path vpk gets is the trimmed one the check just accepted.
+	cfg := fullCfg()
+	cfg.Macos.Entitlements = "  app/x.entitlements \n"
+	if err := checkEntitlements(root, cfg.Macos, mac, false); err != nil {
+		t.Errorf("a padded path to an existing file should pass: %v", err)
+	}
+	assertHas(t, buildPackArgs(cfg, "osx-arm64", "p", "o", "1.0.0", false, osMac, ""), "--signEntitlements", "app/x.entitlements")
 }
 
 // TestRenderPlistSubstitutesVersion: ${version} is replaced with the release
@@ -797,7 +842,7 @@ func TestRedactCommandStorepass(t *testing.T) {
 func TestBuildPackArgsOmitsEmptyOptionalFlags(t *testing.T) {
 	min := Config{PackId: "App", PackTitle: "App", MainExe: "App", Channels: []string{"osx-arm64"}, Output: "out"}
 	got := buildPackArgs(min, "osx-arm64", "p", "out", "1.0.0", false, osMac, "")
-	for _, f := range []string{"--packAuthors", "--icon", "--bundleId", "--signAppIdentity", "--notaryProfile"} {
+	for _, f := range []string{"--packAuthors", "--icon", "--bundleId", "--signAppIdentity", "--signEntitlements", "--notaryProfile"} {
 		if contains(got, f) {
 			t.Errorf("unset optional flag %s should be omitted, got %v", f, got)
 		}

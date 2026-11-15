@@ -104,6 +104,12 @@ type Macos struct {
 	// NotaryProfile is the `xcrun notarytool` stored-credential profile
 	// (vpk --notaryProfile). Empty means skip notarization.
 	NotaryProfile string `json:"notaryProfile,omitempty"`
+	// Entitlements is a repo-root-relative path to the .entitlements plist the
+	// app is signed with (vpk --signEntitlements). Empty leaves vpk's bundled
+	// default, which grants JIT, unsigned executable memory, Apple Events
+	// automation, DYLD environment variables and disabled library validation.
+	// Applies only to a signed build, so it needs SignIdentity.
+	Entitlements string `json:"entitlements,omitempty"`
 	// Dmg wraps the notarized .app in a distributable .dmg (the first-install
 	// medium, separate from the update feed). Defaults to true.
 	Dmg *bool `json:"dmg,omitempty"`
@@ -248,6 +254,11 @@ func (c Config) validate() error {
 	// identity, so a profile on its own would ship an un-notarized DMG silently.
 	if strings.TrimSpace(c.Macos.NotaryProfile) != "" && strings.TrimSpace(c.Macos.SignIdentity) == "" {
 		return fmt.Errorf("velopack: macos.notaryProfile needs macos.signIdentity — Apple notarizes only signed code")
+	}
+	// Entitlements are part of the code signature, so without an identity they
+	// would be dropped silently and the app would ship without them.
+	if strings.TrimSpace(c.Macos.Entitlements) != "" && strings.TrimSpace(c.Macos.SignIdentity) == "" {
+		return fmt.Errorf("velopack: macos.entitlements needs macos.signIdentity — entitlements apply only to signed code")
 	}
 	return nil
 }
