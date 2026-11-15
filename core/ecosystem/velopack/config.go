@@ -124,6 +124,11 @@ type Macos struct {
 	// Required for a TIFF/2× background (its pixel size isn't the logical size);
 	// for a 1× PNG it defaults to the image's pixel dimensions.
 	DmgWindow *DmgWindow `json:"dmgWindow,omitempty"`
+
+	// keychain is the throwaway keychain setupKeychain built from the signing
+	// env, set at build time and never read from velopack.json. Empty means sign
+	// and notarize from the login keychain.
+	keychain string
 }
 
 // DmgWindow is the install-DMG window's content size in logical points.

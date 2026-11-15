@@ -679,6 +679,35 @@ exactly as for any project in that language. For a **dotnet** base the build run
   picks by host. `$VAR`/`${VAR}` in a `signTemplate` are expanded from the build
   env (vpk runs it without a shell), so `--storepass $AZURE_CODESIGN_TOKEN` works
   from a pre-set env var; the token is redacted from any echoed command.
+- **macOS signing without the login keychain.** `macos.signIdentity` and
+  `macos.notaryProfile` normally name a cert and a notary profile already in
+  your login keychain. On a CI runner or a fresh Mac, put them in the signing
+  env instead (Doppler, 1Password, or any other secret reference) and shiprig
+  builds a throwaway keychain from them for the build:
+
+  ```jsonc
+  // .changeset/config.json
+  "velopack": { "signing": { "enabled": true, "env": {
+    "MACOS_SIGN_P12":         "doppler:MACOS_SIGN_P12",         // base64 of the Developer ID Application .p12
+    "MACOS_SIGN_PASSWORD":    "doppler:MACOS_SIGN_PASSWORD",
+    "MACOS_NOTARY_KEY":       "doppler:MACOS_NOTARY_KEY",       // an App Store Connect API key (.p8): PEM text or base64
+    "MACOS_NOTARY_KEY_ID":    "doppler:MACOS_NOTARY_KEY_ID",
+    "MACOS_NOTARY_ISSUER_ID": "doppler:MACOS_NOTARY_ISSUER_ID"  // omit for an individual key
+  } } }
+  ```
+
+  With `MACOS_SIGN_P12` set, a signed macOS build creates a keychain under a
+  temp dir, imports the cert for `codesign`, checks that `macos.signIdentity` is
+  in it, and with `MACOS_NOTARY_KEY` stores the key under `macos.notaryProfile`
+  (which must still be set — it names the profile). `vpk` and the DMG's
+  `codesign`/`notarytool` are pointed at that keychain with `--keychain`, so your
+  login keychain is not read; the keychain is deleted when the build ends,
+  failed or interrupted (Ctrl-C), and one left by a build that was killed
+  outright is removed by the next signed build. vpk reads the cert and the notary profile from that one
+  keychain, so the two travel together: a notary key without a cert is an error,
+  and so is a cert with `notaryProfile` set but no notary key (a profile in your
+  login keychain can't be reached; clear `notaryProfile` to sign without
+  notarizing). Without these variables nothing changes. Snapshot builds skip it.
 - **Updates need no `vpk upload`.** Velopack's in-app updater finds updates by
   listing a release's assets over the GitHub API — the `releases.<channel>.json`
   index `vpk pack` produces plus the `.nupkg` payloads — so attaching those to the

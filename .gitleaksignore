@@ -1,0 +1,8 @@
+# Individual gitleaks findings to skip, by fingerprint (commit:file:rule:line).
+# Each names one finding in one historical commit, so it can never hide a new
+# secret — prefer it to a .gitleaks.toml allowlist for a fixture already
+# committed. gitleaks scans every ref, so a finding on any branch fails CI for all.
+#
+# d9cc1ee6 (PR #585): a placeholder "-----BEGIN PRIVATE KEY-----" string in a
+# keychain test fixture, not a key. The test no longer carries a PEM literal.
+d9cc1ee660043135efd1024fabf3998e2a44e323:core/ecosystem/velopack/keychain_test.go:private-key:77

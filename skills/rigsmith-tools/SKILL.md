@@ -14,7 +14,8 @@ description: >
   adopting upstream PRs as import-rooted edge topics, setting up edge publishing with interactive confirmation and checking its shared facts with doctor --edge,
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001),
-  or secrets in Doppler (running tests or releases that need secrets, `doppler run`, a GitHub Actions secrets fetch, DOPPLER_TOKEN, a publish key or signing credential) —
+  or secrets in Doppler (running tests or releases that need secrets, `doppler run`, a GitHub Actions secrets fetch, DOPPLER_TOKEN, a publish key or signing credential),
+  or signing and notarizing a Velopack macOS app (Developer ID cert, notary profile or API key, entitlements, signing without the login keychain) —
   even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
@@ -580,6 +581,31 @@ secret fails the release. shiprig prints where each credential came from
 (`vars.key ← Doppler owlwatch/release (FEEDZ_API_KEY)`), never the value. In CI a
 `doppler:NAME` reference reads `NAME` from the step's environment, which the
 generated fetch step supplies.
+
+**Velopack macOS signing (velopack.json `macos`).** Signing happens inside `vpk
+pack` at build time, not in the `sign` step. `signIdentity` and `notaryProfile`
+name a cert and a `notarytool` profile; `entitlements` is a repo-root-relative
+`.entitlements` plist (`--signEntitlements`; without it vpk's permissive default
+applies) and needs `signIdentity`. To sign where the login keychain has neither
+(CI, a fresh Mac), put the credentials in the velopack signing env instead — no
+`.env` file, just names mapped to secret references:
+
+```jsonc
+"velopack": { "signing": { "enabled": true, "env": {
+  "MACOS_SIGN_P12": "doppler:APPLE_DEVELOPER_ID_CERT_P12",          // base64 .p12
+  "MACOS_SIGN_PASSWORD": "doppler:APPLE_DEVELOPER_ID_CERT_PASSWORD",
+  "MACOS_NOTARY_KEY": "doppler:APPLE_ASC_PRIVATE_KEY",              // .p8, PEM or base64
+  "MACOS_NOTARY_KEY_ID": "doppler:APPLE_ASC_KEY_ID",
+  "MACOS_NOTARY_ISSUER_ID": "doppler:APPLE_ASC_ISSUER_ID" } } }
+```
+
+shiprig then builds a throwaway keychain, passes it to vpk and the DMG steps with
+`--keychain`, and deletes it afterwards; `notaryProfile` must still be set (it
+names the profile stored there). The cert and the notary key travel together: a
+notary key without the cert, or the cert with `notaryProfile` but no notary key,
+is an error (vpk reads both from the one keychain). To
+check a signed build without publishing: `shiprig release --only build`, then
+`spctl -a -vv -t install <dmg>` should say `source=Notarized Developer ID`.
 
 In a `rig stack` stackspace, `shiprig` stamps no member manifest (the versions go
 to `.changeset/versions.json` and `${version.<pkg>}`), and `tag`/`push`/`release`
