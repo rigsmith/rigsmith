@@ -1,6 +1,10 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/rigsmith/rigsmith/core/selfupdate"
+)
 
 // NewRootCmd builds the codexrig command tree: the sync lifecycle, the account
 // group, the scoped hook/config groups, and the interactive dashboard. main
@@ -35,6 +39,7 @@ func NewRootCmd(version string) *cobra.Command {
 		NewGuardCmd(),
 		NewGuideCmd(),
 		NewDoctorCmd(version),
+		selfupdate.NewCmd(selfupdate.Options{Tool: "codexrig", Version: version}),
 		NewConfigCmd(),
 		NewMCPCmd(),
 		NewAccountCmd(),

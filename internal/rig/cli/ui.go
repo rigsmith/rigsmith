@@ -316,7 +316,7 @@ func buildMenu() menuModel {
 		menuItem{label: "doctor", desc: "check the environment", verb: "doctor"},
 	)
 
-	maint = append(maint, menuItem{label: "self-update", desc: "update rig itself", verb: "self-update"})
+	maint = append(maint, menuItem{label: "self-update", desc: "update every rigsmith tool", verb: "self-update"})
 
 	// Project focus (the .NET rig Menu's project submenu / the Node menu's
 	// focus): with several projects, a picker entry scopes subsequent verbs.
@@ -397,7 +397,7 @@ func unanchoredMenu(dir string) menuModel {
 	top := []menuItem{
 		{label: "init", desc: "scaffold .rig.json and make this a rig project", verb: "init", recommended: true},
 		{label: "doctor", desc: "check the environment", verb: "doctor"},
-		{label: "self-update", desc: "update rig itself", verb: "self-update"},
+		{label: "self-update", desc: "update every rigsmith tool", verb: "self-update"},
 	}
 	return menuModel{
 		header: fmt.Sprintf("%s  ·  %s", dir, "no project here"),

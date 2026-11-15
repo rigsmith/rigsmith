@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cmderr"
@@ -157,8 +158,21 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	}
 
 	// Signing secrets (when enabled) ride in via the environment — electron-builder
-	// and electron-forge read the standard CSC_*/APPLE_* variables.
+	// and electron-forge read the standard CSC_*/APPLE_* variables. A build that
+	// must not sign (a snapshot, or --unsigned) gets electron-builder's own
+	// off-switch instead: see unsignedBuilderEnv.
 	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
+	note := ""
+	major := installedBuilderMajor(dir, req.RepoRoot)
+	if !signsBuild(req) {
+		env = unsignedBuilderEnv(env)
+		switch {
+		case forge:
+			note = " — electron-forge has no switch to skip signing; any osxSign/windowsSign in its config still applies"
+		case identityOverride(major) == "":
+			note = " — electron-builder's version isn't known (not in node_modules), so a macOS identity set in its config isn't overridden"
+		}
+	}
 	var outDir string
 	if forge {
 		if _, _, err := runCmdEnv(ctx, dir, env, "npx", "electron-forge", "make"); err != nil {
@@ -166,7 +180,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		}
 		outDir = filepath.Join(dir, "out", "make")
 	} else {
-		if _, _, err := runCmdEnv(ctx, dir, env, "npx", "electron-builder", "--publish", "never"); err != nil {
+		if _, _, err := runCmdEnv(ctx, dir, env, "npx", builderArgs(req, major)...); err != nil {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("electron-builder: %w", err)
 		}
 		outDir = filepath.Join(dir, "dist")
@@ -176,7 +190,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	return plugin.ArtifactsResponse{
 		Built:     true,
 		Artifacts: arts,
-		Message:   fmt.Sprintf("built %d installer(s) for %s@%s via %s%s", len(arts), req.Package.Name, req.Package.Version, builder, signedSuffix(signed)),
+		Message:   fmt.Sprintf("built %d installer(s) for %s@%s via %s%s%s", len(arts), req.Package.Name, req.Package.Version, builder, signedSuffix(signed), note),
 	}, nil
 }
 
@@ -356,6 +370,93 @@ func mergeSigningEnv(base []string, s *plugin.SigningCreds) []string {
 		out = append(out, k+"="+s.Env[k])
 	}
 	return out
+}
+
+// signsBuild reports whether an Artifacts request may sign: not a snapshot
+// (--dry-build), and not asked to build unsigned (--unsigned). Pure.
+func signsBuild(req plugin.ArtifactsRequest) bool {
+	return !req.Snapshot && !req.Unsigned
+}
+
+// builderArgs is the electron-builder command line (after npx), for the
+// installed electron-builder major version (0 when unknown). A build that must
+// not sign turns notarization off — electron-builder notarizes whenever APPLE_*
+// credentials are present, and `mac.notarize: false` is its documented "never
+// notarize" (website/docs/features/code-signing/notarization.md) — and nulls
+// the macOS identity, so one set in the project's own config can't sign
+// either. Pure.
+func builderArgs(req plugin.ArtifactsRequest, major int) []string {
+	args := []string{"electron-builder", "--publish", "never"}
+	if !signsBuild(req) {
+		args = append(args, "-c.mac.notarize=false")
+		if o := identityOverride(major); o != "" {
+			args = append(args, o)
+		}
+	}
+	return args
+}
+
+// identityOverride is the CLI override that skips macOS signing for an
+// electron-builder major version. v27 moved the identity under `mac.sign`
+// ("set `mac.sign.identity` to `null` … (CLI: `-c.mac.sign.identity=null`)",
+// code-signing-mac.md) and fails a build that still sets the old `mac.identity`
+// (migration/v27-config-changes.md); before v27, `mac.identity: null` is the
+// key and `mac.sign` is something else. "" when the version is unknown, since
+// either guess can fail the build. Pure.
+func identityOverride(major int) string {
+	switch {
+	case major >= 27:
+		return "-c.mac.sign.identity=null"
+	case major > 0:
+		return "-c.mac.identity=null"
+	}
+	return ""
+}
+
+// installedBuilderMajor is the major version of the electron-builder that npx
+// will run: the one in node_modules, searched from dir up to root (a workspace
+// hoists it to the root). 0 when none is found or its version doesn't parse.
+func installedBuilderMajor(dir, root string) int {
+	for d := dir; ; d = filepath.Dir(d) {
+		pj := readPkg(filepath.Join(d, "node_modules", "electron-builder", "package.json"))
+		if pj.Version != "" {
+			major, _, _ := strings.Cut(strings.TrimPrefix(pj.Version, "v"), ".")
+			n, err := strconv.Atoi(major)
+			if err != nil {
+				return 0
+			}
+			return n
+		}
+		if d == root || filepath.Dir(d) == d || !strings.HasPrefix(d, root) {
+			return 0
+		}
+	}
+}
+
+// builderCertVars are the variables electron-builder reads a signing
+// certificate or identity from (website/docs/features/code-signing/code-signing.md,
+// "Environment Variables").
+var builderCertVars = map[string]bool{
+	"CSC_LINK": true, "CSC_KEY_PASSWORD": true, "CSC_NAME": true, "CSC_KEYCHAIN": true,
+	"CSC_INSTALLER_LINK": true, "CSC_INSTALLER_KEY_PASSWORD": true,
+	"WIN_CSC_LINK": true, "WIN_CSC_KEY_PASSWORD": true,
+}
+
+// unsignedBuilderEnv is env set up for an unsigned electron-builder build, as
+// its docs describe: "To skip signing, leave all CSC_* environment variables
+// unset and set CSC_IDENTITY_AUTO_DISCOVERY=false" (code-signing-mac.md), and
+// with WIN_CSC_LINK / CSC_LINK unset there is no certificate for Windows
+// signing to discover (code-signing-win.md). env is not modified. Pure.
+func unsignedBuilderEnv(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if builderCertVars[strings.ToUpper(name)] || strings.EqualFold(name, "CSC_IDENTITY_AUTO_DISCOVERY") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "CSC_IDENTITY_AUTO_DISCOVERY=false")
 }
 
 // signedSuffix is a short " (signed)" tag for build messages.

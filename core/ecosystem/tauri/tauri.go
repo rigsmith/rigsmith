@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cmderr"
@@ -221,7 +222,13 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	// Signing secrets (when enabled) ride in via the environment — `cargo tauri
 	// build` and its bundlers read the standard APPLE_*/TAURI_SIGNING_* variables.
 	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
-	if _, _, err := runCmdEnv(ctx, crateDir, env, "cargo", "tauri", "build"); err != nil {
+	if _, _, err := runCmdEnv(ctx, crateDir, env, "cargo", tauriBuildArgs(req)...); err != nil {
+		if !signsBuild(req) {
+			version, _, _ := runCmdEnv(ctx, crateDir, env, "cargo", "tauri", "--version")
+			if hint := noSignCaveat(version); hint != "" {
+				return plugin.ArtifactsResponse{}, fmt.Errorf("tauri build: %w (%s)", err, hint)
+			}
+		}
 		return plugin.ArtifactsResponse{}, fmt.Errorf("tauri build: %w", err)
 	}
 
@@ -608,6 +615,48 @@ func mergeSigningEnv(base []string, s *plugin.SigningCreds) []string {
 	}
 	return out
 }
+
+// signsBuild reports whether an Artifacts request may sign: not a snapshot
+// (--dry-build), and not asked to build unsigned (--unsigned). Pure.
+func signsBuild(req plugin.ArtifactsRequest) bool {
+	return !req.Snapshot && !req.Unsigned
+}
+
+// tauriBuildArgs is the `cargo tauri build` command line (after cargo). A build
+// that must not sign passes Tauri v2's documented `--no-sign` ("Skip code
+// signing when bundling the app", https://v2.tauri.app/reference/cli/). From
+// tauri-cli 2.9.5 that covers the updater artifacts too (tauri-apps/tauri#14582);
+// see noSignCaveat for earlier CLIs. Pure.
+func tauriBuildArgs(req plugin.ArtifactsRequest) []string {
+	args := []string{"tauri", "build"}
+	if !signsBuild(req) {
+		args = append(args, "--no-sign")
+	}
+	return args
+}
+
+// noSignCaveat explains a failed --no-sign build on a tauri-cli before 2.9.5,
+// from its `cargo tauri --version` output ("tauri-cli 2.9.4"): those still sign
+// updater artifacts under --no-sign, so an app with an updater pubkey fails
+// asking for TAURI_SIGNING_PRIVATE_KEY (fixed by tauri-apps/tauri#14582). ""
+// for 2.9.5 and later, or a version it can't read. Pure.
+func noSignCaveat(versionOutput string) string {
+	m := tauriCLIVersion.FindStringSubmatch(versionOutput)
+	if m == nil {
+		return ""
+	}
+	var v [3]int
+	for i := range v {
+		v[i], _ = strconv.Atoi(m[i+1])
+	}
+	if v[0] > 2 || (v[0] == 2 && (v[1] > 9 || (v[1] == 9 && v[2] >= 5))) {
+		return ""
+	}
+	return fmt.Sprintf("tauri-cli %d.%d.%d still signs updater artifacts under --no-sign, so an updater pubkey needs TAURI_SIGNING_PRIVATE_KEY; "+
+		"upgrade to tauri-cli 2.9.5 or later for an unsigned build", v[0], v[1], v[2])
+}
+
+var tauriCLIVersion = regexp.MustCompile(`tauri-cli (\d+)\.(\d+)\.(\d+)`)
 
 // signedSuffix is a short " (signed)" tag for build messages.
 func signedSuffix(signed bool) string {

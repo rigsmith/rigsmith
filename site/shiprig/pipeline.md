@@ -513,6 +513,28 @@ Artifacts are signed in place by the `sign` step before `release` attaches them.
 (Velopack apps sign differently — at `vpk pack` time, configured in
 `velopack.json`; see [Desktop apps with Velopack](#desktop-apps-with-velopack).)
 
+A release configured to sign never builds unsigned without being asked. When a
+signing secret can't be read — Doppler signed out, a `doppler:NAME` missing from
+the release config, an unset `env:NAME` — the `build` (or `sign`) step stops,
+naming the variable and how to supply it, on a terminal as in CI. To build
+unsigned on purpose, pass `shiprig release --unsigned`: no signing secret is read,
+no signer runs, a Velopack app's own macOS and Windows signing from `velopack.json`
+is skipped, and the variables `signing.env` names are left out of the build's
+environment, so a shell or `.env` value can't sign it either. Each builder's own
+switch is set too: electron-builder runs with every `CSC_*` certificate variable
+unset, `CSC_IDENTITY_AUTO_DISCOVERY=false`, `-c.mac.notarize=false`, and the
+macOS identity nulled for the installed version (`-c.mac.sign.identity=null` from
+v27, `-c.mac.identity=null` before), so an identity in its own config can't sign
+either; and Tauri
+runs `cargo tauri build --no-sign` (which skips the updater's signature too from
+tauri-cli 2.9.5; an earlier CLI still signs it, and a failed build says so).
+electron-forge has no such switch, so signing set up in its own config still
+applies. A `--dry-build` builds unsigned the same way, with one difference: it
+still reads the signing secrets, to report any it can't read, so it does reach
+your secrets manager or credential helpers; only `--unsigned` reads none. Its
+snapshot ships nowhere, so there a missing secret is reported and the rehearsal
+carries on.
+
 ### Where the release config lives
 
 shiprig resolves the pipeline file from **one** of these locations. If more than

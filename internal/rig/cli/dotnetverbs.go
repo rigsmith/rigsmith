@@ -496,13 +496,3 @@ func compareVersions(a, b []int) int {
 	}
 	return 0
 }
-
-// siblingSelfUpdateArgs are the args for handing off to the sibling tool's
-// self-update. Always carries --self-only so the sibling never cross-updates
-// back to us (infinite mutual recursion). Pure.
-func siblingSelfUpdateArgs(check bool) []string {
-	if check {
-		return []string{"self-update", "--check", "--self-only"}
-	}
-	return []string{"self-update", "--self-only"}
-}

@@ -220,6 +220,9 @@ jobs:
     permissions:
       contents: write # create the GitHub Release and upload assets
       actions: read # CI's runs for the tagged commit
+      # cosign signs checksums.txt keyless with this job's OIDC identity
+      # (.goreleaser.yaml signs:); installers verify against it.
+      id-token: write
     env:
       # The tag being released: the one the release job pushed, one pushed by
       # hand, or the one a manual release-tag run names. Empty for a dry run.
@@ -438,6 +441,9 @@ jobs:
       - name: Release notes from the changelog
         if: ${{ env.RELEASE_TAG != '' }}
         run: sh scripts/release-notes.sh "$RELEASE_TAG" CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+
+      # GoReleaser's signs: step runs cosign to sign checksums.txt.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:

@@ -359,14 +359,3 @@ func TestUpdate_IsNewerComparesAndTreatsUnknownCurrentAsOutdated(t *testing.T) {
 		}
 	}
 }
-
-func TestUpdate_SiblingArgsAlwaysCarrySelfOnly(t *testing.T) {
-	// The cross-update hands off with --self-only so the sibling never bounces
-	// back and re-updates us (infinite mutual recursion).
-	if got := siblingSelfUpdateArgs(false); !reflect.DeepEqual(got, []string{"self-update", "--self-only"}) {
-		t.Fatalf("siblingSelfUpdateArgs(false) = %v", got)
-	}
-	if got := siblingSelfUpdateArgs(true); !reflect.DeepEqual(got, []string{"self-update", "--check", "--self-only"}) {
-		t.Fatalf("siblingSelfUpdateArgs(true) = %v", got)
-	}
-}

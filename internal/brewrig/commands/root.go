@@ -1,6 +1,10 @@
 package commands
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/spf13/cobra"
+
+	"github.com/rigsmith/rigsmith/core/selfupdate"
+)
 
 // NewRootCmd builds the brewrig command tree. main wires fang styling and the
 // bare-TTY → dashboard routing around it; keeping the tree here lets the
@@ -26,6 +30,7 @@ func NewRootCmd(version string) *cobra.Command {
 		NewUpdateCmd(),
 		NewSkipCmd(),
 		NewDoctorCmd(version),
+		selfupdate.NewCmd(selfupdate.Options{Tool: "brewrig", Version: version}),
 		NewUICmd(),
 	)
 	return root

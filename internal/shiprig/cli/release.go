@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -48,6 +49,7 @@ func newReleaseCmd() *cobra.Command {
 		gitOnly    bool
 		ui, noUI   bool
 		force      bool
+		unsigned   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "release",
@@ -160,10 +162,6 @@ func newReleaseCmd() *cobra.Command {
 			outRedirected := !term.IsTerminal(int(os.Stdout.Fd()))
 			inRedirected := !term.IsTerminal(int(os.Stdin.Fd()))
 			mode := pipeline.ResolveUIMode(ui, noUI, yes, outRedirected, inRedirected)
-			// On a real terminal, a signing-secret resolution failure degrades to an
-			// unsigned build with a warning; in CI (redirected) it's a hard error, so
-			// a release that asked to be signed never ships unsigned unnoticed.
-			interactive := !outRedirected && !inRedirected
 
 			masker := pipeline.NewSecretMasker()
 
@@ -227,17 +225,23 @@ func newReleaseCmd() *cobra.Command {
 						// (off unless a `signing` block enables it); masked and passed to
 						// the build so the tool self-signs (macOS CSC_*/APPLE_*). Windows
 						// artifacts are signed later by the `sign` step.
-						env, ok := resolveSigningEnv(cmd.Context(), ws.Config, ecoOf[pkg.Name], masker, interactive, "build "+pkg.Name, out)
+						env, ok := resolveSigningEnv(cmd.Context(), ws.Config, ecoOf[pkg.Name], masker, unsigned, dryBuild, "build "+pkg.Name, out)
 						if !ok {
 							return false
 						}
+						// A --dry-build snapshot, and an --unsigned build, are unsigned:
+						// the Electron and Tauri adapters would sign with whatever they
+						// are handed, from the creds or from the build's environment.
 						var signing *plugin.SigningCreds
-						if len(env) > 0 {
+						buildEnv := runnerEnv
+						if dryBuild || unsigned {
+							buildEnv = withoutSigningVars(runnerEnv, ws.Config, ecoOf[pkg.Name])
+						} else if len(env) > 0 {
 							signing = &plugin.SigningCreds{Env: env}
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{
 							RepoRoot: ws.Root, Package: pkg, OutputDir: distDir, Snapshot: dryBuild,
-							Channels: channels, Env: runnerEnv, Signing: signing,
+							Unsigned: unsigned, Channels: channels, Env: buildEnv, Signing: signing,
 						})
 						if err != nil {
 							out("build " + pkg.Name + ": " + err.Error())
@@ -276,7 +280,11 @@ func newReleaseCmd() *cobra.Command {
 							continue
 						}
 						configured = true
-						env, ok := resolveSigningEnv(cmd.Context(), ws.Config, ecoOf[name], masker, interactive, "sign "+name, out)
+						if unsigned {
+							out("sign " + name + ": skipped (--unsigned)")
+							continue
+						}
+						env, ok := resolveSigningEnv(cmd.Context(), ws.Config, ecoOf[name], masker, unsigned, dryBuild, "sign "+name, out)
 						if !ok {
 							return false
 						}
@@ -295,7 +303,7 @@ func newReleaseCmd() *cobra.Command {
 							out(fmt.Sprintf("sign %s: signed %d artifact(s)", name, len(files)))
 						}
 					}
-					if !signedAny {
+					if !signedAny && !unsigned {
 						if configured {
 							out("sign: signers configured but no matching artifacts")
 						} else {
@@ -480,6 +488,7 @@ func newReleaseCmd() *cobra.Command {
 	f.StringVar(&configPath, "config", "", "release config file (default: auto-detected, e.g. .changeset/release.jsonc)")
 	f.BoolVarP(&yes, "yes", "y", false, "approve all confirm gates (non-interactive)")
 	f.BoolVar(&gitOnly, "git-only", false, "skip forge (GitHub) releases; tags only")
+	f.BoolVar(&unsigned, "unsigned", false, "build without signing on purpose, even where signing is configured (no signing secrets are read)")
 	f.BoolVar(&ui, "ui", false, "force the rich reporter even when piped")
 	f.BoolVar(&noUI, "no-ui", false, "force the plain reporter")
 	// --dry-build, --dry-run, and the step-selection flags are three distinct
@@ -931,23 +940,29 @@ func attachPaths(built map[string][]plugin.Artifact) map[string][]string {
 }
 
 // resolveSigningEnv resolves an ecosystem's signing secret env, returning nil
-// when signing is not configured/enabled. It applies the degrade policy on a
-// resolution failure: interactive (a real terminal) warns and proceeds UNSIGNED
-// (ok=true, nil env); non-interactive (CI) reports the error and fails the step
-// (ok=false) — so a release that asked to be signed never ships unsigned
-// unnoticed. label prefixes the warning/error (e.g. "build web" / "sign web").
-func resolveSigningEnv(ctx context.Context, cfg *config.Config, eco string, masker *pipeline.SecretMasker, interactive bool, label string, out func(...string)) (map[string]string, bool) {
+// when signing is not configured/enabled. A secret that can't be read fails the
+// step (ok=false) on a terminal as in CI: a release configured to sign never
+// builds unsigned without being asked to. unsigned (--unsigned) is that ask —
+// nothing is read and the build runs unsigned. A --dry-build (dryBuild) packs
+// an unsigned snapshot that ships nowhere, so there an unreadable secret is
+// reported and the rehearsal carries on. label prefixes the output (e.g.
+// "build web" / "sign web").
+func resolveSigningEnv(ctx context.Context, cfg *config.Config, eco string, masker *pipeline.SecretMasker, unsigned, dryBuild bool, label string, out func(...string)) (map[string]string, bool) {
 	sc := cfg.EcoConfig(eco).Signing
 	if sc == nil || !sc.Enabled || len(sc.Env) == 0 {
 		return nil, true
 	}
+	if unsigned {
+		out(label + ": signing is configured; building unsigned (--unsigned)")
+		return nil, true
+	}
 	env, err := sign.ResolveEnv(ctx, sc.Env, masker)
 	if err != nil {
-		if interactive {
-			out(label + ": signing secret unavailable — proceeding UNSIGNED (" + err.Error() + ")")
+		if dryBuild {
+			out(label + ": " + err.Error() + " — the --dry-build snapshot carries on unsigned; a release would stop here")
 			return nil, true
 		}
-		out(label + ": " + err.Error())
+		out(signingFailure(label, err)...)
 		return nil, false
 	}
 	// Name where each secrets-manager value came from — never the value.
@@ -964,6 +979,83 @@ func resolveSigningEnv(ctx context.Context, cfg *config.Config, eco string, mask
 		}
 	}
 	return env, true
+}
+
+// withoutSigningVars is env (KEY=value entries) without the variables eco's
+// signing.env names, so a build meant to be unsigned can't pick them up from
+// the shell or a .env file. env itself is not modified. Pure.
+func withoutSigningVars(env []string, cfg *config.Config, eco string) []string {
+	sc := cfg.EcoConfig(eco).Signing
+	if sc == nil || len(sc.Env) == 0 {
+		return env
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !isSigningName(sc.Env, name, runtime.GOOS) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// isSigningName reports whether name is a signing.env key. Environment names
+// are case-insensitive on Windows, so there a csc_link still matches CSC_LINK;
+// elsewhere the match is exact. Pure.
+func isSigningName(signing map[string]string, name, goos string) bool {
+	if _, ok := signing[name]; ok {
+		return true
+	}
+	if goos != "windows" {
+		return false
+	}
+	for key := range signing {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// signingFailure is what a release configured to sign says when a signing
+// secret can't be read: which secret, why, how to supply it, and the
+// deliberate way to build unsigned. It names the secret and its reference,
+// never a value. Pure.
+func signingFailure(label string, err error) []string {
+	lines := []string{label + ": signing is configured, but " + err.Error() + " — not building unsigned"}
+	fix := ""
+	var se *sign.SecretError
+	if errors.As(err, &se) {
+		fix = signingSecretFix(se.Env, se.Ref)
+	}
+	if fix != "" {
+		lines = append(lines, label+": fix: "+fix+"; or pass --unsigned to build unsigned on purpose")
+	} else {
+		lines = append(lines, label+": pass --unsigned to build unsigned on purpose")
+	}
+	return lines
+}
+
+// signingSecretFix says how to supply the signing variable envName from the
+// reference ref, by the reference's kind. Pure.
+func signingSecretFix(envName, ref string) string {
+	ref = strings.TrimSpace(ref)
+	if provider, name, ok := secrets.ParseRef(ref); ok {
+		if provider == "doppler" {
+			return "run `doppler login`, and check that " + name + " is set in the release config"
+		}
+		return "check that " + name + " is set in " + provider
+	}
+	switch {
+	case strings.HasPrefix(ref, "env:"):
+		name := strings.TrimPrefix(ref, "env:")
+		return "set " + name + " in the environment or .env.local"
+	case strings.HasPrefix(ref, "op://"):
+		return "sign in with `op signin`, and check that " + ref + " exists"
+	case strings.HasPrefix(ref, "cmd:"):
+		return "check that the command " + envName + " names prints the secret"
+	}
+	return ""
 }
 
 // ttyPrompter asks a confirm gate on the terminal.

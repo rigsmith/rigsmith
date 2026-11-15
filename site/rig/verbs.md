@@ -26,6 +26,7 @@
 | `default` | Show or set the default project for `run`/`publish` (interactive picker) |
 | `setup` | Install shell integration — `cd` wrapper + tab completion (zsh/bash/fish/PowerShell); `--aliases` also adds the short [verb aliases](./alias) |
 | `alias` | Install short verb aliases — `rr` run, `rb` build, `rt` test, `rcd` cd, … ([details](./alias)) |
+| `self-update` | Update every rigsmith tool — rig, shiprig, clauderig, codexrig, changerig, brewrig — to the latest release in one installer run, into the directory rig runs from; `--check` lists each tool's version against the latest. Every tool carries the same verb ([details](/guide/installation#updating)) |
 | `ui` | Interactive bubbletea menu over the dev verbs (capability-gated) |
 | *custom* | Any `commands` entry in `.rig.json` becomes a subcommand — shell string, argv, or a cross-platform Tengo [`script`](/rig/configuration#commands) |
 | *scripts* | In a Node repo, every `package.json` script becomes a verb |

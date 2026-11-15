@@ -979,3 +979,23 @@ func valueAfter(args []string, i int) string {
 	}
 	return ""
 }
+
+// `shiprig release --unsigned` is a real build that must not sign: Velopack
+// signs from its own macos/windows config (and ambient AZURE_* for a Windows
+// signer), not only from the Signing creds, so the request flag has to reach
+// every signing decision the adapter makes — the same ones a snapshot skips.
+func TestSignsBuildHonoursUnsignedLikeSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		req  plugin.ArtifactsRequest
+		want bool
+	}{
+		{plugin.ArtifactsRequest{}, true},
+		{plugin.ArtifactsRequest{Snapshot: true}, false},
+		{plugin.ArtifactsRequest{Unsigned: true}, false},
+		{plugin.ArtifactsRequest{Snapshot: true, Unsigned: true}, false},
+	} {
+		if got := signsBuild(tc.req); got != tc.want {
+			t.Errorf("signsBuild(snapshot=%v, unsigned=%v) = %v, want %v", tc.req.Snapshot, tc.req.Unsigned, got, tc.want)
+		}
+	}
+}

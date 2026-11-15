@@ -316,6 +316,11 @@ type ArtifactsRequest struct {
 	OutputDir  string  `json:"outputDir"` // absolute dir to place built files (dist/)
 	Snapshot   bool    `json:"snapshot,omitempty"`
 	DryRun     bool    `json:"dryRun,omitempty"`
+	// Unsigned asks for a real (non-snapshot) build with no signing at all —
+	// `shiprig release --unsigned`. An adapter that signs from its own config
+	// (Velopack's macos/windows blocks) must skip that too, not only the
+	// Signing creds below.
+	Unsigned bool `json:"unsigned,omitempty"`
 	// Channels narrows a multi-target build to these targets — for Velopack the
 	// RID channels from velopack.json (e.g. ["osx-arm64"] to produce just the
 	// Apple-silicon installer instead of every configured channel). Empty means

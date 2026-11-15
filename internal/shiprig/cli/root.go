@@ -11,6 +11,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/brand"
 	"github.com/rigsmith/rigsmith/core/fang"
 	"github.com/rigsmith/rigsmith/core/secrets"
+	"github.com/rigsmith/rigsmith/core/selfupdate"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	rigconfig "github.com/rigsmith/rigsmith/internal/rig/config"
 	"github.com/spf13/cobra"
@@ -86,6 +87,7 @@ func newRootCmd() *cobra.Command {
 		newReleaseCmd(),
 		newForgeReleaseCmd(),
 		newDoctorCmd(),
+		selfupdate.NewCmd(selfupdate.Options{Tool: "shiprig", Version: version}),
 	)
 	return root
 }

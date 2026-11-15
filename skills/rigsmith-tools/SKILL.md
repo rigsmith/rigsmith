@@ -15,7 +15,8 @@ description: >
   setting up a seed locally or in CI, reading a member's .rig-stack pointer, stack CI warning guards, speculative topic PR testing, topic PR dependencies, scheduled NuGet release migration PRs,
   or .NET source signals (STACK_*, RigStackSource_*, RigStackAvailable_*, RIGSTACK001),
   or secrets in Doppler (running tests or releases that need secrets, `doppler run`, a GitHub Actions secrets fetch, DOPPLER_TOKEN, a publish key or signing credential),
-  or signing and notarizing a Velopack macOS app (Developer ID cert, notary profile or API key, entitlements, signing without the login keychain) —
+  or signing and notarizing a Velopack macOS app (Developer ID cert, notary profile or API key, entitlements, signing without the login keychain),
+  or updating the rigsmith tools themselves or checking whether they are current (`self-update`, `self-update --check`) —
   even if the user names a raw
   tool (go/dotnet/npm/cargo) instead of rig.
 allowed-tools: Bash(rig:*), Bash(rig-dev:*), Bash(changerig:*), Bash(changeset:*), Bash(shiprig:*), Bash(shiprig-dev:*), Bash(clauderig:*), Bash(clauderig-dev:*), Bash(command -v:*), Bash(which:*)
@@ -875,6 +876,7 @@ it can silently stop reporting third-party tap formulae.
 - "what was I working on", "find that chat", "reopen it in Desktop" → **clauderig** (`recent` / `search` / `desktop open`)
 - "sync my Codex setup", "run or switch Codex logins", "find or resume that Codex session" → **codexrig** (`recent -l` / `search` / `account`)
 - "sync Homebrew packages or versions", "what's installed on my other Mac" → **brewrig**
+- "update the rigsmith tools", "are they current?" → `self-update` (any tool; it updates the whole family to one release, `--check` only reports). Never run it unasked: it replaces the user's installed binaries
 
 When driving `rig stack push`, use `--dry-run` to inspect the same plan a real
 push uses. Squash/rebase merges with identical member content need no push.

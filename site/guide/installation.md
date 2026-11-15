@@ -106,6 +106,65 @@ curl -fsSL https://rigsmith.sh/brewrig | sh    # just brewrig (macOS / Linux)
 Binaries install to `~/.local/bin` by default (override with `RIGSMITH_INSTALL`).
 Make sure that directory is on your `PATH`.
 
+### Updating {#updating}
+
+Every tool carries `self-update`, and it updates the whole family, whichever
+tool you run it from:
+
+```sh
+rig self-update          # or shiprig self-update, changerig self-update, …
+rig self-update --check  # each tool's installed version against the latest
+```
+
+It re-runs the installer once, pinned to the latest release and pointed at the
+directory the running tool lives in, so every tool there ends on the same
+version — one that was already current is re-installed too — and reports what
+moved. A Homebrew or npm install is left to its package manager — `self-update`
+prints the `brew upgrade` or `npm install -g` command for the cask or package
+you have — and on Windows it points you at the release to download. The
+installer script it runs is the release's own `install.sh`, checked against the
+release's signed checksums before it runs (see [Verifying a
+download](#verifying)).
+
+`--check` reports versions only for an install `self-update` manages: a dev
+build, or a Homebrew or npm install, says so and stops before reporting.
+
+`RIGSMITH_BIN_DIR` installs into exactly that directory, overriding
+`RIGSMITH_INSTALL`; `RIGSMITH_REPO` downloads from a fork's releases. When
+`RIG_SELFUPDATE_REPO` names a fork, `self-update` checks and installs from it.
+
+### Verifying a download {#verifying}
+
+Every release publishes `checksums.txt`, the SHA-256 of `install.sh` and of
+every archive, and `checksums.txt.sigstore.json`, a [Sigstore](https://www.sigstore.dev/)
+signature over it made by the release workflow's own GitHub identity. There is
+no key: the signature is tied to `.github/workflows/release.yml` in
+`rigsmith/rigsmith` and recorded in Sigstore's public transparency log.
+
+The installers (`install.sh` and, on Windows, `install.ps1`) and `self-update`
+all download every file first and check it against `checksums.txt`, and check
+that file's signature, before installing anything. A file that doesn't match, or a signature that is missing or doesn't
+verify, stops the install with the reason and leaves your existing tools as
+they were.
+
+`https://rigsmith.sh` serves the installers that shipped with the latest
+release, not the ones on `main`, so the script you run always matches the release
+it installs.
+
+Checking the signature needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/).
+Without it the checksums are still checked, and the installer says the
+signature wasn't; set `RIGSMITH_REQUIRE_SIGNATURE=1` to refuse to install
+instead. To check a download by hand:
+
+```sh
+cosign verify-blob \
+  --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/rigsmith/rigsmith/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+shasum -a 256 --check --ignore-missing checksums.txt
+```
+
 ::: tip Auditing the script
 `https://rigsmith.sh` returns the install script as plain text — open it in a
 browser to read it before piping it to a shell.

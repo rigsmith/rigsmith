@@ -37,7 +37,7 @@ func run(ctx context.Context) error {
 }
 
 func runCommand(ctx context.Context) error {
-	root := commands.NewRootCmd()
+	root := commands.NewRootCmd(version)
 
 	// Bare, interactive `changerig` (no verb/flag) lands on the menu. Routing
 	// through the registered `ui` subcommand — rather than running a standalone

@@ -89,7 +89,10 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		return plugin.ArtifactsResponse{Skipped: true, Message: "no Velopack channels buildable on this host" + skipNote(skipped)}, nil
 	}
 
-	if err := checkEntitlements(req.RepoRoot, cfg.Macos, planned, req.Snapshot); err != nil {
+	// A snapshot is unsigned, and so is a build asked to be (--unsigned): no
+	// keychain, no notarization, no Windows signer.
+	unsigned := !signsBuild(req)
+	if err := checkEntitlements(req.RepoRoot, cfg.Macos, planned, unsigned); err != nil {
 		return plugin.ArtifactsResponse{}, err
 	}
 
@@ -111,7 +114,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 
 	// A signed macOS build whose cert (and notary key) arrive in the signing env
 	// signs from a throwaway keychain built from them, deleted when the build ends.
-	if !req.Snapshot && plansOS(planned, osMac) {
+	if !unsigned && plansOS(planned, osMac) {
 		kc, cleanup, err := setupKeychain(cfg.Macos, env, func(name string, args ...string) (string, error) {
 			stdout, _, err := runCmdEnv(ctx, req.RepoRoot, env, name, args...)
 			return stdout, err
@@ -133,7 +136,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		// next to the output (best-effort cleanup leaves it — it carries no secrets).
 		// Cross-compiled Windows signs via --signTemplate instead, so no file there.
 		azureFile := ""
-		if osOf(ch) == osWindows && host == osWindows && cfg.Windows.TrustedSigning != nil && !req.Snapshot {
+		if osOf(ch) == osWindows && host == osWindows && cfg.Windows.TrustedSigning != nil && !unsigned {
 			azureFile = filepath.Join("dist", "trustedsigning.json")
 			if err := writeTrustedSigningFile(filepath.Join(req.RepoRoot, azureFile), *cfg.Windows.TrustedSigning); err != nil {
 				return plugin.ArtifactsResponse{}, err
@@ -146,7 +149,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		// the same trustedSigning block works on a Mac/Linux host too. Skipped for a
 		// snapshot (unsigned rehearsal) to avoid an unnecessary token mint.
 		packCfg := cfg
-		if osOf(ch) == osWindows && host != osWindows && !req.Snapshot {
+		if osOf(ch) == osWindows && host != osWindows && !unsigned {
 			tmpl, err := resolveCrossWindowsSignTemplate(cfg.Windows, env)
 			if err != nil {
 				return plugin.ArtifactsResponse{}, err
@@ -176,13 +179,13 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 			packCfg.Macos.Plist = rendered
 		}
 
-		packArgs := buildPackArgs(packCfg, ch, pubRel, releasesRel, ver, req.Snapshot, host, azureFile)
+		packArgs := buildPackArgs(packCfg, ch, pubRel, releasesRel, ver, unsigned, host, azureFile)
 		if _, _, err := runCmdEnv(ctx, req.RepoRoot, env, "vpk", packArgs...); err != nil {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("vpk pack %s: %w", ch, err)
 		}
 
 		if osOf(ch) == osMac && cfg.Macos.WrapDmg() {
-			if err := a.wrapDmg(ctx, req.RepoRoot, env, cfg, ch, releasesRel, req.Snapshot); err != nil {
+			if err := a.wrapDmg(ctx, req.RepoRoot, env, cfg, ch, releasesRel, unsigned); err != nil {
 				return plugin.ArtifactsResponse{}, fmt.Errorf("dmg %s: %w", ch, err)
 			}
 		}
@@ -342,6 +345,12 @@ func plansOS(planned []string, want targetOS) bool {
 // macos.entitlements file that isn't there, before any channel is built — so a
 // typo'd path is a config error rather than a late vpk failure or a quiet sign
 // with vpk's permissive default. Snapshot builds are unsigned and skip it.
+// signsBuild reports whether an Artifacts request may sign: not a snapshot,
+// and not asked to build unsigned. Pure.
+func signsBuild(req plugin.ArtifactsRequest) bool {
+	return !req.Snapshot && !req.Unsigned
+}
+
 func checkEntitlements(repoRoot string, m Macos, planned []string, snapshot bool) error {
 	path := strings.TrimSpace(m.Entitlements)
 	if snapshot || path == "" {

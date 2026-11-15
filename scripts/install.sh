@@ -19,14 +19,30 @@
 #
 # Env:
 #     RIGSMITH_INSTALL   install prefix (default: $HOME/.local) -> bin/ underneath
+#     RIGSMITH_BIN_DIR   install into exactly this directory (overrides RIGSMITH_INSTALL)
 #     RIGSMITH_VERSION   pin a release tag (default: latest)
+#     RIGSMITH_REPO      GitHub repo to download from (default: rigsmith/rigsmith)
+#     RIGSMITH_REQUIRE_SIGNATURE=1
+#                        refuse to install when cosign isn't there to check the
+#                        signature (default: warn, and check the checksums only)
+#
+# `<tool> self-update` runs this with all four set: the release it found, the
+# directory the running tool lives in, and the repo it checked.
+#
+# Verification: every release publishes checksums.txt (the SHA-256 of
+# install.sh and of every archive) and checksums.txt.sigstore.json, a Sigstore
+# bundle signing it with the release workflow's GitHub OIDC identity. Every
+# archive is downloaded and checked against checksums.txt before any is
+# installed; a mismatch, or a missing or invalid signature, installs nothing.
+# Checking the signature needs cosign; without it the checksums are still
+# checked, and the script says so.
 #
 set -e
 
-REPO="rigsmith/rigsmith"
+REPO="${RIGSMITH_REPO:-rigsmith/rigsmith}"
 
 INSTALL_PREFIX="${RIGSMITH_INSTALL:-$HOME/.local}"
-BIN_DIR="$INSTALL_PREFIX/bin"
+BIN_DIR="${RIGSMITH_BIN_DIR:-$INSTALL_PREFIX/bin}"
 VERSION="${RIGSMITH_VERSION:-latest}"
 
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
@@ -69,41 +85,121 @@ resolve_version() {
   echo "$tag"
 }
 
-# --- install a single binary -------------------------------------------------
-# $1 = binary name (rig|shiprig|clauderig|codexrig|changerig|brewrig), $2 = tag, $3 = os, $4 = arch
-install_binary() {
-  bin="$1"
-  tag="$2"
-  os="$3"
-  arch="$4"
+# --- verification ------------------------------------------------------------
+# A SHA-256 tool, found once up front: sha256sum (Linux), shasum (macOS), or
+# openssl. Named here rather than inside $(...), where error() can't stop us.
+pick_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then SHA256="sha256sum"
+  elif command -v shasum >/dev/null 2>&1; then SHA256="shasum -a 256"
+  elif command -v openssl >/dev/null 2>&1; then SHA256="openssl dgst -sha256 -r"
+  else error "need sha256sum, shasum or openssl to verify the downloads"
+  fi
+}
 
-  # Archive names match the GoReleaser name_template:
-  #   <bin>_<version>_<os>_<arch>.tar.gz   (version is the tag without leading v)
-  version_no_v="${tag#v}"
-  archive="${bin}_${version_no_v}_${os}_${arch}.tar.gz"
-  url="https://github.com/$REPO/releases/download/$tag/$archive"
+sha256_of() { $SHA256 "$1" | awk '{print $1}'; }
 
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
+# $1 = checksums file, $2 = file name: the checksum listed for it ("" if none).
+listed_sum() { awk -v n="$2" '$2 == n || $2 == "*" n { print $1; exit }' "$1"; }
 
-  info "downloading $bin $tag ($os/$arch)"
-  if ! curl -fsSL "$url" -o "$tmp/$archive"; then
-    error "download failed: $url"
+# $1 = tag, $2 = work dir: download checksums.txt and its signature, and check
+# the signature (with cosign) before anything is trusted.
+fetch_checksums() {
+  base="https://github.com/$REPO/releases/download/$1"
+  curl -fsSL "$base/checksums.txt" -o "$2/checksums.txt" \
+    || error "could not download checksums.txt for $1 — refusing to install unverified files"
+  curl -fsSL "$base/checksums.txt.sigstore.json" -o "$2/checksums.txt.sigstore.json" \
+    || error "$1 has no signature for its checksums.txt (checksums.txt.sigstore.json is missing) — refusing to install"
+
+  # A cosign that can't be trusted (cosign_usable) counts as no cosign.
+  why="cosign is not installed"
+  usable=0
+  if command -v cosign >/dev/null 2>&1; then
+    if cosign_usable; then usable=1; else why="$COSIGN_PROBLEM"; fi
   fi
 
-  info "extracting $archive"
-  tar -xzf "$tmp/$archive" -C "$tmp"
+  if [ "$usable" = 1 ]; then
+    repo_re="$(printf '%s' "$REPO" | sed 's/[.]/\\./g')"
+    # $COSIGN_EXTRA is empty or one flag; unquoted on purpose.
+    # shellcheck disable=SC2086
+    if ! cosign verify-blob $COSIGN_EXTRA \
+        --bundle "$2/checksums.txt.sigstore.json" \
+        --certificate-identity-regexp "^https://github.com/$repo_re/\\.github/workflows/release\\.yml@" \
+        --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+        "$2/checksums.txt" >"$2/cosign.log" 2>&1; then
+      cat "$2/cosign.log" >&2
+      error "the signature on checksums.txt for $1 does not verify — refusing to install"
+    fi
+    info "verified the signature on checksums.txt"
+  elif [ "${RIGSMITH_REQUIRE_SIGNATURE:-}" = "1" ]; then
+    error "$why, so the signature on checksums.txt can't be checked, and RIGSMITH_REQUIRE_SIGNATURE=1 requires it"
+  else
+    warn "$why: checking every download against checksums.txt, but not checksums.txt's own signature."
+    echo "  Install cosign v3.1.3 or later (https://docs.sigstore.dev/cosign/system_config/installation/) to verify it," >&2
+    echo "  or set RIGSMITH_REQUIRE_SIGNATURE=1 to refuse to install without it." >&2
+  fi
+}
 
-  if [ ! -f "$tmp/$bin" ]; then
+# Whether the cosign on PATH can be trusted to check the signature. Sets
+# COSIGN_EXTRA (verify-blob flags for that version) or COSIGN_PROBLEM.
+#   - v2 up to 2.6.4 and v3 up to 3.1.2 pass a legacy bundle carrying a bare
+#     public key without checking the identity (GHSA-fx35-mq7g-6g98).
+#   - Releases are signed in the new bundle format: v3 reads it by default, v2
+#     only with --new-bundle-format.
+cosign_usable() {
+  COSIGN_EXTRA=""
+  v="$(cosign version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n1)"
+  if [ -z "$v" ]; then COSIGN_PROBLEM="couldn't read cosign's version"; return 1; fi
+  maj="${v%%.*}"; rest="${v#*.}"; min="${rest%%.*}"; pat="${rest#*.}"
+  at() { [ "$min" -gt "$1" ] || { [ "$min" -eq "$1" ] && [ "$pat" -ge "$2" ]; }; }
+  bypass="cosign v$v has a signature-check bypass (GHSA-fx35-mq7g-6g98)"
+  if [ "$maj" -ge 4 ]; then return 0; fi
+  if [ "$maj" -eq 3 ]; then
+    at 1 3 && return 0
+    COSIGN_PROBLEM="$bypass; upgrade to v3.1.3 or later"; return 1
+  fi
+  if [ "$maj" -eq 2 ]; then
+    if at 6 5; then COSIGN_EXTRA="--new-bundle-format"; return 0; fi
+    COSIGN_PROBLEM="$bypass; upgrade to v2.6.5 or later"; return 1
+  fi
+  COSIGN_PROBLEM="cosign v$v is too old to read the release's signature; upgrade to v3.1.3 or later"; return 1
+}
+
+# --- download and verify a single binary's archive ---------------------------
+# $1 = binary name, $2 = tag, $3 = os, $4 = arch, $5 = work dir
+download_binary() {
+  # Archive names match the GoReleaser name_template:
+  #   <bin>_<version>_<os>_<arch>.tar.gz   (version is the tag without leading v)
+  archive="${1}_${2#v}_${3}_${4}.tar.gz"
+  url="https://github.com/$REPO/releases/download/$2/$archive"
+
+  info "downloading $1 $2 ($3/$4)"
+  curl -fsSL "$url" -o "$5/$archive" || error "download failed: $url"
+
+  want="$(listed_sum "$5/checksums.txt" "$archive")"
+  [ -n "$want" ] || error "$archive is not listed in checksums.txt for $2 — refusing to install"
+  got="$(sha256_of "$5/$archive")"
+  [ "$got" = "$want" ] \
+    || error "$archive does not match checksums.txt (expected $want, got $got) — refusing to install anything"
+}
+
+# --- install a single, already verified binary --------------------------------
+# $1 = binary name, $2 = tag, $3 = os, $4 = arch, $5 = work dir
+install_binary() {
+  bin="$1"
+  archive="${bin}_${2#v}_${3}_${4}.tar.gz"
+  dir="$5/$bin"
+  mkdir -p "$dir"
+
+  info "extracting $archive"
+  tar -xzf "$5/$archive" -C "$dir"
+
+  if [ ! -f "$dir/$bin" ]; then
     error "expected '$bin' inside $archive but it was not found"
   fi
 
   mkdir -p "$BIN_DIR"
-  install -m 0755 "$tmp/$bin" "$BIN_DIR/$bin" 2>/dev/null \
-    || { cp "$tmp/$bin" "$BIN_DIR/$bin" && chmod 0755 "$BIN_DIR/$bin"; }
-
-  rm -rf "$tmp"
-  trap - EXIT
+  install -m 0755 "$dir/$bin" "$BIN_DIR/$bin" 2>/dev/null \
+    || { cp "$dir/$bin" "$BIN_DIR/$bin" && chmod 0755 "$BIN_DIR/$bin"; }
 
   info "installed $bin -> $BIN_DIR/$bin"
   case "$bin" in
@@ -151,21 +247,27 @@ main() {
   fi
 
   case "$target" in
-    rig)       install_binary rig       "$tag" "$os" "$arch" ;;
-    shiprig)   install_binary shiprig   "$tag" "$os" "$arch" ;;
-    clauderig) install_binary clauderig "$tag" "$os" "$arch" ;;
-    codexrig) install_binary codexrig "$tag" "$os" "$arch" ;;
-    changerig) install_binary changerig "$tag" "$os" "$arch" ;;
-    brewrig)   install_binary brewrig   "$tag" "$os" "$arch" ;;
     all)
-      install_binary rig       "$tag" "$os" "$arch"
-      install_binary shiprig   "$tag" "$os" "$arch"
-      install_binary clauderig "$tag" "$os" "$arch"
-      install_binary codexrig "$tag" "$os" "$arch"
-      install_binary changerig "$tag" "$os" "$arch"
-      [ "$os" = "windows" ] || install_binary brewrig "$tag" "$os" "$arch"
+      bins="rig shiprig clauderig codexrig changerig"
+      [ "$os" = "windows" ] || bins="$bins brewrig"
       ;;
+    *) bins="$target" ;;
   esac
+
+  pick_sha256
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+
+  # Everything is downloaded and checked before anything is installed, so a
+  # tampered or missing file leaves the existing tools as they were.
+  fetch_checksums "$tag" "$work"
+  for bin in $bins; do
+    download_binary "$bin" "$tag" "$os" "$arch" "$work"
+  done
+  info "every archive matches the release's checksums"
+  for bin in $bins; do
+    install_binary "$bin" "$tag" "$os" "$arch" "$work"
+  done
 
   path_hint
   info "done."
