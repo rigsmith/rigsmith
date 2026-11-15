@@ -194,6 +194,18 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// forgeRelease "combined" needs the packages this publish tags to
+			// share a version when its templates use one. Checked now, before
+			// a registry is touched, rather than at the forge release after.
+			if !noGitTag && ws.Stackspace == nil {
+				if err := checkCombinedPublish(cmd.Context(), ws, pkgs, ecoOf, events != nil); err != nil {
+					if !dryRun {
+						cmd.SilenceUsage = true
+						return err
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), commands.DimStyle.Render("warning: "+err.Error()))
+				}
+			}
 			// From a pack directory, exactly the files pack built go out, in
 			// the plan's order, and nothing is built.
 			packed := map[string]packedRelease{}
@@ -412,6 +424,7 @@ func newPublishCmd() *cobra.Command {
 			// one "tagged+pushed" then eleven "tag exists" as each iteration
 			// re-reads the tag the previous one just created).
 			done := map[string]bool{}
+			var taggedNow []plugin.Package // packages whose tag this run creates at HEAD (or would)
 			for _, p := range pkgs {
 				if ws.Config.SkipsTag(p.Name) {
 					continue
@@ -450,6 +463,12 @@ func newPublishCmd() *cobra.Command {
 					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("tag exists"), tag)
 					continue
 				}
+				// Only a tag made now is made at HEAD. One that exists locally
+				// and only needs pushing may sit on an earlier commit; if it is
+				// at HEAD, releasedAtHead already counts it.
+				if !localExists {
+					taggedNow = append(taggedNow, p)
+				}
 				if dryRun {
 					push := ""
 					if remote != "" {
@@ -480,6 +499,26 @@ func newPublishCmd() *cobra.Command {
 					fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
 				}
 			}
+			// forgeRelease "combined": its tag too, made and pushed like the
+			// rest. With tag events the caller pushes only the tags reported,
+			// and `shiprig forge-release` makes this one (see newTagCmd).
+			if events == nil && notPerPackage(ws.Config) {
+				atHead, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
+				if err != nil {
+					return err
+				}
+				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, atHead))
+				if err != nil {
+					return err
+				}
+				if ctag != "" && !done[ctag] {
+					line, err := combinedTagEnsurer(cmd.Context(), ws.Root, remote)(ctag, dryRun)
+					if err != nil {
+						return fmt.Errorf("tagging %s: %w", ctag, err)
+					}
+					fmt.Fprintln(out, line)
+				}
+			}
 			return nil
 		},
 	}
@@ -495,6 +534,51 @@ func newPublishCmd() *cobra.Command {
 	f.BoolVar(&allowPend, "allow-pending", false, "publish the versions on disk even though changesets are waiting to bump them (by default publish refuses until shiprig version has run)")
 	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
 	return cmd
+}
+
+// checkCombinedPublish fails when forgeRelease is invalid, when its combined
+// tag already exists on another commit, or when a template uses ${version} and
+// the packages the combined release will cover are on different versions: the
+// ones this publish will tag at HEAD and the ones already tagged there, the
+// same set the tagging phase renders the combined tag from.
+//
+// Which packages get tagged follows the tagging phase's own rule. With tag
+// events (remoteSkips), a tag already on the remote is skipped. Otherwise only
+// the local tag counts, so a tag that exists only on the remote is made again
+// here at HEAD, with --no-push or without, and its package belongs to the set.
+func checkCombinedPublish(ctx context.Context, ws *commands.Workspace, pkgs []plugin.Package, ecoOf map[string]string, remoteSkips bool) error {
+	fr := ws.Config.ForgeRelease
+	if err := fr.Validate(); err != nil {
+		return err
+	}
+	if !fr.Combined() {
+		return nil
+	}
+	remote := gitutil.DefaultRemote(ctx, ws.Root)
+	solo := singleApp(pkgs)
+	var pending []plugin.Package
+	for _, p := range pkgs {
+		if ws.Config.SkipsTag(p.Name) {
+			continue
+		}
+		tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo)
+		if gitutil.TagExists(ctx, ws.Root, tag) || remoteSkips && remote != "" && gitutil.RemoteTagExists(ctx, ws.Root, remote, tag) {
+			continue
+		}
+		pending = append(pending, p)
+	}
+	atHead, err := releasedAtHead(ctx, ws, pkgs, ecoOf)
+	if err != nil {
+		return err
+	}
+	ctag, err := combinedReleaseTag(ws.Config, unionByName(pending, atHead))
+	if err != nil || ctag == "" {
+		return err
+	}
+	// A combined tag already on another commit would fail the tagging phase
+	// after the registries have the packages; a dry run of it says so now.
+	_, _, err = ensureCombinedTag(ctx, ws.Root, remote, ctag, true)
+	return err
 }
 
 // releaseRunEnv is set in the environment of every command `shiprig release`

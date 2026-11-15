@@ -203,6 +203,26 @@
         }
       }
     },
+    "forgeRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "How shiprig cuts forge (GitHub/GitLab/Gitea) releases, in `shiprig release` and `shiprig forge-release`. Default: one release per package.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["per-package", "combined"],
+          "description": "\"per-package\" (default): one release per released package, on its own tag. \"combined\": one release for everything released at the release commit, marked latest."
+        },
+        "name": {
+          "type": "string",
+          "description": "Combined mode: the release title, e.g. \"Acme ${version}\". Default: the rendered tag."
+        },
+        "tag": {
+          "type": "string",
+          "description": "Combined mode: the git tag the release hangs off, created and pushed with the per-package tags. Default \"v${version}\"."
+        }
+      }
+    },
     "release": {
       "$ref": "https://rigsmith.dev/schemas/shiprig.json",
       "description": "Cross-tool key carrying the shiprig pipeline config in a unified file."

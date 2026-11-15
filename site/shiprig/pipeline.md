@@ -260,6 +260,113 @@ explicit value. `none` (or `--git-only`) degrades to tags only — the `issues`
 step and forge URLs are skipped. Release creation and asset upload are
 idempotent.
 
+### One release per version
+
+By default the `release` step makes one release per released package, on that
+package's own tag (`@acme/web@1.2.0`), with its `CHANGELOG.md` entry as the
+notes. A monorepo whose packages always release together can ask for **one**
+release instead, with `forgeRelease` in the **changeset config**, where CI that
+reads only `.changeset/config.json` sees it too:
+
+```jsonc
+// .changeset/config.json
+{
+  "fixed": [["@acme/web", "@acme/theme"]],   // keeps them on one version
+  "forgeRelease": {
+    "mode": "combined",          // per-package (default) | combined
+    "name": "Acme ${version}",   // the release title; default: the tag
+    "tag": "v${version}"         // the release's git tag; default "v${version}"
+  }
+}
+```
+
+In combined mode the release covers every package released at the release
+commit (those whose own tag points at `HEAD`):
+
+- **Tag.** The `tag` template, created as an annotated tag at the release commit
+  beside the per-package tags, which stay exactly as they are. `shiprig tag`
+  (the `tag` step) makes it, so `push --follow-tags` carries it with the rest,
+  and `shiprig publish` makes and pushes it with its own tags. The `release`
+  step and `shiprig forge-release` make and push it themselves if it's still
+  missing, before creating the release. A combined tag that already exists on
+  another commit belongs to an earlier release and is refused rather than
+  reused, so a template without `${version}` (`"tag": "release"`) works for
+  one release only.
+- **Templates.** `${version}` is the only placeholder; any other `${…}`, or a
+  tag git would refuse (`"Acme ${version}"`, with its space), is an error
+  before anything is published.
+- **Name.** The `name` template; without one, the rendered tag.
+- **Latest.** On GitHub the release is created with `--latest`. GitLab and
+  Gitea have no such flag (they treat the newest release as latest), so nothing
+  is passed there.
+- **Prerelease.** If any released version is a prerelease (`2.0.0-next.1`), the
+  release is one (`--prerelease` on GitHub and Gitea; GitLab has no
+  prerelease), and it is not marked latest, which GitHub refuses for a
+  prerelease.
+- **Notes.** Each released package's changelog entry under a `## <name>@<version>`
+  heading, in package-name order (the display name where one is set, compared
+  byte by byte; the same order per-package releases are made in).
+- **Assets.** Every released package's attachable build outputs go on the one
+  release, uploaded once each; with `gh` a file of the same name replaces the
+  earlier one.
+- **Idempotent.** An existing release with that tag is skipped (its assets are
+  still re-attached), so a re-run is safe.
+
+`${version}` is the one version every released package shares. If the `name`
+or `tag` template uses it and the released packages are on different
+versions, shiprig stops before anything irreversible, naming each package and
+version: `shiprig release` checks the plan before the pipeline starts, and
+`shiprig publish` checks the packages it will tag before touching a registry.
+A changesets `fixed` group is how a monorepo guarantees one shared version.
+Templates without `${version}` take any mix, though such a tag can be used
+only once (see **Tag** above).
+
+### `shiprig forge-release`
+
+The `release` step on its own, for CI that publishes with `shiprig publish` and
+then makes the forge releases itself. It releases the packages whose own tag
+points at `HEAD` (the ones that publish just tagged), under the configured
+`forgeRelease` mode, skips releases that already exist, and attaches no build
+assets:
+
+```sh
+shiprig publish --yes
+shiprig forge-release --json          # --dry-run to preview, with the notes
+```
+
+The forge comes from the `release` step's `forge`/`forgeURL` when a release
+config exists, else `auto`; `--forge github|gitlab|gitea|none` overrides it.
+With `--json`, stdout carries one object and progress goes to stderr:
+
+```json
+{
+  "mode": "combined",
+  "dryRun": false,
+  "releases": [
+    {
+      "tag": "v1.2.0",
+      "name": "Acme 1.2.0",
+      "packages": ["@acme/theme", "@acme/web"],
+      "action": "created",
+      "url": "https://github.com/acme/web/releases/tag/v1.2.0",
+      "latest": true,
+      "prerelease": false
+    }
+  ]
+}
+```
+
+`action` is `created`, `exists` (already there, skipped) or `would-create`
+(`--dry-run`). `url` is filled where the forge CLI can print it (GitHub).
+Nothing tagged at `HEAD` is not an error: `releases` is empty and `message`
+says so. A failure exits non-zero with the JSON's `message` saying what failed.
+With tag events (`--output` or `$CHANGESETS_OUTPUT`), or `--no-push`, publish
+leaves its tags local. Push them before `forge-release` (the caller's own push
+of the reported tags, or `git push --follow-tags`): `forge-release` pushes only
+the combined tag, which it makes itself since it is no package's event, and a
+per-package release on a tag the forge can't see makes the forge create that
+tag at its default branch, which may not be the release commit.
+
 ## Publish authentication
 
 Per-ecosystem auth and OIDC trusted publishing are configured under each

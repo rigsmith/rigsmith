@@ -130,6 +130,44 @@ The existing GitHub logic becomes `githubProvider`.
 
 `forge`: `auto | github | gitlab | gitea | none`.
 
+### 2e. One release per version (`forgeRelease`)
+
+Added later, for monorepos whose packages always release together and want one
+repo-page release marked Latest rather than one per package. Decisions:
+
+- **Config lives in the changeset config**, as `forgeRelease: { mode, name,
+  tag }`, not on the `release` step. The forge choice (`forge`/`forgeURL`)
+  stays on the step, but the release *shape* has to be readable by CI that runs
+  `shiprig publish` and never reads `release.jsonc` (shiprig-action reads only
+  `.changeset/config.json`). `mode` defaults to `per-package`; an unknown mode
+  is an error rather than the default.
+- **Templates use `${version}`**, the placeholder `tagTemplate` already uses.
+  A template using it requires every released package to share one version;
+  a mismatch is checked before anything irreversible (`shiprig release`
+  from the plan before the pipeline starts; `shiprig publish` over the packages
+  whose tags are on neither the clone nor the remote, before the registry push).
+- **"Released" means "tagged at HEAD."** The combined release, and
+  `shiprig forge-release`, cover the packages whose own tag points at the
+  release commit. That needs no new state: the tag step (or publish) has just
+  made those tags, and a re-run finds the same set. The per-package `release`
+  step inside `shiprig release` keeps releasing every discovered package,
+  idempotently, as before.
+- **The combined tag is made like the others**: `shiprig tag` creates it so
+  `push --follow-tags` carries it, and `shiprig publish` creates and pushes it.
+  It is not reported as a tag event (it belongs to no package), so under tag
+  events the forge step makes and pushes it before creating the release, which
+  it does in every mode as a backstop.
+  An existing combined tag is reused only when it points at the release
+  commit; one on another commit is an earlier release's, and is an error
+  (`shiprig publish` checks this before the registry push).
+- **Templates are validated up front**: `${version}` is the only placeholder,
+  and the tag rendered from a sample version must be a valid git ref name.
+- **Latest / prerelease** ride on `Release` as flags the providers render where
+  their CLI has them: GitHub `--latest`/`--prerelease`, Gitea `--prerelease`,
+  GitLab neither. A prerelease is never marked latest.
+- **`shiprig forge-release`** is the standalone entry point (`--dry-run`,
+  `--json`), so the behavior lives in shiprig rather than in each caller.
+
 ## Part 3 — Issue-tracker integration
 
 > Design agreed 2026-06-15. Parity target: on release, comment on / close issues

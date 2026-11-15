@@ -551,3 +551,34 @@ func TestEcoProvenance(t *testing.T) {
 		}
 	}
 }
+
+// forgeRelease is checked before anything ships: an unknown mode, a placeholder
+// other than ${version}, or a tag git would refuse are all errors, naming the
+// field; per-package mode ignores the templates.
+func TestForgeReleaseValidate(t *testing.T) {
+	for _, tc := range []struct {
+		fr      ForgeRelease
+		wantErr string
+	}{
+		{ForgeRelease{}, ""},
+		{ForgeRelease{Mode: "per-package", Tag: "${nope}"}, ""},
+		{ForgeRelease{Mode: "combined"}, ""},
+		{ForgeRelease{Mode: "combined", Name: "Acme ${version}", Tag: "release/v${version}"}, ""},
+		{ForgeRelease{Mode: "combined", Tag: "nightly"}, ""},
+		{ForgeRelease{Mode: "combind"}, `forgeRelease.mode "combind"`},
+		{ForgeRelease{Mode: "combined", Tag: "v${name}"}, "forgeRelease.tag"},
+		{ForgeRelease{Mode: "combined", Name: "Acme {version} ${ver}"}, "forgeRelease.name"},
+		{ForgeRelease{Mode: "combined", Tag: "Acme ${version}"}, "not a valid git tag"},
+		{ForgeRelease{Mode: "combined", Tag: "v${version}.."}, "not a valid git tag"},
+		{ForgeRelease{Mode: "combined", Tag: "-v${version}"}, "not a valid git tag"},
+		{ForgeRelease{Mode: "combined", Tag: "v${version}.lock"}, "not a valid git tag"},
+	} {
+		err := tc.fr.Validate()
+		switch {
+		case tc.wantErr == "" && err != nil:
+			t.Errorf("%+v: unexpected error %v", tc.fr, err)
+		case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+			t.Errorf("%+v: error %v, want one containing %q", tc.fr, err, tc.wantErr)
+		}
+	}
+}

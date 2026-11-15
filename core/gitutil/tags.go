@@ -6,6 +6,7 @@ package gitutil
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -212,6 +213,50 @@ func AnyTagMatches(ctx context.Context, repoRoot, pattern string) bool {
 		return false
 	}
 	return strings.TrimSpace(out) != ""
+}
+
+// TagsAt returns the tags pointing at rev (e.g. "HEAD"). A git failure (an
+// unborn HEAD, not a repository) is an error, never "no tags".
+func TagsAt(ctx context.Context, repoRoot, rev string) ([]string, error) {
+	out, err := runGit(ctx, repoRoot, "tag", "--points-at", rev)
+	if err != nil {
+		return nil, fmt.Errorf("listing the tags at %s: %w", rev, err)
+	}
+	return strings.Fields(out), nil
+}
+
+// CommitOf returns the full hash of the commit rev names (a tag is peeled to
+// its commit).
+func CommitOf(ctx context.Context, repoRoot, rev string) (string, error) {
+	out, err := runGit(ctx, repoRoot, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", rev, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// RemoteTagCommit returns the commit tag points at on remote (an annotated
+// tag peeled to its commit), with found=false when the remote has no such
+// tag. A failed lookup is an error, not "missing".
+func RemoteTagCommit(ctx context.Context, repoRoot, remote, tag string) (commit string, found bool, err error) {
+	ref := "refs/tags/" + tag
+	out, err := runGit(ctx, repoRoot, "ls-remote", "--tags", remote, ref, ref+"^{}")
+	if err != nil {
+		return "", false, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		switch fields[1] {
+		case ref + "^{}":
+			return fields[0], true, nil // the peeled commit wins
+		case ref:
+			commit, found = fields[0], true
+		}
+	}
+	return commit, found, nil
 }
 
 // TagExists reports whether a tag already exists in the repo.

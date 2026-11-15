@@ -11,6 +11,9 @@
 // or unauthenticated CLI degrades to "tags only" (a no-op here), never an
 // error. Versioning/changelog/tagging stay with the other steps; this only adds
 // the forge release, per the "orchestrate, don't reimplement" scope.
+//
+// With forgeRelease mode "combined" in the changeset config it instead creates
+// ONE release for all the released packages (see combined.go).
 package forge
 
 import (
@@ -99,12 +102,81 @@ const changelogFileName = "CHANGELOG.md"
 // (the `build` step's Attach:true outputs); nil/empty for packages with nothing
 // to attach. Uploads are idempotent on forges that support it (gh --clobber).
 func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][]string, cfg *config.Config, sel Selection, repoRoot string, run Runner, report func(lines ...string)) (ok bool, message string) {
+	_, ok, message = Make(Request{
+		Packages: packages, EcoOf: ecoOf, Attach: attach, Config: cfg,
+		Selection: sel, RepoRoot: repoRoot, Run: run, Report: report,
+	})
+	return ok, message
+}
+
+// Request is one forge-release run: Run's arguments, plus what
+// `shiprig forge-release` needs on top.
+type Request struct {
+	// Packages is every discovered package. A single-package repo's default tag
+	// is vX.Y.Z, so the count must be of all of them, as the tag step counts.
+	Packages []plugin.Package
+	// Released is the subset to release; nil means all of Packages.
+	Released []plugin.Package
+	EcoOf    map[string]string
+	Attach   map[string][]string
+	Config   *config.Config
+	// Selection, RepoRoot, Run and Report are as for Run.
+	Selection Selection
+	RepoRoot  string
+	Run       Runner
+	Report    func(lines ...string)
+	// DryRun reports what would be created, uploaded and tagged, and changes
+	// nothing.
+	DryRun bool
+	// WantURLs looks up each release's web URL for its Result.
+	WantURLs bool
+	// EnsureTag makes the combined release's tag exist where the forge can see
+	// it (created at HEAD and pushed, when missing), returning a line to report.
+	// nil leaves the tag to the forge.
+	EnsureTag func(tag string, dryRun bool) (string, error)
+}
+
+// Result is one release a run made, found already there, or would make.
+type Result struct {
+	Tag        string   `json:"tag"`
+	Name       string   `json:"name"`
+	Packages   []string `json:"packages"`
+	Action     string   `json:"action"` // ActionCreated | ActionExists | ActionWouldCreate
+	URL        string   `json:"url,omitempty"`
+	Latest     bool     `json:"latest"`
+	Prerelease bool     `json:"prerelease"`
+}
+
+// Result actions.
+const (
+	ActionCreated     = "created"
+	ActionExists      = "exists"
+	ActionWouldCreate = "would-create"
+)
+
+// Make makes the forge releases req describes, under the configured
+// forgeRelease mode, and returns one Result per release. ok and message are as
+// for Run.
+func Make(req Request) (results []Result, ok bool, message string) {
+	report := req.Report
 	if report == nil {
 		report = func(...string) {}
 	}
+	cfg := req.Config
+	var fr config.ForgeRelease
+	if cfg != nil {
+		fr = cfg.ForgeRelease
+	}
+	if err := fr.Validate(); err != nil {
+		return nil, false, err.Error()
+	}
 
-	released := make([]plugin.Package, 0, len(packages))
-	for _, pkg := range packages {
+	candidates := req.Released
+	if candidates == nil {
+		candidates = req.Packages
+	}
+	released := make([]plugin.Package, 0, len(candidates))
+	for _, pkg := range candidates {
 		// A forge release hangs off the package's tag, so a package that gets
 		// no tag (ignored, or private without privatePackages.tag) gets none.
 		if cfg != nil && cfg.SkipsTag(pkg.Name) {
@@ -117,12 +189,16 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 	})
 
 	if len(released) == 0 {
-		return true, "No packages found; nothing to release."
+		return nil, true, "No packages found; nothing to release."
 	}
 
-	provider, skip := selectProvider(sel, repoRoot, run)
+	if fr.Combined() {
+		return releaseCombined(req, fr, released, report)
+	}
+
+	provider, skip := selectProvider(req.Selection, req.RepoRoot, req.Run)
 	if provider == nil {
-		return true, skip
+		return nil, true, skip
 	}
 
 	for _, pkg := range released {
@@ -130,42 +206,39 @@ func Run(packages []plugin.Package, ecoOf map[string]string, attach map[string][
 		// (Go: dir/vX.Y.Z; single-app: vX.Y.Z; or a configured tagTemplate), so the
 		// forge attaches the release to it instead of creating a new, divergent tag
 		// at HEAD. The human-facing title keeps the friendly DisplayName@version
-		// form. Single-app is the count of ALL discovered packages (len(packages),
+		// form. Single-app is the count of ALL discovered packages (len(Packages),
 		// not the non-ignored len(released)), matching the tag/publish steps.
 		tagTemplate := ""
 		if cfg != nil {
 			tagTemplate = cfg.TagTemplate
 		}
-		tag := gitutil.RenderTag(tagTemplate, ecoOf[pkg.Name], pkg.Dir, pkg.Name, pkg.Version, len(packages) == 1)
+		tag := gitutil.RenderTag(tagTemplate, req.EcoOf[pkg.Name], pkg.Dir, pkg.Name, pkg.Version, len(req.Packages) == 1)
 		releaseTitle := title(pkg) + "@" + pkg.Version
+		res := Result{Tag: tag, Name: releaseTitle, Packages: []string{pkg.Name}}
 
-		if provider.ReleaseExists(tag, repoRoot, run) {
+		if provider.ReleaseExists(tag, req.RepoRoot, req.Run) {
 			report(tag + ": release already exists, skipped create.")
+			res.Action = ActionExists
 		} else {
-			notes := extractNotes(pkg, repoRoot)
+			notes := extractNotes(pkg, req.RepoRoot)
 			if notes == "" {
 				notes = releaseTitle
 			}
-			if ok, msg := runForgeCmd(provider.CreateReleaseCmd(Release{Tag: tag, Title: releaseTitle, Notes: notes}), repoRoot, run, report); !ok {
-				return false, fmt.Sprintf("release %s failed: %s", tag, msg)
+			if ok, msg := createRelease(provider, Release{Tag: tag, Title: releaseTitle, Notes: notes}, &res, req, report); !ok {
+				return results, false, fmt.Sprintf("release %s failed: %s", tag, msg)
 			}
 		}
 
 		// Attach the build's assets (binaries/archives). On a forge that can't
 		// upload to an existing release (Gitea), report a skip rather than fail.
-		if files := attach[pkg.Name]; len(files) > 0 {
-			argv := provider.UploadAssetsCmd(tag, files)
-			if argv == nil {
-				report(fmt.Sprintf("%s: %s cannot attach assets to an existing release; skipped %d asset(s).", tag, provider.Name(), len(files)))
-				continue
-			}
-			if ok, msg := runForgeCmd(argv, repoRoot, run, report); !ok {
-				return false, fmt.Sprintf("release upload %s failed: %s", tag, msg)
-			}
+		if ok, msg := uploadAssets(provider, tag, req.Attach[pkg.Name], req, report); !ok {
+			return results, false, fmt.Sprintf("release upload %s failed: %s", tag, msg)
 		}
+		lookUpURL(provider, &res, req)
+		results = append(results, res)
 	}
 
-	return true, ""
+	return results, true, ""
 }
 
 // Notes returns the package's CHANGELOG section for its current version (the

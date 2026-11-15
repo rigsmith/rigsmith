@@ -67,12 +67,39 @@ func newTagCmd() *cobra.Command {
 			if events != nil {
 				eventRemote = gitutil.DefaultRemote(cmd.Context(), ws.Root)
 			}
+			// forgeRelease "combined": settle the combined tag before any
+			// package tag is made, so a refusal (packages on different
+			// versions, or the tag already on another commit) leaves nothing
+			// behind for a retry to trip over.
+			if events == nil && notPerPackage(ws.Config) {
+				var projected []plugin.Package
+				for _, p := range pkgs {
+					if !ws.Config.SkipsTag(p.Name) && !gitutil.TagExists(cmd.Context(), ws.Root,
+						gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo)) {
+						projected = append(projected, p)
+					}
+				}
+				atHead, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
+				if err != nil {
+					return err
+				}
+				ctag, err := combinedReleaseTag(ws.Config, unionByName(projected, atHead))
+				if err != nil {
+					return err
+				}
+				if ctag != "" {
+					if _, _, err := ensureCombinedTag(cmd.Context(), ws.Root, "", ctag, true); err != nil {
+						return fmt.Errorf("tagging %s: %w", ctag, err)
+					}
+				}
+			}
 			created, skipped := 0, 0
 			// Distinct tags, not packages: a `tagTemplate` like "v${version}"
 			// renders the same tag for every package, and one git ref should be
 			// reported (and counted) once. Same reasoning as the publish tagging
 			// phase.
 			done := map[string]bool{}
+			var taggedNow []plugin.Package // tagged (or would be) by this run
 			for _, p := range pkgs {
 				if ws.Config.SkipsTag(p.Name) {
 					continue // ignored packages, and private ones unless privatePackages.tag, are never tagged
@@ -90,6 +117,7 @@ func newTagCmd() *cobra.Command {
 				if dryRun {
 					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("would tag"), tag)
 					created++
+					taggedNow = append(taggedNow, p)
 					continue
 				}
 				if events != nil {
@@ -106,6 +134,34 @@ func newTagCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
 				created++
+				taggedNow = append(taggedNow, p)
+			}
+			// forgeRelease "combined": the one release's tag too, at the same
+			// commit, so `git push --follow-tags` carries it with the rest. With
+			// tag events the caller pushes only the tags reported, and a
+			// combined tag belongs to no package, so `shiprig forge-release`
+			// makes and pushes it instead.
+			if events == nil && notPerPackage(ws.Config) {
+				atHead, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
+				if err != nil {
+					return err
+				}
+				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, atHead))
+				if err != nil {
+					return err
+				}
+				if ctag != "" && !done[ctag] {
+					existed, line, err := ensureCombinedTag(cmd.Context(), ws.Root, "", ctag, dryRun)
+					if err != nil {
+						return fmt.Errorf("tagging %s: %w", ctag, err)
+					}
+					if existed {
+						skipped++
+					} else {
+						fmt.Fprintln(out, line)
+						created++
+					}
+				}
 			}
 			fmt.Fprintf(out, "\n%d tag(s), %s\n", created, commands.DimStyle.Render(fmt.Sprintf("%d already present", skipped)))
 			return nil
