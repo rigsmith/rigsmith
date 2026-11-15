@@ -214,6 +214,16 @@ func AnyTagMatches(ctx context.Context, repoRoot, pattern string) bool {
 	return strings.TrimSpace(out) != ""
 }
 
+// TagsAt returns the tags pointing at rev (e.g. "HEAD"), or nil when there are
+// none or git fails.
+func TagsAt(ctx context.Context, repoRoot, rev string) []string {
+	out, err := runGit(ctx, repoRoot, "tag", "--points-at", rev)
+	if err != nil {
+		return nil
+	}
+	return strings.Fields(out)
+}
+
 // TagExists reports whether a tag already exists in the repo.
 func TagExists(ctx context.Context, repoRoot, tag string) bool {
 	out, err := runGit(ctx, repoRoot, "tag", "--list", tag)

@@ -318,6 +318,12 @@ type Config struct {
 	// issues a release resolves. Absent/disabled means the step is a no-op.
 	Issues Issues `json:"issues,omitempty"`
 
+	// ForgeRelease shapes the forge releases shiprig makes (`shiprig release`'s
+	// release step and `shiprig forge-release`). Absent is one release per
+	// package, the historical behavior. It lives here rather than in the release
+	// pipeline's config so CI that only reads .changeset/config.json sees it too.
+	ForgeRelease ForgeRelease `json:"forgeRelease,omitempty"`
+
 	// Ecosystems holds per-ecosystem config blocks (dotnet/node/go/...), kept raw
 	// so each ecosystem adapter decodes its own settings. This generalizes the
 	// C# tool's single `dotnet` block.
@@ -391,6 +397,7 @@ var sharedKeys = map[string]bool{
 	"snapshot":        true, "format": true, "changelog": true, "commit": true,
 	"privatePackages": true, "changelogGroups": true, "paths": true,
 	"versioning": true, "contributors": true, "issues": true,
+	"forgeRelease": true,
 	// Cross-tool keys, ignored by changerig: a `release` key carries the shiprig
 	// pipeline in a unified file; a `changeset` key carries this config in a
 	// release-primary file. Listed here so they're not mis-read as ecosystem
@@ -410,6 +417,66 @@ type Issues struct {
 	Comment string `json:"comment,omitempty"`
 	// Close closes issues referenced with a closing keyword.
 	Close bool `json:"close,omitempty"`
+}
+
+// Forge release modes.
+const (
+	ForgeReleasePerPackage = "per-package"
+	ForgeReleaseCombined   = "combined"
+)
+
+// ForgeRelease configures how forge releases are cut. Mode "per-package" (the
+// default) makes one release per released package, tagged with its own tag.
+// Mode "combined" makes ONE release for everything released at the release
+// commit, under Tag and Name. Both are templates whose only placeholder is
+// ${version}, the version the released packages share.
+type ForgeRelease struct {
+	Mode string `json:"mode,omitempty"`
+	// Name is the combined release's title; empty uses the rendered tag.
+	Name string `json:"name,omitempty"`
+	// Tag is the combined release's git tag; empty is "v${version}".
+	Tag string `json:"tag,omitempty"`
+}
+
+// DefaultForgeReleaseTag is the combined release's tag when none is set.
+const DefaultForgeReleaseTag = "v${version}"
+
+// Validate reports a mode it does not know, so a typo is loud rather than read
+// as the per-package default.
+func (f ForgeRelease) Validate() error {
+	switch f.Mode {
+	case "", ForgeReleasePerPackage, ForgeReleaseCombined:
+		return nil
+	}
+	return fmt.Errorf("forgeRelease.mode %q: want %q or %q", f.Mode, ForgeReleasePerPackage, ForgeReleaseCombined)
+}
+
+// Combined reports whether one release per version is configured.
+func (f ForgeRelease) Combined() bool { return f.Mode == ForgeReleaseCombined }
+
+// TagTemplate is the configured tag template, or the default.
+func (f ForgeRelease) TagTemplate() string {
+	if t := strings.TrimSpace(f.Tag); t != "" {
+		return t
+	}
+	return DefaultForgeReleaseTag
+}
+
+// UsesVersion reports whether the tag or name template needs the shared
+// version, which then has to exist.
+func (f ForgeRelease) UsesVersion() bool {
+	return strings.Contains(f.TagTemplate(), "${version}") || strings.Contains(f.Name, "${version}")
+}
+
+// Render returns the combined release's tag and name for version.
+func (f ForgeRelease) Render(version string) (tag, name string) {
+	r := strings.NewReplacer("${version}", version)
+	tag = r.Replace(f.TagTemplate())
+	name = tag
+	if strings.TrimSpace(f.Name) != "" {
+		name = r.Replace(f.Name)
+	}
+	return tag, name
 }
 
 // Parse decodes config bytes, applying defaults and bucketing unknown

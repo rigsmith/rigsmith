@@ -73,6 +73,7 @@ func newTagCmd() *cobra.Command {
 			// reported (and counted) once. Same reasoning as the publish tagging
 			// phase.
 			done := map[string]bool{}
+			var taggedNow []plugin.Package // tagged (or would be) by this run
 			for _, p := range pkgs {
 				if ws.Config.SkipsTag(p.Name) {
 					continue // ignored packages, and private ones unless privatePackages.tag, are never tagged
@@ -90,6 +91,7 @@ func newTagCmd() *cobra.Command {
 				if dryRun {
 					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("would tag"), tag)
 					created++
+					taggedNow = append(taggedNow, p)
 					continue
 				}
 				if events != nil {
@@ -106,6 +108,32 @@ func newTagCmd() *cobra.Command {
 				}
 				fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
 				created++
+				taggedNow = append(taggedNow, p)
+			}
+			// forgeRelease "combined": the one release's tag too, at the same
+			// commit, so `git push --follow-tags` carries it with the rest. With
+			// tag events the caller pushes only the tags reported, and a
+			// combined tag belongs to no package, so `shiprig forge-release`
+			// makes and pushes it instead.
+			if events == nil {
+				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)))
+				if err != nil {
+					return err
+				}
+				switch {
+				case ctag == "" || done[ctag]:
+				case gitutil.TagExists(cmd.Context(), ws.Root, ctag):
+					skipped++
+				case dryRun:
+					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("would tag"), ctag)
+					created++
+				default:
+					if err := gitutil.CreateTag(cmd.Context(), ws.Root, ctag, ctag); err != nil {
+						return fmt.Errorf("tagging %s: %w", ctag, err)
+					}
+					fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), ctag)
+					created++
+				}
 			}
 			fmt.Fprintf(out, "\n%d tag(s), %s\n", created, commands.DimStyle.Render(fmt.Sprintf("%d already present", skipped)))
 			return nil

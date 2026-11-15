@@ -7,6 +7,12 @@ type Release struct {
 	Tag   string
 	Title string
 	Notes string
+	// Prerelease marks the release a prerelease where the forge has the notion
+	// (GitHub, Gitea; GitLab has none).
+	Prerelease bool
+	// Latest marks the release the repository's latest where the forge lets a
+	// release say so (GitHub only; GitLab and Gitea derive it from the dates).
+	Latest bool
 }
 
 // Provider is one forge backend (GitHub / GitLab / Gitea). It follows the
@@ -79,7 +85,14 @@ func (githubProvider) ReleaseExists(tag, root string, run Runner) bool {
 	return err == nil
 }
 func (githubProvider) CreateReleaseCmd(r Release) []string {
-	return []string{"gh", "release", "create", r.Tag, "--title", r.Title, "--notes", r.Notes}
+	argv := []string{"gh", "release", "create", r.Tag, "--title", r.Title, "--notes", r.Notes}
+	if r.Prerelease {
+		argv = append(argv, "--prerelease")
+	}
+	if r.Latest {
+		argv = append(argv, "--latest")
+	}
+	return argv
 }
 func (githubProvider) UploadAssetsCmd(tag string, files []string) []string {
 	argv := append([]string{"gh", "release", "upload", tag}, files...)
@@ -148,7 +161,11 @@ func (giteaProvider) ReleaseExists(tag, root string, run Runner) bool {
 	return false
 }
 func (giteaProvider) CreateReleaseCmd(r Release) []string {
-	return []string{"tea", "release", "create", "--tag", r.Tag, "--title", r.Title, "--note", r.Notes}
+	argv := []string{"tea", "release", "create", "--tag", r.Tag, "--title", r.Title, "--note", r.Notes}
+	if r.Prerelease {
+		argv = append(argv, "--prerelease")
+	}
+	return argv
 }
 
 // UploadAssetsCmd: tea attaches assets only at create time (`--asset`), with no

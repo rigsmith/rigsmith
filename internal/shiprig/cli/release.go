@@ -177,12 +177,18 @@ func newReleaseCmd() *cobra.Command {
 			}
 			runnerEnv := envstack.Environ(releaseEnv)
 
-			// release native handler: per-package forge releases. Output is
+			// release native handler: forge releases (per package, or one combined). Output is
 			// routed through the active reporter (so the live dashboard captures it
 			// instead of writing raw to the terminal).
 			fsel := forge.Selection{Forge: stepForge(cfg), URL: stepForgeURL(cfg)}
 			if gitOnly {
 				fsel.Forge = "none"
+			}
+			// A combined forge release whose tag or name needs one shared
+			// version is checked now, before the pipeline publishes anything.
+			if err := checkCombinedRelease(cmd.Context(), ws, steps); err != nil {
+				cmd.SilenceUsage = true
+				return err
 			}
 			// built is shared between the `build` and `release` handlers in a
 			// single run: build produces dist/ and records each package's artifacts;
@@ -305,7 +311,20 @@ func newReleaseCmd() *cobra.Command {
 						out("discover: " + err.Error())
 						return false
 					}
-					ok, msg := forge.Run(pkgs, ecoOf, attachPaths(built), ws.Config, fsel, ws.Root, execForgeRunner(cmd, runnerEnv), out)
+					var ok bool
+					var msg string
+					if ws.Config.ForgeRelease.Combined() {
+						// One release for what the release commit released: the
+						// packages the tag step tagged at HEAD.
+						_, ok, msg = forge.Make(forge.Request{
+							Packages: pkgs, Released: releasedAtHead(cmd.Context(), ws, pkgs, ecoOf), EcoOf: ecoOf,
+							Attach: attachPaths(built), Config: ws.Config, Selection: fsel, RepoRoot: ws.Root,
+							Run: execForgeRunner(cmd, runnerEnv), Report: out,
+							EnsureTag: combinedTagEnsurer(cmd.Context(), ws.Root, gitutil.DefaultRemote(cmd.Context(), ws.Root)),
+						})
+					} else {
+						ok, msg = forge.Run(pkgs, ecoOf, attachPaths(built), ws.Config, fsel, ws.Root, execForgeRunner(cmd, runnerEnv), out)
+					}
 					if msg != "" {
 						out(msg)
 					}
@@ -551,6 +570,32 @@ func distinctEcosystems(ecoOf map[string]string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// checkCombinedRelease fails a release whose forgeRelease config is invalid,
+// or whose combined release needs one shared version the plan's releasing
+// packages don't have. Only when the plan runs the forge `release` step; an
+// empty plan (a resumed release, already versioned) is left to that step.
+func checkCombinedRelease(ctx context.Context, ws *commands.Workspace, steps []pipeline.ResolvedStep) error {
+	fr := ws.Config.ForgeRelease
+	if err := fr.Validate(); err != nil {
+		return err
+	}
+	if !fr.Combined() || !hasEnabledStep(steps, "release") {
+		return nil
+	}
+	rps, err := commands.ReleasePackages(ctx, ws)
+	if err != nil {
+		return nil // the version step reports a planning error
+	}
+	var releasing []plugin.Package
+	for _, rp := range rps {
+		if rp.Releasing() && !ws.Config.SkipsTag(rp.Name) {
+			releasing = append(releasing, plugin.Package{Name: rp.Name, Version: rp.Next})
+		}
+	}
+	_, err = forge.SharedVersion(releasing, fr)
+	return err
 }
 
 // plannedVersions returns each releasing package's bumped version (name ->

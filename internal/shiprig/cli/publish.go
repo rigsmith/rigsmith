@@ -194,6 +194,18 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// forgeRelease "combined" needs the packages this publish tags to
+			// share a version when its templates use one. Checked now, before
+			// a registry is touched, rather than at the forge release after.
+			if !noGitTag && ws.Stackspace == nil {
+				if err := checkCombinedPublish(cmd.Context(), ws, pkgs, ecoOf); err != nil {
+					if !dryRun {
+						cmd.SilenceUsage = true
+						return err
+					}
+					fmt.Fprintln(cmd.OutOrStdout(), commands.DimStyle.Render("warning: "+err.Error()))
+				}
+			}
 			// From a pack directory, exactly the files pack built go out, in
 			// the plan's order, and nothing is built.
 			packed := map[string]packedRelease{}
@@ -412,6 +424,7 @@ func newPublishCmd() *cobra.Command {
 			// one "tagged+pushed" then eleven "tag exists" as each iteration
 			// re-reads the tag the previous one just created).
 			done := map[string]bool{}
+			var taggedNow []plugin.Package // packages whose tag this run makes (or would)
 			for _, p := range pkgs {
 				if ws.Config.SkipsTag(p.Name) {
 					continue
@@ -450,6 +463,7 @@ func newPublishCmd() *cobra.Command {
 					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("tag exists"), tag)
 					continue
 				}
+				taggedNow = append(taggedNow, p)
 				if dryRun {
 					push := ""
 					if remote != "" {
@@ -480,6 +494,22 @@ func newPublishCmd() *cobra.Command {
 					fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), tag)
 				}
 			}
+			// forgeRelease "combined": its tag too, made and pushed like the
+			// rest. With tag events the caller pushes only the tags reported,
+			// and `shiprig forge-release` makes this one (see newTagCmd).
+			if events == nil {
+				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)))
+				if err != nil {
+					return err
+				}
+				if ctag != "" && !done[ctag] {
+					line, err := combinedTagEnsurer(cmd.Context(), ws.Root, remote)(ctag, dryRun)
+					if err != nil {
+						return fmt.Errorf("tagging %s: %w", ctag, err)
+					}
+					fmt.Fprintln(out, line)
+				}
+			}
 			return nil
 		},
 	}
@@ -495,6 +525,34 @@ func newPublishCmd() *cobra.Command {
 	f.BoolVar(&allowPend, "allow-pending", false, "publish the versions on disk even though changesets are waiting to bump them (by default publish refuses until shiprig version has run)")
 	f.StringVar(&packDir, "from-pack-dir", "", "publish the files `shiprig pack` built into this directory, building nothing (as `changeset publish --from-pack-dir`)")
 	return cmd
+}
+
+// checkCombinedPublish fails when forgeRelease is invalid, or is "combined"
+// with a template using ${version} and the packages this publish will tag (those
+// whose tag is on neither this clone nor the remote) are on different versions.
+func checkCombinedPublish(ctx context.Context, ws *commands.Workspace, pkgs []plugin.Package, ecoOf map[string]string) error {
+	fr := ws.Config.ForgeRelease
+	if err := fr.Validate(); err != nil {
+		return err
+	}
+	if !fr.Combined() || !fr.UsesVersion() {
+		return nil
+	}
+	remote := gitutil.DefaultRemote(ctx, ws.Root)
+	solo := singleApp(pkgs)
+	var pending []plugin.Package
+	for _, p := range pkgs {
+		if ws.Config.SkipsTag(p.Name) {
+			continue
+		}
+		tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo)
+		if gitutil.TagExists(ctx, ws.Root, tag) || remote != "" && gitutil.RemoteTagExists(ctx, ws.Root, remote, tag) {
+			continue
+		}
+		pending = append(pending, p)
+	}
+	_, err := combinedReleaseTag(ws.Config, pending)
+	return err
 }
 
 // releaseRunEnv is set in the environment of every command `shiprig release`
