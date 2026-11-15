@@ -263,8 +263,9 @@ idempotent.
 ### One release per version
 
 By default the `release` step makes one release per released package, on that
-package's own tag (`@acme/web@1.2.0`), with its `CHANGELOG.md` entry as the
-notes. A monorepo whose packages always release together can ask for **one**
+package's own tag (`@acme/web@1.2.0`), titled after that tag (a single-package
+repo's release on `v1.2.0` is titled `v1.2.0`), with its `CHANGELOG.md` entry as
+the notes. A monorepo whose packages always release together can ask for **one**
 release instead, with `forgeRelease` in the **changeset config**, where CI that
 reads only `.changeset/config.json` sees it too:
 

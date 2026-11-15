@@ -205,15 +205,16 @@ func Make(req Request) (results []Result, ok bool, message string) {
 		// The positional tag must be the one the tag/publish steps actually pushed
 		// (Go: dir/vX.Y.Z; single-app: vX.Y.Z; or a configured tagTemplate), so the
 		// forge attaches the release to it instead of creating a new, divergent tag
-		// at HEAD. The human-facing title keeps the friendly DisplayName@version
-		// form. Single-app is the count of ALL discovered packages (len(Packages),
-		// not the non-ignored len(released)), matching the tag/publish steps.
+		// at HEAD. The release is titled after its tag, as changesets' own action
+		// does: a single package's vX.Y.Z, a monorepo's name@X.Y.Z. Single-app is
+		// the count of ALL discovered packages (len(Packages), not the non-ignored
+		// len(released)), matching the tag/publish steps.
 		tagTemplate := ""
 		if cfg != nil {
 			tagTemplate = cfg.TagTemplate
 		}
 		tag := gitutil.RenderTag(tagTemplate, req.EcoOf[pkg.Name], pkg.Dir, pkg.Name, pkg.Version, len(req.Packages) == 1)
-		releaseTitle := title(pkg) + "@" + pkg.Version
+		releaseTitle := tag
 		res := Result{Tag: tag, Name: releaseTitle, Packages: []string{pkg.Name}}
 
 		if provider.ReleaseExists(tag, req.RepoRoot, req.Run) {

@@ -149,10 +149,39 @@ func TestForgeReleasePerPackageReleasesOnlyWhatIsTaggedAtHead(t *testing.T) {
 	gh := stubGH(t)
 
 	res, _ := runForgeRelease(t)
-	if res.Mode != "per-package" || len(res.Releases) != 1 || res.Releases[0].Tag != "lib@1.0.0" {
+	if res.Mode != "per-package" || len(res.Releases) != 1 || res.Releases[0].Tag != "lib@1.0.0" || res.Releases[0].Name != "lib@1.0.0" {
 		t.Fatalf("output = %+v", res)
 	}
-	if len(gh.creates) != 1 || gh.creates[0][2] != "lib@1.0.0" || slices.Contains(gh.creates[0], "--latest") {
+	if len(gh.creates) != 1 || gh.creates[0][2] != "lib@1.0.0" || gh.creates[0][slices.Index(gh.creates[0], "--title")+1] != "lib@1.0.0" ||
+		slices.Contains(gh.creates[0], "--latest") {
+		t.Errorf("creates = %v", gh.creates)
+	}
+}
+
+// A single-package repo is tagged v<version>, and its release is titled after
+// that tag, not <package>@<version>; the JSON name reports the title used.
+func TestForgeReleasePerPackageSinglePackageTitledAfterTag(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, ".changeset/config.json", `{}`)
+	writeFile(t, root, "package.json", `{ "name": "acme-tool", "version": "1.2.3" }`)
+	writeFile(t, root, "package-lock.json", "{}")
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"-c", "user.email=x@y.z", "-c", "user.name=x", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	t.Chdir(root)
+	tagRepo(t, root, "v1.2.3")
+	gh := stubGH(t)
+
+	res, _ := runForgeRelease(t)
+	if len(res.Releases) != 1 || res.Releases[0].Tag != "v1.2.3" || res.Releases[0].Name != "v1.2.3" {
+		t.Fatalf("output = %+v", res)
+	}
+	if len(gh.creates) != 1 || gh.creates[0][2] != "v1.2.3" || gh.creates[0][slices.Index(gh.creates[0], "--title")+1] != "v1.2.3" {
 		t.Errorf("creates = %v", gh.creates)
 	}
 }

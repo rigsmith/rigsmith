@@ -152,6 +152,11 @@ repo-page release marked Latest rather than one per package. Decisions:
   made those tags, and a re-run finds the same set. The per-package `release`
   step inside `shiprig release` keeps releasing every discovered package,
   idempotently, as before.
+- **A per-package release is titled after its tag**, as changesets' own action
+  titles it: `v1.2.3` in a single-package repo, `name@1.2.3` in a monorepo, or
+  whatever `tagTemplate` or the ecosystem (`dir/v1.2.3` for Go) renders. It
+  was `<package>@<version>` whatever the tag, which renamed a single-package
+  repo's releases once shiprig-action moved onto `forge-release`.
 - **The combined tag is made like the others**: `shiprig tag` creates it so
   `push --follow-tags` carries it, and `shiprig publish` creates and pushes it.
   It is not reported as a tag event (it belongs to no package), so under tag
