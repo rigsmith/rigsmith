@@ -198,7 +198,7 @@ func newPublishCmd() *cobra.Command {
 			// share a version when its templates use one. Checked now, before
 			// a registry is touched, rather than at the forge release after.
 			if !noGitTag && ws.Stackspace == nil {
-				if err := checkCombinedPublish(cmd.Context(), ws, pkgs, ecoOf); err != nil {
+				if err := checkCombinedPublish(cmd.Context(), ws, pkgs, ecoOf, events != nil); err != nil {
 					if !dryRun {
 						cmd.SilenceUsage = true
 						return err
@@ -539,10 +539,14 @@ func newPublishCmd() *cobra.Command {
 // checkCombinedPublish fails when forgeRelease is invalid, when its combined
 // tag already exists on another commit, or when a template uses ${version} and
 // the packages the combined release will cover are on different versions: the
-// ones this publish will tag (their tag is on neither this clone nor the
-// remote) and the ones already tagged at HEAD, the same set the tagging phase
-// renders the combined tag from.
-func checkCombinedPublish(ctx context.Context, ws *commands.Workspace, pkgs []plugin.Package, ecoOf map[string]string) error {
+// ones this publish will tag at HEAD and the ones already tagged there, the
+// same set the tagging phase renders the combined tag from.
+//
+// Which packages get tagged follows the tagging phase's own rule. With tag
+// events (remoteSkips), a tag already on the remote is skipped. Otherwise only
+// the local tag counts, so a tag that exists only on the remote is made again
+// here at HEAD, with --no-push or without, and its package belongs to the set.
+func checkCombinedPublish(ctx context.Context, ws *commands.Workspace, pkgs []plugin.Package, ecoOf map[string]string, remoteSkips bool) error {
 	fr := ws.Config.ForgeRelease
 	if err := fr.Validate(); err != nil {
 		return err
@@ -558,7 +562,7 @@ func checkCombinedPublish(ctx context.Context, ws *commands.Workspace, pkgs []pl
 			continue
 		}
 		tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, solo)
-		if gitutil.TagExists(ctx, ws.Root, tag) || remote != "" && gitutil.RemoteTagExists(ctx, ws.Root, remote, tag) {
+		if gitutil.TagExists(ctx, ws.Root, tag) || remoteSkips && remote != "" && gitutil.RemoteTagExists(ctx, ws.Root, remote, tag) {
 			continue
 		}
 		pending = append(pending, p)

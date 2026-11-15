@@ -185,9 +185,9 @@ func TestTagCreatesTheCombinedTag(t *testing.T) {
 	}
 }
 
-// publishTagging runs `shiprig publish --yes` (tagging on) with the npm adapter
-// recording.
-func publishTagging(t *testing.T) ([]plugin.PublishRequest, string, error) {
+// publishTagging runs `shiprig publish --yes` (tagging on) plus args with the
+// npm adapter recording.
+func publishTagging(t *testing.T, args ...string) ([]plugin.PublishRequest, string, error) {
 	t.Helper()
 	var mu sync.Mutex
 	var reqs []plugin.PublishRequest
@@ -206,7 +206,7 @@ func publishTagging(t *testing.T) ([]plugin.PublishRequest, string, error) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--yes"})
+	cmd.SetArgs(append([]string{"--yes"}, args...))
 	err := cmd.Execute()
 	return reqs, out.String(), err
 }
@@ -499,6 +499,40 @@ func TestPublishCombinedIgnoresOldTagsThatOnlyNeedPushing(t *testing.T) {
 	for _, tag := range []string{"lib@1.0.0", "app@2.0.0", "v2.0.0"} {
 		if !strings.Contains(string(remoteTags), tag) {
 			t.Errorf("remote lacks %s; has %q\n%s", tag, remoteTags, out)
+		}
+	}
+}
+
+// Without tag events, the tagging phase only asks whether a tag exists here: a
+// tag that exists only on the remote is made again at HEAD and joins the
+// combined release. So the preflight counts it too, and a remote-only
+// lib@1.0.0 beside an untagged app@2.0.0 stops publish before the registries,
+// with --no-push as without it.
+func TestPublishPreflightCountsRemoteOnlyTagsTheTaggingPhaseRemakes(t *testing.T) {
+	for _, args := range [][]string{{"--no-push"}, nil} {
+		root := planRepo(t, `{"ignore": ["done"], "forgeRelease": {"mode": "combined"}}`)
+		bare := t.TempDir()
+		for _, git := range [][]string{
+			{"init", "-q", "--bare", bare},
+			{"-C", root, "remote", "add", "origin", bare},
+			{"-C", root, "tag", "-a", "lib@1.0.0", "-m", "lib@1.0.0"},
+			{"-C", root, "push", "-q", "origin", "HEAD:refs/heads/main", "refs/tags/lib@1.0.0"},
+			{"-C", root, "tag", "-d", "lib@1.0.0"},
+			{"-C", root, "-c", "user.email=x@y.z", "-c", "user.name=x", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "next"},
+		} {
+			if out, err := exec.Command("git", git...).CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", git, err, out)
+			}
+		}
+		reqs, out, err := publishTagging(t, args...)
+		if err == nil {
+			t.Fatalf("publish %v succeeded; output:\n%s", args, out)
+		}
+		if !strings.Contains(err.Error(), "lib 1.0.0") || !strings.Contains(err.Error(), "app 2.0.0") {
+			t.Errorf("publish %v: err = %v", args, err)
+		}
+		if len(reqs) != 0 {
+			t.Errorf("publish %v went ahead: %d request(s)", args, len(reqs))
 		}
 	}
 }
