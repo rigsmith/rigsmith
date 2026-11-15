@@ -288,7 +288,13 @@ commit (those whose own tag points at `HEAD`):
   (the `tag` step) makes it, so `push --follow-tags` carries it with the rest,
   and `shiprig publish` makes and pushes it with its own tags. The `release`
   step and `shiprig forge-release` make and push it themselves if it's still
-  missing, before creating the release.
+  missing, before creating the release. A combined tag that already exists on
+  another commit belongs to an earlier release and is refused rather than
+  reused, so a template without `${version}` (`"tag": "release"`) works for
+  one release only.
+- **Templates.** `${version}` is the only placeholder; any other `${…}`, or a
+  tag git would refuse (`"Acme ${version}"`, with its space), is an error
+  before anything is published.
 - **Name.** The `name` template; without one, the rendered tag.
 - **Latest.** On GitHub the release is created with `--latest`. GitLab and
   Gitea have no such flag (they treat the newest release as latest), so nothing
@@ -312,7 +318,8 @@ versions, shiprig stops before anything irreversible, naming each package and
 version: `shiprig release` checks the plan before the pipeline starts, and
 `shiprig publish` checks the packages it will tag before touching a registry.
 A changesets `fixed` group is how a monorepo guarantees one shared version.
-Templates without `${version}` (`"tag": "release"`) take any mix.
+Templates without `${version}` take any mix, though such a tag can be used
+only once (see **Tag** above).
 
 ### `shiprig forge-release`
 
@@ -353,9 +360,12 @@ With `--json`, stdout carries one object and progress goes to stderr:
 (`--dry-run`). `url` is filled where the forge CLI can print it (GitHub).
 Nothing tagged at `HEAD` is not an error: `releases` is empty and `message`
 says so. A failure exits non-zero with the JSON's `message` saying what failed.
-With tag events (`--output` or `$CHANGESETS_OUTPUT`), publish leaves the tags
-local for the caller to push and reports only per-package tags, so in that
-setup `forge-release` is what makes and pushes the combined tag.
+With tag events (`--output` or `$CHANGESETS_OUTPUT`), or `--no-push`, publish
+leaves its tags local. Push them before `forge-release` (the caller's own push
+of the reported tags, or `git push --follow-tags`): `forge-release` pushes only
+the combined tag, which it makes itself since it is no package's event, and a
+per-package release on a tag the forge can't see makes the forge create that
+tag at its default branch, which may not be the release commit.
 
 ## Publish authentication
 

@@ -77,9 +77,17 @@ checks that the file can be written before it touches any registry.
 Forge releases are one per package by default. `forgeRelease` in
 `.changeset/config.json` (`{"mode": "combined", "name": "Acme ${version}",
 "tag": "v${version}"}`) makes one release per version instead, marked latest,
-with every released package's changelog entry under its own heading.
+with every released package's changelog entry under its own heading. It never
+splits into one release per distinct version: when a template uses
+`${version}`, the released packages must share one (a changesets `fixed`
+group guarantees it), and a release whose packages don't is stopped before it
+publishes anything.
 `shiprig forge-release` makes the forge release(s) for the packages tagged at
-`HEAD`, for CI that runs `shiprig publish` itself (`--dry-run`, `--json`). See
+`HEAD`, for CI that runs `shiprig publish` itself (`--dry-run`, `--json`).
+When publish left its tags local (`--output`, `$CHANGESETS_OUTPUT` or
+`--no-push`), push them before `forge-release` (`git push --follow-tags`):
+a per-package release on a tag the forge can't see makes the forge create the
+tag at its default branch. See
 [the pipeline docs](../../site/shiprig/pipeline.md#one-release-per-version).
 
 `version` runs the shared engine in `rigsmith/core`: it parses changesets,

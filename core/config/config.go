@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cfgfind"
@@ -442,13 +443,51 @@ type ForgeRelease struct {
 const DefaultForgeReleaseTag = "v${version}"
 
 // Validate reports a mode it does not know, so a typo is loud rather than read
-// as the per-package default.
+// as the per-package default, and, in combined mode, a template with a
+// placeholder other than ${version} or a tag that can't be a git tag. It runs
+// before anything is published, so a bad template stops a release up front
+// rather than after the registries have it.
 func (f ForgeRelease) Validate() error {
 	switch f.Mode {
-	case "", ForgeReleasePerPackage, ForgeReleaseCombined:
+	case "", ForgeReleasePerPackage:
 		return nil
+	case ForgeReleaseCombined:
+	default:
+		return fmt.Errorf("forgeRelease.mode %q: want %q or %q", f.Mode, ForgeReleasePerPackage, ForgeReleaseCombined)
 	}
-	return fmt.Errorf("forgeRelease.mode %q: want %q or %q", f.Mode, ForgeReleasePerPackage, ForgeReleaseCombined)
+	for _, field := range []struct{ name, value string }{{"tag", f.Tag}, {"name", f.Name}} {
+		for _, m := range placeholderPattern.FindAllStringSubmatch(field.value, -1) {
+			if m[1] != "version" {
+				return fmt.Errorf("forgeRelease.%s %q: unknown placeholder ${%s}; the only one is ${version}", field.name, field.value, m[1])
+			}
+		}
+	}
+	if tag, _ := f.Render("1.2.3"); !validTagName(tag) {
+		return fmt.Errorf("forgeRelease.tag %q: renders %q, which is not a valid git tag name", f.TagTemplate(), tag)
+	}
+	return nil
+}
+
+var placeholderPattern = regexp.MustCompile(`\$\{([^}]*)\}`)
+
+// validTagName applies git's ref-name rules (git check-ref-format) to a tag.
+func validTagName(tag string) bool {
+	if tag == "" || tag == "@" || strings.Contains(tag, "..") || strings.Contains(tag, "@{") ||
+		strings.Contains(tag, "//") || strings.HasPrefix(tag, "-") || strings.HasPrefix(tag, "/") ||
+		strings.HasSuffix(tag, "/") || strings.HasSuffix(tag, ".") || strings.HasSuffix(tag, ".lock") {
+		return false
+	}
+	for _, r := range tag {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(" ~^:?*[\\", r) {
+			return false
+		}
+	}
+	for _, part := range strings.Split(tag, "/") {
+		if strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
 }
 
 // Combined reports whether one release per version is configured.

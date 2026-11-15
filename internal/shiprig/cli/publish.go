@@ -497,8 +497,12 @@ func newPublishCmd() *cobra.Command {
 			// forgeRelease "combined": its tag too, made and pushed like the
 			// rest. With tag events the caller pushes only the tags reported,
 			// and `shiprig forge-release` makes this one (see newTagCmd).
-			if events == nil {
-				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)))
+			if events == nil && notPerPackage(ws.Config) {
+				atHead, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
+				if err != nil {
+					return err
+				}
+				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, atHead))
 				if err != nil {
 					return err
 				}
@@ -527,15 +531,18 @@ func newPublishCmd() *cobra.Command {
 	return cmd
 }
 
-// checkCombinedPublish fails when forgeRelease is invalid, or is "combined"
-// with a template using ${version} and the packages this publish will tag (those
-// whose tag is on neither this clone nor the remote) are on different versions.
+// checkCombinedPublish fails when forgeRelease is invalid, when its combined
+// tag already exists on another commit, or when a template uses ${version} and
+// the packages the combined release will cover are on different versions: the
+// ones this publish will tag (their tag is on neither this clone nor the
+// remote) and the ones already tagged at HEAD, the same set the tagging phase
+// renders the combined tag from.
 func checkCombinedPublish(ctx context.Context, ws *commands.Workspace, pkgs []plugin.Package, ecoOf map[string]string) error {
 	fr := ws.Config.ForgeRelease
 	if err := fr.Validate(); err != nil {
 		return err
 	}
-	if !fr.Combined() || !fr.UsesVersion() {
+	if !fr.Combined() {
 		return nil
 	}
 	remote := gitutil.DefaultRemote(ctx, ws.Root)
@@ -551,7 +558,17 @@ func checkCombinedPublish(ctx context.Context, ws *commands.Workspace, pkgs []pl
 		}
 		pending = append(pending, p)
 	}
-	_, err := combinedReleaseTag(ws.Config, pending)
+	atHead, err := releasedAtHead(ctx, ws, pkgs, ecoOf)
+	if err != nil {
+		return err
+	}
+	ctag, err := combinedReleaseTag(ws.Config, unionByName(pending, atHead))
+	if err != nil || ctag == "" {
+		return err
+	}
+	// A combined tag already on another commit would fail the tagging phase
+	// after the registries have the packages; a dry run of it says so now.
+	_, _, err = ensureCombinedTag(ctx, ws.Root, remote, ctag, true)
 	return err
 }
 

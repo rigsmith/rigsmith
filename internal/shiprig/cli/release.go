@@ -316,8 +316,13 @@ func newReleaseCmd() *cobra.Command {
 					if ws.Config.ForgeRelease.Combined() {
 						// One release for what the release commit released: the
 						// packages the tag step tagged at HEAD.
+						atHead, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
+						if err != nil {
+							out("release: " + err.Error())
+							return false
+						}
 						_, ok, msg = forge.Make(forge.Request{
-							Packages: pkgs, Released: releasedAtHead(cmd.Context(), ws, pkgs, ecoOf), EcoOf: ecoOf,
+							Packages: pkgs, Released: atHead, EcoOf: ecoOf,
 							Attach: attachPaths(built), Config: ws.Config, Selection: fsel, RepoRoot: ws.Root,
 							Run: execForgeRunner(cmd, runnerEnv), Report: out,
 							EnsureTag: combinedTagEnsurer(cmd.Context(), ws.Root, gitutil.DefaultRemote(cmd.Context(), ws.Root)),
@@ -573,9 +578,16 @@ func distinctEcosystems(ecoOf map[string]string) []string {
 }
 
 // checkCombinedRelease fails a release whose forgeRelease config is invalid,
-// or whose combined release needs one shared version the plan's releasing
-// packages don't have. Only when the plan runs the forge `release` step; an
-// empty plan (a resumed release, already versioned) is left to that step.
+// or whose combined release needs one shared version that the packages it
+// will cover don't have. Only when the plan runs the forge `release` step.
+//
+// The set checked is the one the forge step will find tagged at HEAD, as this
+// plan will leave it:
+//   - with the version step, each package the plan bumps, at its new version;
+//   - without it (`--only release`, `--from publish`), the packages already
+//     tagged at HEAD, at the versions on disk;
+//   - with the tag step, every other package whose tag at the version on disk
+//     is on neither this clone nor the remote, since `shiprig tag` tags it.
 func checkCombinedRelease(ctx context.Context, ws *commands.Workspace, steps []pipeline.ResolvedStep) error {
 	fr := ws.Config.ForgeRelease
 	if err := fr.Validate(); err != nil {
@@ -586,15 +598,48 @@ func checkCombinedRelease(ctx context.Context, ws *commands.Workspace, steps []p
 	}
 	rps, err := commands.ReleasePackages(ctx, ws)
 	if err != nil {
-		return nil // the version step reports a planning error
+		// Failing open here would let the version check first happen after
+		// publish, when the forge step renders the tag.
+		return fmt.Errorf("forgeRelease: planning the release to check its packages share a version: %w", err)
 	}
-	var releasing []plugin.Package
-	for _, rp := range rps {
-		if rp.Releasing() && !ws.Config.SkipsTag(rp.Name) {
-			releasing = append(releasing, plugin.Package{Name: rp.Name, Version: rp.Next})
+	versionRuns := hasEnabledStep(steps, "version")
+	tagRuns := hasEnabledStep(steps, "tag")
+	atHead := map[string]bool{}
+	if !versionRuns {
+		// The version step would make a new commit; without it, HEAD is the
+		// release commit and its tags count.
+		tags, err := gitutil.TagsAt(ctx, ws.Root, "HEAD")
+		if err != nil {
+			return err
+		}
+		for _, t := range tags {
+			atHead[t] = true
 		}
 	}
-	_, err = forge.SharedVersion(releasing, fr)
+	remote := ""
+	if tagRuns {
+		remote = gitutil.DefaultRemote(ctx, ws.Root)
+	}
+	solo := len(rps) == 1
+	var covered []plugin.Package
+	for _, rp := range rps {
+		if ws.Config.SkipsTag(rp.Name) {
+			continue
+		}
+		if versionRuns && rp.Releasing() {
+			covered = append(covered, plugin.Package{Name: rp.Name, Version: rp.Next})
+			continue
+		}
+		tag := gitutil.RenderTag(ws.Config.TagTemplate, rp.Eco, rp.Dir, rp.Name, rp.Current, solo)
+		switch {
+		case atHead[tag]:
+		case tagRuns && !gitutil.TagExists(ctx, ws.Root, tag) && (remote == "" || !gitutil.RemoteTagExists(ctx, ws.Root, remote, tag)):
+		default:
+			continue
+		}
+		covered = append(covered, plugin.Package{Name: rp.Name, Version: rp.Current})
+	}
+	_, err = forge.SharedVersion(covered, fr)
 	return err
 }
 

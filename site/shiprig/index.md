@@ -48,8 +48,11 @@ The whole workflow is wired:
 - `tag` — create the git tags for the released versions
 - `forge-release` — create the forge release(s) for the packages tagged at
   `HEAD`, one per package or one combined release per version
-  (`forgeRelease` in the changeset config), idempotently, with `--dry-run`
-  and `--json` for CI ([details](pipeline.md#shiprig-forge-release))
+  (`forgeRelease` in the changeset config; a `${version}` template needs the
+  packages on one shared version, which a changesets `fixed` group
+  guarantees), idempotently, with `--dry-run` and `--json` for CI. Push the
+  package tags first when publish left them local
+  ([details](pipeline.md#shiprig-forge-release))
 - `publish-plan` — what a publish would release, as `changeset publish-plan`:
   each package's registry is asked whether its version is already there (for
   npm: `node.packageSource`, else the package's `publishConfig.registry`, else

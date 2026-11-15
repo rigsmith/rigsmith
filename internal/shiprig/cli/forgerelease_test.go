@@ -13,6 +13,7 @@ import (
 	"github.com/rigsmith/rigsmith/core/plugin"
 	"github.com/rigsmith/rigsmith/internal/changerig/commands"
 	"github.com/rigsmith/rigsmith/internal/shiprig/forge"
+	"github.com/rigsmith/rigsmith/internal/shiprig/pipeline"
 	"github.com/spf13/cobra"
 )
 
@@ -267,5 +268,159 @@ func TestReleaseRefusesMismatchedCombinedVersionsUpFront(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "publish") {
 		t.Errorf("the pipeline started:\n%s", out.String())
+	}
+}
+
+// runForgeReleaseFailing runs forge-release --json expecting it to fail, and
+// returns the JSON envelope it still printed.
+func runForgeReleaseFailing(t *testing.T, args ...string) forgeReleaseOutput {
+	t.Helper()
+	cmd := newForgeReleaseCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(append([]string{"--forge", "github", "--json"}, args...))
+	if err := cmd.Execute(); err == nil {
+		t.Fatalf("forge-release succeeded:\n%s", out.String())
+	}
+	var res forgeReleaseOutput
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("no JSON envelope on failure: %v\nstdout: %q", err, out.String())
+	}
+	if res.Message == "" {
+		t.Errorf("envelope carries no message: %+v", res)
+	}
+	return res
+}
+
+// A failure to read the release config still answers in JSON.
+func TestForgeReleaseJSONOnEarlyFailure(t *testing.T) {
+	root := planRepo(t, combinedCfg)
+	writeFile(t, root, ".changeset/release.jsonc", "{}")
+	writeFile(t, root, ".changeset/shiprig.json", "{}")
+	cmd := newForgeReleaseCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--json"}) // no --forge: the release config is read, and is ambiguous
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("forge-release succeeded over two release configs")
+	}
+	var res forgeReleaseOutput
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil || res.Message == "" {
+		t.Errorf("envelope = %q (%v)", out.String(), err)
+	}
+}
+
+// An unborn HEAD is a git failure, not "nothing tagged".
+func TestForgeReleaseUnbornHeadFails(t *testing.T) {
+	root := planRepo(t, combinedCfg)
+	if out, err := exec.Command("git", "-C", root, "checkout", "-q", "--orphan", "fresh").CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	stubGH(t)
+	res := runForgeReleaseFailing(t)
+	if !strings.Contains(res.Message, "HEAD") {
+		t.Errorf("message = %q", res.Message)
+	}
+}
+
+// A combined tag already on an earlier commit is refused, not reused: the new
+// release would otherwise hang off the old one.
+func TestForgeReleaseRefusesACombinedTagOnAnotherCommit(t *testing.T) {
+	root := planRepo(t, combinedCfg)
+	tagRepo(t, root, "v1.0.0")
+	if out, err := exec.Command("git", "-C", root, "-c", "user.email=x@y.z", "-c", "user.name=x", "-c", "commit.gpgsign=false",
+		"commit", "-q", "--allow-empty", "-m", "next").CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	tagRepo(t, root, "lib@1.0.0", "done@1.0.0")
+	gh := stubGH(t)
+	res := runForgeReleaseFailing(t)
+	if !strings.Contains(res.Message, "v1.0.0 already exists") || len(gh.creates) != 0 {
+		t.Errorf("message = %q, creates = %v", res.Message, gh.creates)
+	}
+}
+
+// The publish preflight checks the same packages the combined tag is rendered
+// from: those it will tag plus those already tagged at HEAD.
+func TestPublishPreflightCountsPackagesAlreadyTaggedAtHead(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["done"], "forgeRelease": {"mode": "combined"}}`)
+	tagRepo(t, root, "app@2.0.0")
+	reqs, out, err := publishTagging(t)
+	if err == nil {
+		t.Fatalf("publish succeeded; output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "app 2.0.0") || !strings.Contains(err.Error(), "lib 1.0.0") {
+		t.Errorf("error = %v", err)
+	}
+	if len(reqs) != 0 {
+		t.Errorf("publish went ahead: %d request(s)", len(reqs))
+	}
+}
+
+// A release plan that can't be built stops the combined check rather than
+// letting the version mismatch surface only after publish.
+func TestCheckCombinedReleaseReportsAPlanningError(t *testing.T) {
+	root := planRepo(t, `{"forgeRelease": {"mode": "combined"}}`)
+	writeFile(t, root, ".changeset/broken.md", "---\n\"lib\": sideways\n---\n\nBad bump.\n")
+	ws, err := commands.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, perr := commands.ReleasePackages(t.Context(), ws); perr == nil {
+		t.Skip("this changeset does not make planning fail; nothing to check")
+	}
+	steps, err := pipeline.Resolve(&pipeline.Config{}, pipeline.ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = checkCombinedRelease(t.Context(), ws, steps)
+	if err == nil || !strings.Contains(err.Error(), "planning the release") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// The release preflight checks every package the tag step will tag, not only
+// the bumped ones: a bumped lib (1.0.1) beside an untagged, unbumped done
+// (1.0.0) would only fail after the version commit otherwise.
+func TestCheckCombinedReleaseCountsUntaggedPackagesTheTagStepWillTag(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["app"], "forgeRelease": {"mode": "combined"}}`)
+	writeFile(t, root, ".changeset/lib-only.md", "---\n\"lib\": patch\n---\n\nLib only.\n")
+	ws, err := commands.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := pipeline.Resolve(&pipeline.Config{}, pipeline.ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = checkCombinedRelease(t.Context(), ws, steps)
+	if err == nil || !strings.Contains(err.Error(), "lib 1.0.1") || !strings.Contains(err.Error(), "done 1.0.0") {
+		t.Errorf("err = %v", err)
+	}
+	// Once done's 1.0.0 is tagged (an earlier release), only lib is covered.
+	tagRepo(t, root, "done@1.0.0")
+	if err := checkCombinedRelease(t.Context(), ws, steps); err != nil {
+		t.Errorf("with done already tagged: %v", err)
+	}
+}
+
+// Without the version step (`--only release`), the release covers what is
+// tagged at HEAD at the versions on disk; pending changesets don't count.
+func TestCheckCombinedReleaseWithoutTheVersionStepUsesTagsAtHead(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["app"], "forgeRelease": {"mode": "combined"}}`)
+	writeFile(t, root, ".changeset/two-bumps.md", "---\n\"lib\": patch\n\"done\": minor\n---\n\nTwo bumps.\n")
+	tagRepo(t, root, "lib@1.0.0", "done@1.0.0")
+	ws, err := commands.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := pipeline.Resolve(&pipeline.Config{}, pipeline.ResolveOptions{Only: []string{"release"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCombinedRelease(t.Context(), ws, steps); err != nil {
+		t.Errorf("--only release over lib and done at 1.0.0: %v", err)
 	}
 }

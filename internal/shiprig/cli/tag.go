@@ -115,24 +115,26 @@ func newTagCmd() *cobra.Command {
 			// tag events the caller pushes only the tags reported, and a
 			// combined tag belongs to no package, so `shiprig forge-release`
 			// makes and pushes it instead.
-			if events == nil {
-				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)))
+			if events == nil && notPerPackage(ws.Config) {
+				atHead, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
 				if err != nil {
 					return err
 				}
-				switch {
-				case ctag == "" || done[ctag]:
-				case gitutil.TagExists(cmd.Context(), ws.Root, ctag):
-					skipped++
-				case dryRun:
-					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("would tag"), ctag)
-					created++
-				default:
-					if err := gitutil.CreateTag(cmd.Context(), ws.Root, ctag, ctag); err != nil {
+				ctag, err := combinedReleaseTag(ws.Config, unionByName(taggedNow, atHead))
+				if err != nil {
+					return err
+				}
+				if ctag != "" && !done[ctag] {
+					existed, line, err := ensureCombinedTag(cmd.Context(), ws.Root, "", ctag, dryRun)
+					if err != nil {
 						return fmt.Errorf("tagging %s: %w", ctag, err)
 					}
-					fmt.Fprintf(out, "%s %s\n", commands.PatchStyle.Render("tagged"), ctag)
-					created++
+					if existed {
+						skipped++
+					} else {
+						fmt.Fprintln(out, line)
+						created++
+					}
 				}
 			}
 			fmt.Fprintf(out, "\n%d tag(s), %s\n", created, commands.DimStyle.Render(fmt.Sprintf("%d already present", skipped)))

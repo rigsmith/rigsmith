@@ -50,10 +50,6 @@ func newForgeReleaseCmd() *cobra.Command {
 			"release. Existing releases are skipped, so a re-run is safe. Run it after\n" +
 			"`shiprig publish`; it attaches no build assets.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ws, err := commands.Open()
-			if err != nil {
-				return err
-			}
 			out := cmd.OutOrStdout()
 			// With --json, stdout carries only the JSON; progress goes to stderr.
 			progress := out
@@ -61,9 +57,6 @@ func newForgeReleaseCmd() *cobra.Command {
 				progress = cmd.ErrOrStderr()
 			}
 			result := forgeReleaseOutput{Mode: config.ForgeReleasePerPackage, DryRun: dryRun, Releases: []forge.Result{}}
-			if ws.Config.ForgeRelease.Combined() {
-				result.Mode = config.ForgeReleaseCombined
-			}
 			finish := func(ok bool) error {
 				if jsonOut {
 					enc := json.NewEncoder(out)
@@ -80,9 +73,22 @@ func newForgeReleaseCmd() *cobra.Command {
 				}
 				return nil
 			}
-			if err := ws.Config.ForgeRelease.Validate(); err != nil {
+			// Every failure goes out through finish, so --json always prints
+			// the envelope, with the failure in its message.
+			fail := func(err error) error {
 				result.Message = err.Error()
 				return finish(false)
+			}
+
+			ws, err := commands.Open()
+			if err != nil {
+				return fail(err)
+			}
+			if ws.Config.ForgeRelease.Combined() {
+				result.Mode = config.ForgeReleaseCombined
+			}
+			if err := ws.Config.ForgeRelease.Validate(); err != nil {
+				return fail(err)
 			}
 			if ws.Stackspace != nil {
 				result.Message = "stackspace: a fused history is not released — nothing to do"
@@ -93,21 +99,24 @@ func newForgeReleaseCmd() *cobra.Command {
 			if !cmd.Flags().Changed("forge") {
 				rcfg, err := resolveReleaseConfig(ws.Root, ws.ChangesetDir)
 				if err != nil {
-					return err
+					return fail(err)
 				}
 				sel = forge.Selection{Forge: stepForge(rcfg), URL: stepForgeURL(rcfg)}
 			}
 			releaseEnv, err := loadReleaseEnv(ws.Root, noEnv)
 			if err != nil {
-				return err
+				return fail(err)
 			}
 			run := newForgeRunner(cmd, envstack.Environ(releaseEnv))
 
 			pkgs, ecoOf, err := ws.Discover(cmd.Context())
 			if err != nil {
-				return err
+				return fail(err)
 			}
-			released := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
+			released, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
+			if err != nil {
+				return fail(err)
+			}
 			if len(released) == 0 {
 				result.Message = "No package is tagged at HEAD; nothing to release."
 				return finish(true)
@@ -148,9 +157,14 @@ func printLines(w io.Writer, lines []string) {
 
 // releasedAtHead returns the packages whose own tag points at HEAD: what the
 // release commit released. Never nil, so forge.Request reads it as a subset.
-func releasedAtHead(ctx context.Context, ws *commands.Workspace, pkgs []plugin.Package, ecoOf map[string]string) []plugin.Package {
+// A git failure (an unborn HEAD) is an error, not "nothing released".
+func releasedAtHead(ctx context.Context, ws *commands.Workspace, pkgs []plugin.Package, ecoOf map[string]string) ([]plugin.Package, error) {
+	tags, err := gitutil.TagsAt(ctx, ws.Root, "HEAD")
+	if err != nil {
+		return nil, err
+	}
 	at := map[string]bool{}
-	for _, t := range gitutil.TagsAt(ctx, ws.Root, "HEAD") {
+	for _, t := range tags {
 		at[t] = true
 	}
 	solo := singleApp(pkgs)
@@ -163,40 +177,85 @@ func releasedAtHead(ctx context.Context, ws *commands.Workspace, pkgs []plugin.P
 			released = append(released, p)
 		}
 	}
-	return released
+	return released, nil
 }
 
 // combinedTagEnsurer makes the combined release's tag the way the publish step
 // makes the others: an annotated tag at HEAD, pushed to remote ("" keeps it
-// local). Already on the remote (or, with no remote, local) is done.
+// local). It is the forge.Request.EnsureTag shape of ensureCombinedTag.
 func combinedTagEnsurer(ctx context.Context, root, remote string) func(tag string, dryRun bool) (string, error) {
 	return func(tag string, dryRun bool) (string, error) {
-		local := gitutil.TagExists(ctx, root, tag)
-		if remote != "" && gitutil.RemoteTagExists(ctx, root, remote, tag) || remote == "" && local {
-			return "tag exists " + tag, nil
-		}
-		if dryRun {
-			if remote == "" {
-				return "would tag " + tag, nil
-			}
-			if local {
-				return "would push " + tag + " → " + remote, nil
-			}
-			return "would tag " + tag + " → push " + remote, nil
-		}
-		if !local {
-			if err := gitutil.CreateTag(ctx, root, tag, tag); err != nil {
-				return "", err
-			}
-		}
-		if remote == "" {
-			return "tagged " + tag, nil
-		}
-		if err := gitutil.PushTag(ctx, root, remote, tag); err != nil {
-			return "", fmt.Errorf("pushing: %w", err)
-		}
-		return "tagged+pushed " + tag + " → " + remote, nil
+		_, line, err := ensureCombinedTag(ctx, root, remote, tag, dryRun)
+		return line, err
 	}
+}
+
+// ensureCombinedTag makes tag exist at HEAD: created when missing, and pushed
+// to remote unless remote is "". A tag already there (on the remote, or with
+// no remote, locally) is done, existed=true, but only when it points at HEAD:
+// one on another commit belongs to an earlier release, and reusing it would
+// hang this release's notes and assets on that one, so it is an error.
+func ensureCombinedTag(ctx context.Context, root, remote, tag string, dryRun bool) (existed bool, line string, err error) {
+	head, err := gitutil.CommitOf(ctx, root, "HEAD")
+	if err != nil {
+		return false, "", err
+	}
+	elsewhere := func(at string) error {
+		return fmt.Errorf("the combined release's tag %s already exists at %s, not at the release commit %s; "+
+			"each release needs its own tag (use ${version} in forgeRelease.tag)", tag, shortHash(at), shortHash(head))
+	}
+	local := gitutil.TagExists(ctx, root, tag)
+	if local {
+		at, err := gitutil.CommitOf(ctx, root, "refs/tags/"+tag)
+		if err != nil {
+			return false, "", err
+		}
+		if at != head {
+			return false, "", elsewhere(at)
+		}
+	}
+	if remote != "" {
+		at, found, err := gitutil.RemoteTagCommit(ctx, root, remote, tag)
+		if err != nil {
+			return false, "", fmt.Errorf("looking up tag %s on %s: %w", tag, remote, err)
+		}
+		if found {
+			if at != head {
+				return false, "", elsewhere(at)
+			}
+			return true, "tag exists " + tag, nil
+		}
+	} else if local {
+		return true, "tag exists " + tag, nil
+	}
+	if dryRun {
+		if remote == "" {
+			return false, "would tag " + tag, nil
+		}
+		if local {
+			return false, "would push " + tag + " → " + remote, nil
+		}
+		return false, "would tag " + tag + " → push " + remote, nil
+	}
+	if !local {
+		if err := gitutil.CreateTag(ctx, root, tag, tag); err != nil {
+			return false, "", err
+		}
+	}
+	if remote == "" {
+		return false, "tagged " + tag, nil
+	}
+	if err := gitutil.PushTag(ctx, root, remote, tag); err != nil {
+		return false, "", fmt.Errorf("pushing: %w", err)
+	}
+	return false, "tagged+pushed " + tag + " → " + remote, nil
+}
+
+func shortHash(h string) string {
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
 }
 
 // combinedReleaseTag returns the combined release's tag for released, or ""
@@ -218,6 +277,14 @@ func combinedReleaseTag(cfg *config.Config, released []plugin.Package) (string, 
 	}
 	tag, _ := cfg.ForgeRelease.Render(version)
 	return tag, nil
+}
+
+// notPerPackage reports whether forgeRelease asks for anything but the default
+// per-package releases: combined, or a mode combinedReleaseTag will reject.
+// Per-package repos skip the combined-tag work, git lookups included.
+func notPerPackage(cfg *config.Config) bool {
+	m := cfg.ForgeRelease.Mode
+	return m != "" && m != config.ForgeReleasePerPackage
 }
 
 // unionByName returns a followed by the packages of b not already in a.

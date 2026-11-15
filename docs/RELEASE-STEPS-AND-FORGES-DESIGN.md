@@ -157,6 +157,11 @@ repo-page release marked Latest rather than one per package. Decisions:
   It is not reported as a tag event (it belongs to no package), so under tag
   events the forge step makes and pushes it before creating the release, which
   it does in every mode as a backstop.
+  An existing combined tag is reused only when it points at the release
+  commit; one on another commit is an earlier release's, and is an error
+  (`shiprig publish` checks this before the registry push).
+- **Templates are validated up front**: `${version}` is the only placeholder,
+  and the tag rendered from a sample version must be a valid git ref name.
 - **Latest / prerelease** ride on `Release` as flags the providers render where
   their CLI has them: GitHub `--latest`/`--prerelease`, Gitea `--prerelease`,
   GitLab neither. A prerelease is never marked latest.
