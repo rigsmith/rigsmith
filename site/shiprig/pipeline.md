@@ -701,7 +701,8 @@ exactly as for any project in that language. For a **dotnet** base the build run
   (which must still be set — it names the profile). `vpk` and the DMG's
   `codesign`/`notarytool` are pointed at that keychain with `--keychain`, so your
   login keychain is not read; the keychain is deleted when the build ends,
-  failed or not. vpk reads the cert and the notary profile from that one
+  failed or interrupted (Ctrl-C), and one left by a build that was killed
+  outright is removed by the next signed build. vpk reads the cert and the notary profile from that one
   keychain, so the two travel together: a notary key without a cert is an error,
   and so is a cert with `notaryProfile` set but no notary key (a profile in your
   login keychain can't be reached; clear `notaryProfile` to sign without

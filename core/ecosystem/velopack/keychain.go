@@ -4,10 +4,15 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 // Signing-env variables that carry macOS credentials for a machine whose login
@@ -84,20 +89,31 @@ func setupKeychain(m Macos, env []string, run keychainRun) (string, func(), erro
 	p12Pass := envValue(env, envSignPassword)
 	secrets := []string{pass, p12Pass, p12, notaryKey}
 
-	dir, err := os.MkdirTemp("", "shiprig-keychain-*")
+	// A build killed outright (SIGKILL, a crash) never ran its cleanup and left
+	// its keychain behind, unlocked; take those away before making a new one.
+	sweepStaleKeychains(os.TempDir(), run)
+	dir, err := os.MkdirTemp("", fmt.Sprintf("%s%d-*", keychainDirPrefix, os.Getpid()))
 	if err != nil {
 		return "", noop, err
 	}
-	kc := filepath.Join(dir, "signing.keychain-db")
+	kc := filepath.Join(dir, keychainFile)
 	created := false
+	var once sync.Once
 	cleanup := func() {
-		if created {
-			_, _ = run("security", "delete-keychain", kc)
-		}
-		_ = os.RemoveAll(dir)
+		once.Do(func() {
+			if created {
+				_, _ = run("security", "delete-keychain", kc)
+			}
+			_ = os.RemoveAll(dir)
+		})
+	}
+	stopWatch := func() {}
+	discard := func() {
+		stopWatch()
+		cleanup()
 	}
 	fail := func(step string, err error) (string, func(), error) {
-		cleanup()
+		discard()
 		return "", noop, fmt.Errorf("velopack: keychain %s: %s", step, redactValues(err.Error(), secrets...))
 	}
 
@@ -105,6 +121,9 @@ func setupKeychain(m Macos, env []string, run keychainRun) (string, func(), erro
 		return fail("create", err)
 	}
 	created = true
+	// shiprig installs no signal handling, so a Ctrl-C would end the process
+	// before any deferred cleanup ran and leave this keychain unlocked on disk.
+	stopWatch = cleanupOnSignal(cleanup)
 	// No flags: no lock timeout and no lock on sleep. It is unlocked once, below,
 	// and a keychain that locked mid-build (a long compile, a slow notarization)
 	// would stop codesign with a prompt nobody is there to answer.
@@ -133,7 +152,7 @@ func setupKeychain(m Macos, env []string, run keychainRun) (string, func(), erro
 		return fail("list identities", err)
 	}
 	if !strings.Contains(ids, strings.TrimSpace(m.SignIdentity)) {
-		cleanup()
+		discard()
 		return "", noop, fmt.Errorf("velopack: macos.signIdentity %q is not a valid codesigning identity in the cert from %s; it holds:\n%s", m.SignIdentity, envSignP12, strings.TrimSpace(ids))
 	}
 
@@ -154,7 +173,74 @@ func setupKeychain(m Macos, env []string, run keychainRun) (string, func(), erro
 			return fail("store notary profile", err)
 		}
 	}
-	return kc, cleanup, nil
+	return kc, discard, nil
+}
+
+const (
+	keychainDirPrefix = "shiprig-keychain-" // + the build's pid + "-" + random
+	keychainFile      = "signing.keychain-db"
+)
+
+// reraise delivers sig to this process again once its handler is gone, so an
+// interrupted build still ends the way it would have. A variable for tests.
+var reraise = func(sig os.Signal) {
+	if p, err := os.FindProcess(os.Getpid()); err == nil {
+		_ = p.Signal(sig)
+	}
+}
+
+// cleanupOnSignal runs cleanup if the process is interrupted or terminated while
+// the keychain exists, then re-raises the signal with the default handling back
+// in place. The returned stop ends the watch; it is safe to call more than once.
+func cleanupOnSignal(cleanup func()) (stop func()) {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case sig := <-ch:
+			cleanup()
+			signal.Stop(ch)
+			reraise(sig)
+		case <-done:
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			signal.Stop(ch)
+			close(done)
+		})
+	}
+}
+
+// sweepStaleKeychains deletes keychains under root left by shiprig builds whose
+// process is gone — killed outright, so neither their deferred cleanup nor
+// cleanupOnSignal ran. A keychain whose build is still running is left alone.
+func sweepStaleKeychains(root string, run keychainRun) {
+	dirs, _ := filepath.Glob(filepath.Join(root, keychainDirPrefix+"*"))
+	for _, d := range dirs {
+		pidText, _, ok := strings.Cut(strings.TrimPrefix(filepath.Base(d), keychainDirPrefix), "-")
+		pid, err := strconv.Atoi(pidText)
+		if !ok || err != nil || pid == os.Getpid() || processAlive(pid) {
+			continue
+		}
+		if kc := filepath.Join(d, keychainFile); fileExists(kc) {
+			_, _ = run("security", "delete-keychain", kc)
+		}
+		_ = os.RemoveAll(d)
+	}
+}
+
+// processAlive reports whether pid names a running process. Signal 0 checks
+// without delivering anything; EPERM means it exists but isn't ours to signal.
+func processAlive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = p.Signal(syscall.Signal(0))
+	return err == nil || errors.Is(err, os.ErrPermission)
 }
 
 // envValue is the value of key in a KEY=VALUE environment; the last entry wins,

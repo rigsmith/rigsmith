@@ -3,10 +3,14 @@ package velopack
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeKeychain records the commands setupKeychain runs, answers find-identity
@@ -285,6 +289,82 @@ func TestKeychainReachesVpkAndDmgSteps(t *testing.T) {
 	assertHas(t, steps[0].args, "--keychain", cfg.Macos.keychain)
 	assertHas(t, steps[1].args, "--keychain", cfg.Macos.keychain)
 	assertHas(t, steps[1].args, "--keychain-profile", "halyards-notary")
+}
+
+// TestSweepStaleKeychainsRemovesOnlyDeadBuilds: a keychain left by a build
+// whose process is gone is deleted; one owned by a live process (this one), and
+// a folder not named by the pid scheme, are left alone.
+func TestSweepStaleKeychainsRemovesOnlyDeadBuilds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("keychains are macOS-only; process probing differs on Windows")
+	}
+	dead := exec.Command("true")
+	if err := dead.Run(); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	mk := func(name string) string {
+		d := filepath.Join(root, name)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, keychainFile), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	stale := mk(fmt.Sprintf("%s%d-abc", keychainDirPrefix, dead.ProcessState.Pid()))
+	live := mk(fmt.Sprintf("%s%d-def", keychainDirPrefix, os.Getpid()))
+	unnamed := mk(keychainDirPrefix + "123456789")
+
+	f := &fakeKeychain{}
+	sweepStaleKeychains(root, f.run)
+
+	if len(f.cmds) != 1 || f.cmds[0][1] != "delete-keychain" || f.cmds[0][2] != filepath.Join(stale, keychainFile) {
+		t.Errorf("want one delete-keychain for the dead build's keychain, got %v", f.cmds)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Error("the dead build's folder must be removed")
+	}
+	for _, d := range []string{live, unnamed} {
+		if _, err := os.Stat(d); err != nil {
+			t.Errorf("%s must be left alone: %v", filepath.Base(d), err)
+		}
+	}
+}
+
+// TestCleanupOnSignalCleansThenReraises: an interrupt while the keychain exists
+// runs the cleanup first, then hands the signal back so the process still exits.
+func TestCleanupOnSignalCleansThenReraises(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cannot deliver os.Interrupt to self on Windows")
+	}
+	got := make(chan os.Signal, 1)
+	orig := reraise
+	reraise = func(sig os.Signal) { got <- sig }
+	defer func() { reraise = orig }()
+
+	cleaned := make(chan struct{})
+	stop := cleanupOnSignal(func() { close(cleaned) })
+	defer stop()
+
+	p, _ := os.FindProcess(os.Getpid())
+	if err := p.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cleaned:
+	case <-time.After(5 * time.Second):
+		t.Fatal("an interrupt must run the keychain cleanup")
+	}
+	select {
+	case sig := <-got:
+		if sig != os.Interrupt {
+			t.Errorf("re-raised %v, want the interrupt", sig)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the signal must be re-raised after cleanup so the process still exits")
+	}
 }
 
 func TestPlansOS(t *testing.T) {
