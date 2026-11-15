@@ -75,10 +75,11 @@ func TestParseVersionOutput(t *testing.T) {
 }
 
 // fakeBin is a bin directory as probeVersion would see it: path → --version
-// output, absent paths not installed.
+// output, absent paths not installed. dir is compared cleaned, so a slash path
+// still matches on Windows, where filepath turns it into backslashes.
 func fakeBin(dir string, versions map[string]string) func(string) (string, bool) {
 	return func(path string) (string, bool) {
-		if filepath.Dir(path) != dir {
+		if filepath.Dir(path) != filepath.Clean(dir) {
 			return "", false
 		}
 		v, ok := versions[filepath.Base(path)]
@@ -121,13 +122,15 @@ func TestNeedsUpdate_AnyInstalledToolOffTheTag(t *testing.T) {
 }
 
 func TestInstallerArgs_WholeFamilyPinnedToTheTagIntoTheBinDir(t *testing.T) {
-	argv := InstallerArgs("rigsmith/rigsmith", "v1.28.0", "/home/you/.local/bin")
+	// Native paths: binDir comes from os.Executable, and its prefix from filepath.Dir.
+	binDir := filepath.FromSlash("/home/you/.local/bin")
+	argv := InstallerArgs("rigsmith/rigsmith", "v1.28.0", binDir)
 	if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %v, want sh -c <script>", argv)
 	}
 	want := "curl -fsSL https://raw.githubusercontent.com/rigsmith/rigsmith/v1.28.0/scripts/install.sh" +
 		" | RIGSMITH_VERSION='v1.28.0' RIGSMITH_REPO='rigsmith/rigsmith'" +
-		" RIGSMITH_BIN_DIR='/home/you/.local/bin' RIGSMITH_INSTALL='/home/you/.local' sh -s all"
+		" RIGSMITH_BIN_DIR='" + binDir + "' RIGSMITH_INSTALL='" + filepath.Dir(binDir) + "' sh -s all"
 	if argv[2] != want {
 		t.Fatalf("script =\n %s\nwant\n %s", argv[2], want)
 	}
@@ -234,7 +237,7 @@ func TestRun_UpdatesTheWholeFamilyAndReportsWhatMoved(t *testing.T) {
 	if len(*calls) != 1 {
 		t.Fatalf("installer ran %d times, want once for the family", len(*calls))
 	}
-	if want := InstallerArgs("rigsmith/rigsmith", "v1.28.0", "/home/you/.local/bin"); !reflect.DeepEqual((*calls)[0], want) {
+	if want := InstallerArgs("rigsmith/rigsmith", "v1.28.0", filepath.Dir(e.Exe)); !reflect.DeepEqual((*calls)[0], want) {
 		t.Fatalf("installer argv = %v, want %v", (*calls)[0], want)
 	}
 	for _, want := range []string{"rig        v1.27.0 → v1.28.0", "shiprig    v1.23.1 → v1.28.0", "codexrig   installed v1.28.0"} {
