@@ -119,8 +119,10 @@ rig self-update --check  # each tool's installed version against the latest
 It re-runs the installer once, pinned to the latest release and pointed at the
 directory the running tool lives in, so every tool there ends on the same
 version — one that was already current is re-installed too — and reports what
-moved. A Homebrew install is left to `brew upgrade --cask rigsmith`, and on
-Windows it points you at the release to download.
+moved. A Homebrew or npm install is left to its package manager — `self-update`
+prints the `brew upgrade` or `npm install -g` command for the cask or package
+you have — and on Windows it points you at the release to download. The
+installer script it runs comes from the release it installs, not from `main`.
 
 `RIGSMITH_BIN_DIR` installs into exactly that directory, overriding
 `RIGSMITH_INSTALL`; `RIGSMITH_REPO` downloads from a fork's releases. When

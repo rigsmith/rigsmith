@@ -112,11 +112,13 @@ func Run(out io.Writer, check bool, e Env) error {
 		return nil
 	}
 
-	// A Homebrew install belongs to brew: writing into its bin would replace
-	// the cask's links with copies brew no longer tracks.
-	if HomebrewManaged(e.Resolved) {
-		fmt.Fprintf(out, "this %s was installed by Homebrew; update the rigsmith tools with:\n", e.Tool)
-		fmt.Fprintln(out, "  brew upgrade --cask rigsmith")
+	// A package manager's install belongs to it: writing into its bin would
+	// replace its links with copies it no longer tracks — and an npm install
+	// keeps each tool in its own package, so one bin directory isn't the family.
+	if upgrade, manager, note := ManagedUpgrade(e.Tool, e.Resolved); upgrade != "" {
+		fmt.Fprintf(out, "this %s was installed by %s; update it with:\n", e.Tool, manager)
+		fmt.Fprintln(out, "  "+upgrade)
+		fmt.Fprintln(out, dim.Render(note))
 		return nil
 	}
 
@@ -307,6 +309,10 @@ func MoveLines(before, after []Installed) []string {
 // InstallerArgs is the argv that re-runs the rigsmith installer for the whole
 // family, pinned to tag and installing into binDir. Pure.
 //
+// The script is fetched from the tag too, not from main: what runs is the
+// installer that shipped with the release it installs, and a later change to
+// main can't change what a self-update executes.
+//
 // RIGSMITH_BIN_DIR names the directory outright. RIGSMITH_INSTALL (its parent,
 // when binDir is a …/bin) says the same thing to an installer that predates
 // RIGSMITH_BIN_DIR, which only knows the prefix. RIGSMITH_REPO keeps a
@@ -320,16 +326,49 @@ func InstallerArgs(repo, tag, binDir string) []string {
 	if filepath.Base(binDir) == "bin" {
 		vars = append(vars, "RIGSMITH_INSTALL="+shellQuote(filepath.Dir(binDir)))
 	}
-	script := "curl -fsSL https://raw.githubusercontent.com/" + repo + "/main/scripts/install.sh" +
+	script := "curl -fsSL https://raw.githubusercontent.com/" + repo + "/" + tag + "/scripts/install.sh" +
 		" | " + strings.Join(vars, " ") + " sh -s all"
 	return []string{"sh", "-c", script}
 }
 
-// HomebrewManaged reports whether a resolved binary path lives in a Homebrew
-// prefix — a cask's Caskroom or a formula's Cellar. Pure.
-func HomebrewManaged(resolved string) bool {
+// ManagedUpgrade reports how to update tool when its resolved binary belongs
+// to a package manager: the command, the manager's name, and a note about the
+// rest of the family. All "" when no manager owns it. Pure.
+//
+// Homebrew is named by the cask or formula the path is in — the `rigsmith`
+// bundle cask, or a per-tool one like `rig` — since brew upgrades only the
+// token it is given. npm keeps each tool in its own package, so it is named
+// per tool.
+func ManagedUpgrade(tool, resolved string) (upgrade, manager, note string) {
 	p := filepath.ToSlash(resolved)
-	return strings.Contains(p, "/Caskroom/") || strings.Contains(p, "/Cellar/")
+	if token := pathSegmentAfter(p, "/Caskroom/"); token != "" {
+		return "brew upgrade --cask " + token, "Homebrew", brewNote(token)
+	}
+	if formula := pathSegmentAfter(p, "/Cellar/"); formula != "" {
+		return "brew upgrade " + formula, "Homebrew", brewNote(formula)
+	}
+	if strings.Contains(p, "/node_modules/") {
+		return "npm install -g @rigsmith/" + tool + "@latest", "npm",
+			"each rigsmith tool is its own npm package; update the others you installed the same way."
+	}
+	return "", "", ""
+}
+
+func brewNote(token string) string {
+	if token == "rigsmith" {
+		return "the rigsmith cask carries every tool, so this updates the whole family."
+	}
+	return "tools installed as their own casks update by name: brew upgrade --cask <tool>."
+}
+
+// pathSegmentAfter is the path segment following marker in p, or "". Pure.
+func pathSegmentAfter(p, marker string) string {
+	i := strings.Index(p, marker)
+	if i < 0 {
+		return ""
+	}
+	seg, _, _ := strings.Cut(p[i+len(marker):], "/")
+	return seg
 }
 
 // IsDevVersion reports whether v is a source build's version rather than a

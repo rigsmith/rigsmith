@@ -125,7 +125,7 @@ func TestInstallerArgs_WholeFamilyPinnedToTheTagIntoTheBinDir(t *testing.T) {
 	if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
 		t.Fatalf("argv = %v, want sh -c <script>", argv)
 	}
-	want := "curl -fsSL https://raw.githubusercontent.com/rigsmith/rigsmith/main/scripts/install.sh" +
+	want := "curl -fsSL https://raw.githubusercontent.com/rigsmith/rigsmith/v1.28.0/scripts/install.sh" +
 		" | RIGSMITH_VERSION='v1.28.0' RIGSMITH_REPO='rigsmith/rigsmith'" +
 		" RIGSMITH_BIN_DIR='/home/you/.local/bin' RIGSMITH_INSTALL='/home/you/.local' sh -s all"
 	if argv[2] != want {
@@ -141,20 +141,23 @@ func TestInstallerArgs_QuotesTheDirAndSkipsThePrefixOffABin(t *testing.T) {
 	if strings.Contains(script, "RIGSMITH_INSTALL=") {
 		t.Fatalf("a dir not named bin has no prefix to give an older installer: %s", script)
 	}
-	if !strings.Contains(script, "raw.githubusercontent.com/acme/fork/") || !strings.Contains(script, "RIGSMITH_REPO='acme/fork'") {
+	if !strings.Contains(script, "raw.githubusercontent.com/acme/fork/v2.0.0/scripts/install.sh") || !strings.Contains(script, "RIGSMITH_REPO='acme/fork'") {
 		t.Fatalf("fork repo not carried through: %s", script)
 	}
 }
 
-func TestHomebrewManaged(t *testing.T) {
-	for path, want := range map[string]bool{
-		"/opt/homebrew/Caskroom/rigsmith/1.18.0/rig": true,
-		"/usr/local/Cellar/rigsmith/1.18.0/bin/rig":  true,
-		"/home/you/.local/bin/rig":                   false,
-		"":                                           false,
+func TestManagedUpgrade_NamesTheManagersOwnPackage(t *testing.T) {
+	for path, want := range map[string]string{
+		// The bundle cask, and a per-tool cask: brew upgrades only the token named.
+		"/opt/homebrew/Caskroom/rigsmith/1.18.0/rig":                     "brew upgrade --cask rigsmith",
+		"/opt/homebrew/Caskroom/rig/1.18.0/rig":                          "brew upgrade --cask rig",
+		"/usr/local/Cellar/rigsmith/1.18.0/bin/rig":                      "brew upgrade rigsmith",
+		"/usr/local/lib/node_modules/@rigsmith/rig-darwin-arm64/bin/rig": "npm install -g @rigsmith/rig@latest",
+		"/home/you/.local/bin/rig":                                       "",
+		"":                                                               "",
 	} {
-		if got := HomebrewManaged(path); got != want {
-			t.Errorf("HomebrewManaged(%q) = %v, want %v", path, got, want)
+		if got, _, _ := ManagedUpgrade("rig", path); got != want {
+			t.Errorf("ManagedUpgrade(%q) = %q, want %q", path, got, want)
 		}
 	}
 }
@@ -290,9 +293,12 @@ func TestRun_KeepsTheGuards(t *testing.T) {
 		"offline": {func(e *Env) {
 			e.FetchLatestTag = func() (string, error) { return "", errors.New("dial tcp: no route") }
 		}, "couldn't reach GitHub"},
-		"no releases":       {func(e *Env) { e.FetchLatestTag = func() (string, error) { return "", nil } }, "no published releases"},
-		"windows":           {func(e *Env) { e.GOOS = "windows" }, "can't replace a running shiprig.exe"},
-		"homebrew":          {func(e *Env) { e.Resolved = "/opt/homebrew/Caskroom/rigsmith/1.18.0/shiprig" }, "brew upgrade --cask rigsmith"},
+		"no releases": {func(e *Env) { e.FetchLatestTag = func() (string, error) { return "", nil } }, "no published releases"},
+		"windows":     {func(e *Env) { e.GOOS = "windows" }, "can't replace a running shiprig.exe"},
+		"homebrew":    {func(e *Env) { e.Resolved = "/opt/homebrew/Caskroom/rigsmith/1.18.0/shiprig" }, "brew upgrade --cask rigsmith"},
+		"npm": {func(e *Env) {
+			e.Resolved = "/usr/local/lib/node_modules/@rigsmith/shiprig-darwin-arm64/bin/shiprig"
+		}, "npm install -g @rigsmith/shiprig@latest"},
 		"newer than latest": {func(e *Env) { e.Version = "1.29.0-rc.1" }, "newer than the latest release"},
 	}
 	for name, tc := range cases {
