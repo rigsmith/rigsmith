@@ -228,8 +228,10 @@ func newReleaseCmd() *cobra.Command {
 						if !ok {
 							return false
 						}
+						// A --dry-build snapshot is unsigned: the Electron and Tauri
+						// adapters would sign with whatever they are handed.
 						var signing *plugin.SigningCreds
-						if len(env) > 0 {
+						if len(env) > 0 && !dryBuild {
 							signing = &plugin.SigningCreds{Env: env}
 						}
 						resp, err := eco.Artifacts(cmd.Context(), plugin.ArtifactsRequest{

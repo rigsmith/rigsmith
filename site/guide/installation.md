@@ -124,6 +124,9 @@ prints the `brew upgrade` or `npm install -g` command for the cask or package
 you have — and on Windows it points you at the release to download. The
 installer script it runs comes from the release it installs, not from `main`.
 
+`--check` reports versions only for an install `self-update` manages: a dev
+build, or a Homebrew or npm install, says so and stops before reporting.
+
 `RIGSMITH_BIN_DIR` installs into exactly that directory, overriding
 `RIGSMITH_INSTALL`; `RIGSMITH_REPO` downloads from a fork's releases. When
 `RIG_SELFUPDATE_REPO` names a fork, `self-update` checks and installs from it.

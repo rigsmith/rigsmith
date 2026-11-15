@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -62,6 +63,24 @@ func TestResolveSigningEnv_UnreadableSecretFailsWithItsNameAndTheFix(t *testing.
 	}
 	if strings.Contains(output, "proceeding UNSIGNED") {
 		t.Fatalf("still degrading to an unsigned build:\n%s", output)
+	}
+}
+
+// A cmd: helper's stderr can carry the secret it was meant to print. A failure
+// names the reference by kind only and never repeats that output.
+func TestResolveSigningEnv_HelperOutputNeverReachesTheMessage(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cmd: references run through sh")
+	}
+	cfg := signingConfig(t, `{ "MACOS_SIGN_P12": "cmd:echo leaked-s3cret >&2; exit 1" }`)
+	for _, dry := range []bool{false, true} {
+		_, _, output := resolveForTestDry(t, cfg, false, dry)
+		if strings.Contains(output, "leaked-s3cret") {
+			t.Fatalf("dryBuild=%v: a helper's stderr reached the output:\n%s", dry, output)
+		}
+		if !strings.Contains(output, "MACOS_SIGN_P12") {
+			t.Errorf("dryBuild=%v: the failing variable isn't named:\n%s", dry, output)
+		}
 	}
 }
 

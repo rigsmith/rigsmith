@@ -26,7 +26,12 @@ type SecretError struct {
 	Err error
 }
 
-func (e *SecretError) Error() string { return "signing secret " + e.Env + ": " + e.Err.Error() }
+// Error names the variable and why its reference failed, through
+// auth.SafeReason: a resolver's own output (a cmd: helper's stderr, say) can
+// carry a secret, so it is kept in Err for inspection but never printed.
+func (e *SecretError) Error() string {
+	return "signing secret " + e.Env + ": " + auth.SafeReason(e.Ref, e.Err)
+}
 
 func (e *SecretError) Unwrap() error { return e.Err }
 
@@ -53,7 +58,7 @@ func ResolveEnv(ctx context.Context, refs map[string]string, masker auth.Masker)
 			return nil, &SecretError{Env: k, Ref: refs[k], Err: err}
 		}
 		if !cred.Resolved() {
-			return nil, &SecretError{Env: k, Ref: refs[k], Err: fmt.Errorf("reference %q resolved to an empty value", refs[k])}
+			return nil, &SecretError{Env: k, Ref: refs[k], Err: fmt.Errorf("reference %q %w", refs[k], auth.ErrEmptyToken)}
 		}
 		out[k] = cred.Token
 	}

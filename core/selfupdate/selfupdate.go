@@ -449,8 +449,14 @@ func liveEnv(cmd *cobra.Command, o Options) Env {
 		Exe:            exe,
 		Resolved:       resolved,
 		FetchLatestTag: func() (string, error) { return FetchLatestReleaseTag(LatestReleaseURL(repo)) },
-		ProbeVersion:   func(path string) (string, bool) { return probeVersion(cmd.Context(), path) },
-		Install:        func(argv []string) error { return run(cmd, argv) },
+		ProbeVersion: func(path string) (string, bool) {
+			// os.Stat adds no extension, so a Windows sibling is found by its .exe.
+			if goos == "windows" && filepath.Ext(path) == "" {
+				path += ".exe"
+			}
+			return probeVersion(cmd.Context(), path)
+		},
+		Install: func(argv []string) error { return run(cmd, argv) },
 	}
 }
 
