@@ -522,7 +522,10 @@ no signer runs, a Velopack app's own macOS and Windows signing from `velopack.js
 is skipped, and the variables `signing.env` names are left out of the build's
 environment, so a shell or `.env` value can't sign it either. Each builder's own
 switch is set too: electron-builder runs with every `CSC_*` certificate variable
-unset, `CSC_IDENTITY_AUTO_DISCOVERY=false` and `-c.mac.notarize=false`, and Tauri
+unset, `CSC_IDENTITY_AUTO_DISCOVERY=false`, `-c.mac.notarize=false`, and the
+macOS identity nulled for the installed version (`-c.mac.sign.identity=null` from
+v27, `-c.mac.identity=null` before), so an identity in its own config can't sign
+either; and Tauri
 runs `cargo tauri build --no-sign` (Tauri's updater signature is separate and
 can't be turned off). electron-forge has no such switch, so signing set up in its
 own config still applies. All of this holds for a `--dry-build` too. A `--dry-build` snapshot is unsigned anyway and ships nowhere,

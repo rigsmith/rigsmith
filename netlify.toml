@@ -10,10 +10,12 @@
 [build]
   base = "site"
   publish = ".vitepress/dist"
-  # Keep scripts/install.{sh,ps1} and scripts/brew.sh the single source of truth —
-  # copy them into the published site so the install edge function can serve them
-  # from /install.sh (curl|sh), /install.ps1 (irm|iex) and /brew.sh (rigsmith.sh/brew).
-  command = "cp ../scripts/install.sh public/install.sh && cp ../scripts/install.ps1 public/install.ps1 && cp ../scripts/brew.sh public/brew.sh && npm run build"
+  # The install edge function serves /install.sh (curl|sh), /install.ps1 (irm|iex)
+  # and /brew.sh (rigsmith.sh/brew) from the published site. The installers come
+  # from the latest published release, not from main, so what rigsmith.sh serves
+  # always matches the release it installs (scripts/site-installers.sh); the build
+  # fails if that release can't be read. brew.sh is the repo's own.
+  command = "sh ../scripts/site-installers.sh public && cp ../scripts/brew.sh public/brew.sh && npm run build"
 
 [build.environment]
   NODE_VERSION = "20"

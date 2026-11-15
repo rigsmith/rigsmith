@@ -227,12 +227,12 @@ func TestCollectInstallers(t *testing.T) {
 // CSC_IDENTITY_AUTO_DISCOVERY=false, and notarization off.
 func TestUnsignedBuildUsesElectronBuildersOffSwitch(t *testing.T) {
 	for _, req := range []plugin.ArtifactsRequest{{Snapshot: true}, {Unsigned: true}} {
-		args := builderArgs(req)
-		if args[len(args)-1] != "-c.mac.notarize=false" {
-			t.Errorf("snapshot=%v unsigned=%v: args %v don't turn notarization off", req.Snapshot, req.Unsigned, args)
+		got := strings.Join(builderArgs(req, 27), " ")
+		if got != "electron-builder --publish never -c.mac.notarize=false -c.mac.sign.identity=null" {
+			t.Errorf("snapshot=%v unsigned=%v: args = %q", req.Snapshot, req.Unsigned, got)
 		}
 	}
-	if args := builderArgs(plugin.ArtifactsRequest{}); strings.Join(args, " ") != "electron-builder --publish never" {
+	if args := builderArgs(plugin.ArtifactsRequest{}, 27); strings.Join(args, " ") != "electron-builder --publish never" {
 		t.Errorf("a signed build's args changed: %v", args)
 	}
 
@@ -243,5 +243,47 @@ func TestUnsignedBuildUsesElectronBuildersOffSwitch(t *testing.T) {
 	want := "PATH=/usr/bin|APPLE_ID=you@example.com|CSC_IDENTITY_AUTO_DISCOVERY=false"
 	if got := strings.Join(env, "|"); got != want {
 		t.Fatalf("unsignedBuilderEnv = %s, want %s", got, want)
+	}
+}
+
+// The macOS identity override follows the installed electron-builder: v27
+// rejects the old mac.identity key, and before v27 mac.sign means something
+// else, so an unknown version gets neither.
+func TestIdentityOverrideFollowsTheInstalledBuilder(t *testing.T) {
+	for major, want := range map[int]string{28: "-c.mac.sign.identity=null", 27: "-c.mac.sign.identity=null", 26: "-c.mac.identity=null", 24: "-c.mac.identity=null", 0: ""} {
+		if got := identityOverride(major); got != want {
+			t.Errorf("identityOverride(%d) = %q, want %q", major, got, want)
+		}
+	}
+	if got := strings.Join(builderArgs(plugin.ArtifactsRequest{Unsigned: true}, 0), " "); got != "electron-builder --publish never -c.mac.notarize=false" {
+		t.Errorf("unknown version: args = %q", got)
+	}
+
+	// Found in the app's own node_modules, or hoisted to the workspace root.
+	root := t.TempDir()
+	app := filepath.Join(root, "apps", "desk")
+	writeBuilder := func(dir, version string) {
+		t.Helper()
+		p := filepath.Join(dir, "node_modules", "electron-builder")
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(p, "package.json"), []byte(`{"version":"`+version+`"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := installedBuilderMajor(app, root); got != 0 {
+		t.Fatalf("nothing installed, got major %d", got)
+	}
+	writeBuilder(root, "26.0.12")
+	if got := installedBuilderMajor(app, root); got != 26 {
+		t.Fatalf("hoisted v26 read as %d", got)
+	}
+	writeBuilder(app, "27.1.0")
+	if got := installedBuilderMajor(app, root); got != 27 {
+		t.Fatalf("the app's own v27 read as %d", got)
 	}
 }

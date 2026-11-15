@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rigsmith/rigsmith/core/cmderr"
@@ -162,10 +163,14 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	// off-switch instead: see unsignedBuilderEnv.
 	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
 	note := ""
+	major := installedBuilderMajor(dir, req.RepoRoot)
 	if !signsBuild(req) {
 		env = unsignedBuilderEnv(env)
-		if forge {
+		switch {
+		case forge:
 			note = " — electron-forge has no switch to skip signing; any osxSign/windowsSign in its config still applies"
+		case identityOverride(major) == "":
+			note = " — electron-builder's version isn't known (not in node_modules), so a macOS identity set in its config isn't overridden"
 		}
 	}
 	var outDir string
@@ -175,7 +180,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		}
 		outDir = filepath.Join(dir, "out", "make")
 	} else {
-		if _, _, err := runCmdEnv(ctx, dir, env, "npx", builderArgs(req)...); err != nil {
+		if _, _, err := runCmdEnv(ctx, dir, env, "npx", builderArgs(req, major)...); err != nil {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("electron-builder: %w", err)
 		}
 		outDir = filepath.Join(dir, "dist")
@@ -373,16 +378,59 @@ func signsBuild(req plugin.ArtifactsRequest) bool {
 	return !req.Snapshot && !req.Unsigned
 }
 
-// builderArgs is the electron-builder command line (after npx). A build that
-// must not sign also turns notarization off: electron-builder notarizes
-// whenever APPLE_* credentials are present, and `mac.notarize: false` is its
-// documented "never notarize" (website/docs/features/code-signing/notarization.md). Pure.
-func builderArgs(req plugin.ArtifactsRequest) []string {
+// builderArgs is the electron-builder command line (after npx), for the
+// installed electron-builder major version (0 when unknown). A build that must
+// not sign turns notarization off — electron-builder notarizes whenever APPLE_*
+// credentials are present, and `mac.notarize: false` is its documented "never
+// notarize" (website/docs/features/code-signing/notarization.md) — and nulls
+// the macOS identity, so one set in the project's own config can't sign
+// either. Pure.
+func builderArgs(req plugin.ArtifactsRequest, major int) []string {
 	args := []string{"electron-builder", "--publish", "never"}
 	if !signsBuild(req) {
 		args = append(args, "-c.mac.notarize=false")
+		if o := identityOverride(major); o != "" {
+			args = append(args, o)
+		}
 	}
 	return args
+}
+
+// identityOverride is the CLI override that skips macOS signing for an
+// electron-builder major version. v27 moved the identity under `mac.sign`
+// ("set `mac.sign.identity` to `null` … (CLI: `-c.mac.sign.identity=null`)",
+// code-signing-mac.md) and fails a build that still sets the old `mac.identity`
+// (migration/v27-config-changes.md); before v27, `mac.identity: null` is the
+// key and `mac.sign` is something else. "" when the version is unknown, since
+// either guess can fail the build. Pure.
+func identityOverride(major int) string {
+	switch {
+	case major >= 27:
+		return "-c.mac.sign.identity=null"
+	case major > 0:
+		return "-c.mac.identity=null"
+	}
+	return ""
+}
+
+// installedBuilderMajor is the major version of the electron-builder that npx
+// will run: the one in node_modules, searched from dir up to root (a workspace
+// hoists it to the root). 0 when none is found or its version doesn't parse.
+func installedBuilderMajor(dir, root string) int {
+	for d := dir; ; d = filepath.Dir(d) {
+		pj := readPkg(filepath.Join(d, "node_modules", "electron-builder", "package.json"))
+		if pj.Version != "" {
+			major, _, _ := strings.Cut(strings.TrimPrefix(pj.Version, "v"), ".")
+			n, err := strconv.Atoi(major)
+			if err != nil {
+				return 0
+			}
+			return n
+		}
+		if d == root || filepath.Dir(d) == d || !strings.HasPrefix(d, root) {
+			return 0
+		}
+	}
 }
 
 // builderCertVars are the variables electron-builder reads a signing

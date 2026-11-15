@@ -274,6 +274,7 @@ checksum:
   name_template: "checksums.txt"
   extra_files:
     - glob: ./scripts/install.sh
+    - glob: ./scripts/install.ps1
 
 # Sigstore keyless signing: cosign signs checksums.txt with the release
 # workflow's own GitHub OIDC identity (the job's id-token), so there is no key
@@ -594,3 +595,4 @@ release:
   # release's own copy after checking it, rather than one fetched from a branch.
   extra_files:
     - glob: ./scripts/install.sh
+    - glob: ./scripts/install.ps1

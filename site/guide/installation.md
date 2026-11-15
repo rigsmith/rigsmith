@@ -141,11 +141,15 @@ signature over it made by the release workflow's own GitHub identity. There is
 no key: the signature is tied to `.github/workflows/release.yml` in
 `rigsmith/rigsmith` and recorded in Sigstore's public transparency log.
 
-The installer and `self-update` both download every file first and check it
-against `checksums.txt`, and check that file's signature, before installing
-anything. A file that doesn't match, or a signature that is missing or doesn't
+The installers (`install.sh` and, on Windows, `install.ps1`) and `self-update`
+all download every file first and check it against `checksums.txt`, and check
+that file's signature, before installing anything. A file that doesn't match, or a signature that is missing or doesn't
 verify, stops the install with the reason and leaves your existing tools as
 they were.
+
+`https://rigsmith.sh` serves the installers that shipped with the latest
+release, not the ones on `main`, so the script you run always matches the release
+it installs.
 
 Checking the signature needs [cosign](https://docs.sigstore.dev/cosign/system_config/installation/).
 Without it the checksums are still checked, and the installer says the
