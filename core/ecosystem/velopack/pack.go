@@ -109,6 +109,20 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	}
 	baseID := base.Info().ID
 
+	// A signed macOS build whose cert (and notary key) arrive in the signing env
+	// signs from a throwaway keychain built from them, deleted when the build ends.
+	if !req.Snapshot && plansOS(planned, osMac) {
+		kc, cleanup, err := setupKeychain(cfg.Macos, env, func(name string, args ...string) (string, error) {
+			stdout, _, err := runCmdEnv(ctx, req.RepoRoot, env, name, args...)
+			return stdout, err
+		})
+		if err != nil {
+			return plugin.ArtifactsResponse{}, err
+		}
+		defer cleanup()
+		cfg.Macos.keychain = kc
+	}
+
 	for _, ch := range planned {
 		pubRel, err := a.producePackDir(ctx, req, cfg, baseID, ch, ver, env)
 		if err != nil {
@@ -314,6 +328,16 @@ func ridRustTarget(rid string) string {
 	}
 }
 
+// plansOS reports whether any planned channel targets want.
+func plansOS(planned []string, want targetOS) bool {
+	for _, ch := range planned {
+		if osOf(ch) == want {
+			return true
+		}
+	}
+	return false
+}
+
 // checkEntitlements fails when a signed build of a planned macOS channel names a
 // macos.entitlements file that isn't there, before any channel is built — so a
 // typo'd path is a config error rather than a late vpk failure or a quiet sign
@@ -374,6 +398,9 @@ func buildPackArgs(cfg Config, ch, pubDir, output, version string, snapshot bool
 		}
 		args = appendFlag(args, "--icon", cfg.Icon.Macos)
 		if !snapshot {
+			// vpk's --keychain (hidden in its help) points both codesign and
+			// notarytool at the keychain built from the signing env.
+			args = appendFlag(args, "--keychain", cfg.Macos.keychain)
 			args = appendFlag(args, "--signAppIdentity", cfg.Macos.SignIdentity)
 			args = appendFlag(args, "--signEntitlements", strings.TrimSpace(cfg.Macos.Entitlements))
 			args = appendFlag(args, "--notaryProfile", cfg.Macos.NotaryProfile)
@@ -675,10 +702,16 @@ func dmgFinishSteps(m Macos, dmg string, snapshot bool) []dmgStep {
 		return nil
 	}
 	notarize := strings.TrimSpace(m.NotaryProfile) != ""
-	steps := []dmgStep{{args: []string{"codesign", "--force", "--timestamp", "--sign", m.SignIdentity, dmg}, required: notarize}}
+	var kc []string
+	if m.keychain != "" {
+		kc = []string{"--keychain", m.keychain}
+	}
+	sign := append(append([]string{"codesign", "--force", "--timestamp"}, kc...), "--sign", m.SignIdentity, dmg)
+	steps := []dmgStep{{args: sign, required: notarize}}
 	if notarize {
+		submit := append(append([]string{"xcrun", "notarytool", "submit", dmg, "--keychain-profile", m.NotaryProfile}, kc...), "--wait")
 		steps = append(steps,
-			dmgStep{args: []string{"xcrun", "notarytool", "submit", dmg, "--keychain-profile", m.NotaryProfile, "--wait"}, required: true},
+			dmgStep{args: submit, required: true},
 			dmgStep{args: []string{"xcrun", "stapler", "staple", dmg}, required: true},
 		)
 	}

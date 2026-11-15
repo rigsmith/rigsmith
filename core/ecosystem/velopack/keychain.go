@@ -1,0 +1,188 @@
+package velopack
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// Signing-env variables that carry macOS credentials for a machine whose login
+// keychain holds neither the Developer ID cert nor a notary profile (a CI runner,
+// a fresh Mac). Each can be a `doppler:NAME` reference in signing.env. The names
+// match scripts/package-ui.sh, rigsmith's own release packaging.
+const (
+	envSignP12      = "MACOS_SIGN_P12"         // base64 of the Developer ID Application .p12
+	envSignPassword = "MACOS_SIGN_PASSWORD"    // the .p12's password
+	envNotaryKey    = "MACOS_NOTARY_KEY"       // the App Store Connect API key (.p8): PEM text, or base64 of it
+	envNotaryKeyID  = "MACOS_NOTARY_KEY_ID"    // its key id
+	envNotaryIssuer = "MACOS_NOTARY_ISSUER_ID" // its issuer id (empty for an individual key)
+)
+
+// keychainRun runs one command and returns its stdout. The error it returns may
+// echo the command's arguments; setupKeychain redacts its secrets from it.
+type keychainRun func(name string, args ...string) (string, error)
+
+// setupKeychain builds a throwaway keychain from the signing env when it carries
+// MACOS_SIGN_P12: the Developer ID cert imported for codesign, and, with
+// MACOS_NOTARY_KEY, macos.notaryProfile stored in it for notarytool. It returns
+// the keychain's path, which vpk (--keychain) and the DMG steps then use instead
+// of the login keychain, and a cleanup that deletes it. With no MACOS_SIGN_P12
+// it returns "" and a no-op, and the build signs from the login keychain as
+// before. Every secret is kept out of argv where a file will do, and out of the
+// errors it returns.
+func setupKeychain(m Macos, env []string, run keychainRun) (string, func(), error) {
+	noop := func() {}
+	p12 := envValue(env, envSignP12)
+	notaryKey := envValue(env, envNotaryKey)
+	if strings.TrimSpace(p12) == "" {
+		if strings.TrimSpace(notaryKey) != "" {
+			return "", noop, fmt.Errorf("velopack: %s is set but %s is not — vpk reads the signing cert and the notary profile from one keychain, so both must come from the signing env", envNotaryKey, envSignP12)
+		}
+		return "", noop, nil
+	}
+	if strings.TrimSpace(m.SignIdentity) == "" {
+		return "", noop, fmt.Errorf("velopack: %s is set but macos.signIdentity is empty — name the identity in the cert (e.g. \"Developer ID Application: Acme (TEAMID)\")", envSignP12)
+	}
+	notarize := strings.TrimSpace(notaryKey) != ""
+	if notarize {
+		if strings.TrimSpace(m.NotaryProfile) == "" {
+			return "", noop, fmt.Errorf("velopack: %s is set but macos.notaryProfile is empty — set it to name the profile shiprig stores the key under", envNotaryKey)
+		}
+		if strings.TrimSpace(envValue(env, envNotaryKeyID)) == "" {
+			return "", noop, fmt.Errorf("velopack: %s is set but %s is not", envNotaryKey, envNotaryKeyID)
+		}
+	}
+
+	certDER, err := decodeBase64(p12)
+	if err != nil {
+		return "", noop, fmt.Errorf("velopack: %s is not valid base64: %w", envSignP12, err)
+	}
+	var keyPEM []byte
+	if notarize {
+		// The .p8 is text, so a secret store may hold it as-is rather than base64.
+		if strings.HasPrefix(strings.TrimSpace(notaryKey), "-----BEGIN") {
+			keyPEM = []byte(strings.TrimSpace(notaryKey) + "\n")
+		} else if keyPEM, err = decodeBase64(notaryKey); err != nil {
+			return "", noop, fmt.Errorf("velopack: %s is neither a PEM key nor valid base64: %w", envNotaryKey, err)
+		}
+	}
+
+	pass, err := randomPassword()
+	if err != nil {
+		return "", noop, err
+	}
+	p12Pass := envValue(env, envSignPassword)
+	secrets := []string{pass, p12Pass, p12, notaryKey}
+
+	dir, err := os.MkdirTemp("", "shiprig-keychain-*")
+	if err != nil {
+		return "", noop, err
+	}
+	kc := filepath.Join(dir, "signing.keychain-db")
+	created := false
+	cleanup := func() {
+		if created {
+			_, _ = run("security", "delete-keychain", kc)
+		}
+		_ = os.RemoveAll(dir)
+	}
+	fail := func(step string, err error) (string, func(), error) {
+		cleanup()
+		return "", noop, fmt.Errorf("velopack: keychain %s: %s", step, redactValues(err.Error(), secrets...))
+	}
+
+	if _, err := run("security", "create-keychain", "-p", pass, kc); err != nil {
+		return fail("create", err)
+	}
+	created = true
+	// No auto-lock for an hour: notarization can run long, and a keychain that
+	// locks mid-build stops codesign with a prompt nobody is there to answer.
+	if _, err := run("security", "set-keychain-settings", "-lut", "3600", kc); err != nil {
+		return fail("settings", err)
+	}
+	if _, err := run("security", "unlock-keychain", "-p", pass, kc); err != nil {
+		return fail("unlock", err)
+	}
+
+	certFile := filepath.Join(dir, "cert.p12")
+	if err := os.WriteFile(certFile, certDER, 0o600); err != nil {
+		return fail("write cert", err)
+	}
+	_, err = run("security", "import", certFile, "-k", kc, "-P", p12Pass, "-T", "/usr/bin/codesign")
+	_ = os.Remove(certFile)
+	if err != nil {
+		return fail("import cert", err)
+	}
+	// Let codesign use the key without the "allow access" prompt.
+	if _, err := run("security", "set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", pass, kc); err != nil {
+		return fail("key access", err)
+	}
+	ids, err := run("security", "find-identity", "-v", "-p", "codesigning", kc)
+	if err != nil {
+		return fail("list identities", err)
+	}
+	if !strings.Contains(ids, strings.TrimSpace(m.SignIdentity)) {
+		cleanup()
+		return "", noop, fmt.Errorf("velopack: macos.signIdentity %q is not a valid codesigning identity in the cert from %s; it holds:\n%s", m.SignIdentity, envSignP12, strings.TrimSpace(ids))
+	}
+
+	if notarize {
+		keyFile := filepath.Join(dir, "notary.p8")
+		if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+			return fail("write notary key", err)
+		}
+		args := []string{"notarytool", "store-credentials", strings.TrimSpace(m.NotaryProfile),
+			"--key", keyFile, "--key-id", envValue(env, envNotaryKeyID)}
+		if iss := strings.TrimSpace(envValue(env, envNotaryIssuer)); iss != "" {
+			args = append(args, "--issuer", iss)
+		}
+		args = append(args, "--keychain", kc)
+		_, err := run("xcrun", args...)
+		_ = os.Remove(keyFile)
+		if err != nil {
+			return fail("store notary profile", err)
+		}
+	}
+	return kc, cleanup, nil
+}
+
+// envValue is the value of key in a KEY=VALUE environment; the last entry wins,
+// as it does for exec.
+func envValue(env []string, key string) string {
+	v := ""
+	for _, kv := range env {
+		if k, val, ok := strings.Cut(kv, "="); ok && k == key {
+			v = val
+		}
+	}
+	return v
+}
+
+// decodeBase64 decodes a base64 secret, ignoring the line breaks and spaces a
+// pasted or `base64`-wrapped value carries.
+func decodeBase64(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(strings.Join(strings.Fields(s), ""))
+}
+
+// randomPassword is the throwaway keychain's password: never shown, never kept.
+func randomPassword() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// redactValues replaces every non-empty secret in s with ***.
+func redactValues(s string, secrets ...string) string {
+	for _, v := range secrets {
+		if v = strings.TrimSpace(v); v != "" {
+			s = strings.ReplaceAll(s, v, "***")
+		}
+	}
+	return s
+}
