@@ -110,9 +110,18 @@ fetch_checksums() {
   curl -fsSL "$base/checksums.txt.sigstore.json" -o "$2/checksums.txt.sigstore.json" \
     || error "$1 has no signature for its checksums.txt (checksums.txt.sigstore.json is missing) — refusing to install"
 
+  # A cosign that can't be trusted (cosign_usable) counts as no cosign.
+  why="cosign is not installed"
+  usable=0
   if command -v cosign >/dev/null 2>&1; then
+    if cosign_usable; then usable=1; else why="$COSIGN_PROBLEM"; fi
+  fi
+
+  if [ "$usable" = 1 ]; then
     repo_re="$(printf '%s' "$REPO" | sed 's/[.]/\\./g')"
-    if ! cosign verify-blob \
+    # $COSIGN_EXTRA is empty or one flag; unquoted on purpose.
+    # shellcheck disable=SC2086
+    if ! cosign verify-blob $COSIGN_EXTRA \
         --bundle "$2/checksums.txt.sigstore.json" \
         --certificate-identity-regexp "^https://github.com/$repo_re/\\.github/workflows/release\\.yml@" \
         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
@@ -122,12 +131,37 @@ fetch_checksums() {
     fi
     info "verified the signature on checksums.txt"
   elif [ "${RIGSMITH_REQUIRE_SIGNATURE:-}" = "1" ]; then
-    error "cosign is not installed, so the signature on checksums.txt can't be checked, and RIGSMITH_REQUIRE_SIGNATURE=1 requires it"
+    error "$why, so the signature on checksums.txt can't be checked, and RIGSMITH_REQUIRE_SIGNATURE=1 requires it"
   else
-    warn "cosign is not installed: checking every download against checksums.txt, but not checksums.txt's own signature."
-    echo "  Install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) to verify it," >&2
+    warn "$why: checking every download against checksums.txt, but not checksums.txt's own signature."
+    echo "  Install cosign v3.1.3 or later (https://docs.sigstore.dev/cosign/system_config/installation/) to verify it," >&2
     echo "  or set RIGSMITH_REQUIRE_SIGNATURE=1 to refuse to install without it." >&2
   fi
+}
+
+# Whether the cosign on PATH can be trusted to check the signature. Sets
+# COSIGN_EXTRA (verify-blob flags for that version) or COSIGN_PROBLEM.
+#   - v2 up to 2.6.4 and v3 up to 3.1.2 pass a legacy bundle carrying a bare
+#     public key without checking the identity (GHSA-fx35-mq7g-6g98).
+#   - Releases are signed in the new bundle format: v3 reads it by default, v2
+#     only with --new-bundle-format.
+cosign_usable() {
+  COSIGN_EXTRA=""
+  v="$(cosign version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*v\{0,1\}\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n1)"
+  if [ -z "$v" ]; then COSIGN_PROBLEM="couldn't read cosign's version"; return 1; fi
+  maj="${v%%.*}"; rest="${v#*.}"; min="${rest%%.*}"; pat="${rest#*.}"
+  at() { [ "$min" -gt "$1" ] || { [ "$min" -eq "$1" ] && [ "$pat" -ge "$2" ]; }; }
+  bypass="cosign v$v has a signature-check bypass (GHSA-fx35-mq7g-6g98)"
+  if [ "$maj" -ge 4 ]; then return 0; fi
+  if [ "$maj" -eq 3 ]; then
+    at 1 3 && return 0
+    COSIGN_PROBLEM="$bypass; upgrade to v3.1.3 or later"; return 1
+  fi
+  if [ "$maj" -eq 2 ]; then
+    if at 6 5; then COSIGN_EXTRA="--new-bundle-format"; return 0; fi
+    COSIGN_PROBLEM="$bypass; upgrade to v2.6.5 or later"; return 1
+  fi
+  COSIGN_PROBLEM="cosign v$v is too old to read the release's signature; upgrade to v3.1.3 or later"; return 1
 }
 
 # --- download and verify a single binary's archive ---------------------------

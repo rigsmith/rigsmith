@@ -102,6 +102,28 @@ function Get-ListedSum($sumsPath, $name) {
     return $null
 }
 
+# Whether the cosign on PATH can be trusted to check the signature, as in
+# install.sh's cosign_usable: v2 up to 2.6.4 and v3 up to 3.1.2 pass a legacy
+# bundle without checking the identity (GHSA-fx35-mq7g-6g98), and v2 reads the
+# release's new-format bundle only with --new-bundle-format. Returns the extra
+# verify-blob arguments in Args, or the reason in Problem.
+function Get-CosignSupport {
+    $text = (& cosign version 2>&1 | Out-String)
+    if ($text -notmatch 'GitVersion:\s*v?(\d+)\.(\d+)\.(\d+)') { return @{ Problem = "couldn't read cosign's version" } }
+    $v = [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])"
+    $bypass = "cosign v$v has a signature-check bypass (GHSA-fx35-mq7g-6g98)"
+    if ($v.Major -ge 4) { return @{ Args = @() } }
+    if ($v.Major -eq 3) {
+        if ($v -ge [version]'3.1.3') { return @{ Args = @() } }
+        return @{ Problem = "$bypass; upgrade to v3.1.3 or later" }
+    }
+    if ($v.Major -eq 2) {
+        if ($v -ge [version]'2.6.5') { return @{ Args = @('--new-bundle-format') } }
+        return @{ Problem = "$bypass; upgrade to v2.6.5 or later" }
+    }
+    return @{ Problem = "cosign v$v is too old to read the release's signature; upgrade to v3.1.3 or later" }
+}
+
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("rigsmith-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 try {
@@ -113,9 +135,18 @@ try {
     try { Invoke-WebRequest -Uri "$base/checksums.txt.sigstore.json" -OutFile $bundle -UseBasicParsing }
     catch { Fail "$tag has no signature for its checksums.txt (checksums.txt.sigstore.json is missing) — refusing to install" }
 
+    # A cosign that can't be trusted counts as no cosign.
+    $why = 'cosign is not installed'
+    $support = $null
     if (Get-Command cosign -ErrorAction SilentlyContinue) {
+        $support = Get-CosignSupport
+        if ($support.Problem) { $why = $support.Problem; $support = $null }
+    }
+
+    if ($support) {
         $repoRe = [regex]::Escape($Repo)
-        $cosignOut = & cosign verify-blob --bundle $bundle `
+        $extra = $support.Args
+        $cosignOut = & cosign verify-blob @extra --bundle $bundle `
             --certificate-identity-regexp "^https://github.com/$repoRe/\.github/workflows/release\.yml@" `
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' $sums 2>&1
         if ($LASTEXITCODE -ne 0) {
@@ -124,10 +155,10 @@ try {
         }
         Info "verified the signature on checksums.txt"
     } elseif ($env:RIGSMITH_REQUIRE_SIGNATURE -eq '1') {
-        Fail "cosign is not installed, so the signature on checksums.txt can't be checked, and RIGSMITH_REQUIRE_SIGNATURE=1 requires it"
+        Fail "$why, so the signature on checksums.txt can't be checked, and RIGSMITH_REQUIRE_SIGNATURE=1 requires it"
     } else {
-        Warn "cosign is not installed: checking the download against checksums.txt, but not checksums.txt's own signature."
-        Write-Host "  Install cosign (https://docs.sigstore.dev/cosign/system_config/installation/) to verify it,"
+        Warn "${why}: checking the download against checksums.txt, but not checksums.txt's own signature."
+        Write-Host "  Install cosign v3.1.3 or later (https://docs.sigstore.dev/cosign/system_config/installation/) to verify it,"
         Write-Host "  or set RIGSMITH_REQUIRE_SIGNATURE=1 to refuse to install without it."
     }
 

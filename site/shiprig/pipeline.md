@@ -526,10 +526,14 @@ unset, `CSC_IDENTITY_AUTO_DISCOVERY=false`, `-c.mac.notarize=false`, and the
 macOS identity nulled for the installed version (`-c.mac.sign.identity=null` from
 v27, `-c.mac.identity=null` before), so an identity in its own config can't sign
 either; and Tauri
-runs `cargo tauri build --no-sign` (Tauri's updater signature is separate and
-can't be turned off). electron-forge has no such switch, so signing set up in its
-own config still applies. All of this holds for a `--dry-build` too. A `--dry-build` snapshot is unsigned anyway and ships nowhere,
-so there a missing secret is reported and the rehearsal carries on.
+runs `cargo tauri build --no-sign` (which skips the updater's signature too from
+tauri-cli 2.9.5; an earlier CLI still signs it, and a failed build says so).
+electron-forge has no such switch, so signing set up in its own config still
+applies. A `--dry-build` builds unsigned the same way, with one difference: it
+still reads the signing secrets, to report any it can't read, so it does reach
+your secrets manager or credential helpers; only `--unsigned` reads none. Its
+snapshot ships nowhere, so there a missing secret is reported and the rehearsal
+carries on.
 
 ### Where the release config lives
 

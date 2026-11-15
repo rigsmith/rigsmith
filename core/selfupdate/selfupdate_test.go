@@ -455,3 +455,51 @@ func TestSigningIdentity_PinsTheReleaseWorkflowOfTheRepo(t *testing.T) {
 		}
 	}
 }
+
+func TestCosignSupport_RefusesBypassableAndTooOldVersions(t *testing.T) {
+	banner := func(v string) string { return "  ______  ____\nGitVersion:    " + v + "\nGitCommit:     abc\n" }
+	for _, tc := range []struct {
+		out     string
+		args    string
+		problem string
+	}{
+		{banner("v3.1.3"), "", ""},
+		{banner("v3.2.0"), "", ""},
+		{banner("v4.0.0"), "", ""},
+		{banner("v3.1.2"), "", "GHSA-fx35-mq7g-6g98"},
+		{banner("v3.0.6"), "", "GHSA-fx35-mq7g-6g98"},
+		{banner("v2.6.5"), "--new-bundle-format", ""},
+		{banner("v2.6.4"), "", "GHSA-fx35-mq7g-6g98"},
+		{banner("v1.13.1"), "", "too old"},
+		{"cosign: command not understood", "", "couldn't read"},
+	} {
+		args, problem := CosignSupport(tc.out)
+		if strings.Join(args, " ") != tc.args || (tc.problem == "") != (problem == "") || !strings.Contains(problem, tc.problem) {
+			t.Errorf("CosignSupport(%q) = %v, %q; want %q, %q", tc.out, args, problem, tc.args, tc.problem)
+		}
+	}
+}
+
+// A cosign that can't be trusted is treated like none: the checksums are
+// checked and the reason is said, and RIGSMITH_REQUIRE_SIGNATURE=1 refuses.
+func TestRun_AnUnsupportedCosignIsNotTrusted(t *testing.T) {
+	unsupported := func(_, _ []byte) (bool, error) {
+		return false, &UnsupportedVerifier{Reason: "cosign v3.0.6 has a signature-check bypass (GHSA-fx35-mq7g-6g98); upgrade to v3.1.3 or later"}
+	}
+	e, calls := testEnv(map[string]string{"rig": "1.23.1"}, "v1.28.0")
+	e.VerifySignature = unsupported
+	var out bytes.Buffer
+	if err := Run(&out, false, *e); err != nil || len(*calls) != 1 {
+		t.Fatalf("err=%v calls=%d", err, len(*calls))
+	}
+	if !strings.Contains(out.String(), "GHSA-fx35-mq7g-6g98") || strings.Contains(out.String(), "verified the signature") {
+		t.Fatalf("an untrusted cosign wasn't reported as such:\n%s", out.String())
+	}
+
+	strict, strictCalls := testEnv(map[string]string{"rig": "1.23.1"}, "v1.28.0")
+	strict.VerifySignature = unsupported
+	strict.RequireSignature = true
+	if err := Run(&bytes.Buffer{}, false, *strict); err == nil || !strings.Contains(err.Error(), "GHSA-fx35-mq7g-6g98") || len(*strictCalls) != 0 {
+		t.Fatalf("RIGSMITH_REQUIRE_SIGNATURE=1 accepted an untrusted cosign: %v", err)
+	}
+}

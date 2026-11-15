@@ -421,3 +421,21 @@ func TestUnsignedBuildPassesTaurisNoSign(t *testing.T) {
 		t.Errorf("a signed build's args changed: %q", got)
 	}
 }
+
+// Before tauri-cli 2.9.5, --no-sign still signs updater artifacts; a failed
+// unsigned build on such a CLI says so (tauri-apps/tauri#14582).
+func TestNoSignCaveatNamesTheFixedTauriCLI(t *testing.T) {
+	for out, wantHint := range map[string]bool{
+		"tauri-cli 2.9.4\n": true,
+		"tauri-cli 2.8.0":   true,
+		"tauri-cli 2.9.5":   false,
+		"tauri-cli 2.10.1":  false,
+		"tauri-cli 3.0.0":   false,
+		"":                  false,
+	} {
+		hint := noSignCaveat(out)
+		if (hint != "") != wantHint || (wantHint && !strings.Contains(hint, "2.9.5")) {
+			t.Errorf("noSignCaveat(%q) = %q", out, hint)
+		}
+	}
+}

@@ -19,14 +19,17 @@ var family = []string{"rig", "shiprig", "clauderig", "codexrig", "changerig", "b
 // archive into a stub binary named after it, and a fake cosign, when present,
 // accepts only the bundle the release was signed with.
 type fakeRelease struct {
-	t        *testing.T
-	tools    string // fake curl/tar/cosign, first on PATH
-	assets   string // the release's files
-	urls     string // every URL curl was asked for
-	prefix   string
-	data     string
-	cosign   bool
-	extraEnv []string
+	t      *testing.T
+	tools  string // fake curl/tar/cosign, first on PATH
+	assets string // the release's files
+	urls   string // every URL curl was asked for
+	prefix string
+	data   string
+	cosign bool
+	// cosignVersion is what the fake cosign reports (default v3.1.3, the
+	// first v3 without GHSA-fx35-mq7g-6g98).
+	cosignVersion string
+	extraEnv      []string
 }
 
 func newFakeRelease(t *testing.T) *fakeRelease {
@@ -96,10 +99,23 @@ func (r *fakeRelease) write(dir, name, body string) {
 func (r *fakeRelease) run() (string, error) {
 	r.t.Helper()
 	if r.cosign {
+		version := r.cosignVersion
+		if version == "" {
+			version = "v3.1.3"
+		}
+		// Like the real one, a v2 can read the release's bundle only when told
+		// it is the new format.
 		r.write(r.tools, "cosign", `#!/bin/sh
-for a in "$@"; do last="$a"; done
-bundle=""
-while [ "$#" -gt 0 ]; do [ "$1" = --bundle ] && bundle="$2"; shift; done
+if [ "$1" = version ]; then printf '  COSIGN\nGitVersion:    %s\n' "`+version+`"; exit 0; fi
+bundle=""; newfmt=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --bundle) bundle="$2" ;;
+    --new-bundle-format) newfmt=1 ;;
+  esac
+  shift
+done
+case "`+version+`" in v2.*) [ "$newfmt" = 1 ] || { echo "bundle: unknown format" >&2; exit 1; } ;; esac
 grep -q 'by the release workflow' "$bundle" || { echo "invalid signature" >&2; exit 1; }
 `)
 	}
@@ -107,7 +123,9 @@ grep -q 'by the release workflow' "$bundle" || { echo "invalid signature" >&2; e
 	cmd.Env = append(os.Environ(),
 		"PATH="+r.tools+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin",
 		"RIGSMITH_VERSION=v0.0.1", "RIGSMITH_INSTALL="+r.prefix, "XDG_DATA_HOME="+r.data,
-		"RIGSMITH_REQUIRE_SIGNATURE=")
+		// A developer's own overrides must not leak in: an inherited
+		// RIGSMITH_BIN_DIR would send the fake binaries over their real tools.
+		"RIGSMITH_REQUIRE_SIGNATURE=", "RIGSMITH_BIN_DIR=", "RIGSMITH_REPO=")
 	cmd.Env = append(cmd.Env, r.extraEnv...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
@@ -258,5 +276,34 @@ func TestReleaseInstallerHonoursBinDirAndRepo(t *testing.T) {
 		if !strings.HasPrefix(line, "https://github.com/acme/fork/releases/download/v0.0.1/") {
 			t.Errorf("a download ignored RIGSMITH_REPO: %s", line)
 		}
+	}
+}
+
+// Only a cosign that can be trusted checks the signature: one with the
+// GHSA-fx35-mq7g-6g98 bypass counts as none (said, and refused under
+// RIGSMITH_REQUIRE_SIGNATURE=1), and a fixed v2 is told the bundle format.
+func TestReleaseInstallerChecksTheCosignVersion(t *testing.T) {
+	old := newFakeRelease(t)
+	old.cosignVersion = "v3.0.6"
+	out, err := old.run()
+	if err != nil || len(old.installed()) != len(family) {
+		t.Fatalf("an untrusted cosign should fall back to the checksums: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "GHSA-fx35-mq7g-6g98") || strings.Contains(out, "verified the signature") {
+		t.Errorf("v3.0.6 was trusted, or not said to be untrusted:\n%s", out)
+	}
+
+	strict := newFakeRelease(t)
+	strict.cosignVersion = "v2.6.4"
+	strict.extraEnv = []string{"RIGSMITH_REQUIRE_SIGNATURE=1"}
+	if out, err := strict.run(); err == nil || len(strict.installed()) != 0 || !strings.Contains(out, "upgrade to v2.6.5") {
+		t.Fatalf("RIGSMITH_REQUIRE_SIGNATURE=1 accepted cosign v2.6.4: %v\n%s", err, out)
+	}
+
+	v2 := newFakeRelease(t)
+	v2.cosignVersion = "v2.6.5"
+	out, err = v2.run()
+	if err != nil || !strings.Contains(out, "verified the signature on checksums.txt") {
+		t.Fatalf("cosign v2.6.5 should verify with --new-bundle-format: %v\n%s", err, out)
 	}
 }
