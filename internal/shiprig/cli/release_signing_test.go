@@ -163,3 +163,20 @@ func TestWithoutSigningVars_DropsWhatSigningEnvNames(t *testing.T) {
 		t.Fatalf("no signing config, yet %v", got)
 	}
 }
+
+func TestIsSigningName_FoldsCaseOnWindowsOnly(t *testing.T) {
+	signing := map[string]string{"CSC_LINK": "env:X"}
+	for _, tc := range []struct {
+		name, goos string
+		want       bool
+	}{
+		{"CSC_LINK", "darwin", true},
+		{"csc_link", "darwin", false},
+		{"csc_link", "windows", true},
+		{"CSC_LINK_EXTRA", "windows", false},
+	} {
+		if got := isSigningName(signing, tc.name, tc.goos); got != tc.want {
+			t.Errorf("isSigningName(%q, %s) = %v, want %v", tc.name, tc.goos, got, tc.want)
+		}
+	}
+}

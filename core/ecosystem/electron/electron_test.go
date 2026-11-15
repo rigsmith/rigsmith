@@ -221,3 +221,27 @@ func TestCollectInstallers(t *testing.T) {
 		t.Errorf("junk collected: %v", got)
 	}
 }
+
+// A build that must not sign (--dry-build, --unsigned) uses electron-builder's
+// documented off-switch: every CSC_* certificate variable unset,
+// CSC_IDENTITY_AUTO_DISCOVERY=false, and notarization off.
+func TestUnsignedBuildUsesElectronBuildersOffSwitch(t *testing.T) {
+	for _, req := range []plugin.ArtifactsRequest{{Snapshot: true}, {Unsigned: true}} {
+		args := builderArgs(req)
+		if args[len(args)-1] != "-c.mac.notarize=false" {
+			t.Errorf("snapshot=%v unsigned=%v: args %v don't turn notarization off", req.Snapshot, req.Unsigned, args)
+		}
+	}
+	if args := builderArgs(plugin.ArtifactsRequest{}); strings.Join(args, " ") != "electron-builder --publish never" {
+		t.Errorf("a signed build's args changed: %v", args)
+	}
+
+	env := unsignedBuilderEnv([]string{
+		"PATH=/usr/bin", "CSC_LINK=/tmp/cert.p12", "CSC_KEY_PASSWORD=pw", "WIN_CSC_LINK=x",
+		"CSC_NAME=Dev", "CSC_IDENTITY_AUTO_DISCOVERY=true", "APPLE_ID=you@example.com",
+	})
+	want := "PATH=/usr/bin|APPLE_ID=you@example.com|CSC_IDENTITY_AUTO_DISCOVERY=false"
+	if got := strings.Join(env, "|"); got != want {
+		t.Fatalf("unsignedBuilderEnv = %s, want %s", got, want)
+	}
+}

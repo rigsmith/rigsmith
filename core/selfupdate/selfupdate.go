@@ -93,6 +93,15 @@ type Env struct {
 	// ProbeVersion reports the version printed by the binary at path, and
 	// whether a binary is there at all.
 	ProbeVersion func(path string) (version string, present bool)
+	// Fetch downloads a release asset, reporting a missing one as ErrNotFound.
+	Fetch func(url string) ([]byte, error)
+	// VerifySignature checks the checksums file's Sigstore bundle. checked is
+	// false, with no error, when no verifier (cosign) is available.
+	VerifySignature func(checksums, bundle []byte) (checked bool, err error)
+	// RequireSignature refuses an unchecked signature instead of warning.
+	RequireSignature bool
+	// StageScript writes the verified installer somewhere to run it from.
+	StageScript func(script []byte) (path string, cleanup func(), err error)
 	// Install runs the installer argv.
 	Install func(argv []string) error
 }
@@ -169,8 +178,21 @@ func Run(out io.Writer, check bool, e Env) error {
 		return nil
 	}
 
+	// Nothing runs until the release's checksums verify against its signature
+	// and the installer against the checksums; the installer then checks every
+	// archive against the same checksums before installing any of them.
+	script, err := verifiedInstaller(out, e, tag)
+	if err != nil {
+		return err
+	}
+	path, cleanup, err := e.StageScript(script)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
 	fmt.Fprintf(out, "updating the rigsmith tools in %s to v%s…\n", binDir, latest)
-	if err := e.Install(InstallerArgs(e.Repo, tag, binDir)); err != nil {
+	if err := e.Install(InstallerArgs(e.Repo, tag, binDir, path)); err != nil {
 		return err
 	}
 
@@ -306,29 +328,26 @@ func MoveLines(before, after []Installed) []string {
 	return lines
 }
 
-// InstallerArgs is the argv that re-runs the rigsmith installer for the whole
-// family, pinned to tag and installing into binDir. Pure.
-//
-// The script is fetched from the tag too, not from main: what runs is the
-// installer that shipped with the release it installs, and a later change to
-// main can't change what a self-update executes.
+// InstallerArgs is the argv that runs the verified installer script (the
+// release's own install.sh, checked against its signed checksums and staged at
+// script) for the whole family, pinned to tag and installing into binDir. It
+// goes through env(1), so no value passes through a shell. Pure.
 //
 // RIGSMITH_BIN_DIR names the directory outright. RIGSMITH_INSTALL (its parent,
 // when binDir is a …/bin) says the same thing to an installer that predates
 // RIGSMITH_BIN_DIR, which only knows the prefix. RIGSMITH_REPO keeps a
 // $RIG_SELFUPDATE_REPO fork's installer downloading that fork's release.
-func InstallerArgs(repo, tag, binDir string) []string {
-	vars := []string{
-		"RIGSMITH_VERSION=" + shellQuote(tag),
-		"RIGSMITH_REPO=" + shellQuote(repo),
-		"RIGSMITH_BIN_DIR=" + shellQuote(binDir),
+func InstallerArgs(repo, tag, binDir, script string) []string {
+	argv := []string{
+		"env",
+		"RIGSMITH_VERSION=" + tag,
+		"RIGSMITH_REPO=" + repo,
+		"RIGSMITH_BIN_DIR=" + binDir,
 	}
 	if filepath.Base(binDir) == "bin" {
-		vars = append(vars, "RIGSMITH_INSTALL="+shellQuote(filepath.Dir(binDir)))
+		argv = append(argv, "RIGSMITH_INSTALL="+filepath.Dir(binDir))
 	}
-	script := "curl -fsSL https://raw.githubusercontent.com/" + repo + "/" + tag + "/scripts/install.sh" +
-		" | " + strings.Join(vars, " ") + " sh -s all"
-	return []string{"sh", "-c", script}
+	return append(argv, "sh", script, "all")
 }
 
 // ManagedUpgrade reports how to update tool when its resolved binary belongs
@@ -456,7 +475,13 @@ func liveEnv(cmd *cobra.Command, o Options) Env {
 			}
 			return probeVersion(cmd.Context(), path)
 		},
-		Install: func(argv []string) error { return run(cmd, argv) },
+		Fetch: fetchAsset,
+		VerifySignature: func(checksums, bundle []byte) (bool, error) {
+			return cosignVerify(cmd.Context(), repo, checksums, bundle)
+		},
+		RequireSignature: os.Getenv(RequireSignatureEnv) == "1",
+		StageScript:      stageScript,
+		Install:          func(argv []string) error { return run(cmd, argv) },
 	}
 }
 
@@ -517,8 +542,3 @@ func nameWidth(tools []Installed) int {
 }
 
 func trimV(v string) string { return strings.TrimPrefix(strings.TrimSpace(v), "v") }
-
-// shellQuote single-quotes s for sh. Pure.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}

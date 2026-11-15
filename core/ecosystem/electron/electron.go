@@ -157,8 +157,17 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	}
 
 	// Signing secrets (when enabled) ride in via the environment — electron-builder
-	// and electron-forge read the standard CSC_*/APPLE_* variables.
+	// and electron-forge read the standard CSC_*/APPLE_* variables. A build that
+	// must not sign (a snapshot, or --unsigned) gets electron-builder's own
+	// off-switch instead: see unsignedBuilderEnv.
 	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
+	note := ""
+	if !signsBuild(req) {
+		env = unsignedBuilderEnv(env)
+		if forge {
+			note = " — electron-forge has no switch to skip signing; any osxSign/windowsSign in its config still applies"
+		}
+	}
 	var outDir string
 	if forge {
 		if _, _, err := runCmdEnv(ctx, dir, env, "npx", "electron-forge", "make"); err != nil {
@@ -166,7 +175,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 		}
 		outDir = filepath.Join(dir, "out", "make")
 	} else {
-		if _, _, err := runCmdEnv(ctx, dir, env, "npx", "electron-builder", "--publish", "never"); err != nil {
+		if _, _, err := runCmdEnv(ctx, dir, env, "npx", builderArgs(req)...); err != nil {
 			return plugin.ArtifactsResponse{}, fmt.Errorf("electron-builder: %w", err)
 		}
 		outDir = filepath.Join(dir, "dist")
@@ -176,7 +185,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	return plugin.ArtifactsResponse{
 		Built:     true,
 		Artifacts: arts,
-		Message:   fmt.Sprintf("built %d installer(s) for %s@%s via %s%s", len(arts), req.Package.Name, req.Package.Version, builder, signedSuffix(signed)),
+		Message:   fmt.Sprintf("built %d installer(s) for %s@%s via %s%s%s", len(arts), req.Package.Name, req.Package.Version, builder, signedSuffix(signed), note),
 	}, nil
 }
 
@@ -356,6 +365,50 @@ func mergeSigningEnv(base []string, s *plugin.SigningCreds) []string {
 		out = append(out, k+"="+s.Env[k])
 	}
 	return out
+}
+
+// signsBuild reports whether an Artifacts request may sign: not a snapshot
+// (--dry-build), and not asked to build unsigned (--unsigned). Pure.
+func signsBuild(req plugin.ArtifactsRequest) bool {
+	return !req.Snapshot && !req.Unsigned
+}
+
+// builderArgs is the electron-builder command line (after npx). A build that
+// must not sign also turns notarization off: electron-builder notarizes
+// whenever APPLE_* credentials are present, and `mac.notarize: false` is its
+// documented "never notarize" (website/docs/features/code-signing/notarization.md). Pure.
+func builderArgs(req plugin.ArtifactsRequest) []string {
+	args := []string{"electron-builder", "--publish", "never"}
+	if !signsBuild(req) {
+		args = append(args, "-c.mac.notarize=false")
+	}
+	return args
+}
+
+// builderCertVars are the variables electron-builder reads a signing
+// certificate or identity from (website/docs/features/code-signing/code-signing.md,
+// "Environment Variables").
+var builderCertVars = map[string]bool{
+	"CSC_LINK": true, "CSC_KEY_PASSWORD": true, "CSC_NAME": true, "CSC_KEYCHAIN": true,
+	"CSC_INSTALLER_LINK": true, "CSC_INSTALLER_KEY_PASSWORD": true,
+	"WIN_CSC_LINK": true, "WIN_CSC_KEY_PASSWORD": true,
+}
+
+// unsignedBuilderEnv is env set up for an unsigned electron-builder build, as
+// its docs describe: "To skip signing, leave all CSC_* environment variables
+// unset and set CSC_IDENTITY_AUTO_DISCOVERY=false" (code-signing-mac.md), and
+// with WIN_CSC_LINK / CSC_LINK unset there is no certificate for Windows
+// signing to discover (code-signing-win.md). env is not modified. Pure.
+func unsignedBuilderEnv(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if builderCertVars[strings.ToUpper(name)] || strings.EqualFold(name, "CSC_IDENTITY_AUTO_DISCOVERY") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "CSC_IDENTITY_AUTO_DISCOVERY=false")
 }
 
 // signedSuffix is a short " (signed)" tag for build messages.

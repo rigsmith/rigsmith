@@ -408,3 +408,16 @@ func TestFindBundleDir(t *testing.T) {
 		t.Errorf("findBundleDir = %q, want crate-local %q", got, crateBundle)
 	}
 }
+
+// A build that must not sign (--dry-build, --unsigned) passes Tauri's
+// documented --no-sign; a signed build's command line is unchanged.
+func TestUnsignedBuildPassesTaurisNoSign(t *testing.T) {
+	for _, req := range []plugin.ArtifactsRequest{{Snapshot: true}, {Unsigned: true}} {
+		if got := strings.Join(tauriBuildArgs(req), " "); got != "tauri build --no-sign" {
+			t.Errorf("snapshot=%v unsigned=%v: args = %q", req.Snapshot, req.Unsigned, got)
+		}
+	}
+	if got := strings.Join(tauriBuildArgs(plugin.ArtifactsRequest{}), " "); got != "tauri build" {
+		t.Errorf("a signed build's args changed: %q", got)
+	}
+}

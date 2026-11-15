@@ -221,7 +221,7 @@ func (a *Adapter) Artifacts(ctx context.Context, req plugin.ArtifactsRequest) (p
 	// Signing secrets (when enabled) ride in via the environment — `cargo tauri
 	// build` and its bundlers read the standard APPLE_*/TAURI_SIGNING_* variables.
 	env := mergeSigningEnv(req.BaseEnv(), req.Signing)
-	if _, _, err := runCmdEnv(ctx, crateDir, env, "cargo", "tauri", "build"); err != nil {
+	if _, _, err := runCmdEnv(ctx, crateDir, env, "cargo", tauriBuildArgs(req)...); err != nil {
 		return plugin.ArtifactsResponse{}, fmt.Errorf("tauri build: %w", err)
 	}
 
@@ -607,6 +607,24 @@ func mergeSigningEnv(base []string, s *plugin.SigningCreds) []string {
 		out = append(out, k+"="+s.Env[k])
 	}
 	return out
+}
+
+// signsBuild reports whether an Artifacts request may sign: not a snapshot
+// (--dry-build), and not asked to build unsigned (--unsigned). Pure.
+func signsBuild(req plugin.ArtifactsRequest) bool {
+	return !req.Snapshot && !req.Unsigned
+}
+
+// tauriBuildArgs is the `cargo tauri build` command line (after cargo). A build
+// that must not sign passes Tauri v2's documented `--no-sign` ("Skip code
+// signing when bundling the app", https://v2.tauri.app/reference/cli/). The
+// updater's own signature is separate and, per Tauri, cannot be disabled. Pure.
+func tauriBuildArgs(req plugin.ArtifactsRequest) []string {
+	args := []string{"tauri", "build"}
+	if !signsBuild(req) {
+		args = append(args, "--no-sign")
+	}
+	return args
 }
 
 // signedSuffix is a short " (signed)" tag for build messages.

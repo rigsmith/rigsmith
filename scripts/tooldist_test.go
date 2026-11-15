@@ -57,7 +57,8 @@ var notACommand = map[string]bool{
 }
 
 var distSurfaces = []surface{
-	{file: "install.sh", list: regexp.MustCompile(`install_binary ([\w-]+)`)},
+	// The `all` list: `bins="rig shiprig …"`, plus `bins="$bins brewrig"` off Windows.
+	{file: "install.sh", section: regexp.MustCompile(`bins="(?:\$bins )?([\w -]+)"`), list: regexp.MustCompile(`([\w-]+)`)},
 	{file: "install.ps1", windowsOnly: true, section: regexp.MustCompile(`(?m)^\s*\$binaries = @\(.*\)$`), list: regexp.MustCompile(`'([\w-]+)'`)},
 	{file: "brew.sh", section: regexp.MustCompile(`(?m)^\s*[\w|-]+\) cask=`), list: regexp.MustCompile(`([\w-]+)[|)]`)},
 	{file: "winres.sh", windowsOnly: true, section: regexp.MustCompile(`(?m)^\s*for tool in (.*); do$`), list: regexp.MustCompile(`([\w-]+)`)},

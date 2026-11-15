@@ -267,8 +267,28 @@ archives:
         formats:
           - zip
 
+# checksums.txt covers every archive and the installer itself, and is signed
+# (signs: below). install.sh and `<tool> self-update` check the signature, then
+# every file against it, before installing anything.
 checksum:
   name_template: "checksums.txt"
+  extra_files:
+    - glob: ./scripts/install.sh
+
+# Sigstore keyless signing: cosign signs checksums.txt with the release
+# workflow's own GitHub OIDC identity (the job's id-token), so there is no key
+# to create, store or rotate. The bundle (certificate + signature + Rekor
+# transparency-log entry) ships as checksums.txt.sigstore.json, and a verifier
+# pins the identity to .github/workflows/release.yml of this repository. The
+# CI snapshot skips it (--skip=sign): only the release workflow has the
+# identity.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args: ["sign-blob", "--bundle=${signature}", "--yes", "${artifact}"]
+    output: true
 
 # A release's notes are the changelog entry for its version, passed as
 # --release-notes by the release workflow (scripts/release-notes.sh), which
@@ -570,3 +590,7 @@ release:
   github:
     owner: rigsmith
     name: rigsmith
+  # The installer the checksums vouch for, so `<tool> self-update` runs the
+  # release's own copy after checking it, rather than one fetched from a branch.
+  extra_files:
+    - glob: ./scripts/install.sh

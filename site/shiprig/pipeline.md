@@ -520,8 +520,12 @@ naming the variable and how to supply it, on a terminal as in CI. To build
 unsigned on purpose, pass `shiprig release --unsigned`: no signing secret is read,
 no signer runs, a Velopack app's own macOS and Windows signing from `velopack.json`
 is skipped, and the variables `signing.env` names are left out of the build's
-environment, so a shell or `.env` value can't sign it either (the same holds for a
-`--dry-build`). A `--dry-build` snapshot is unsigned anyway and ships nowhere,
+environment, so a shell or `.env` value can't sign it either. Each builder's own
+switch is set too: electron-builder runs with every `CSC_*` certificate variable
+unset, `CSC_IDENTITY_AUTO_DISCOVERY=false` and `-c.mac.notarize=false`, and Tauri
+runs `cargo tauri build --no-sign` (Tauri's updater signature is separate and
+can't be turned off). electron-forge has no such switch, so signing set up in its
+own config still applies. All of this holds for a `--dry-build` too. A `--dry-build` snapshot is unsigned anyway and ships nowhere,
 so there a missing secret is reported and the rehearsal carries on.
 
 ### Where the release config lives

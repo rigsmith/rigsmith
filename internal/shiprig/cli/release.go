@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -991,11 +992,29 @@ func withoutSigningVars(env []string, cfg *config.Config, eco string) []string {
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
-		if _, signing := sc.Env[name]; !signing {
+		if !isSigningName(sc.Env, name, runtime.GOOS) {
 			out = append(out, kv)
 		}
 	}
 	return out
+}
+
+// isSigningName reports whether name is a signing.env key. Environment names
+// are case-insensitive on Windows, so there a csc_link still matches CSC_LINK;
+// elsewhere the match is exact. Pure.
+func isSigningName(signing map[string]string, name, goos string) bool {
+	if _, ok := signing[name]; ok {
+		return true
+	}
+	if goos != "windows" {
+		return false
+	}
+	for key := range signing {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // signingFailure is what a release configured to sign says when a signing

