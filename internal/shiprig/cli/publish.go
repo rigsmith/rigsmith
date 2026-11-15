@@ -424,7 +424,7 @@ func newPublishCmd() *cobra.Command {
 			// one "tagged+pushed" then eleven "tag exists" as each iteration
 			// re-reads the tag the previous one just created).
 			done := map[string]bool{}
-			var taggedNow []plugin.Package // packages whose tag this run makes (or would)
+			var taggedNow []plugin.Package // packages whose tag this run creates at HEAD (or would)
 			for _, p := range pkgs {
 				if ws.Config.SkipsTag(p.Name) {
 					continue
@@ -463,7 +463,12 @@ func newPublishCmd() *cobra.Command {
 					fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("tag exists"), tag)
 					continue
 				}
-				taggedNow = append(taggedNow, p)
+				// Only a tag made now is made at HEAD. One that exists locally
+				// and only needs pushing may sit on an earlier commit; if it is
+				// at HEAD, releasedAtHead already counts it.
+				if !localExists {
+					taggedNow = append(taggedNow, p)
+				}
 				if dryRun {
 					push := ""
 					if remote != "" {

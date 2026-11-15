@@ -466,3 +466,39 @@ func TestCheckCombinedReleaseRefusesAnExistingCombinedTag(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// A package whose tag exists locally on an earlier commit and only needs
+// pushing is not part of the HEAD release: publish pushes it, but renders the
+// combined tag from what it tags at HEAD (app at 2.0.0), so a stale lib@1.0.0
+// doesn't fail the shared-version check after the registry push.
+func TestPublishCombinedIgnoresOldTagsThatOnlyNeedPushing(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["done"], "forgeRelease": {"mode": "combined"}}`)
+	bare := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q", "--bare", bare},
+		{"-C", root, "remote", "add", "origin", bare},
+		{"-C", root, "tag", "-a", "lib@1.0.0", "-m", "lib@1.0.0"},
+		{"-C", root, "-c", "user.email=x@y.z", "-c", "user.name=x", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "next"},
+		{"-C", root, "push", "-q", "origin", "HEAD:refs/heads/main"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	reqs, out, err := publishTagging(t)
+	if err != nil {
+		t.Fatalf("publish: %v\n%s", err, out)
+	}
+	if len(reqs) == 0 {
+		t.Fatal("nothing published")
+	}
+	remoteTags, err := exec.Command("git", "-C", bare, "tag", "--list").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{"lib@1.0.0", "app@2.0.0", "v2.0.0"} {
+		if !strings.Contains(string(remoteTags), tag) {
+			t.Errorf("remote lacks %s; has %q\n%s", tag, remoteTags, out)
+		}
+	}
+}

@@ -246,6 +246,12 @@ func ensureCombinedTag(ctx context.Context, root, remote, tag string, dryRun boo
 		return false, "tagged " + tag, nil
 	}
 	if err := gitutil.PushTag(ctx, root, remote, tag); err != nil {
+		// Another job may have pushed its own tag object for this release
+		// between the lookup and the push; git refuses to overwrite it. The
+		// same commit means the same release, so that is a success.
+		if at, found, lerr := gitutil.RemoteTagCommit(ctx, root, remote, tag); lerr == nil && found && at == head {
+			return true, "tag exists " + tag + " (pushed concurrently)", nil
+		}
 		return false, "", fmt.Errorf("pushing: %w", err)
 	}
 	return false, "tagged+pushed " + tag + " → " + remote, nil
