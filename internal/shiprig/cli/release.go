@@ -639,7 +639,30 @@ func checkCombinedRelease(ctx context.Context, ws *commands.Workspace, steps []p
 		}
 		covered = append(covered, plugin.Package{Name: rp.Name, Version: rp.Current})
 	}
-	_, err = forge.SharedVersion(covered, fr)
+	version, err := forge.SharedVersion(covered, fr)
+	if err != nil || len(covered) == 0 {
+		return err
+	}
+	// The combined tag must not already sit on another commit, or the forge
+	// step refuses it after publish. With the version step the release commit
+	// doesn't exist yet, so any existing tag is an earlier release's.
+	ctag, _ := fr.Render(version)
+	if versionRuns {
+		remote := gitutil.DefaultRemote(ctx, ws.Root)
+		onRemote := false
+		if remote != "" {
+			var err error
+			if _, onRemote, err = gitutil.RemoteTagCommit(ctx, ws.Root, remote, ctag); err != nil {
+				return fmt.Errorf("looking up tag %s on %s: %w", ctag, remote, err)
+			}
+		}
+		if onRemote || gitutil.TagExists(ctx, ws.Root, ctag) {
+			return fmt.Errorf("the combined release's tag %s already exists, from an earlier release; "+
+				"each release needs its own tag (use ${version} in forgeRelease.tag)", ctag)
+		}
+		return nil
+	}
+	_, _, err = ensureCombinedTag(ctx, ws.Root, gitutil.DefaultRemote(ctx, ws.Root), ctag, true)
 	return err
 }
 

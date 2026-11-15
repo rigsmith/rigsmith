@@ -424,3 +424,45 @@ func TestCheckCombinedReleaseWithoutTheVersionStepUsesTagsAtHead(t *testing.T) {
 		t.Errorf("--only release over lib and done at 1.0.0: %v", err)
 	}
 }
+
+// `shiprig tag` refuses a combined tag left on an earlier commit before it
+// makes any package tag, so the refusal leaves nothing for a retry to trip on.
+func TestTagRefusesAStaleCombinedTagBeforeTaggingPackages(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["app"], "forgeRelease": {"mode": "combined", "tag": "release"}}`)
+	tagRepo(t, root, "release")
+	if out, err := exec.Command("git", "-C", root, "-c", "user.email=x@y.z", "-c", "user.name=x", "-c", "commit.gpgsign=false",
+		"commit", "-q", "--allow-empty", "-m", "next").CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	cmd := newTagCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(nil)
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "release already exists") {
+		t.Fatalf("err = %v\n%s", err, out.String())
+	}
+	if hasTag(t, root, "lib@1.0.0") || hasTag(t, root, "done@1.0.0") {
+		t.Error("package tags were made before the refusal")
+	}
+}
+
+// With the version step, the release commit doesn't exist yet, so a combined
+// tag that already exists is an earlier release's: refused before the pipeline.
+func TestCheckCombinedReleaseRefusesAnExistingCombinedTag(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["app", "done"], "forgeRelease": {"mode": "combined", "tag": "release"}}`)
+	writeFile(t, root, ".changeset/lib.md", "---\n\"lib\": patch\n---\n\nLib.\n")
+	tagRepo(t, root, "release")
+	ws, err := commands.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := pipeline.Resolve(&pipeline.Config{}, pipeline.ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCombinedRelease(t.Context(), ws, steps); err == nil || !strings.Contains(err.Error(), "release already exists") {
+		t.Errorf("err = %v", err)
+	}
+}
