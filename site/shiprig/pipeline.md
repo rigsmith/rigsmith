@@ -518,7 +518,8 @@ signing secret can't be read — Doppler signed out, a `doppler:NAME` missing fr
 the release config, an unset `env:NAME` — the `build` (or `sign`) step stops,
 naming the variable and how to supply it, on a terminal as in CI. To build
 unsigned on purpose, pass `shiprig release --unsigned`: no signing secret is read,
-no signer runs, and the variables `signing.env` names are left out of the build's
+no signer runs, a Velopack app's own macOS and Windows signing from `velopack.json`
+is skipped, and the variables `signing.env` names are left out of the build's
 environment, so a shell or `.env` value can't sign it either (the same holds for a
 `--dry-build`). A `--dry-build` snapshot is unsigned anyway and ships nowhere,
 so there a missing secret is reported and the rehearsal carries on.
