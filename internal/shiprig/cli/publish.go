@@ -423,16 +423,12 @@ func newPublishCmd() *cobra.Command {
 			// repo reports the one tag 12 times ("would tag v0.2.0" twelve over, or
 			// one "tagged+pushed" then eleven "tag exists" as each iteration
 			// re-reads the tag the previous one just created).
+			// With tag events, a shared tag still reports each of its
+			// packages (see tagEvents).
 			done := map[string]bool{}
 			var taggedNow []plugin.Package // packages whose tag this run creates at HEAD (or would)
-			for _, p := range pkgs {
-				if ws.Config.SkipsTag(p.Name) {
-					continue
-				}
-				tag := gitutil.RenderTag(ws.Config.TagTemplate, ecoOf[p.Name], p.Dir, p.Name, p.Version, soloApp)
-				if done[tag] {
-					continue
-				}
+			for _, g := range tagGroups(ws.Config, pkgs, ecoOf, soloApp) {
+				p, tag := g.Packages[0], g.Tag
 				done[tag] = true
 				localExists := gitutil.TagExists(cmd.Context(), ws.Root, tag)
 				if events != nil {
@@ -444,7 +440,7 @@ func newPublishCmd() *cobra.Command {
 						fmt.Fprintf(out, "%s %s\n", commands.DimStyle.Render("would tag"), tag)
 						continue
 					}
-					created, err := events.create(cmd.Context(), ws.Root, tag, p.Name)
+					created, err := events.create(cmd.Context(), ws.Root, tag, g.names())
 					if err != nil {
 						return fmt.Errorf("tagging %s: %w", p.Name, err)
 					}
@@ -467,7 +463,7 @@ func newPublishCmd() *cobra.Command {
 				// and only needs pushing may sit on an earlier commit; if it is
 				// at HEAD, releasedAtHead already counts it.
 				if !localExists {
-					taggedNow = append(taggedNow, p)
+					taggedNow = append(taggedNow, g.Packages...)
 				}
 				if dryRun {
 					push := ""

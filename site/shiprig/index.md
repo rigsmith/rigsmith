@@ -45,7 +45,10 @@ The whole workflow is wired:
   prints and exits, and `packages list --json` prints every package for a script
   (ecosystem, directory, version, next version and bump, private/ignored, and
   where its changelog goes)
-- `tag` — create the git tags for the released versions
+- `tag` — create the git tags for the released versions; `--dry-run` lists
+  them first, and `--json` prints each tag made (or that would be) or already
+  present with the packages it covers (see
+  [which packages a tag covers](./pipeline#which-packages-a-tag-covers))
 - `forge-release` — create the forge release(s) for the packages tagged at
   `HEAD`, one per package or one combined release per version
   (`forgeRelease` in the changeset config; a `${version}` template needs the
@@ -107,7 +110,8 @@ The whole workflow is wired:
   npm and NuGet publish a prebuilt file; cargo can't, so it's refused
 - `tag` and `publish` speak @changesets v3's output contract: with
   `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends a
-  `{"type":"git-tag","tag":…,"packageName":…}` line per tag it creates, skips a
+  `{"type":"git-tag","tag":…,"packageName":…}` line per package for each tag it
+  creates (a tag several packages share gets a line for each of them), skips a
   tag that already exists locally or on the remote, and pushes nothing. The
   caller owns the push, as with `changeset publish`; this is how changesets/action
   and shiprig-action learn which tags to push and release
