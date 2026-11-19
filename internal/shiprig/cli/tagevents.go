@@ -22,6 +22,13 @@ import (
 // are created locally and never pushed here, as `changeset publish` never
 // pushes, so no tag is pushed twice. As in canon, a tag that already exists,
 // locally or on the remote, is skipped with no event.
+//
+// A tag several packages share (a `tagTemplate` like "v${version}") is one
+// ref but gets one event per package, the same tag on each: a reader maps
+// events to released packages by packageName, so one event for the tag would
+// leave the others unreleased. A reader that pushes or releases per tag sees
+// the tag once per package and dedupes by tag. Canon never renders one tag
+// for two packages, so this case is shiprig's alone.
 type tagEvents struct {
 	path string
 }
@@ -54,18 +61,23 @@ func (e *tagEvents) ready() error {
 	return f.Close()
 }
 
-// gitTag appends one git-tag event, all or nothing: a write that fails
-// partway is truncated back off, so the file never holds half a line.
-// appended reports whether the whole line landed, which can be true even with
-// an error (the close failed after the write).
-func (e *tagEvents) gitTag(tag, packageName string) (appended bool, err error) {
-	line, err := json.Marshal(struct {
-		Type        string `json:"type"`
-		Tag         string `json:"tag"`
-		PackageName string `json:"packageName"`
-	}{"git-tag", tag, packageName})
-	if err != nil {
-		return false, err
+// gitTag appends a tag's git-tag events, one per package it covers, all or
+// nothing: a write that fails partway is truncated back off, so the file
+// never holds half a line, or some of a shared tag's packages without the
+// rest. appended reports whether every line landed, which can be true even
+// with an error (the close failed after the write).
+func (e *tagEvents) gitTag(tag string, packageNames []string) (appended bool, err error) {
+	var lines []byte
+	for _, name := range packageNames {
+		line, err := json.Marshal(struct {
+			Type        string `json:"type"`
+			Tag         string `json:"tag"`
+			PackageName string `json:"packageName"`
+		}{"git-tag", tag, name})
+		if err != nil {
+			return false, err
+		}
+		lines = append(append(lines, line...), '\n')
 	}
 	f, err := os.OpenFile(e.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
@@ -76,7 +88,7 @@ func (e *tagEvents) gitTag(tag, packageName string) (appended bool, err error) {
 		f.Close()
 		return false, err
 	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
+	if _, err := f.Write(lines); err != nil {
 		_ = f.Truncate(before)
 		f.Close()
 		return false, err
@@ -88,12 +100,12 @@ func (e *tagEvents) gitTag(tag, packageName string) (appended bool, err error) {
 // out to exist already: one another process created between the caller's
 // check and this call is theirs, so it is neither reported nor, on a failed
 // write, deleted.
-func (e *tagEvents) create(ctx context.Context, repoRoot, tag, packageName string) (created bool, err error) {
+func (e *tagEvents) create(ctx context.Context, repoRoot, tag string, packageNames []string) (created bool, err error) {
 	created, err = gitutil.CreateNewTag(ctx, repoRoot, tag, tag)
 	if err != nil || !created {
 		return false, err
 	}
-	return true, e.record(ctx, repoRoot, tag, packageName)
+	return true, e.record(ctx, repoRoot, tag, packageNames)
 }
 
 // record reports a tag this run just created. When its event could not be
@@ -101,8 +113,8 @@ func (e *tagEvents) create(ctx context.Context, repoRoot, tag, packageName strin
 // existing, skip it, and never report it, so the caller would never push or
 // release it. When the event did land (only the close failed), the tag stays,
 // or a retry would report it twice.
-func (e *tagEvents) record(ctx context.Context, repoRoot, tag, packageName string) error {
-	appended, err := e.gitTag(tag, packageName)
+func (e *tagEvents) record(ctx context.Context, repoRoot, tag string, packageNames []string) error {
+	appended, err := e.gitTag(tag, packageNames)
 	if err == nil {
 		return nil
 	}

@@ -69,10 +69,14 @@ steps in between never ran, and `publish` ships what `build` produced. See
 
 `publish` and `tag` speak @changesets v3's output contract for a calling
 action: with `--output <file>` or `$CHANGESETS_OUTPUT` set, each appends one
-`{"type":"git-tag","tag":…,"packageName":…}` line per tag it creates, skips a
-tag already present locally or on the remote, and pushes nothing. The tags stay
-local for the caller to push (changesets/action, shiprig-action). `publish`
-checks that the file can be written before it touches any registry.
+`{"type":"git-tag","tag":…,"packageName":…}` line per package for each tag it
+creates (a tag several packages share, as `"tagTemplate": "v${version}"` makes,
+gets one line for each of them), skips a tag already present locally or on the
+remote, and pushes nothing. The tags stay local for the caller to push
+(changesets/action, shiprig-action). `publish` checks that the file can be
+written before it touches any registry. `shiprig tag --dry-run --json` says
+which packages each tag would cover before anything is tagged (see
+[the pipeline docs](../../site/shiprig/pipeline.md#which-packages-a-tag-covers)).
 
 Forge releases are one per package by default, each titled after its tag
 (`v1.2.3` in a single-package repo, `@acme/web@1.2.3` in a monorepo).

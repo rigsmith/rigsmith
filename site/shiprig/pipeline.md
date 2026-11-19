@@ -241,6 +241,53 @@ variable, so the release always attaches to the tag that was pushed:
 
 Placeholders: `${version}` and `${name}`.
 
+### Which packages a tag covers
+
+A template can put several packages on one tag (`v${version}` in a lockstep
+repo), and a custom one can make a tag's name say nothing about its package.
+Read the packages from shiprig, not from the tag's name:
+`shiprig tag --json` prints, on stdout, every tag the run made (or with
+`--dry-run`, would make) and every one already there, each with the packages
+it covers. The text report goes to stderr.
+
+```sh
+shiprig tag --dry-run --json
+```
+
+```json
+{
+  "dryRun": true,
+  "tags": [
+    {
+      "tag": "v1.0.0",
+      "action": "would-create",
+      "packages": [
+        { "name": "@acme/core", "version": "1.0.0", "ecosystem": "node" },
+        { "name": "@acme/web", "version": "1.0.0", "ecosystem": "node" }
+      ]
+    },
+    {
+      "tag": "v0.9.0",
+      "action": "exists",
+      "packages": [{ "name": "@acme/cli", "version": "0.9.0", "ecosystem": "node" }]
+    }
+  ]
+}
+```
+
+`action` is `created`, `would-create` (`--dry-run`) or `exists` (already
+there, skipped), the same words `forge-release --json` uses. A `forgeRelease`
+combined tag is listed too, with `"combined": true` and the packages its
+release covers, each of which also has a tag of its own. Ignored packages,
+and private ones unless `privatePackages.tag`, are never tagged, so they are
+never listed. In a stackspace `tags` is empty and `message` says why. A
+failure exits non-zero and still prints the JSON, with the tags made before
+it and `message` saying what failed.
+
+With tag events (`--output` or `$CHANGESETS_OUTPUT`), a tag several packages
+share gets one `git-tag` event per package, the same tag on each, so a reader
+that maps events to packages by `packageName` finds every package released.
+
 ## Forge releases
 
 The `release` step creates a release on your forge and uploads built assets.
