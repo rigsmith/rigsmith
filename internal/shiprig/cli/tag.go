@@ -244,6 +244,11 @@ created appends one @changesets git-tag event per package it covers.`,
 					if events != nil {
 						made, err := events.create(cmd.Context(), ws.Root, g.Tag, g.names())
 						if err != nil {
+							// A tag kept despite the error (its events landed,
+							// only the close failed) was made: list it.
+							if made {
+								result.Tags = append(result.Tags, tagEntry(g.Tag, forge.ActionCreated, g.Packages, ecoOf))
+							}
 							return fail(fmt.Errorf("tagging %s: %w", g.Packages[0].Name, err))
 						}
 						if !made {

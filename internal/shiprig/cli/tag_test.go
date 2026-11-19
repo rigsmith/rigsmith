@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,8 +31,11 @@ func runTagJSON(t *testing.T, args ...string) (tagOutput, string) {
 	if err := dec.Decode(&res); err != nil {
 		t.Fatalf("stdout is not the tag JSON: %v\n%s", err, stdout.String())
 	}
-	if rest := strings.TrimSpace(stdout.String()); rest != "" {
-		t.Fatalf("stdout has more than the JSON: %q", rest)
+	// The decoder reads ahead, so the buffer's remainder says nothing: a
+	// second Decode must find the end, not trailing text or another value.
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		t.Fatalf("stdout has more than the JSON: %v %s", err, extra)
 	}
 	return res, stderr.String()
 }
@@ -258,5 +263,27 @@ func TestTagJSONFailurePrintsTheEnvelope(t *testing.T) {
 	}
 	if got := tagsByName(res); !reflect.DeepEqual(got, map[string]string{"lib@1.0.0": "exists lib@1.0.0"}) {
 		t.Errorf("tags = %v, want the present lib@1.0.0", got)
+	}
+}
+
+// An event that can't be written takes its tag back off, and create says the
+// tag is gone, so `tag --json` doesn't list it as made. (The other half, a
+// tag kept because its events landed and only the close failed, has no clean
+// way to fail an *os.File's Close and is not tested.)
+func TestTagEventsWriteFailureReportsTheTagGone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a read-only file")
+	}
+	root := planRepo(t, `{}`)
+	path := filepath.Join(t.TempDir(), "events.ndjson")
+	if err := os.WriteFile(path, nil, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	created, err := (&tagEvents{path: path}).create(context.Background(), root, "v1.0.0", []string{"lib", "done"})
+	if err == nil || created {
+		t.Errorf("create = %v, %v; want an error and the tag reported gone", created, err)
+	}
+	if hasTag(t, root, "v1.0.0") {
+		t.Error("v1.0.0 is still there")
 	}
 }

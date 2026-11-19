@@ -282,7 +282,11 @@ package has, so it is also `"releaseOnly": true` and lists the packages its
 release covers, each of which has a tag of its own: skip it when working out
 which packages a run tags. When the combined tag is the packages' own tag (a
 lockstep repo with `v${version}` for both), that one entry is marked
-`"combined": true` and lists its packages like any other. Ignored packages,
+`"combined": true` and lists its packages like any other. Combined tags are
+reported only without tag events: with `--output` or `$CHANGESETS_OUTPUT`
+set, `tag` neither makes nor lists a separate combined tag (nor marks any
+entry `combined`), and
+`shiprig forge-release` creates and pushes it instead. Ignored packages,
 and private ones unless `privatePackages.tag`, are never tagged, so they are
 never listed. In a stackspace `tags` is empty and `message` says why. A
 failure exits non-zero and still prints the JSON, with `message` saying what
