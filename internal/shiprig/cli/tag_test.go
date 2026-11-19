@@ -197,9 +197,38 @@ func TestTagJSONListsTheCombinedTag(t *testing.T) {
 		t.Errorf("report = %v, want %v", got, want)
 	}
 	for _, tg := range res.Tags {
-		if tg.Combined != (tg.Tag == "v1.0.0") {
-			t.Errorf("%s combined = %v", tg.Tag, tg.Combined)
+		combined := tg.Tag == "v1.0.0"
+		if tg.Combined != combined || tg.ReleaseOnly != combined {
+			t.Errorf("%s combined = %v, releaseOnly = %v, want %v", tg.Tag, tg.Combined, tg.ReleaseOnly, combined)
 		}
+	}
+}
+
+// A lockstep repo whose combined release uses the packages' own tag
+// ("v${version}" for both): the one tag is listed once, marked combined, with
+// its packages, and not as a release-only entry a reader would skip. The text
+// report still shows it once.
+func TestTagJSONCombinedTagThatIsThePackagesTag(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["app"], "tagTemplate": "v${version}", "forgeRelease": {"mode": "combined", "tag": "v${version}"}}`)
+	for _, args := range [][]string{{"--dry-run"}, nil} {
+		res, stderr := runTagJSON(t, args...)
+		action := "created"
+		if len(args) > 0 {
+			action = "would-create"
+		}
+		if len(res.Tags) != 1 {
+			t.Fatalf("%v: %d entries, want 1: %+v", args, len(res.Tags), res.Tags)
+		}
+		tg := res.Tags[0]
+		if got := tagsByName(res)["v1.0.0"]; got != action+" done@1.0.0 lib@1.0.0" || !tg.Combined || tg.ReleaseOnly {
+			t.Errorf("%v: entry = %q combined=%v releaseOnly=%v", args, got, tg.Combined, tg.ReleaseOnly)
+		}
+		if n := strings.Count(stderr, "v1.0.0"); n != 1 || !strings.Contains(stderr, "1 tag(s)") {
+			t.Errorf("%v: text report shows v1.0.0 %d times:\n%s", args, n, stderr)
+		}
+	}
+	if !hasTag(t, root, "v1.0.0") {
+		t.Error("v1.0.0 was not created")
 	}
 }
 
@@ -207,7 +236,10 @@ func TestTagJSONListsTheCombinedTag(t *testing.T) {
 // as forge-release --json does, and exits non-zero.
 func TestTagJSONFailurePrintsTheEnvelope(t *testing.T) {
 	// A combined release needs one version; app is on 2.0.0, lib on 1.0.0.
-	planRepo(t, `{"forgeRelease": {"mode": "combined"}}`)
+	// lib's tag is already there, and the refusal comes before any tag is
+	// recorded: the envelope still lists it.
+	root := planRepo(t, `{"forgeRelease": {"mode": "combined"}}`)
+	tagRepo(t, root, "lib@1.0.0")
 	cmd := newTagCmd()
 	var stdout, stderr bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -221,7 +253,10 @@ func TestTagJSONFailurePrintsTheEnvelope(t *testing.T) {
 	if jerr := json.Unmarshal(stdout.Bytes(), &res); jerr != nil {
 		t.Fatalf("stdout is not the tag JSON: %v\n%s", jerr, stdout.String())
 	}
-	if res.Message != err.Error() || res.Tags == nil {
-		t.Errorf("envelope = %+v, want message %q and a tags array", res, err)
+	if res.Message != err.Error() {
+		t.Errorf("envelope = %+v, want message %q", res, err)
+	}
+	if got := tagsByName(res); !reflect.DeepEqual(got, map[string]string{"lib@1.0.0": "exists lib@1.0.0"}) {
+		t.Errorf("tags = %v, want the present lib@1.0.0", got)
 	}
 }

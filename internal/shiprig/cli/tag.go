@@ -77,11 +77,16 @@ type tagJSON struct {
 	// Action is forge.ActionCreated, ActionWouldCreate (--dry-run) or
 	// ActionExists (present locally or, with tag events, on the remote).
 	Action string `json:"action"`
-	// Combined marks forgeRelease "combined"'s tag, which belongs to no
-	// package: its packages are the ones the combined release covers, each
-	// also on a tag of its own.
-	Combined bool             `json:"combined,omitempty"`
-	Packages []tagPackageJSON `json:"packages"`
+	// Combined marks forgeRelease "combined"'s tag. It is usually a tag of
+	// its own, which no package has (ReleaseOnly): its packages are the ones
+	// the combined release covers, each also on a tag of its own, so a reader
+	// working out which packages a run tags skips it. When the combined tag
+	// is also packages' own tag (a lockstep "v${version}" for both), that
+	// entry is marked Combined and lists those packages as any package tag
+	// does.
+	Combined    bool             `json:"combined,omitempty"`
+	ReleaseOnly bool             `json:"releaseOnly,omitempty"`
+	Packages    []tagPackageJSON `json:"packages"`
 }
 
 type tagPackageJSON struct {
@@ -185,22 +190,34 @@ created appends one @changesets git-tag event per package it covers.`,
 			// behind for a retry to trip over.
 			if events == nil && notPerPackage(ws.Config) {
 				var projected []plugin.Package
+				var existing []tagGroup
 				for _, g := range groups {
-					if !gitutil.TagExists(cmd.Context(), ws.Root, g.Tag) {
+					if gitutil.TagExists(cmd.Context(), ws.Root, g.Tag) {
+						existing = append(existing, g)
+					} else {
 						projected = append(projected, g.Packages...)
 					}
 				}
+				// A refusal here comes before the tagging loop records
+				// anything, so the envelope still lists what is known: the
+				// tags already present, as a failure in the loop would.
+				refuse := func(err error) error {
+					for _, g := range existing {
+						result.Tags = append(result.Tags, tagEntry(g.Tag, forge.ActionExists, g.Packages, ecoOf))
+					}
+					return fail(err)
+				}
 				atHead, err := releasedAtHead(cmd.Context(), ws, pkgs, ecoOf)
 				if err != nil {
-					return fail(err)
+					return refuse(err)
 				}
 				ctag, err := combinedReleaseTag(ws.Config, unionByName(projected, atHead))
 				if err != nil {
-					return fail(err)
+					return refuse(err)
 				}
 				if ctag != "" {
 					if _, _, err := ensureCombinedTag(cmd.Context(), ws.Root, "", ctag, true); err != nil {
-						return fail(fmt.Errorf("tagging %s: %w", ctag, err))
+						return refuse(fmt.Errorf("tagging %s: %w", ctag, err))
 					}
 				}
 			}
@@ -257,7 +274,10 @@ created appends one @changesets git-tag event per package it covers.`,
 				if err != nil {
 					return fail(err)
 				}
-				if ctag != "" && !hasGroup(groups, ctag) {
+				// The combined tag is also packages' own tag (lockstep
+				// "v${version}" for both): made and reported already, so it
+				// is only marked, with nothing printed, counted or made again.
+				if ctag != "" && !markCombined(result.Tags, ctag) {
 					existed, line, err := ensureCombinedTag(cmd.Context(), ws.Root, "", ctag, dryRun)
 					if err != nil {
 						return fail(fmt.Errorf("tagging %s: %w", ctag, err))
@@ -274,7 +294,7 @@ created appends one @changesets git-tag event per package it covers.`,
 						}
 					}
 					entry := tagEntry(ctag, action, covered, ecoOf)
-					entry.Combined = true
+					entry.Combined, entry.ReleaseOnly = true, true
 					result.Tags = append(result.Tags, entry)
 				}
 			}
@@ -288,9 +308,12 @@ created appends one @changesets git-tag event per package it covers.`,
 	return cmd
 }
 
-func hasGroup(groups []tagGroup, tag string) bool {
-	for _, g := range groups {
-		if g.Tag == tag {
+// markCombined marks the entry for tag as the combined release's, reporting
+// whether there was one.
+func markCombined(tags []tagJSON, tag string) bool {
+	for i := range tags {
+		if tags[i].Tag == tag {
+			tags[i].Combined = true
 			return true
 		}
 	}

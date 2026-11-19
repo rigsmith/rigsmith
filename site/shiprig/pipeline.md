@@ -277,12 +277,16 @@ shiprig tag --dry-run --json
 
 `action` is `created`, `would-create` (`--dry-run`) or `exists` (already
 there, skipped), the same words `forge-release --json` uses. A `forgeRelease`
-combined tag is listed too, with `"combined": true` and the packages its
-release covers, each of which also has a tag of its own. Ignored packages,
+combined tag is listed too, with `"combined": true`. Usually it is a tag no
+package has, so it is also `"releaseOnly": true` and lists the packages its
+release covers, each of which has a tag of its own: skip it when working out
+which packages a run tags. When the combined tag is the packages' own tag (a
+lockstep repo with `v${version}` for both), that one entry is marked
+`"combined": true` and lists its packages like any other. Ignored packages,
 and private ones unless `privatePackages.tag`, are never tagged, so they are
 never listed. In a stackspace `tags` is empty and `message` says why. A
-failure exits non-zero and still prints the JSON, with the tags made before
-it and `message` saying what failed.
+failure exits non-zero and still prints the JSON, with `message` saying what
+failed and the tags known by then: those made, and those already present.
 
 With tag events (`--output` or `$CHANGESETS_OUTPUT`), a tag several packages
 share gets one `git-tag` event per package, the same tag on each, so a reader
