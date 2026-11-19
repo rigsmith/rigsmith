@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -281,8 +282,13 @@ created appends one @changesets git-tag event per package it covers.`,
 				}
 				// The combined tag is also packages' own tag (lockstep
 				// "v${version}" for both): made and reported already, so it
-				// is only marked, with nothing printed, counted or made again.
-				if ctag != "" && !markCombined(result.Tags, ctag) {
+				// is only checked and marked, with nothing printed, counted or
+				// made again.
+				found, err := markCombined(cmd.Context(), ws.Root, result.Tags, ctag)
+				if err != nil {
+					return fail(fmt.Errorf("tagging %s: %w", ctag, err))
+				}
+				if ctag != "" && !found {
 					existed, line, err := ensureCombinedTag(cmd.Context(), ws.Root, "", ctag, dryRun)
 					if err != nil {
 						return fail(fmt.Errorf("tagging %s: %w", ctag, err))
@@ -314,13 +320,23 @@ created appends one @changesets git-tag event per package it covers.`,
 }
 
 // markCombined marks the entry for tag as the combined release's, reporting
-// whether there was one.
-func markCombined(tags []tagJSON, tag string) bool {
-	for i := range tags {
-		if tags[i].Tag == tag {
-			tags[i].Combined = true
-			return true
-		}
+// whether there was one. The tag is checked first, as ensureCombinedTag
+// checks any combined tag: present, it must point at HEAD. The preflight
+// refuses one elsewhere, but another process can make it between then and
+// here, and the loop that listed it only saw that it exists.
+func markCombined(ctx context.Context, root string, tags []tagJSON, tag string) (bool, error) {
+	if tag == "" {
+		return false, nil
 	}
-	return false
+	for i := range tags {
+		if tags[i].Tag != tag {
+			continue
+		}
+		if _, _, err := ensureCombinedTag(ctx, root, "", tag, true); err != nil {
+			return true, err
+		}
+		tags[i].Combined = true
+		return true, nil
+	}
+	return false, nil
 }

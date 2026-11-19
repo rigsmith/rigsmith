@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -285,5 +286,63 @@ func TestTagEventsWriteFailureReportsTheTagGone(t *testing.T) {
 	}
 	if hasTag(t, root, "v1.0.0") {
 		t.Error("v1.0.0 is still there")
+	}
+}
+
+// laterCommit tags HEAD with tags, then commits again, so the tags sit on a
+// commit that is no longer the release commit.
+func laterCommit(t *testing.T, root string, tags ...string) {
+	t.Helper()
+	tagRepo(t, root, tags...)
+	if out, err := exec.Command("git", "-C", root, "-c", "user.email=x@y.z", "-c", "user.name=x",
+		"-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "later").CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+}
+
+// A combined tag that is also a package's tag, already there on an earlier
+// commit: refused, the envelope listing the tag as present, never reported
+// as this release's.
+func TestTagJSONRefusesACombinedPackageTagOnAnotherCommit(t *testing.T) {
+	root := planRepo(t, `{"ignore": ["app"], "forgeRelease": {"mode": "combined", "tag": "lib@${version}"}}`)
+	laterCommit(t, root, "lib@1.0.0")
+	cmd := newTagCmd()
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--json"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "already exists at") {
+		t.Fatalf("tag = %v, want the combined tag refused\n%s", err, stderr.String())
+	}
+	var res tagOutput
+	if jerr := json.Unmarshal(stdout.Bytes(), &res); jerr != nil {
+		t.Fatalf("stdout is not the tag JSON: %v\n%s", jerr, stdout.String())
+	}
+	for _, tg := range res.Tags {
+		if tg.Combined {
+			t.Errorf("%s reported as the combined release's", tg.Tag)
+		}
+	}
+	if hasTag(t, root, "done@1.0.0") {
+		t.Error("done@1.0.0 was created before the refusal")
+	}
+}
+
+// markCombined checks the tag it marks: one listed as present but on another
+// commit (made there after the preflight, say) is an error, and the entry is
+// left unmarked. One at HEAD is marked.
+func TestMarkCombinedChecksTheTagIsAtHead(t *testing.T) {
+	root := planRepo(t, `{}`)
+	laterCommit(t, root, "lib@1.0.0")
+	tags := []tagJSON{{Tag: "lib@1.0.0", Action: "exists"}}
+	found, err := markCombined(context.Background(), root, tags, "lib@1.0.0")
+	if !found || err == nil || tags[0].Combined {
+		t.Errorf("tag on an earlier commit: found=%v err=%v combined=%v; want found, an error, unmarked", found, err, tags[0].Combined)
+	}
+	tagRepo(t, root, "done@1.0.0")
+	tags = []tagJSON{{Tag: "done@1.0.0", Action: "exists"}}
+	if found, err := markCombined(context.Background(), root, tags, "done@1.0.0"); !found || err != nil || !tags[0].Combined {
+		t.Errorf("tag at HEAD: found=%v err=%v combined=%v; want it marked", found, err, tags[0].Combined)
 	}
 }
